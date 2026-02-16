@@ -32,6 +32,12 @@ import {
   Bot,
   Radio,
   Activity,
+  Star,
+  Database,
+  Layers,
+  Camera,
+  BarChart3,
+  Plug,
 } from "lucide-react";
 import { currentUser, getRoleLabel, signals } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -56,6 +62,12 @@ const navItems = [
   { path: "/bot-registry", label: "Bot Governance", icon: Bot, group: "bots" },
   { path: "/signal-engine", label: "Signal Engine", icon: Radio, group: "bots" },
   { path: "/bot-audit", label: "Bot Audit", icon: Activity, group: "bots" },
+  { path: "/ecr", label: "ECR Dashboard", icon: Star, group: "ecr" },
+  { path: "/ecr-metrics", label: "Metrics", icon: Database, group: "ecr" },
+  { path: "/ecr-rule-sets", label: "Rule Sets", icon: Layers, group: "ecr" },
+  { path: "/ecr-snapshots", label: "Snapshots", icon: Camera, group: "ecr" },
+  { path: "/ecr-scoring", label: "Scoring", icon: BarChart3, group: "ecr" },
+  { path: "/ecr-connectors", label: "Connectors", icon: Plug, group: "ecr" },
 ];
 
 const groupLabels: Record<string, string> = {
@@ -65,6 +77,7 @@ const groupLabels: Record<string, string> = {
   output: "OUTPUT",
   system: "SYSTEM",
   bots: "BOT GOVERNANCE",
+  ecr: "CUSTOMER RATING",
 };
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -72,7 +85,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [collapsed, setCollapsed] = useState(false);
   const redCount = signals.filter(s => s.severity === "red").length;
 
-  const groups = ["core", "deals", "authoring", "output", "system", "bots"];
+  const groups = ["core", "deals", "authoring", "output", "system", "bots", "ecr"];
 
   return (
     <div className="flex h-screen overflow-hidden">

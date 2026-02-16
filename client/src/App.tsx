@@ -28,6 +28,12 @@ import BotRegistry from "./pages/BotRegistry";
 import BotBuilder from "./pages/BotBuilder";
 import SignalEngine from "./pages/SignalEngine";
 import BotAudit from "./pages/BotAudit";
+import EcrDashboard from "./pages/EcrDashboard";
+import EcrMetrics from "./pages/EcrMetrics";
+import EcrRuleSets from "./pages/EcrRuleSets";
+import EcrSnapshots from "./pages/EcrSnapshots";
+import EcrScoring from "./pages/EcrScoring";
+import EcrConnectors from "./pages/EcrConnectors";
 
 function AppRouter() {
   return (
@@ -54,6 +60,12 @@ function AppRouter() {
       <Route path="/bot-builder" component={BotBuilder} />
       <Route path="/signal-engine" component={SignalEngine} />
       <Route path="/bot-audit" component={BotAudit} />
+      <Route path="/ecr" component={EcrDashboard} />
+      <Route path="/ecr-metrics" component={EcrMetrics} />
+      <Route path="/ecr-rule-sets" component={EcrRuleSets} />
+      <Route path="/ecr-snapshots" component={EcrSnapshots} />
+      <Route path="/ecr-scoring" component={EcrScoring} />
+      <Route path="/ecr-connectors" component={EcrConnectors} />
       <Route component={NotFound} />
     </Switch>
   );
