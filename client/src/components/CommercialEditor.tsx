@@ -1,9 +1,12 @@
-// Commercial Editor — Full WYSIWYG Authoring Shell
-// Three-mode doctrine: Structure → Draft → Canon
-// Connected to Quotes, Proposals, and SLAs
-// Design: Swiss Precision Instrument — deep navy accents, IBM Plex Sans
+/*
+ * Commercial Editor Shell — WYSIWYG Three-Mode Authoring
+ * Three-mode doctrine: Structure → Draft → Canon
+ * Connected to Quotes, Proposals, and SLAs
+ * Features: Customer data linking, Compiled View, Block View, AI Staging
+ * Design: Swiss Precision Instrument — deep navy accents, IBM Plex Sans
+ */
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -35,8 +38,11 @@ import {
   Sparkles, Send, ChevronDown, ChevronRight, Plus,
   Trash2, GripVertical, X, Download,
   BookOpen, FileCheck, FileSignature, ClipboardList,
-  Layers, PenTool, Shield, LayoutTemplate, Wand2, Check
+  Layers, PenTool, Shield, LayoutTemplate, Wand2, Check,
+  Building2, User, Phone, Mail, MapPin, DollarSign,
+  Calendar, Hash, ToggleLeft, ToggleRight, Eye, Columns2
 } from "lucide-react";
+import { customers, type Customer, formatSAR } from "@/lib/store";
 
 // ============================================================
 // TYPES
@@ -44,6 +50,7 @@ import {
 
 export type DocumentType = "quote" | "proposal" | "sla";
 export type EditorMode = "structure" | "draft" | "canon";
+export type ViewMode = "block" | "compiled";
 
 export interface DocumentSection {
   id: string;
@@ -60,6 +67,7 @@ export interface EditorDocument {
   type: DocumentType;
   title: string;
   workspaceId: string;
+  customerId: string;
   customerName: string;
   version: number;
   sections: DocumentSection[];
@@ -73,33 +81,31 @@ export interface EditorDocument {
 // ============================================================
 
 const QUOTE_TEMPLATE: DocumentSection[] = [
-  { id: "qs1", title: "Cover Page", content: "<h1>Commercial Quotation</h1><p>Prepared for: <strong>[Customer Name]</strong></p><p>Date: [Date]</p><p>Reference: [Quote ID]</p><p>Prepared by: Hala Supply Chain Services</p>", isLocked: false, isAIGenerated: false, order: 1, type: "heading" },
-  { id: "qs2", title: "Executive Summary", content: "<h2>Executive Summary</h2><p>Hala Supply Chain Services is pleased to present this commercial quotation for warehousing and logistics services. This quotation outlines our proposed solution, pricing structure, and service commitments.</p><p>Start writing your executive summary here...</p>", isLocked: false, isAIGenerated: false, order: 2, type: "body" },
-  { id: "qs3", title: "Scope of Services", content: "<h2>Scope of Services</h2><h3>Warehousing Services</h3><ul><li>Pallet storage in temperature-controlled environment</li><li>Inbound receiving and putaway</li><li>Outbound picking and dispatch</li><li>Inventory management and cycle counting</li></ul><h3>Value Added Services</h3><ul><li>Labeling and relabeling</li><li>Kitting and co-packing</li><li>Returns management</li></ul>", isLocked: false, isAIGenerated: false, order: 3, type: "scope" },
-  { id: "qs4", title: "Pricing Schedule", content: "<h2>Pricing Schedule</h2><table><thead><tr><th>Service</th><th>Unit</th><th>Rate (SAR)</th><th>Volume</th><th>Monthly (SAR)</th></tr></thead><tbody><tr><td>Pallet Storage</td><td>Per Pallet/Day</td><td>[Rate]</td><td>[Volume]</td><td>[Calculated]</td></tr><tr><td>Inbound Handling</td><td>Per Pallet</td><td>[Rate]</td><td>[Volume]</td><td>[Calculated]</td></tr><tr><td>Outbound Handling</td><td>Per Pallet</td><td>[Rate]</td><td>[Volume]</td><td>[Calculated]</td></tr><tr><td>VAS</td><td>As Required</td><td>Per Rate Card</td><td>-</td><td>[Estimated]</td></tr></tbody></table>", isLocked: false, isAIGenerated: false, order: 4, type: "pricing" },
-  { id: "qs5", title: "Terms & Conditions", content: "<h2>Terms & Conditions</h2><h3>Payment Terms</h3><p>Payment is due within 30 days of invoice date.</p><h3>Validity</h3><p>This quotation is valid for 30 days from the date of issue.</p><h3>Minimum Commitment</h3><p>A minimum monthly commitment of [X] pallets applies.</p>", isLocked: false, isAIGenerated: false, order: 5, type: "terms" },
+  { id: "qt1", title: "Cover & Reference", content: "<h1>Commercial Quotation</h1><p><strong>Ref:</strong> HCS-Q-2026-XXX</p><p><strong>Date:</strong> [Date]</p><p><strong>Valid Until:</strong> [Date + 30 days]</p><p>Dear [Client Name],</p><p>Thank you for the opportunity to present our warehousing and logistics services quotation. Hala Supply Chain Services is pleased to offer the following commercial terms for your consideration.</p>", isLocked: false, isAIGenerated: false, order: 1, type: "heading" },
+  { id: "qt2", title: "Scope of Services", content: "<h2>1. Scope of Services</h2><ul><li><strong>Warehousing:</strong> Ambient/temperature-controlled pallet storage with WMS integration</li><li><strong>Inbound:</strong> Container devanning, goods receipt, quality inspection, putaway</li><li><strong>Outbound:</strong> Order processing, pick-pack-ship, carrier management</li><li><strong>VAS:</strong> Labeling, kitting, co-packing, returns processing</li></ul>", isLocked: false, isAIGenerated: false, order: 2, type: "scope" },
+  { id: "qt3", title: "Pricing Schedule", content: "<h2>2. Pricing Schedule</h2><table><thead><tr><th>Service</th><th>Unit</th><th>Rate (SAR)</th><th>Est. Volume</th><th>Monthly (SAR)</th></tr></thead><tbody><tr><td>Pallet Storage</td><td>Per pallet/day</td><td>0.00</td><td>0</td><td>0.00</td></tr><tr><td>Inbound Handling</td><td>Per pallet</td><td>0.00</td><td>0</td><td>0.00</td></tr><tr><td>Outbound Handling</td><td>Per pallet</td><td>0.00</td><td>0</td><td>0.00</td></tr><tr><td>VAS</td><td>Various</td><td>-</td><td>-</td><td>0.00</td></tr></tbody></table><p><strong>Estimated Monthly Total: SAR 0.00</strong></p><p><strong>Estimated Annual Total: SAR 0.00</strong></p>", isLocked: false, isAIGenerated: false, order: 3, type: "pricing" },
+  { id: "qt4", title: "Terms & Conditions", content: "<h2>3. Terms & Conditions</h2><ul><li><strong>Payment Terms:</strong> Net 30 days from invoice date</li><li><strong>Contract Duration:</strong> [X] months from commencement date</li><li><strong>Rate Review:</strong> Annual review subject to CPI adjustment</li><li><strong>Minimum Commitment:</strong> [X] pallets per month</li><li><strong>Insurance:</strong> Standard warehouse liability coverage included</li></ul>", isLocked: false, isAIGenerated: false, order: 4, type: "terms" },
+  { id: "qt5", title: "Validity & Acceptance", content: "<h2>4. Validity & Acceptance</h2><p>This quotation is valid for 30 days from the date of issue. To accept, please sign and return a copy of this document.</p><p>We look forward to the opportunity to serve your logistics needs.</p><p><strong>Authorized Signatory — Hala Supply Chain Services</strong></p><p>Name: _______________</p><p>Title: _______________</p><p>Date: _______________</p>", isLocked: false, isAIGenerated: false, order: 5, type: "terms" },
 ];
 
 const PROPOSAL_TEMPLATE: DocumentSection[] = [
-  { id: "ps1", title: "Cover Page", content: "<h1>Commercial Proposal</h1><p>Prepared for: <strong>[Customer Name]</strong></p><p>Date: [Date]</p><p>Reference: [Proposal ID]</p><p>Prepared by: Hala Supply Chain Services</p><p><em>Confidential</em></p>", isLocked: false, isAIGenerated: false, order: 1, type: "heading" },
-  { id: "ps2", title: "Executive Summary", content: "<h2>Executive Summary</h2><p>Write your executive summary here. This should capture the client's needs, your proposed solution, and the key value proposition in 2-3 paragraphs.</p>", isLocked: false, isAIGenerated: false, order: 2, type: "body" },
-  { id: "ps3", title: "Understanding of Requirements", content: "<h2>Understanding of Requirements</h2><p>Based on our discussions and site assessment, we understand that [Customer Name] requires:</p><ul><li>Warehousing capacity for [X] pallets</li><li>Inbound/outbound handling for [X] pallets per month</li><li>Temperature-controlled storage at [X]\u00b0C</li><li>Value-added services including [list services]</li></ul>", isLocked: false, isAIGenerated: false, order: 3, type: "body" },
-  { id: "ps4", title: "Proposed Solution", content: "<h2>Proposed Solution</h2><h3>Facility</h3><p>We propose to serve [Customer Name] from our [Facility Name] facility located in [City].</p><h3>Solution Design</h3><p>Describe the operational solution, layout, staffing, and technology here.</p>", isLocked: false, isAIGenerated: false, order: 4, type: "scope" },
-  { id: "ps5", title: "Scope of Work", content: "<h2>Scope of Work</h2><ol><li>Receiving & Putaway</li><li>Storage Management</li><li>Order Processing</li><li>Picking & Packing</li><li>Dispatch & Loading</li><li>Inventory Management</li><li>Returns Processing</li><li>Reporting & KPIs</li></ol>", isLocked: false, isAIGenerated: false, order: 5, type: "scope" },
-  { id: "ps6", title: "Commercial Pricing", content: "<h2>Commercial Pricing</h2><table><thead><tr><th>Service</th><th>Unit</th><th>Rate (SAR)</th></tr></thead><tbody><tr><td>Pallet Storage</td><td>Per Pallet/Day</td><td>[Rate]</td></tr><tr><td>Inbound Handling</td><td>Per Pallet</td><td>[Rate]</td></tr><tr><td>Outbound Handling</td><td>Per Pallet</td><td>[Rate]</td></tr></tbody></table>", isLocked: false, isAIGenerated: false, order: 6, type: "pricing" },
-  { id: "ps7", title: "SLA Framework", content: "<h2>Service Level Agreement Framework</h2><table><thead><tr><th>KPI</th><th>Target</th><th>Measurement</th></tr></thead><tbody><tr><td>Receiving Accuracy</td><td>99.5%</td><td>Monthly</td></tr><tr><td>Order Accuracy</td><td>99.8%</td><td>Monthly</td></tr><tr><td>On-Time Dispatch</td><td>98%</td><td>Monthly</td></tr><tr><td>Inventory Accuracy</td><td>99.9%</td><td>Quarterly</td></tr></tbody></table>", isLocked: false, isAIGenerated: false, order: 7, type: "kpi" },
-  { id: "ps8", title: "Implementation Timeline", content: "<h2>Implementation Timeline</h2><table><thead><tr><th>Phase</th><th>Activity</th><th>Duration</th></tr></thead><tbody><tr><td>Phase 1</td><td>Contract Signing & Kick-off</td><td>Week 1</td></tr><tr><td>Phase 2</td><td>Facility Setup & Configuration</td><td>Weeks 2-3</td></tr><tr><td>Phase 3</td><td>System Integration & Testing</td><td>Weeks 3-4</td></tr><tr><td>Phase 4</td><td>Go-Live & Stabilization</td><td>Week 5</td></tr></tbody></table>", isLocked: false, isAIGenerated: false, order: 8, type: "body" },
-  { id: "ps9", title: "Terms & Conditions", content: "<h2>Terms & Conditions</h2><h3>Contract Duration</h3><p>The proposed contract duration is [X] years.</p><h3>Payment Terms</h3><p>Payment is due within [X] days of invoice date.</p><h3>Confidentiality</h3><p>This proposal and its contents are confidential and proprietary to Hala Supply Chain Services.</p>", isLocked: false, isAIGenerated: false, order: 9, type: "terms" },
+  { id: "pr1", title: "Executive Summary", content: "<h1>Commercial Proposal</h1><h2>Executive Summary</h2><p>Hala Supply Chain Services is pleased to present this comprehensive warehousing and logistics proposal. Our solution is designed to optimize your supply chain operations, reduce costs, and improve service levels across the Kingdom.</p>", isLocked: false, isAIGenerated: false, order: 1, type: "heading" },
+  { id: "pr2", title: "Company Overview", content: "<h2>1. Company Overview</h2><p>Hala Supply Chain Services is a leading third-party logistics provider in Saudi Arabia, operating state-of-the-art facilities across the Eastern, Central, and Western regions. With over two decades of experience, we serve major clients across petrochemical, FMCG, healthcare, and industrial sectors.</p>", isLocked: false, isAIGenerated: false, order: 2, type: "body" },
+  { id: "pr3", title: "Understanding of Requirements", content: "<h2>2. Understanding of Requirements</h2><p>[Client Name] requires a comprehensive warehousing and distribution solution that addresses the following key needs:</p><ul><li>Secure, temperature-controlled storage capacity</li><li>Efficient inbound and outbound operations</li><li>Real-time inventory visibility and reporting</li><li>Scalable solution to accommodate growth</li></ul>", isLocked: false, isAIGenerated: false, order: 3, type: "scope" },
+  { id: "pr4", title: "Proposed Solution", content: "<h2>3. Proposed Solution</h2><p>Our proposed solution leverages our facility infrastructure, advanced WMS technology, and dedicated operational team to deliver:</p><ul><li><strong>Dedicated Storage:</strong> [X] pallet positions in our [Facility] warehouse</li><li><strong>WMS Integration:</strong> Real-time inventory management with client portal access</li><li><strong>Dedicated Team:</strong> Trained warehouse staff with industry-specific expertise</li><li><strong>MHE Fleet:</strong> Modern material handling equipment for efficient operations</li></ul>", isLocked: false, isAIGenerated: false, order: 4, type: "body" },
+  { id: "pr5", title: "Commercial Terms", content: "<h2>4. Commercial Terms</h2><table><thead><tr><th>Service</th><th>Unit</th><th>Rate (SAR)</th></tr></thead><tbody><tr><td>Pallet Storage</td><td>Per pallet/day</td><td>0.00</td></tr><tr><td>Inbound Handling</td><td>Per pallet</td><td>0.00</td></tr><tr><td>Outbound Handling</td><td>Per pallet</td><td>0.00</td></tr></tbody></table>", isLocked: false, isAIGenerated: false, order: 5, type: "pricing" },
+  { id: "pr6", title: "Implementation Timeline", content: "<h2>5. Implementation Timeline</h2><table><thead><tr><th>Phase</th><th>Activity</th><th>Duration</th><th>Owner</th></tr></thead><tbody><tr><td>Phase 1</td><td>Contract Signing & Kick-off</td><td>Week 1</td><td>Commercial Team</td></tr><tr><td>Phase 2</td><td>Facility Preparation</td><td>Week 2-3</td><td>Operations</td></tr><tr><td>Phase 3</td><td>WMS Configuration & Testing</td><td>Week 3-4</td><td>IT / Operations</td></tr><tr><td>Phase 4</td><td>Go-Live</td><td>Week 5</td><td>Joint Team</td></tr></tbody></table>", isLocked: false, isAIGenerated: false, order: 6, type: "body" },
+  { id: "pr7", title: "SLA Framework", content: "<h2>6. Service Level Framework</h2><table><thead><tr><th>KPI</th><th>Target</th><th>Measurement</th></tr></thead><tbody><tr><td>Inventory Accuracy</td><td>≥ 99.5%</td><td>Monthly cycle count</td></tr><tr><td>Order Fulfillment</td><td>≥ 98%</td><td>Same-day dispatch</td></tr><tr><td>Goods Receipt</td><td>≤ 4 hours</td><td>From truck arrival</td></tr></tbody></table>", isLocked: false, isAIGenerated: false, order: 7, type: "kpi" },
 ];
 
 const SLA_TEMPLATE: DocumentSection[] = [
-  { id: "sl1", title: "Cover Page", content: "<h1>Service Level Agreement</h1><p>Between: <strong>Hala Supply Chain Services</strong></p><p>And: <strong>[Customer Name]</strong></p><p>Effective Date: [Date]</p><p>Reference: [SLA ID]</p>", isLocked: false, isAIGenerated: false, order: 1, type: "heading" },
-  { id: "sl2", title: "Purpose & Scope", content: "<h2>1. Purpose & Scope</h2><p>This Service Level Agreement defines the service commitments, performance metrics, and remedies applicable to the warehousing and logistics services provided by Hala Supply Chain Services to [Customer Name].</p>", isLocked: false, isAIGenerated: false, order: 2, type: "body" },
-  { id: "sl3", title: "Service Description", content: "<h2>2. Service Description</h2><p>The services covered under this SLA include:</p><ul><li>Warehousing and storage management</li><li>Inbound receiving and putaway operations</li><li>Outbound picking, packing, and dispatch</li><li>Inventory management and reporting</li><li>Value-added services as specified in the MSA</li></ul>", isLocked: false, isAIGenerated: false, order: 3, type: "scope" },
-  { id: "sl4", title: "Key Performance Indicators", content: "<h2>3. Key Performance Indicators</h2><table><thead><tr><th>KPI</th><th>Definition</th><th>Target</th><th>Measurement Period</th><th>Penalty Threshold</th></tr></thead><tbody><tr><td>Receiving Accuracy</td><td>% of items received correctly vs. ASN</td><td>99.5%</td><td>Monthly</td><td>&lt; 98%</td></tr><tr><td>Order Accuracy</td><td>% of orders shipped correctly</td><td>99.8%</td><td>Monthly</td><td>&lt; 99%</td></tr><tr><td>On-Time Dispatch</td><td>% of orders dispatched within SLA window</td><td>98%</td><td>Monthly</td><td>&lt; 95%</td></tr><tr><td>Inventory Accuracy</td><td>% match between system and physical count</td><td>99.9%</td><td>Quarterly</td><td>&lt; 99.5%</td></tr><tr><td>Damage Rate</td><td>% of items damaged in warehouse</td><td>&lt; 0.1%</td><td>Monthly</td><td>&gt; 0.3%</td></tr></tbody></table>", isLocked: false, isAIGenerated: false, order: 4, type: "kpi" },
-  { id: "sl5", title: "Penalties & Remedies", content: "<h2>4. Penalties & Remedies</h2><h3>Credit Mechanism</h3><p>Where KPI targets are not met, the following credit mechanism applies:</p><table><thead><tr><th>Performance Level</th><th>Credit</th></tr></thead><tbody><tr><td>Target met or exceeded</td><td>No credit</td></tr><tr><td>Below target but above penalty threshold</td><td>Warning issued</td></tr><tr><td>Below penalty threshold</td><td>[X]% credit on monthly invoice</td></tr><tr><td>Consecutive months below threshold</td><td>[X]% credit + remediation plan</td></tr></tbody></table>", isLocked: false, isAIGenerated: false, order: 5, type: "terms" },
+  { id: "sl1", title: "SLA Header", content: "<h1>Service Level Agreement</h1><p><strong>Between:</strong> Hala Supply Chain Services (\"Service Provider\")</p><p><strong>And:</strong> [Client Name] (\"Client\")</p><p><strong>Effective Date:</strong> [Date]</p><p><strong>Agreement Reference:</strong> HCS-SLA-2026-XXX</p>", isLocked: false, isAIGenerated: false, order: 1, type: "heading" },
+  { id: "sl2", title: "Service Description", content: "<h2>1. Service Description</h2><p>This SLA defines the service levels, performance metrics, and remediation procedures for the warehousing and logistics services provided by Hala Supply Chain Services under the Master Service Agreement.</p>", isLocked: false, isAIGenerated: false, order: 2, type: "scope" },
+  { id: "sl3", title: "Key Performance Indicators", content: "<h2>2. Key Performance Indicators</h2><table><thead><tr><th>KPI</th><th>Target</th><th>Measurement Method</th><th>Frequency</th><th>Penalty</th></tr></thead><tbody><tr><td>Inventory Accuracy</td><td>≥ 99.5%</td><td>Cycle count vs WMS</td><td>Monthly</td><td>1% credit per 0.1% below target</td></tr><tr><td>Order Fulfillment Rate</td><td>≥ 98%</td><td>Orders shipped same day</td><td>Monthly</td><td>0.5% credit per 1% below target</td></tr><tr><td>Goods Receipt Time</td><td>≤ 4 hours</td><td>Truck arrival to putaway</td><td>Per shipment</td><td>SAR 500 per incident</td></tr><tr><td>Damage Rate</td><td>≤ 0.1%</td><td>Damaged units / total units</td><td>Monthly</td><td>Replacement cost + 10%</td></tr></tbody></table>", isLocked: false, isAIGenerated: false, order: 3, type: "kpi" },
+  { id: "sl4", title: "Service Hours & Response Times", content: "<h2>3. Service Hours & Response Times</h2><table><thead><tr><th>Service</th><th>Hours</th><th>Response Time</th></tr></thead><tbody><tr><td>Standard Operations</td><td>Sun-Thu 07:00-19:00</td><td>N/A</td></tr><tr><td>Emergency Support</td><td>24/7</td><td>30 minutes</td></tr><tr><td>Client Queries</td><td>Sun-Thu 08:00-17:00</td><td>4 hours</td></tr><tr><td>System Issues</td><td>24/7</td><td>1 hour</td></tr></tbody></table>", isLocked: false, isAIGenerated: false, order: 4, type: "body" },
+  { id: "sl5", title: "Penalty & Credit Framework", content: "<h2>4. Penalty & Credit Framework</h2><p>Service credits are calculated monthly and applied to the following month's invoice. Maximum monthly credit shall not exceed 10% of the monthly service fee.</p><p><strong>Credit Calculation:</strong> Credits are cumulative within a calendar month. Hala will provide a detailed credit calculation with each monthly performance report.</p>", isLocked: false, isAIGenerated: false, order: 5, type: "terms" },
   { id: "sl6", title: "Reporting & Review", content: "<h2>5. Reporting & Review</h2><h3>Monthly Reporting</h3><p>Hala will provide a monthly performance report within 5 business days of month-end, including all KPI measurements and trend analysis.</p><h3>Quarterly Review</h3><p>A formal quarterly business review will be conducted between both parties to review performance, discuss improvements, and address any concerns.</p>", isLocked: false, isAIGenerated: false, order: 6, type: "body" },
-  { id: "sl7", title: "Escalation Procedure", content: "<h2>6. Escalation Procedure</h2><table><thead><tr><th>Level</th><th>Hala Contact</th><th>Client Contact</th><th>Response Time</th></tr></thead><tbody><tr><td>Level 1 \u2014 Operational</td><td>Warehouse Manager</td><td>Logistics Coordinator</td><td>4 hours</td></tr><tr><td>Level 2 \u2014 Management</td><td>Operations Head</td><td>Supply Chain Manager</td><td>24 hours</td></tr><tr><td>Level 3 \u2014 Executive</td><td>Commercial Director</td><td>VP Operations</td><td>48 hours</td></tr></tbody></table>", isLocked: false, isAIGenerated: false, order: 7, type: "body" },
+  { id: "sl7", title: "Escalation Procedure", content: "<h2>6. Escalation Procedure</h2><table><thead><tr><th>Level</th><th>Hala Contact</th><th>Client Contact</th><th>Response Time</th></tr></thead><tbody><tr><td>Level 1 — Operational</td><td>Warehouse Manager</td><td>Logistics Coordinator</td><td>4 hours</td></tr><tr><td>Level 2 — Management</td><td>Operations Head</td><td>Supply Chain Manager</td><td>24 hours</td></tr><tr><td>Level 3 — Executive</td><td>Commercial Director</td><td>VP Operations</td><td>48 hours</td></tr></tbody></table>", isLocked: false, isAIGenerated: false, order: 7, type: "body" },
   { id: "sl8", title: "Amendment & Validity", content: "<h2>7. Amendment & Validity</h2><p>This SLA is valid for the duration of the Master Service Agreement. Any amendments must be agreed in writing by both parties.</p><p>Review Date: [Date]</p><p>Next Review: [Date + 12 months]</p>", isLocked: false, isAIGenerated: false, order: 8, type: "terms" },
 ];
 
@@ -122,7 +128,7 @@ const AI_SUGGESTIONS: Record<string, string> = {
   "pricing": "<p>Our pricing structure is designed to provide transparency and predictability while aligning costs with actual service utilization. All rates are quoted in Saudi Riyals (SAR) and are subject to the terms outlined in this document.</p>",
   "kpi": "<p>Performance will be measured against industry-leading benchmarks. Hala commits to maintaining service levels that exceed market standards, with transparent reporting and a structured remediation process for any shortfalls.</p>",
   "terms": "<p>This agreement shall be governed by the laws of the Kingdom of Saudi Arabia. All disputes shall be resolved through amicable negotiation in the first instance, with arbitration as the final recourse.</p>",
-  "heading": "<p>Hala Supply Chain Services \u2014 delivering operational excellence across the Kingdom.</p>",
+  "heading": "<p>Hala Supply Chain Services — delivering operational excellence across the Kingdom.</p>",
   "custom": "<p>Hala Supply Chain Services is committed to delivering exceptional logistics solutions that drive operational efficiency and support our clients' growth objectives across the Kingdom.</p>",
 };
 
@@ -172,7 +178,7 @@ function EditorToolbar({ editor, isLocked }: { editor: ReturnType<typeof useEdit
   );
 
   return (
-    <div className="flex items-center gap-0.5 flex-wrap px-3 py-2 border-b border-gray-200 bg-gray-50/80">
+    <div className="flex items-center gap-0.5 flex-wrap px-3 py-2 border-b border-gray-200 bg-gray-50/80 sticky top-0 z-10">
       <ToolBtn onClick={() => editor.chain().focus().undo().run()} icon={Undo2} title="Undo" disabled={!editor.can().undo()} />
       <ToolBtn onClick={() => editor.chain().focus().redo().run()} icon={Redo2} title="Redo" disabled={!editor.can().redo()} />
       <Separator orientation="vertical" className="h-5 mx-1" />
@@ -202,7 +208,50 @@ function EditorToolbar({ editor, isLocked }: { editor: ReturnType<typeof useEdit
 }
 
 // ============================================================
-// SECTION EDITOR COMPONENT
+// CUSTOMER INFO BANNER
+// ============================================================
+
+function CustomerBanner({ customer }: { customer: Customer | null }) {
+  if (!customer) return null;
+
+  const gradeColors: Record<string, string> = {
+    A: "bg-emerald-100 text-emerald-800 border-emerald-300",
+    B: "bg-blue-100 text-blue-800 border-blue-300",
+    C: "bg-amber-100 text-amber-800 border-amber-300",
+    D: "bg-orange-100 text-orange-800 border-orange-300",
+    F: "bg-red-100 text-red-800 border-red-300",
+  };
+
+  return (
+    <div className="px-4 py-3 bg-gradient-to-r from-[#1B2A4A]/5 to-transparent border-b border-gray-200">
+      <div className="flex items-center gap-4">
+        <div className="w-10 h-10 rounded-lg bg-[#1B2A4A] flex items-center justify-center text-white font-bold text-sm shrink-0">
+          {customer.name.substring(0, 2).toUpperCase()}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-[#1B2A4A]">{customer.name}</h3>
+            <Badge className={`text-[10px] h-4 border ${gradeColors[customer.grade] || "bg-gray-100 text-gray-700"}`}>
+              Grade {customer.grade}
+            </Badge>
+            <Badge variant="outline" className="text-[10px] h-4">{customer.status}</Badge>
+          </div>
+          <div className="flex items-center gap-4 mt-1 text-xs text-gray-500">
+            <span className="flex items-center gap-1"><Hash size={10} /> {customer.code}</span>
+            <span className="flex items-center gap-1"><Building2 size={10} /> {customer.industry}</span>
+            <span className="flex items-center gap-1"><MapPin size={10} /> {customer.city}, {customer.region}</span>
+            <span className="flex items-center gap-1"><DollarSign size={10} /> {formatSAR(customer.contractValue2025)}</span>
+            <span className="flex items-center gap-1"><Calendar size={10} /> Exp: {customer.contractExpiry}</span>
+            <span className="flex items-center gap-1"><User size={10} /> {customer.contactName}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// SECTION EDITOR COMPONENT (Block View)
 // ============================================================
 
 function SectionEditor({
@@ -297,7 +346,7 @@ function SectionEditor({
             <div className="mx-3 mt-3 p-3 rounded-lg border-2 border-dashed border-amber-300 bg-amber-50/50">
               <div className="flex items-center gap-2 mb-2">
                 <Sparkles size={14} className="text-amber-600" />
-                <span className="text-xs font-medium text-amber-700">AI Staging \u2014 Review before accepting</span>
+                <span className="text-xs font-medium text-amber-700">AI Staging — Review before accepting</span>
                 <div className="ml-auto flex gap-1">
                   <Button size="sm" variant="outline" className="h-6 text-xs border-green-300 text-green-700 hover:bg-green-50" onClick={onAcceptAI}>
                     <Check size={12} className="mr-1" /> Accept
@@ -316,13 +365,12 @@ function SectionEditor({
             <>
               {!isLocked && <EditorToolbar editor={editor} isLocked={isLocked} />}
               <div className={`px-4 py-3 ${isLocked ? "opacity-80" : ""}`}>
-
                 <EditorContent editor={editor} className="prose prose-sm max-w-none focus:outline-none [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[60px] [&_.ProseMirror_table]:border-collapse [&_.ProseMirror_td]:border [&_.ProseMirror_td]:border-gray-300 [&_.ProseMirror_td]:p-2 [&_.ProseMirror_th]:border [&_.ProseMirror_th]:border-gray-300 [&_.ProseMirror_th]:p-2 [&_.ProseMirror_th]:bg-gray-100 [&_.ProseMirror_th]:font-semibold" />
               </div>
             </>
           )}
 
-          {/* Structure Mode \u2014 Show content preview */}
+          {/* Structure Mode — Show content preview */}
           {mode === "structure" && (
             <div className="px-4 py-3 text-sm text-gray-500 italic">
               <div className="prose prose-sm max-w-none opacity-60" dangerouslySetInnerHTML={{ __html: section.content.substring(0, 200) + "..." }} />
@@ -335,12 +383,56 @@ function SectionEditor({
 }
 
 // ============================================================
+// COMPILED VIEW EDITOR — Single continuous document
+// ============================================================
+
+function CompiledViewEditor({ sections, isLocked, onContentChange }: {
+  sections: DocumentSection[];
+  isLocked: boolean;
+  onContentChange: (allContent: string) => void;
+}) {
+  const compiledContent = useMemo(() => {
+    return sections.map(s => s.content).join("\n<hr />\n");
+  }, [sections]);
+
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
+      Placeholder.configure({ placeholder: "Start writing your document..." }),
+      Underline, TextAlign.configure({ types: ["heading", "paragraph"] }),
+      Highlight.configure({ multicolor: true }),
+      Table.configure({ resizable: true }), TableRow, TableCell, TableHeader,
+      Link.configure({ openOnClick: false }), TextStyle, Color,
+    ],
+    content: compiledContent,
+    editable: !isLocked,
+    onUpdate: ({ editor: e }) => { onContentChange(e.getHTML()); },
+  });
+
+  useEffect(() => {
+    if (editor && editor.isEditable !== !isLocked) {
+      editor.setEditable(!isLocked);
+    }
+  }, [isLocked, editor]);
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+      {editor && !isLocked && <EditorToolbar editor={editor} isLocked={isLocked} />}
+      <div className={`px-8 py-6 ${isLocked ? "opacity-80" : ""}`}>
+        <EditorContent editor={editor} className="prose prose-base max-w-none focus:outline-none [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[400px] [&_.ProseMirror_table]:border-collapse [&_.ProseMirror_td]:border [&_.ProseMirror_td]:border-gray-300 [&_.ProseMirror_td]:p-2 [&_.ProseMirror_th]:border [&_.ProseMirror_th]:border-gray-300 [&_.ProseMirror_th]:p-2 [&_.ProseMirror_th]:bg-gray-100 [&_.ProseMirror_th]:font-semibold [&_.ProseMirror_hr]:my-6 [&_.ProseMirror_hr]:border-gray-200" />
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // MAIN COMMERCIAL EDITOR
 // ============================================================
 
 interface CommercialEditorProps {
   documentType: DocumentType;
   workspaceId?: string;
+  customerId?: string;
   customerName?: string;
   existingDocument?: EditorDocument;
   onSave?: (doc: EditorDocument) => void;
@@ -348,20 +440,30 @@ interface CommercialEditorProps {
 }
 
 export default function CommercialEditor({
-  documentType, workspaceId = "", customerName = "",
+  documentType, workspaceId = "", customerId = "", customerName = "",
   existingDocument, onSave, onExportPDF,
 }: CommercialEditorProps) {
   const [mode, setMode] = useState<EditorMode>("draft");
+  const [viewMode, setViewMode] = useState<ViewMode>("block");
   const [document, setDocument] = useState<EditorDocument>(() => {
     if (existingDocument) return existingDocument;
     return {
       id: `doc-${Date.now()}`, type: documentType,
       title: documentType === "quote" ? "New Quotation" : documentType === "proposal" ? "New Proposal" : "New Service Level Agreement",
-      workspaceId, customerName, version: 1,
+      workspaceId, customerId, customerName, version: 1,
       sections: getTemplate(documentType),
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), status: "draft",
     };
   });
+
+  // Resolve customer from ID or name
+  const linkedCustomer = useMemo(() => {
+    if (customerId) return customers.find(c => c.id === customerId) || null;
+    if (customerName) return customers.find(c => c.name === customerName) || null;
+    if (document.customerId) return customers.find(c => c.id === document.customerId) || null;
+    if (document.customerName) return customers.find(c => c.name === document.customerName) || null;
+    return null;
+  }, [customerId, customerName, document.customerId, document.customerName]);
 
   const [aiStagingMap, setAiStagingMap] = useState<Record<string, string>>({});
   const [promptText, setPromptText] = useState("");
@@ -407,7 +509,7 @@ export default function CommercialEditor({
     setTimeout(() => {
       const suggestion = AI_SUGGESTIONS[section.type] || AI_SUGGESTIONS["custom"];
       setAiStagingMap(prev => ({ ...prev, [sectionId]: suggestion }));
-      toast.success("AI draft ready \u2014 review in staging area");
+      toast.success("AI draft ready — review in staging area");
     }, 1200);
   }, [document.sections]);
 
@@ -438,9 +540,15 @@ export default function CommercialEditor({
       }));
       setPromptText("");
       setShowPromptBox(false);
-      toast.success("AI generated a new section \u2014 review and edit as needed");
+      toast.success("AI generated a new section — review and edit as needed");
     }, 1500);
   }, [promptText, document.sections.length]);
+
+  const handleCompiledContentChange = useCallback((_content: string) => {
+    // In compiled view, content changes are tracked but sections remain as-is
+    // The compiled view is primarily for reading/light editing
+    setDocument(prev => ({ ...prev, updatedAt: new Date().toISOString() }));
+  }, []);
 
   const handleSave = useCallback(() => {
     if (onSave) onSave(document);
@@ -458,7 +566,7 @@ export default function CommercialEditor({
       sections: prev.sections.map(s => ({ ...s, isLocked: true })),
     }));
     setMode("canon");
-    toast.success("Document locked as Canon \u2014 immutable version created");
+    toast.success("Document locked as Canon — immutable version created");
   }, []);
 
   const lockedCount = document.sections.filter(s => s.isLocked).length;
@@ -477,15 +585,42 @@ export default function CommercialEditor({
                 className="h-7 text-base font-semibold border-none bg-transparent p-0 focus-visible:ring-0 w-[400px]" disabled={mode === "canon"} />
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="text-xs text-gray-500">{typeLabels[documentType]}</span>
-                <span className="text-xs text-gray-300">\u00b7</span>
+                <span className="text-xs text-gray-300">·</span>
                 <span className="text-xs text-gray-500">v{document.version}</span>
-                {customerName && (<><span className="text-xs text-gray-300">\u00b7</span><span className="text-xs text-gray-500">{customerName}</span></>)}
-                <span className="text-xs text-gray-300">\u00b7</span>
+                {linkedCustomer && (
+                  <>
+                    <span className="text-xs text-gray-300">·</span>
+                    <span className="text-xs font-medium text-[#1B2A4A]">{linkedCustomer.name}</span>
+                    <span className="text-xs text-gray-400">({linkedCustomer.code})</span>
+                  </>
+                )}
+                <span className="text-xs text-gray-300">·</span>
                 <Badge variant={document.status === "canon" ? "default" : "outline"} className="text-[10px] h-4 capitalize">{document.status}</Badge>
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* View Mode Toggle */}
+            <div className="flex items-center gap-1 mr-2 border border-gray-200 rounded-md p-0.5">
+              <button
+                onClick={() => setViewMode("block")}
+                className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+                  viewMode === "block" ? "bg-[#1B2A4A] text-white" : "text-gray-500 hover:bg-gray-100"
+                }`}
+                title="Block View — Edit individual sections"
+              >
+                <Columns2 size={12} /> Blocks
+              </button>
+              <button
+                onClick={() => setViewMode("compiled")}
+                className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+                  viewMode === "compiled" ? "bg-[#1B2A4A] text-white" : "text-gray-500 hover:bg-gray-100"
+                }`}
+                title="Compiled View — Single continuous document"
+              >
+                <Eye size={12} /> Compiled
+              </button>
+            </div>
             <Button variant="outline" size="sm" onClick={handleSave} disabled={mode === "canon"}>
               <Save size={14} className="mr-1" /> Save
             </Button>
@@ -499,6 +634,9 @@ export default function CommercialEditor({
             )}
           </div>
         </div>
+
+        {/* Customer Banner */}
+        <CustomerBanner customer={linkedCustomer} />
 
         {/* Mode Tabs */}
         <div className="px-4 pt-3 border-b border-gray-100">
@@ -519,89 +657,104 @@ export default function CommercialEditor({
 
         {/* Mode Description */}
         <div className="px-4 py-2 bg-gray-50/50 border-b border-gray-100">
-          {mode === "structure" && <p className="text-xs text-gray-500"><strong>Structure Mode</strong> \u2014 Organize sections, add/remove blocks, reorder content. No text editing in this mode.</p>}
-          {mode === "draft" && <p className="text-xs text-gray-500"><strong>Draft Mode</strong> \u2014 Full WYSIWYG editing. Write content, use AI assistance, format text. Lock sections when finalized.</p>}
-          {mode === "canon" && <p className="text-xs text-gray-500"><strong>Canon Mode</strong> \u2014 Immutable final version. All sections locked. This is the legal truth.</p>}
+          {mode === "structure" && <p className="text-xs text-gray-500"><strong>Structure Mode</strong> — Organize sections, add/remove blocks, reorder content. No text editing in this mode.</p>}
+          {mode === "draft" && viewMode === "block" && <p className="text-xs text-gray-500"><strong>Draft Mode — Block View</strong> — Edit individual sections with WYSIWYG. Use AI assistance. Lock sections when finalized.</p>}
+          {mode === "draft" && viewMode === "compiled" && <p className="text-xs text-gray-500"><strong>Draft Mode — Compiled View</strong> — Edit the full document as a single continuous page, like a traditional word processor.</p>}
+          {mode === "canon" && <p className="text-xs text-gray-500"><strong>Canon Mode</strong> — Immutable final version. All sections locked. This is the legal truth.</p>}
         </div>
 
-        {/* Sections */}
+        {/* Content Area */}
         <ScrollArea className="flex-1 p-4">
           <div className="max-w-4xl mx-auto">
-            {document.sections.map((section) => (
-              <SectionEditor key={section.id} section={section} mode={mode}
-                onContentChange={(content) => updateSection(section.id, { content })}
-                onTitleChange={(title) => updateSection(section.id, { title })}
-                onLock={() => updateSection(section.id, { isLocked: true })}
-                onDelete={() => removeSection(section.id)}
-                onAIGenerate={() => handleAIGenerate(section.id)}
-                aiStaging={aiStagingMap[section.id] || null}
-                onAcceptAI={() => handleAcceptAI(section.id)}
-                onRejectAI={() => handleRejectAI(section.id)}
+            {/* COMPILED VIEW */}
+            {viewMode === "compiled" && (
+              <CompiledViewEditor
+                sections={document.sections}
+                isLocked={mode === "canon"}
+                onContentChange={handleCompiledContentChange}
               />
-            ))}
-
-            {/* Add Section */}
-            {mode !== "canon" && (
-              <div className="flex items-center gap-2 mt-4">
-                <Button variant="outline" size="sm" onClick={() => addSection()} className="text-xs">
-                  <Plus size={14} className="mr-1" /> Add Section
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setShowBlockLibrary(!showBlockLibrary)} className="text-xs">
-                  <LayoutTemplate size={14} className="mr-1" /> Block Library
-                </Button>
-                {mode === "draft" && (
-                  <Button variant="outline" size="sm" onClick={() => setShowPromptBox(!showPromptBox)} className="text-xs border-amber-300 text-amber-700 hover:bg-amber-50">
-                    <Sparkles size={14} className="mr-1" /> AI Prompt
-                  </Button>
-                )}
-              </div>
             )}
 
-            {/* Block Library */}
-            {showBlockLibrary && mode !== "canon" && (
-              <Card className="mt-3 border-[#1B2A4A]/20">
-                <CardHeader className="py-3 px-4">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <LayoutTemplate size={14} /> Block Library
-                    <button onClick={() => setShowBlockLibrary(false)} className="ml-auto text-gray-400 hover:text-gray-600"><X size={14} /></button>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-4 pb-3">
-                  <div className="grid grid-cols-3 gap-2">
-                    {BLOCK_LIBRARY.map((block) => (
-                      <button key={block.id} onClick={() => addSection(block)}
-                        className="flex items-center gap-2 p-2 rounded border border-gray-200 hover:border-[#1B2A4A]/30 hover:bg-[#F8F9FB] text-left transition-colors">
-                        <block.icon size={14} className="text-[#1B2A4A]/60 shrink-0" />
-                        <div>
-                          <div className="text-xs font-medium">{block.name}</div>
-                          <div className="text-[10px] text-gray-400">{block.category}</div>
-                        </div>
-                      </button>
-                    ))}
+            {/* BLOCK VIEW */}
+            {viewMode === "block" && (
+              <>
+                {document.sections.map((section) => (
+                  <SectionEditor key={section.id} section={section} mode={mode}
+                    onContentChange={(content) => updateSection(section.id, { content })}
+                    onTitleChange={(title) => updateSection(section.id, { title })}
+                    onLock={() => updateSection(section.id, { isLocked: true })}
+                    onDelete={() => removeSection(section.id)}
+                    onAIGenerate={() => handleAIGenerate(section.id)}
+                    aiStaging={aiStagingMap[section.id] || null}
+                    onAcceptAI={() => handleAcceptAI(section.id)}
+                    onRejectAI={() => handleRejectAI(section.id)}
+                  />
+                ))}
+
+                {/* Add Section */}
+                {mode !== "canon" && (
+                  <div className="flex items-center gap-2 mt-4">
+                    <Button variant="outline" size="sm" onClick={() => addSection()} className="text-xs">
+                      <Plus size={14} className="mr-1" /> Add Section
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setShowBlockLibrary(!showBlockLibrary)} className="text-xs">
+                      <LayoutTemplate size={14} className="mr-1" /> Block Library
+                    </Button>
+                    {mode === "draft" && (
+                      <Button variant="outline" size="sm" onClick={() => setShowPromptBox(!showPromptBox)} className="text-xs border-amber-300 text-amber-700 hover:bg-amber-50">
+                        <Sparkles size={14} className="mr-1" /> AI Prompt
+                      </Button>
+                    )}
                   </div>
-                </CardContent>
-              </Card>
-            )}
+                )}
 
-            {/* AI Prompt Box */}
-            {showPromptBox && mode === "draft" && (
-              <Card className="mt-3 border-amber-300 bg-amber-50/30">
-                <CardHeader className="py-3 px-4">
-                  <CardTitle className="text-sm flex items-center gap-2 text-amber-800">
-                    <Sparkles size={14} /> AI Prompt Box
-                    <button onClick={() => setShowPromptBox(false)} className="ml-auto text-gray-400 hover:text-gray-600"><X size={14} /></button>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-4 pb-3">
-                  <p className="text-xs text-amber-700 mb-2">Describe what you need and AI will generate a new section. Human reviews before it enters the document.</p>
-                  <Textarea value={promptText} onChange={(e) => setPromptText(e.target.value)}
-                    placeholder="e.g., Write an executive summary for a warehousing proposal for a petrochemical client in Jubail requiring 2500 pallet positions..."
-                    className="text-sm mb-2 min-h-[80px]" />
-                  <Button size="sm" onClick={handlePromptSubmit} className="bg-amber-600 hover:bg-amber-700 text-white">
-                    <Send size={14} className="mr-1" /> Generate
-                  </Button>
-                </CardContent>
-              </Card>
+                {/* Block Library */}
+                {showBlockLibrary && mode !== "canon" && (
+                  <Card className="mt-3 border-[#1B2A4A]/20">
+                    <CardHeader className="py-3 px-4">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <LayoutTemplate size={14} /> Block Library
+                        <button onClick={() => setShowBlockLibrary(false)} className="ml-auto text-gray-400 hover:text-gray-600"><X size={14} /></button>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="px-4 pb-3">
+                      <div className="grid grid-cols-3 gap-2">
+                        {BLOCK_LIBRARY.map((block) => (
+                          <button key={block.id} onClick={() => addSection(block)}
+                            className="flex items-center gap-2 p-2 rounded border border-gray-200 hover:border-[#1B2A4A]/30 hover:bg-[#F8F9FB] text-left transition-colors">
+                            <block.icon size={14} className="text-[#1B2A4A]/60 shrink-0" />
+                            <div>
+                              <div className="text-xs font-medium">{block.name}</div>
+                              <div className="text-[10px] text-gray-400">{block.category}</div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* AI Prompt Box */}
+                {showPromptBox && mode === "draft" && (
+                  <Card className="mt-3 border-amber-300 bg-amber-50/30">
+                    <CardHeader className="py-3 px-4">
+                      <CardTitle className="text-sm flex items-center gap-2 text-amber-800">
+                        <Sparkles size={14} /> AI Prompt Box
+                        <button onClick={() => setShowPromptBox(false)} className="ml-auto text-gray-400 hover:text-gray-600"><X size={14} /></button>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="px-4 pb-3">
+                      <p className="text-xs text-amber-700 mb-2">Describe what you need and AI will generate a new section. Human reviews before it enters the document.</p>
+                      <Textarea value={promptText} onChange={(e) => setPromptText(e.target.value)}
+                        placeholder="e.g., Write an executive summary for a warehousing proposal for a petrochemical client in Jubail requiring 2500 pallet positions..."
+                        className="text-sm mb-2 min-h-[80px]" />
+                      <Button size="sm" onClick={handlePromptSubmit} className="bg-amber-600 hover:bg-amber-700 text-white">
+                        <Send size={14} className="mr-1" /> Generate
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+              </>
             )}
 
             {/* Progress Bar */}
@@ -620,7 +773,41 @@ export default function CommercialEditor({
       </div>
 
       {/* Right Sidebar */}
-      <div className="w-64 border-l border-gray-200 bg-[#F8F9FB] flex flex-col">
+      <div className="w-72 border-l border-gray-200 bg-[#F8F9FB] flex flex-col overflow-y-auto">
+        {/* Customer Card */}
+        {linkedCustomer && (
+          <div className="p-4 border-b border-gray-200">
+            <h3 className="text-sm font-semibold text-[#1B2A4A] mb-3 flex items-center gap-1.5">
+              <Building2 size={14} /> Linked Customer
+            </h3>
+            <div className="bg-white rounded-lg border border-gray-200 p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-8 h-8 rounded bg-[#1B2A4A] flex items-center justify-center text-white text-xs font-bold">
+                  {linkedCustomer.name.substring(0, 2).toUpperCase()}
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-[#1B2A4A]">{linkedCustomer.name}</div>
+                  <div className="text-[10px] text-gray-500">{linkedCustomer.code}</div>
+                </div>
+              </div>
+              <div className="space-y-1.5 text-xs">
+                <div className="flex justify-between"><span className="text-gray-500">Industry</span><span className="font-medium">{linkedCustomer.industry}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Region</span><span className="font-medium">{linkedCustomer.city}, {linkedCustomer.region}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Grade</span><Badge variant="outline" className="text-[10px] h-4">{linkedCustomer.grade}</Badge></div>
+                <div className="flex justify-between"><span className="text-gray-500">Contract</span><span className="font-medium">{formatSAR(linkedCustomer.contractValue2025)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Expiry</span><span className="font-medium">{linkedCustomer.contractExpiry}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Pallets</span><span className="font-medium">{linkedCustomer.palletContracted.toLocaleString()}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">DSO</span><span className="font-medium">{linkedCustomer.dso} days</span></div>
+                <Separator className="my-1.5" />
+                <div className="flex items-center gap-1.5 text-gray-500"><User size={10} /> {linkedCustomer.contactName}</div>
+                <div className="flex items-center gap-1.5 text-gray-500"><Mail size={10} /> {linkedCustomer.contactEmail}</div>
+                <div className="flex items-center gap-1.5 text-gray-500"><Phone size={10} /> {linkedCustomer.contactPhone}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Document Info */}
         <div className="p-4 border-b border-gray-200">
           <h3 className="text-sm font-semibold text-[#1B2A4A] mb-3">Document Info</h3>
           <div className="space-y-2 text-xs">
@@ -629,11 +816,14 @@ export default function CommercialEditor({
             <div className="flex justify-between"><span className="text-gray-500">Status</span><Badge variant="outline" className="text-[10px] h-4 capitalize">{document.status}</Badge></div>
             <div className="flex justify-between"><span className="text-gray-500">Sections</span><span className="font-medium">{totalCount}</span></div>
             <div className="flex justify-between"><span className="text-gray-500">Locked</span><span className="font-medium">{lockedCount}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">View</span><span className="font-medium capitalize">{viewMode}</span></div>
           </div>
         </div>
+
+        {/* Sections Navigator */}
         <div className="p-4 border-b border-gray-200">
           <h3 className="text-sm font-semibold text-[#1B2A4A] mb-3">Sections</h3>
-          <ScrollArea className="max-h-[300px]">
+          <ScrollArea className="max-h-[250px]">
             <div className="space-y-1">
               {document.sections.map((s, i) => (
                 <div key={s.id} className="flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white transition-colors">
@@ -646,6 +836,8 @@ export default function CommercialEditor({
             </div>
           </ScrollArea>
         </div>
+
+        {/* Mode Guide */}
         <div className="p-4">
           <h3 className="text-sm font-semibold text-[#1B2A4A] mb-3">Mode Guide</h3>
           <div className="space-y-2">
