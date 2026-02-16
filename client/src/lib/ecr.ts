@@ -536,3 +536,28 @@ export const ecrCustomerNames: Record<string, string> = {
   'cust-nestle': 'Nestlé',
   'cust-almarai': 'Almarai',
 };
+
+// Reverse lookup: store customer name → ECR customer ID
+// Handles partial matches (e.g. "Nestlé KSA" matches "Nestlé")
+export function getEcrCustomerIdByName(storeName: string): string | undefined {
+  // Direct match first
+  for (const [ecrId, ecrName] of Object.entries(ecrCustomerNames)) {
+    if (ecrName === storeName || storeName.startsWith(ecrName) || ecrName.startsWith(storeName)) {
+      return ecrId;
+    }
+  }
+  // Fuzzy: check if the store name contains the ECR name or vice-versa
+  for (const [ecrId, ecrName] of Object.entries(ecrCustomerNames)) {
+    if (storeName.toLowerCase().includes(ecrName.toLowerCase()) || ecrName.toLowerCase().includes(storeName.toLowerCase())) {
+      return ecrId;
+    }
+  }
+  return undefined;
+}
+
+// Convenience: get the latest ECR score for a store customer by name
+export function getEcrScoreByCustomerName(storeName: string): EcrScore | undefined {
+  const ecrId = getEcrCustomerIdByName(storeName);
+  if (!ecrId) return undefined;
+  return getLatestScore(ecrId);
+}

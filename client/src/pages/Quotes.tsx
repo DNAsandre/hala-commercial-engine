@@ -12,6 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { quotes, workspaces, customers, formatSAR, formatPercent } from "@/lib/store";
+import { getEcrScoreByCustomerName, getGradeBg, type EcrScore } from "@/lib/ecr";
+import { Star } from "lucide-react";
 import { toast } from "sonner";
 import CommercialEditor, { type EditorDocument } from "@/components/CommercialEditor";
 import OverrideDialog from "@/components/OverrideDialog";
@@ -173,6 +175,7 @@ export default function Quotes() {
           const ws = workspaces.find(w => w.id === q.workspaceId);
           const customerName = ws?.customerName || "Unknown";
           const customer = customers.find(c => c.name === customerName);
+          const ecrScore = customer ? getEcrScoreByCustomerName(customer.name) : undefined;
           const StateIcon = stateIcons[q.state] || Clock;
           const gpColor = q.gpPercent >= 30 ? "text-emerald-700" : q.gpPercent >= 22 ? "text-emerald-600" : q.gpPercent >= 10 ? "text-amber-700" : "text-red-700";
 
@@ -195,6 +198,11 @@ export default function Quotes() {
                     {customer && (
                       <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700">
                         Grade {customer.grade}
+                      </Badge>
+                    )}
+                    {ecrScore && (
+                      <Badge variant="outline" className={`text-[10px] ${getGradeBg(ecrScore.grade)}`}>
+                        <Star size={10} className="mr-1" /> ECR {ecrScore.grade} · {ecrScore.totalScore.toFixed(1)}
                       </Badge>
                     )}
                   </div>
@@ -227,13 +235,14 @@ export default function Quotes() {
                     <span className="text-xs text-gray-400 ml-2">{q.createdAt}</span>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-6 gap-4">
                   {[
                     { l: "Storage Rate", v: `SAR ${q.storageRate}/plt/day` },
                     { l: "Pallets", v: q.palletVolume.toLocaleString() },
                     { l: "Monthly Rev", v: formatSAR(q.monthlyRevenue) },
                     { l: "Annual Rev", v: formatSAR(q.annualRevenue) },
                     { l: "GP%", v: <span className={`font-bold ${gpColor}`}>{formatPercent(q.gpPercent)}</span> },
+                    { l: "ECR Score", v: ecrScore ? <span className={`font-bold ${ecrScore.grade === 'A' ? 'text-emerald-700' : ecrScore.grade === 'B' ? 'text-blue-700' : ecrScore.grade === 'C' ? 'text-amber-700' : 'text-red-700'}`}>{ecrScore.totalScore.toFixed(1)} ({ecrScore.grade})</span> : <span className="text-gray-400">—</span> },
                   ].map(kv => (
                     <div key={kv.l}>
                       <p className="text-[10px] text-gray-500 uppercase tracking-wider">{kv.l}</p>

@@ -12,6 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { proposals, workspaces, customers, formatSAR } from "@/lib/store";
+import { getEcrScoreByCustomerName, getGradeBg, type EcrScore } from "@/lib/ecr";
+import { Star } from "lucide-react";
 import { toast } from "sonner";
 import CommercialEditor, { type EditorDocument } from "@/components/CommercialEditor";
 import OverrideDialog from "@/components/OverrideDialog";
@@ -190,6 +192,7 @@ export default function Proposals() {
           const ws = workspaces.find(w => w.id === p.workspaceId);
           const customerName = ws?.customerName || "Unknown";
           const customer = customers.find(c => c.name === customerName);
+          const ecrScore = customer ? getEcrScoreByCustomerName(customer.name) : undefined;
           const StateIcon = stateIcons[p.state] || Clock;
 
           return (
@@ -211,6 +214,11 @@ export default function Proposals() {
                     {customer && (
                       <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700">
                         Grade {customer.grade}
+                      </Badge>
+                    )}
+                    {ecrScore && (
+                      <Badge variant="outline" className={`text-[10px] ${getGradeBg(ecrScore.grade)}`}>
+                        <Star size={10} className="mr-1" /> ECR {ecrScore.grade} · {ecrScore.totalScore.toFixed(1)}
                       </Badge>
                     )}
                   </div>
@@ -248,7 +256,12 @@ export default function Proposals() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1.5">{p.sections.map(s => <Badge key={s} variant="secondary" className="text-[10px]">{s}</Badge>)}</div>
-                {ws && <p className="text-xs text-gray-500 mt-2">Workspace: {ws.customerName} — {ws.title}</p>}
+                <div className="flex items-center gap-4 mt-2">
+                  {ws && <p className="text-xs text-gray-500">Workspace: {ws.customerName} — {ws.title}</p>}
+                  {ecrScore && (
+                    <p className="text-xs text-gray-500">ECR: <span className={`font-semibold ${ecrScore.grade === 'A' ? 'text-emerald-700' : ecrScore.grade === 'B' ? 'text-blue-700' : ecrScore.grade === 'C' ? 'text-amber-700' : 'text-red-700'}`}>{ecrScore.totalScore.toFixed(1)} ({ecrScore.grade})</span> · Confidence: {ecrScore.confidenceScore}%</p>
+                  )}
+                </div>
               </CardContent>
             </Card>
           );
