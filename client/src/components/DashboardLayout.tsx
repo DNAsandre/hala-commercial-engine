@@ -26,6 +26,9 @@ import {
   Bell,
   Search,
   LogOut,
+  Edit3,
+  Wrench,
+  Bot,
 } from "lucide-react";
 import { currentUser, getRoleLabel, signals } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -38,17 +41,20 @@ const navItems = [
   { path: "/proposals", label: "Proposals", icon: FileCheck, group: "deals" },
   { path: "/pnl", label: "P&L Calculator", icon: Calculator, group: "deals" },
   { path: "/approvals", label: "Approvals", icon: ShieldCheck, group: "deals" },
+  { path: "/editor", label: "Editor", icon: Edit3, group: "authoring" },
   { path: "/documents", label: "Documents", icon: FolderOpen, group: "output" },
   { path: "/tenders", label: "Tenders", icon: Gavel, group: "output" },
   { path: "/handover", label: "Handover", icon: ArrowRightLeft, group: "output" },
   { path: "/crm-sync", label: "CRM Sync", icon: RefreshCw, group: "system" },
   { path: "/admin", label: "Governance", icon: Settings, group: "system" },
+  { path: "/admin-panel", label: "Admin Panel", icon: Wrench, group: "system" },
   { path: "/audit", label: "Audit Trail", icon: ClipboardList, group: "system" },
 ];
 
 const groupLabels: Record<string, string> = {
   core: "CORE",
   deals: "DEAL ENGINE",
+  authoring: "AUTHORING",
   output: "OUTPUT",
   system: "SYSTEM",
 };
@@ -58,7 +64,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [collapsed, setCollapsed] = useState(false);
   const redCount = signals.filter(s => s.severity === "red").length;
 
-  const groups = ["core", "deals", "output", "system"];
+  const groups = ["core", "deals", "authoring", "output", "system"];
 
   return (
     <div className="flex h-screen overflow-hidden">

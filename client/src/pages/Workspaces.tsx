@@ -8,11 +8,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   workspaces, formatSAR, formatPercent, getStageLabel, getStageColor, WORKSPACE_STAGES, signals,
 } from "@/lib/store";
-import { toast } from "sonner";
+import CreateWorkspaceDialog from "@/components/CreateWorkspaceDialog";
 
 export default function Workspaces() {
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [ragFilter, setRagFilter] = useState<string>("all");
+  const [showCreate, setShowCreate] = useState(false);
+
   const filtered = workspaces.filter(w => {
     if (stageFilter !== "all" && w.stage !== stageFilter) return false;
     if (ragFilter !== "all" && w.ragStatus !== ragFilter) return false;
@@ -28,7 +30,7 @@ export default function Workspaces() {
             {workspaces.length} total — {workspaces.filter(w => w.ragStatus === "red").length} critical
           </p>
         </div>
-        <Button onClick={() => toast("Workspace creation triggered from CRM sync", { description: "Workspaces are created when a deal reaches 'Qualified' stage in Zoho CRM." })}>
+        <Button onClick={() => setShowCreate(true)}>
           <Plus className="w-4 h-4 mr-1.5" /> New Workspace
         </Button>
       </div>
@@ -96,6 +98,8 @@ export default function Workspaces() {
           {filtered.length === 0 && <div className="py-12 text-center text-sm text-muted-foreground">No workspaces match the current filters</div>}
         </CardContent>
       </Card>
+
+      <CreateWorkspaceDialog open={showCreate} onOpenChange={setShowCreate} />
     </div>
   );
 }

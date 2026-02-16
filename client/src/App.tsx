@@ -19,7 +19,9 @@ import Documents from "./pages/Documents";
 import Tenders from "./pages/Tenders";
 import Handover from "./pages/Handover";
 import AdminGovernance from "./pages/AdminGovernance";
+import AdminPanel from "./pages/AdminPanel";
 import AuditTrail from "./pages/AuditTrail";
+import Editor from "./pages/Editor";
 import Login from "./pages/Login";
 
 function AppRouter() {
@@ -38,7 +40,9 @@ function AppRouter() {
       <Route path="/documents" component={Documents} />
       <Route path="/tenders" component={Tenders} />
       <Route path="/handover" component={Handover} />
+      <Route path="/editor" component={Editor} />
       <Route path="/admin" component={AdminGovernance} />
+      <Route path="/admin-panel" component={AdminPanel} />
       <Route path="/audit" component={AuditTrail} />
       <Route component={NotFound} />
     </Switch>
