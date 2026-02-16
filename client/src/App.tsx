@@ -12,6 +12,7 @@ import Customers from "./pages/Customers";
 import CustomerDetail from "./pages/CustomerDetail";
 import Quotes from "./pages/Quotes";
 import Proposals from "./pages/Proposals";
+import SLAs from "./pages/SLAs";
 import Approvals from "./pages/Approvals";
 import PnLCalculator from "./pages/PnLCalculator";
 import CRMSync from "./pages/CRMSync";
@@ -34,6 +35,7 @@ function AppRouter() {
       <Route path="/customers/:id" component={CustomerDetail} />
       <Route path="/quotes" component={Quotes} />
       <Route path="/proposals" component={Proposals} />
+      <Route path="/slas" component={SLAs} />
       <Route path="/approvals" component={Approvals} />
       <Route path="/pnl" component={PnLCalculator} />
       <Route path="/crm-sync" component={CRMSync} />
