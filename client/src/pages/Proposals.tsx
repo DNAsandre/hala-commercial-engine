@@ -1,17 +1,21 @@
 /*
- * Proposals Shell — List all proposals with ability to create/edit in the Commercial Editor
+ * Proposals Shell — Governance-enforced proposal management with editor integration
+ * Gate checks on: create, approve, submit to CRM
+ * Audit logging on: all write actions
  * Design: Swiss Precision — deep navy, IBM Plex Sans
  */
 
 import { useState } from "react";
-import { BookOpen, Plus, ArrowLeft, Edit, Download, Send, Search, Filter } from "lucide-react";
+import { BookOpen, Plus, ArrowLeft, Edit, Download, Send, Search, Filter, Shield, CheckCircle, XCircle, Clock, AlertTriangle, Eye } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { proposals, workspaces } from "@/lib/store";
+import { proposals, workspaces, customers, formatSAR } from "@/lib/store";
 import { toast } from "sonner";
 import CommercialEditor, { type EditorDocument } from "@/components/CommercialEditor";
+import OverrideDialog from "@/components/OverrideDialog";
+import { useGateCheck, useAuditLog } from "@/hooks/useGovernance";
 
 const stateColors: Record<string, string> = {
   draft: "bg-gray-100 text-gray-700",
@@ -21,15 +25,67 @@ const stateColors: Record<string, string> = {
   commercial_approved: "bg-emerald-100 text-emerald-800",
 };
 
+const stateIcons: Record<string, typeof CheckCircle> = {
+  draft: Clock,
+  ready_for_crm: Eye,
+  sent: Send,
+  negotiation_active: AlertTriangle,
+  commercial_approved: CheckCircle,
+};
+
 export default function Proposals() {
-  const [editingProposal, setEditingProposal] = useState<{ customerName: string; proposalId: string } | null>(null);
+  const [editingProposal, setEditingProposal] = useState<{ customerName: string; customerId: string; proposalId: string; workspaceId: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const { checkGate, lastEvaluation, showOverrideDialog, executeOverride, cancelOverride } = useGateCheck();
+  const { logAction, logApproval } = useAuditLog();
 
   const filteredProposals = proposals.filter(p => {
     const ws = workspaces.find(w => w.id === p.workspaceId);
     const name = ws?.customerName || "";
     return p.title.toLowerCase().includes(searchTerm.toLowerCase()) || name.toLowerCase().includes(searchTerm.toLowerCase());
   });
+
+  // Governance-enforced create
+  const handleNewProposal = () => {
+    checkGate("pg1", {
+      entityType: "proposal",
+      entityId: "new",
+      workspaceId: "",
+      details: "Creating new proposal — checking commercial approval gate",
+      contextData: { action: "create_proposal" },
+    }, () => {
+      logAction("proposal", "new", "proposal_create_initiated", "New proposal creation initiated");
+      setEditingProposal({ customerName: "", customerId: "", proposalId: "new", workspaceId: "" });
+    });
+  };
+
+  // Governance-enforced approve
+  const handleApproveProposal = (proposalId: string, title: string) => {
+    checkGate("pg1", {
+      entityType: "proposal",
+      entityId: proposalId,
+      workspaceId: "",
+      details: `Approving proposal "${title}" — checking commercial approval gate`,
+      contextData: { action: "approve_proposal" },
+    }, () => {
+      logApproval("proposal", proposalId, "approved", `Proposal "${title}" approved`, {});
+      toast.success("Proposal approved", { description: "Logged to governance audit trail" });
+    });
+  };
+
+  // Governance-enforced CRM export
+  const handleCRMExport = (proposalId: string, title: string) => {
+    checkGate("pg1", {
+      entityType: "proposal",
+      entityId: proposalId,
+      workspaceId: "",
+      details: `Exporting proposal "${title}" to CRM — checking export gate`,
+      contextData: { action: "crm_export" },
+    }, () => {
+      logAction("proposal", proposalId, "proposal_crm_exported", `Proposal "${title}" exported to CRM`);
+      toast.success("Proposal exported to CRM", { description: "PDF attached to Zoho deal record" });
+    });
+  };
 
   // If editing a proposal, show the full editor
   if (editingProposal) {
@@ -40,16 +96,27 @@ export default function Proposals() {
             <ArrowLeft size={14} className="mr-1" /> Back to Proposals
           </Button>
           <span className="text-xs text-gray-400">|</span>
-          <span className="text-xs text-gray-600">Editing proposal for <strong>{editingProposal.customerName}</strong></span>
+          <span className="text-xs text-gray-600">
+            {editingProposal.customerName
+              ? <>Editing proposal for <strong>{editingProposal.customerName}</strong></>
+              : <>New Proposal — select customer in editor</>}
+          </span>
+          <Badge variant="outline" className="ml-auto text-[10px] bg-emerald-50 text-emerald-700">
+            <Shield size={10} className="mr-1" /> Governance Active
+          </Badge>
         </div>
         <div className="flex-1">
           <CommercialEditor
             documentType="proposal"
+            customerId={editingProposal.customerId}
             customerName={editingProposal.customerName}
+            workspaceId={editingProposal.workspaceId}
             onSave={(doc: EditorDocument) => {
+              logAction("proposal", doc.id, "proposal_saved", `Proposal "${doc.title}" saved — v${doc.version}`, { version: doc.version });
               toast.success(`Proposal saved — ${doc.title}`);
             }}
-            onExportPDF={() => {
+            onExportPDF={(doc: EditorDocument) => {
+              logAction("proposal", doc.id, "proposal_pdf_exported", `Proposal "${doc.title}" PDF exported`, { version: doc.version });
               toast.success("Proposal PDF export initiated");
             }}
           />
@@ -58,22 +125,53 @@ export default function Proposals() {
     );
   }
 
+  // Summary stats
+  const draftCount = proposals.filter(p => p.state === "draft").length;
+  const approvedCount = proposals.filter(p => p.state === "commercial_approved").length;
+  const sentCount = proposals.filter(p => p.state === "sent").length;
+
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
+      {/* Override Dialog */}
+      <OverrideDialog
+        open={showOverrideDialog}
+        gateName={lastEvaluation?.gateName || ""}
+        details={lastEvaluation?.details || ""}
+        onOverride={executeOverride}
+        onCancel={cancelOverride}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-serif font-bold text-[#1B2A4A]">Proposals</h1>
           <p className="text-sm text-gray-500 mt-0.5">{proposals.length} proposals across all workspaces</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => toast("Batch PDF export coming soon")}>
             <Download className="w-4 h-4 mr-1.5" /> Export All
           </Button>
-          <Button onClick={() => setEditingProposal({ customerName: "", proposalId: "new" })} className="bg-[#1B2A4A] hover:bg-[#2A3F6A]">
+          <Button onClick={handleNewProposal} className="bg-[#1B2A4A] hover:bg-[#2A3F6A]">
             <Plus className="w-4 h-4 mr-1.5" /> New Proposal
           </Button>
         </div>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-4 gap-4 mb-6">
+        {[
+          { label: "Total Proposals", value: proposals.length, color: "text-[#1B2A4A]", bg: "bg-blue-50" },
+          { label: "Drafts", value: draftCount, color: "text-gray-700", bg: "bg-gray-50" },
+          { label: "Approved", value: approvedCount, color: "text-emerald-700", bg: "bg-emerald-50" },
+          { label: "Sent to Client", value: sentCount, color: "text-indigo-700", bg: "bg-indigo-50" },
+        ].map(stat => (
+          <Card key={stat.label} className={`border border-gray-200 ${stat.bg}`}>
+            <CardContent className="p-4">
+              <p className="text-xs text-gray-500 uppercase tracking-wider">{stat.label}</p>
+              <p className={`text-2xl font-bold mt-1 ${stat.color}`}>{stat.value}</p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       {/* Search */}
@@ -91,6 +189,9 @@ export default function Proposals() {
         {filteredProposals.map(p => {
           const ws = workspaces.find(w => w.id === p.workspaceId);
           const customerName = ws?.customerName || "Unknown";
+          const customer = customers.find(c => c.name === customerName);
+          const StateIcon = stateIcons[p.state] || Clock;
+
           return (
             <Card key={p.id} className="border border-gray-200 shadow-none hover:shadow-sm transition-shadow">
               <CardContent className="p-4">
@@ -101,21 +202,46 @@ export default function Proposals() {
                     </div>
                     <div>
                       <span className="text-sm font-medium text-[#1B2A4A]">{p.title}</span>
+                      {customer && <span className="text-xs text-gray-400 ml-1.5">({customer.code})</span>}
                       <span className="text-xs text-gray-400 ml-2">v{p.version}</span>
                     </div>
-                    <Badge variant="outline" className={`text-[10px] ${stateColors[p.state] || ""}`}>{p.state.replace(/_/g, " ")}</Badge>
+                    <Badge variant="outline" className={`text-[10px] ${stateColors[p.state] || ""}`}>
+                      <StateIcon size={10} className="mr-1" /> {p.state.replace(/_/g, " ")}
+                    </Badge>
+                    {customer && (
+                      <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700">
+                        Grade {customer.grade}
+                      </Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-1">
+                    {p.state === "draft" && (
+                      <Button variant="ghost" size="sm" className="h-7 text-xs text-emerald-700 hover:bg-emerald-50"
+                        onClick={() => handleApproveProposal(p.id, p.title)}>
+                        <CheckCircle size={12} className="mr-1" /> Approve
+                      </Button>
+                    )}
                     <Button variant="ghost" size="sm" className="h-7 text-xs"
-                      onClick={() => setEditingProposal({ customerName, proposalId: p.id })}>
+                      onClick={() => {
+                        logAction("proposal", p.id, "proposal_edit_opened", `Proposal "${p.title}" opened for editing`);
+                        setEditingProposal({
+                          customerName,
+                          customerId: customer?.id || "",
+                          proposalId: p.id,
+                          workspaceId: p.workspaceId,
+                        });
+                      }}>
                       <Edit size={12} className="mr-1" /> Edit in Editor
                     </Button>
                     <Button variant="ghost" size="sm" className="h-7 text-xs"
-                      onClick={() => toast.success("PDF generation triggered")}>
+                      onClick={() => {
+                        logAction("proposal", p.id, "proposal_pdf_exported", `Proposal "${p.title}" PDF exported`);
+                        toast.success("PDF generation triggered");
+                      }}>
                       <Download size={12} className="mr-1" /> PDF
                     </Button>
                     <Button variant="ghost" size="sm" className="h-7 text-xs"
-                      onClick={() => toast.success("CRM export triggered")}>
+                      onClick={() => handleCRMExport(p.id, p.title)}>
                       <Send size={12} className="mr-1" /> CRM
                     </Button>
                     <span className="text-xs text-gray-400 ml-2">{p.createdAt}</span>
