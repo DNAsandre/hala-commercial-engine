@@ -30,6 +30,8 @@ import {
   Edit3,
   Wrench,
   Bot,
+  Radio,
+  Activity,
 } from "lucide-react";
 import { currentUser, getRoleLabel, signals } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -51,6 +53,9 @@ const navItems = [
   { path: "/admin", label: "Governance", icon: Settings, group: "system" },
   { path: "/admin-panel", label: "Admin Panel", icon: Wrench, group: "system" },
   { path: "/audit", label: "Audit Trail", icon: ClipboardList, group: "system" },
+  { path: "/bot-registry", label: "Bot Governance", icon: Bot, group: "bots" },
+  { path: "/signal-engine", label: "Signal Engine", icon: Radio, group: "bots" },
+  { path: "/bot-audit", label: "Bot Audit", icon: Activity, group: "bots" },
 ];
 
 const groupLabels: Record<string, string> = {
@@ -59,6 +64,7 @@ const groupLabels: Record<string, string> = {
   authoring: "AUTHORING",
   output: "OUTPUT",
   system: "SYSTEM",
+  bots: "BOT GOVERNANCE",
 };
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -66,7 +72,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [collapsed, setCollapsed] = useState(false);
   const redCount = signals.filter(s => s.severity === "red").length;
 
-  const groups = ["core", "deals", "authoring", "output", "system"];
+  const groups = ["core", "deals", "authoring", "output", "system", "bots"];
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -186,7 +192,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto bg-background">
+        <main className="flex-1 overflow-y-auto bg-background p-6">
           {children}
         </main>
       </div>

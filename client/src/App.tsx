@@ -24,6 +24,10 @@ import AdminPanel from "./pages/AdminPanel";
 import AuditTrail from "./pages/AuditTrail";
 import Editor from "./pages/Editor";
 import Login from "./pages/Login";
+import BotRegistry from "./pages/BotRegistry";
+import BotBuilder from "./pages/BotBuilder";
+import SignalEngine from "./pages/SignalEngine";
+import BotAudit from "./pages/BotAudit";
 
 function AppRouter() {
   return (
@@ -46,6 +50,10 @@ function AppRouter() {
       <Route path="/admin" component={AdminGovernance} />
       <Route path="/admin-panel" component={AdminPanel} />
       <Route path="/audit" component={AuditTrail} />
+      <Route path="/bot-registry" component={BotRegistry} />
+      <Route path="/bot-builder" component={BotBuilder} />
+      <Route path="/signal-engine" component={SignalEngine} />
+      <Route path="/bot-audit" component={BotAudit} />
       <Route component={NotFound} />
     </Switch>
   );
