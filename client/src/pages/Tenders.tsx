@@ -67,9 +67,11 @@ import {
 } from "@/lib/tender-engine";
 import { useLocation } from "wouter";
 import {
-  getDocumentsByTender, createDocument, getFileTypeColor, getCategoryIcon,
-  DOCUMENT_CATEGORIES, type DocumentCategory, type DocumentStatus, type UnifiedDocument,
+  getDocumentsByTender, getFileTypeColor, getCategoryIcon,
+  uploadDocument, hasRealFile, initializeMockFiles,
+  type UnifiedDocument, type DocumentCategory,
 } from "@/lib/document-vault";
+import { DocumentViewer, UploadDialog } from "@/components/DocumentViewer";
 
 // ─── STATUS FLOW DISPLAY ───────────────────────────────────
 
@@ -278,6 +280,13 @@ export default function Tenders() {
 
   // Workspace suggestion state
   const [wsSuggestion, setWsSuggestion] = useState<WorkspaceSuggestion | null>(null);
+
+  // Document viewer state
+  const [viewerDoc, setViewerDoc] = useState<UnifiedDocument | null>(null);
+  const [showUpload, setShowUpload] = useState(false);
+
+  // Initialize mock files
+  useState(() => { initializeMockFiles(); });
 
   const metrics = useMemo(() => getTenderMetrics(), [tenders.length]);
 
@@ -651,25 +660,46 @@ export default function Tenders() {
                           <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                             <FolderOpen className="w-3.5 h-3.5" /> Tender Documents ({tenderDocs.length})
                           </h4>
+                          <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => setShowUpload(true)}>
+                            <Upload className="w-3 h-3" /> Upload
+                          </Button>
                         </div>
                         {tenderDocs.length > 0 ? (
                           <div className="space-y-2">
-                            {tenderDocs.map(doc => (
-                              <div key={doc.id} className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
-                                <Badge variant="outline" className={`text-[9px] shrink-0 ${getFileTypeColor(doc.fileType)}`}>{doc.fileType}</Badge>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-medium truncate">{doc.name}</p>
-                                  <p className="text-xs text-muted-foreground truncate">{doc.fileName} · v{doc.currentVersion} · {doc.uploadedBy} · {doc.uploadDate}</p>
+                            {tenderDocs.map(doc => {
+                              const isClickable = hasRealFile(doc);
+                              return (
+                                <div
+                                  key={doc.id}
+                                  className={`flex items-center gap-3 p-3 rounded-lg border border-border transition-colors ${
+                                    isClickable ? "hover:bg-muted/30 cursor-pointer" : "opacity-60"
+                                  }`}
+                                  onClick={() => { if (isClickable) setViewerDoc(doc); }}
+                                >
+                                  <Badge variant="outline" className={`text-[9px] shrink-0 ${getFileTypeColor(doc.fileType)}`}>{doc.fileType}</Badge>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium truncate flex items-center gap-1.5">
+                                      {doc.name}
+                                      {isClickable && <Eye className="w-3 h-3 text-muted-foreground" />}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground truncate">{doc.fileName} · v{doc.currentVersion} · {doc.uploadedBy} · {doc.uploadDate}</p>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <Badge variant="outline" className="text-[9px]">{getCategoryIcon(doc.category)} {doc.category}</Badge>
+                                    <Badge variant={doc.status === "Final" || doc.status === "Signed" ? "default" : "secondary"} className="text-[9px]">{doc.status}</Badge>
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  <Badge variant="outline" className="text-[9px]">{getCategoryIcon(doc.category)} {doc.category}</Badge>
-                                  <Badge variant={doc.status === "Final" ? "default" : "secondary"} className="text-[9px]">{doc.status}</Badge>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         ) : (
-                          <p className="text-sm text-muted-foreground text-center py-6">No documents linked to this tender. Upload documents from the Customer Vault.</p>
+                          <div className="text-center py-8">
+                            <FileText className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
+                            <p className="text-sm text-muted-foreground mb-3">No documents linked to this tender.</p>
+                            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowUpload(true)}>
+                              <Upload className="w-3 h-3" /> Upload First Document
+                            </Button>
+                          </div>
                         )}
                       </CardContent>
                     </Card>
@@ -769,6 +799,36 @@ export default function Tenders() {
           onClose={() => setShowCreate(false)}
           onCreated={(t) => {
             setSelectedTenderId(t.id);
+            refresh();
+          }}
+        />
+      )}
+
+      {/* Document Viewer */}
+      <DocumentViewer document={viewerDoc} open={!!viewerDoc} onClose={() => setViewerDoc(null)} />
+
+      {/* Upload Dialog */}
+      {selectedTender && (
+        <UploadDialog
+          open={showUpload}
+          onClose={() => setShowUpload(false)}
+          defaultCategory="Tenders"
+          suggestedName={selectedTender ? `${selectedTender.customerName} — ${selectedTender.title}` : undefined}
+          onUpload={({ name, category, file, notes, tags }) => {
+            uploadDocument({
+              name,
+              category: category as DocumentCategory,
+              customerId: selectedTender.customerId,
+              customerName: selectedTender.customerName,
+              file,
+              tenderId: selectedTender.id,
+              tenderName: selectedTender.title,
+              workspaceId: selectedTender.linkedWorkspaceId,
+              workspaceName: linkedWorkspace?.title ?? null,
+              notes,
+              tags,
+            });
+            toast.success(`Document "${name}" uploaded.`);
             refresh();
           }}
         />

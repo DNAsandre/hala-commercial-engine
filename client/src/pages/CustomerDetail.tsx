@@ -34,11 +34,13 @@ import {
 } from "@/lib/ecr";
 import {
   getAllDocumentsByCustomer, getDocumentCounts, getVaultStats,
-  searchDocuments, createDocument, updateDocumentMetadata, archiveDocument,
+  searchDocuments, uploadDocument, archiveDocument, hasRealFile,
+  initializeMockFiles,
   DOCUMENT_CATEGORIES, DOCUMENT_STATUSES,
   getFileTypeColor, getCategoryIcon,
   type UnifiedDocument, type DocumentCategory, type DocumentStatus,
 } from "@/lib/document-vault";
+import { DocumentViewer, UploadDialog } from "@/components/DocumentViewer";
 import {
   getTendersByCustomer, getTenderStatusDisplayName, getTenderStatusColor,
   type Tender,
@@ -80,16 +82,11 @@ export default function CustomerDetail() {
   const [vaultStatus, setVaultStatus] = useState<string>("all");
   const [showArchived, setShowArchived] = useState(false);
   const [expandedFolder, setExpandedFolder] = useState<string | null>(null);
-  const [selectedDoc, setSelectedDoc] = useState<UnifiedDocument | null>(null);
+  const [viewerDoc, setViewerDoc] = useState<UnifiedDocument | null>(null);
   const [showUpload, setShowUpload] = useState(false);
 
-  // Upload form state
-  const [uploadName, setUploadName] = useState("");
-  const [uploadCategory, setUploadCategory] = useState<DocumentCategory>("Contracts");
-  const [uploadStatus, setUploadStatus] = useState<DocumentStatus>("Draft");
-  const [uploadNotes, setUploadNotes] = useState("");
-  const [uploadFileName, setUploadFileName] = useState("");
-  const [uploadWorkspaceId, setUploadWorkspaceId] = useState<string>("none");
+  // Initialize mock files
+  useState(() => { initializeMockFiles(); });
 
   const vaultStats = getVaultStats(c.id);
   const docCounts = getDocumentCounts(c.id);
@@ -114,37 +111,10 @@ export default function CustomerDetail() {
     return grouped;
   }, [filteredDocs]);
 
-  const handleUpload = () => {
-    if (!uploadName.trim() || !uploadFileName.trim()) {
-      toast.error("Name and file are required");
-      return;
-    }
-    const ext = uploadFileName.split(".").pop()?.toUpperCase() || "PDF";
-    const ws = uploadWorkspaceId !== "none" ? custWorkspaces.find(w => w.id === uploadWorkspaceId) : null;
-    createDocument({
-      name: uploadName,
-      category: uploadCategory,
-      customerId: c.id,
-      customerName: c.name,
-      workspaceId: ws?.id ?? null,
-      workspaceName: ws?.title ?? null,
-      status: uploadStatus,
-      notes: uploadNotes,
-      fileName: uploadFileName,
-      fileSize: `${(Math.random() * 5 + 0.5).toFixed(1)} MB`,
-      fileType: ext,
-      uploadedBy: "Amin Al-Rashid",
-    });
-    toast.success(`Document "${uploadName}" uploaded to ${uploadCategory}`);
-    setShowUpload(false);
-    setUploadName(""); setUploadFileName(""); setUploadNotes(""); setUploadWorkspaceId("none");
-    forceUpdate(n => n + 1);
-  };
-
   const handleArchive = (doc: UnifiedDocument) => {
     archiveDocument(doc.id);
     toast.success(`"${doc.name}" archived`);
-    setSelectedDoc(null);
+    setViewerDoc(null);
     forceUpdate(n => n + 1);
   };
 
@@ -439,64 +409,24 @@ export default function CustomerDetail() {
               </Button>
             </div>
 
-            {/* Upload Modal */}
-            {showUpload && (
-              <Card className="border-2 border-primary/20 shadow-none mb-4">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm font-serif flex items-center gap-2"><Upload className="w-4 h-4" />Upload New Document</CardTitle>
-                    <Button variant="ghost" size="sm" onClick={() => setShowUpload(false)}><X className="w-4 h-4" /></Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Document Name *</Label>
-                      <Input value={uploadName} onChange={e => setUploadName(e.target.value)} placeholder="e.g. SABIC Contract Amendment" className="h-8 text-sm" />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">File Name *</Label>
-                      <Input value={uploadFileName} onChange={e => setUploadFileName(e.target.value)} placeholder="e.g. SABIC_Amendment_v1.pdf" className="h-8 text-sm" />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Category</Label>
-                      <Select value={uploadCategory} onValueChange={v => setUploadCategory(v as DocumentCategory)}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {DOCUMENT_CATEGORIES.map(cat => <SelectItem key={cat} value={cat}>{getCategoryIcon(cat)} {cat}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Status</Label>
-                      <Select value={uploadStatus} onValueChange={v => setUploadStatus(v as DocumentStatus)}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {DOCUMENT_STATUSES.filter(s => s !== "Archived").map(st => <SelectItem key={st} value={st}>{st}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Link to Workspace (optional)</Label>
-                      <Select value={uploadWorkspaceId} onValueChange={setUploadWorkspaceId}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">No workspace</SelectItem>
-                          {custWorkspaces.map(w => <SelectItem key={w.id} value={w.id}>{w.title}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Notes</Label>
-                      <Textarea value={uploadNotes} onChange={e => setUploadNotes(e.target.value)} placeholder="Optional notes..." className="text-sm min-h-[60px]" />
-                    </div>
-                  </div>
-                  <div className="flex justify-end mt-4">
-                    <Button size="sm" onClick={handleUpload}><Upload className="w-3 h-3 mr-1" />Upload</Button>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            {/* Upload Dialog */}
+            <UploadDialog
+              open={showUpload}
+              onClose={() => setShowUpload(false)}
+              onUpload={({ name, category, file, notes, tags }) => {
+                uploadDocument({
+                  name,
+                  category: category as DocumentCategory,
+                  customerId: c.id,
+                  customerName: c.name,
+                  file,
+                  notes,
+                  tags,
+                });
+                toast.success(`Document "${name}" uploaded to ${category}`);
+                forceUpdate(n => n + 1);
+              }}
+            />
 
             {/* Folder View */}
             {Object.keys(docsByCategory).length > 0 ? (
@@ -518,8 +448,10 @@ export default function CustomerDetail() {
                           <Tooltip key={doc.id}>
                             <TooltipTrigger asChild>
                               <div
-                                className={`flex items-center gap-3 px-4 py-2.5 hover:bg-muted/30 transition-colors cursor-pointer border-b border-border last:border-b-0 ${selectedDoc?.id === doc.id ? "bg-muted/50" : ""}`}
-                                onClick={() => setSelectedDoc(selectedDoc?.id === doc.id ? null : doc)}
+                                className={`flex items-center gap-3 px-4 py-2.5 transition-colors border-b border-border last:border-b-0 ${
+                                  hasRealFile(doc) ? "hover:bg-muted/30 cursor-pointer" : "opacity-60"
+                                }`}
+                                onClick={() => { if (hasRealFile(doc)) setViewerDoc(doc); }}
                               >
                                 <Badge variant="outline" className={`text-[9px] shrink-0 ${getFileTypeColor(doc.fileType)}`}>{doc.fileType}</Badge>
                                 <div className="flex-1 min-w-0">
@@ -577,75 +509,8 @@ export default function CustomerDetail() {
               </Card>
             )}
 
-            {/* Selected Document Detail Panel */}
-            {selectedDoc && (
-              <Card className="border-2 border-primary/20 shadow-none mt-4">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm font-serif flex items-center gap-2">
-                      <Eye className="w-4 h-4" />{selectedDoc.name}
-                    </CardTitle>
-                    <div className="flex items-center gap-2">
-                      {selectedDoc.status !== "Archived" && (
-                        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleArchive(selectedDoc)}>
-                          <Archive className="w-3 h-3 mr-1" />Archive
-                        </Button>
-                      )}
-                      <Button variant="ghost" size="sm" className="h-7" onClick={() => setSelectedDoc(null)}>
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-                    {[
-                      { l: "Category", v: `${getCategoryIcon(selectedDoc.category)} ${selectedDoc.category}` },
-                      { l: "Status", v: selectedDoc.status },
-                      { l: "File", v: `${selectedDoc.fileName} (${selectedDoc.fileSize})` },
-                      { l: "Permission", v: selectedDoc.permissionLevel },
-                    ].map(f => (
-                      <div key={f.l}><p className="text-[10px] text-muted-foreground uppercase">{f.l}</p><p className="text-sm font-medium mt-0.5">{f.v}</p></div>
-                    ))}
-                  </div>
-                  {selectedDoc.notes && <p className="text-sm text-muted-foreground mb-4 italic">{selectedDoc.notes}</p>}
-
-                  {/* Links */}
-                  <div className="flex flex-wrap gap-2 mb-4">
-                    {selectedDoc.workspaceName && (
-                      <Badge variant="outline" className="text-xs border-blue-200 text-blue-700 cursor-pointer" onClick={() => navigate(`/workspaces/${selectedDoc.workspaceId}`)}>
-                        <Briefcase className="w-3 h-3 mr-1" />{selectedDoc.workspaceName}
-                      </Badge>
-                    )}
-                    {selectedDoc.tenderName && (
-                      <Badge variant="outline" className="text-xs border-violet-200 text-violet-700 cursor-pointer" onClick={() => navigate("/tenders")}>
-                        <Gavel className="w-3 h-3 mr-1" />{selectedDoc.tenderName}
-                      </Badge>
-                    )}
-                  </div>
-
-                  {/* Version History */}
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Version History ({selectedDoc.versions.length})</p>
-                  <div className="space-y-1.5">
-                    {[...selectedDoc.versions].reverse().map(v => (
-                      <div key={v.versionNumber} className="flex items-center justify-between p-2 rounded border border-border text-sm">
-                        <div className="flex items-center gap-2">
-                          <Badge variant={v.versionNumber === selectedDoc.currentVersion ? "default" : "secondary"} className="text-[9px]">
-                            v{v.versionNumber}
-                          </Badge>
-                          <span className="font-medium">{v.fileName}</span>
-                          <span className="text-xs text-muted-foreground">({v.fileSize})</span>
-                        </div>
-                        <div className="text-right">
-                          <span className="text-xs text-muted-foreground">{v.uploadedBy} · {v.uploadedAt}</span>
-                          {v.notes && <p className="text-[10px] text-muted-foreground italic">{v.notes}</p>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            {/* Document Viewer Modal */}
+            <DocumentViewer document={viewerDoc} open={!!viewerDoc} onClose={() => setViewerDoc(null)} />
           </TabsContent>
 
           {/* ═══ Opportunities Tab ═══ */}

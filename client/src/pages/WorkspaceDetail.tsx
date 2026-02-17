@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, Link } from "wouter";
-import { ArrowLeft, FileText, ShieldCheck, FileCheck, Clock, ChevronRight, AlertTriangle, CheckCircle2, XCircle, Undo2, Timer, ArrowRightLeft, ShieldAlert, ShieldOff, Info, FolderOpen } from "lucide-react";
+import { ArrowLeft, FileText, ShieldCheck, FileCheck, Clock, ChevronRight, AlertTriangle, CheckCircle2, XCircle, Undo2, Timer, ArrowRightLeft, ShieldAlert, ShieldOff, Info, FolderOpen, Upload, Eye } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,8 +27,10 @@ import {
 import { toast } from "sonner";
 import {
   getDocumentsByWorkspace, getFileTypeColor, getCategoryIcon,
-  type UnifiedDocument,
+  uploadDocument, hasRealFile, initializeMockFiles,
+  type UnifiedDocument, type DocumentCategory,
 } from "@/lib/document-vault";
+import { DocumentViewer, UploadDialog } from "@/components/DocumentViewer";
 
 export default function WorkspaceDetail() {
   const { id } = useParams<{ id: string }>();
@@ -41,6 +43,13 @@ export default function WorkspaceDetail() {
   const [showUndoBanner, setShowUndoBanner] = useState(false);
   const undoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Document viewer state
+  const [viewerDoc, setViewerDoc] = useState<UnifiedDocument | null>(null);
+  const [showDocUpload, setShowDocUpload] = useState(false);
+
+  // Initialize mock files
+  useState(() => { initializeMockFiles(); });
 
   const ws = workspaces.find(w => w.id === id);
   if (!ws) return <div className="p-6"><h1 className="text-xl font-serif">Workspace not found</h1><Link href="/workspaces"><Button variant="outline" className="mt-4"><ArrowLeft className="w-4 h-4 mr-1.5" />Back</Button></Link></div>;
@@ -539,29 +548,78 @@ export default function WorkspaceDetail() {
           <TabsContent value="documents">
             {(() => {
               const wsDocs = getDocumentsByWorkspace(ws.id);
-              return wsDocs.length > 0 ? (
-                <div className="space-y-2">
-                  {wsDocs.map(doc => (
-                    <div key={doc.id} className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
-                      <Badge variant="outline" className={`text-[9px] shrink-0 ${getFileTypeColor(doc.fileType)}`}>{doc.fileType}</Badge>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{doc.name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{doc.fileName} · v{doc.currentVersion} · {doc.uploadedBy} · {doc.uploadDate}</p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <Badge variant="outline" className="text-[9px]">{getCategoryIcon(doc.category)} {doc.category}</Badge>
-                        <Badge variant={doc.status === "Final" ? "default" : "secondary"} className="text-[9px]">{doc.status}</Badge>
-                      </div>
+              return (
+                <>
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <FolderOpen className="w-3.5 h-3.5" /> Workspace Documents ({wsDocs.length})
+                    </h4>
+                    <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => setShowDocUpload(true)}>
+                      <Upload className="w-3 h-3" /> Upload
+                    </Button>
+                  </div>
+                  {wsDocs.length > 0 ? (
+                    <div className="space-y-2">
+                      {wsDocs.map(doc => {
+                        const isClickable = hasRealFile(doc);
+                        return (
+                          <div
+                            key={doc.id}
+                            className={`flex items-center gap-3 p-3 rounded-lg border border-border transition-colors ${
+                              isClickable ? "hover:bg-muted/30 cursor-pointer" : "opacity-60"
+                            }`}
+                            onClick={() => { if (isClickable) setViewerDoc(doc); }}
+                          >
+                            <Badge variant="outline" className={`text-[9px] shrink-0 ${getFileTypeColor(doc.fileType)}`}>{doc.fileType}</Badge>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate flex items-center gap-1.5">
+                                {doc.name}
+                                {isClickable && <Eye className="w-3 h-3 text-muted-foreground" />}
+                              </p>
+                              <p className="text-xs text-muted-foreground truncate">{doc.fileName} · v{doc.currentVersion} · {doc.uploadedBy} · {doc.uploadDate}</p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Badge variant="outline" className="text-[9px]">{getCategoryIcon(doc.category)} {doc.category}</Badge>
+                              <Badge variant={doc.status === "Final" || doc.status === "Signed" ? "default" : "secondary"} className="text-[9px]">{doc.status}</Badge>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <Card className="border border-border shadow-none">
-                  <CardContent className="py-12 text-center text-sm text-muted-foreground">
-                    <FolderOpen className="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />
-                    No documents linked to this workspace. Upload documents from the Customer Vault.
-                  </CardContent>
-                </Card>
+                  ) : (
+                    <Card className="border border-border shadow-none">
+                      <CardContent className="py-12 text-center text-sm text-muted-foreground">
+                        <FolderOpen className="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />
+                        <p className="mb-3">No documents linked to this workspace.</p>
+                        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowDocUpload(true)}>
+                          <Upload className="w-3 h-3" /> Upload First Document
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )}
+                  <DocumentViewer document={viewerDoc} open={!!viewerDoc} onClose={() => setViewerDoc(null)} />
+                  <UploadDialog
+                    open={showDocUpload}
+                    onClose={() => setShowDocUpload(false)}
+                    defaultCategory="Supporting"
+                    suggestedName={`${customer?.name ?? ""} — ${ws.title}`}
+                    onUpload={({ name, category, file, notes, tags }) => {
+                      uploadDocument({
+                        name,
+                        category: category as DocumentCategory,
+                        customerId: ws.customerId,
+                        customerName: customer?.name ?? "Unknown",
+                        workspaceId: ws.id,
+                        workspaceName: ws.title,
+                        file,
+                        notes,
+                        tags,
+                      });
+                      toast.success(`Document "${name}" uploaded.`);
+                      forceUpdate(n => n + 1);
+                    }}
+                  />
+                </>
               );
             })()}
           </TabsContent>
