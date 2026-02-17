@@ -1,14 +1,20 @@
+import { useState } from "react";
 import { useParams, Link } from "wouter";
-import { ArrowLeft, FileText, Calculator, ShieldCheck, FileCheck, Clock, RefreshCw } from "lucide-react";
+import { ArrowLeft, FileText, Calculator, ShieldCheck, FileCheck, Clock, RefreshCw, AlertTriangle, CheckCircle2, XCircle, ChevronRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { workspaces, customers, quotes, proposals, approvalRecords, signals, auditLog, formatSAR, formatPercent, getStageLabel, getStageColor, getApprovalRequirements, getRoleLabel, WORKSPACE_STAGES } from "@/lib/store";
+import { advanceStage, getNextStage, getStageDisplayName, type TransitionResult } from "@/lib/stage-transition";
 import { toast } from "sonner";
 
 export default function WorkspaceDetail() {
   const { id } = useParams<{ id: string }>();
+  const [, forceUpdate] = useState(0);
+  const [transitionResult, setTransitionResult] = useState<TransitionResult | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
+
   const ws = workspaces.find(w => w.id === id);
   if (!ws) return <div className="p-6"><h1 className="text-xl font-serif">Workspace not found</h1><Link href="/workspaces"><Button variant="outline" className="mt-4"><ArrowLeft className="w-4 h-4 mr-1.5" />Back</Button></Link></div>;
   const customer = customers.find(c => c.id === ws.customerId);
@@ -19,6 +25,26 @@ export default function WorkspaceDetail() {
   const wsAudit = auditLog.filter(a => a.entityId === ws.id || wsQuotes.some(q => q.id === a.entityId) || wsProposals.some(p => p.id === a.entityId));
   const approvalReqs = getApprovalRequirements(ws.gpPercent, ws.palletVolume);
   const currentStageIdx = WORKSPACE_STAGES.findIndex(s => s.value === ws.stage);
+  const nextStage = getNextStage(ws.stage);
+
+  const handleAdvanceStage = () => {
+    setTransitionResult(null);
+    setShowConfirm(true);
+  };
+
+  const executeTransition = () => {
+    setShowConfirm(false);
+    const result = advanceStage(ws.id);
+    setTransitionResult(result);
+    if (result.success) {
+      toast.success(result.message, { description: `${getStageDisplayName(result.fromStage)} → ${getStageDisplayName(result.nextStage!)}` });
+      forceUpdate(n => n + 1); // re-render with updated workspace
+    } else {
+      toast.error("Stage advance blocked", { description: result.message });
+    }
+  };
+
+  const dismissResult = () => setTransitionResult(null);
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
@@ -33,8 +59,75 @@ export default function WorkspaceDetail() {
           </div>
           <p className="text-sm text-muted-foreground mt-0.5 ml-6">{ws.title}</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => toast("Stage advanced", { description: "Feature coming soon" })}>Advance Stage</Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleAdvanceStage}
+          disabled={!nextStage}
+        >
+          <ChevronRight className="w-3.5 h-3.5 mr-1" />
+          {nextStage ? `Advance to ${getStageDisplayName(nextStage)}` : "Final Stage"}
+        </Button>
       </div>
+
+      {/* Confirmation Dialog */}
+      {showConfirm && nextStage && (
+        <div className="mb-4 p-4 rounded-lg border-2 border-dashed border-primary/40 bg-primary/5">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-semibold">Confirm Stage Transition</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Advance from <strong>{getStageDisplayName(ws.stage)}</strong> → <strong>{getStageDisplayName(nextStage)}</strong>?
+                Validation checks will run before the transition is applied.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => setShowConfirm(false)} className="text-xs h-8">Cancel</Button>
+              <Button size="sm" onClick={executeTransition} className="text-xs h-8 bg-[#1B2A4A] hover:bg-[#2A3F6A]">Confirm Advance</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Transition Result */}
+      {transitionResult && (
+        <div className={`mb-4 p-4 rounded-lg border ${
+          transitionResult.success
+            ? "border-emerald-200 bg-emerald-50"
+            : "border-red-200 bg-red-50"
+        }`}>
+          <div className="flex items-start gap-3">
+            {transitionResult.success
+              ? <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+              : <XCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+            }
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-semibold ${transitionResult.success ? "text-emerald-800" : "text-red-800"}`}>
+                {transitionResult.success ? "Stage Advanced Successfully" : "Stage Advance Blocked"}
+              </p>
+              <p className={`text-xs mt-0.5 ${transitionResult.success ? "text-emerald-700" : "text-red-700"}`}>
+                {transitionResult.message}
+              </p>
+              {transitionResult.validationErrors.length > 1 && (
+                <ul className="mt-2 space-y-1">
+                  {transitionResult.validationErrors.map((err, i) => (
+                    <li key={i} className="text-xs text-red-600 flex items-start gap-1.5">
+                      <span className="text-red-400 mt-0.5">•</span> {err}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground">
+                <span>From: {getStageDisplayName(transitionResult.fromStage)}</span>
+                {transitionResult.nextStage && <span>To: {getStageDisplayName(transitionResult.nextStage)}</span>}
+                <span>Result: {transitionResult.success ? "success" : "blocked"}</span>
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" onClick={dismissResult} className="text-xs h-7 shrink-0">Dismiss</Button>
+          </div>
+        </div>
+      )}
 
       <Card className="border border-border shadow-none mb-6"><CardContent className="py-4 px-6">
         <div className="flex items-center gap-1 overflow-x-auto">
