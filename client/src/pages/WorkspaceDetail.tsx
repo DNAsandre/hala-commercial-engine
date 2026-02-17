@@ -1,12 +1,22 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, Link } from "wouter";
-import { ArrowLeft, FileText, Calculator, ShieldCheck, FileCheck, Clock, RefreshCw, AlertTriangle, CheckCircle2, XCircle, ChevronRight } from "lucide-react";
+import { ArrowLeft, FileText, ShieldCheck, FileCheck, Clock, ChevronRight, AlertTriangle, CheckCircle2, XCircle, Undo2, Timer, ArrowRightLeft, ShieldAlert } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { workspaces, customers, quotes, proposals, approvalRecords, signals, auditLog, formatSAR, formatPercent, getStageLabel, getStageColor, getApprovalRequirements, getRoleLabel, WORKSPACE_STAGES } from "@/lib/store";
-import { advanceStage, getNextStage, getStageDisplayName, type TransitionResult } from "@/lib/stage-transition";
+import {
+  advanceStage,
+  getNextStage,
+  getStageDisplayName,
+  checkUndoEligibility,
+  revertStage,
+  getStageHistory,
+  hasUndoRecord,
+  type TransitionResult,
+} from "@/lib/stage-transition";
 import { toast } from "sonner";
 
 export default function WorkspaceDetail() {
@@ -14,6 +24,11 @@ export default function WorkspaceDetail() {
   const [, forceUpdate] = useState(0);
   const [transitionResult, setTransitionResult] = useState<TransitionResult | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [confirmInput, setConfirmInput] = useState("");
+  const [undoCountdown, setUndoCountdown] = useState(0);
+  const [showUndoBanner, setShowUndoBanner] = useState(false);
+  const undoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const ws = workspaces.find(w => w.id === id);
   if (!ws) return <div className="p-6"><h1 className="text-xl font-serif">Workspace not found</h1><Link href="/workspaces"><Button variant="outline" className="mt-4"><ArrowLeft className="w-4 h-4 mr-1.5" />Back</Button></Link></div>;
@@ -26,25 +41,110 @@ export default function WorkspaceDetail() {
   const approvalReqs = getApprovalRequirements(ws.gpPercent, ws.palletVolume);
   const currentStageIdx = WORKSPACE_STAGES.findIndex(s => s.value === ws.stage);
   const nextStage = getNextStage(ws.stage);
+  const wsStageHistory = getStageHistory(ws.id);
 
+  // ── Hotkey protection: block single-key shortcuts from triggering stage movement ──
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Block Enter key when the confirmation modal is NOT open
+      // This prevents accidental stage advancement via keyboard shortcuts
+      if (e.key === "Enter" && !showConfirm) {
+        const target = e.target as HTMLElement;
+        // Allow Enter in input fields and textareas
+        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return;
+        // Block Enter on the Advance Stage button itself
+        if (target.closest("[data-advance-stage-btn]")) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
+    };
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
+  }, [showConfirm]);
+
+  // ── Undo countdown timer ──
+  const startUndoTimer = useCallback(() => {
+    if (undoTimerRef.current) clearInterval(undoTimerRef.current);
+    setShowUndoBanner(true);
+    const tick = () => {
+      const eligibility = checkUndoEligibility(ws.id);
+      if (eligibility.remainingMs <= 0 || !eligibility.eligible) {
+        setShowUndoBanner(false);
+        if (undoTimerRef.current) clearInterval(undoTimerRef.current);
+        return;
+      }
+      setUndoCountdown(Math.ceil(eligibility.remainingMs / 1000));
+    };
+    tick();
+    undoTimerRef.current = setInterval(tick, 1000);
+  }, [ws.id]);
+
+  useEffect(() => {
+    return () => { if (undoTimerRef.current) clearInterval(undoTimerRef.current); };
+  }, []);
+
+  // ── Handlers ──
   const handleAdvanceStage = () => {
     setTransitionResult(null);
+    setConfirmInput("");
     setShowConfirm(true);
+    // Focus the input after render
+    setTimeout(() => inputRef.current?.focus(), 100);
   };
 
   const executeTransition = () => {
     setShowConfirm(false);
+    setConfirmInput("");
     const result = advanceStage(ws.id);
     setTransitionResult(result);
     if (result.success) {
       toast.success(result.message, { description: `${getStageDisplayName(result.fromStage)} → ${getStageDisplayName(result.nextStage!)}` });
-      forceUpdate(n => n + 1); // re-render with updated workspace
+      startUndoTimer();
+      forceUpdate(n => n + 1);
     } else {
       toast.error("Stage advance blocked", { description: result.message });
     }
   };
 
+  const handleUndo = () => {
+    const result = revertStage(ws.id);
+    if (result.success) {
+      toast.success("Stage reverted", { description: result.message });
+      setShowUndoBanner(false);
+      setTransitionResult(null);
+      if (undoTimerRef.current) clearInterval(undoTimerRef.current);
+      forceUpdate(n => n + 1);
+    } else {
+      toast.error("Undo blocked", { description: result.message });
+    }
+  };
+
   const dismissResult = () => setTransitionResult(null);
+
+  // The required confirmation text is the destination stage name
+  const requiredConfirmText = nextStage ? getStageDisplayName(nextStage) : "";
+  const confirmMatch = confirmInput.trim().toLowerCase() === requiredConfirmText.toLowerCase();
+
+  // Validation warnings to display in the modal
+  const validationWarnings: string[] = [];
+  if (nextStage) {
+    if (ws.stage === "quoting" && nextStage === "proposal_active") {
+      const hasQuote = wsQuotes.length > 0;
+      if (!hasQuote) validationWarnings.push("No quotes exist for this workspace.");
+      if (ws.gpPercent < 22) validationWarnings.push(`GP% is ${ws.gpPercent.toFixed(1)}% — below 22% threshold. Director approval required.`);
+    }
+    if (ws.stage === "solution_design" && nextStage === "quoting" && ws.palletVolume <= 0) {
+      validationWarnings.push("Pallet volume is zero.");
+    }
+    if (ws.stage === "negotiation" && nextStage === "commercial_approved") {
+      const hasApproved = wsQuotes.some(q => q.state === "approved");
+      if (!hasApproved) validationWarnings.push("No approved quote exists.");
+    }
+    if (ws.stage === "commercial_approved" && nextStage === "sla_drafting" && ws.approvalState !== "fully_approved") {
+      validationWarnings.push("Not all required approvals are completed.");
+    }
+  }
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
@@ -64,51 +164,133 @@ export default function WorkspaceDetail() {
           size="sm"
           onClick={handleAdvanceStage}
           disabled={!nextStage}
+          data-advance-stage-btn
         >
           <ChevronRight className="w-3.5 h-3.5 mr-1" />
           {nextStage ? `Advance to ${getStageDisplayName(nextStage)}` : "Final Stage"}
         </Button>
       </div>
 
-      {/* Confirmation Dialog */}
+      {/* ═══ Enhanced Confirmation Modal ═══ */}
       {showConfirm && nextStage && (
-        <div className="mb-4 p-4 rounded-lg border-2 border-dashed border-primary/40 bg-primary/5">
-          <div className="flex items-center gap-3">
-            <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
-            <div className="flex-1">
-              <p className="text-sm font-semibold">Confirm Stage Transition</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Advance from <strong>{getStageDisplayName(ws.stage)}</strong> → <strong>{getStageDisplayName(nextStage)}</strong>?
-                Validation checks will run before the transition is applied.
-              </p>
+        <div className="mb-4 rounded-lg border-2 border-amber-300/60 bg-amber-50/80 overflow-hidden">
+          <div className="px-5 py-3 bg-amber-100/60 border-b border-amber-200/60 flex items-center gap-2.5">
+            <ShieldAlert className="w-4.5 h-4.5 text-amber-600 shrink-0" />
+            <span className="text-sm font-semibold text-amber-900">Stage Transition — Governance Check</span>
+          </div>
+          <div className="p-5 space-y-4">
+            {/* From → To display */}
+            <div className="flex items-center gap-3">
+              <div className="flex-1 rounded-md border border-border bg-background p-3 text-center">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1">From Stage</p>
+                <p className="text-sm font-semibold">{getStageDisplayName(ws.stage)}</p>
+              </div>
+              <ChevronRight className="w-5 h-5 text-amber-500 shrink-0" />
+              <div className="flex-1 rounded-md border-2 border-dashed border-amber-300 bg-amber-50 p-3 text-center">
+                <p className="text-[10px] uppercase tracking-wider text-amber-700 font-medium mb-1">To Stage</p>
+                <p className="text-sm font-semibold text-amber-900">{getStageDisplayName(nextStage)}</p>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" onClick={() => setShowConfirm(false)} className="text-xs h-8">Cancel</Button>
-              <Button size="sm" onClick={executeTransition} className="text-xs h-8 bg-[#1B2A4A] hover:bg-[#2A3F6A]">Confirm Advance</Button>
+
+            {/* Validation warnings */}
+            {validationWarnings.length > 0 && (
+              <div className="rounded-md border border-red-200 bg-red-50 p-3">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                  <span className="text-xs font-semibold text-red-800">Validation Warnings</span>
+                </div>
+                <ul className="space-y-1">
+                  {validationWarnings.map((w, i) => (
+                    <li key={i} className="text-xs text-red-700 flex items-start gap-1.5">
+                      <span className="text-red-400 mt-0.5">•</span> {w}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Type-to-confirm */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                Type <span className="font-bold text-foreground">"{requiredConfirmText}"</span> to enable the Confirm button
+              </label>
+              <Input
+                ref={inputRef}
+                value={confirmInput}
+                onChange={e => setConfirmInput(e.target.value)}
+                placeholder={requiredConfirmText}
+                className="h-9 text-sm font-mono"
+                onKeyDown={e => {
+                  if (e.key === "Enter" && confirmMatch) {
+                    e.preventDefault();
+                    executeTransition();
+                  }
+                }}
+              />
+              {confirmInput.length > 0 && !confirmMatch && (
+                <p className="text-[10px] text-red-500 mt-1">Text does not match. Please type the exact destination stage name.</p>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <Button size="sm" variant="outline" onClick={() => { setShowConfirm(false); setConfirmInput(""); }} className="text-xs h-8">
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={executeTransition}
+                disabled={!confirmMatch}
+                className="text-xs h-8 bg-[#1B2A4A] hover:bg-[#2A3F6A] disabled:opacity-40"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 mr-1" />
+                Confirm Advance
+              </Button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Transition Result */}
-      {transitionResult && (
-        <div className={`mb-4 p-4 rounded-lg border ${
-          transitionResult.success
-            ? "border-emerald-200 bg-emerald-50"
-            : "border-red-200 bg-red-50"
-        }`}>
+      {/* ═══ Undo Banner ═══ */}
+      {showUndoBanner && transitionResult?.success && (
+        <div className="mb-4 p-4 rounded-lg border border-blue-200 bg-blue-50 flex items-center gap-3">
+          <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-emerald-800">Stage Advanced Successfully</p>
+            <p className="text-xs text-emerald-700 mt-0.5">{transitionResult.message}</p>
+            <div className="flex items-center gap-4 mt-1.5 text-[10px] text-muted-foreground">
+              <span>From: {getStageDisplayName(transitionResult.fromStage)}</span>
+              {transitionResult.nextStage && <span>To: {getStageDisplayName(transitionResult.nextStage)}</span>}
+              <span>Result: success</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="flex items-center gap-1.5 text-xs text-blue-700">
+              <Timer className="w-3.5 h-3.5" />
+              <span className="data-value font-medium">{Math.floor(undoCountdown / 60)}:{String(undoCountdown % 60).padStart(2, "0")}</span>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleUndo}
+              className="text-xs h-8 border-blue-300 text-blue-700 hover:bg-blue-100"
+            >
+              <Undo2 className="w-3.5 h-3.5 mr-1" />
+              Undo
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => { setShowUndoBanner(false); setTransitionResult(null); }} className="text-xs h-7">Dismiss</Button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Blocked Transition Result ═══ */}
+      {transitionResult && !transitionResult.success && (
+        <div className="mb-4 p-4 rounded-lg border border-red-200 bg-red-50">
           <div className="flex items-start gap-3">
-            {transitionResult.success
-              ? <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-              : <XCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-            }
+            <XCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <p className={`text-sm font-semibold ${transitionResult.success ? "text-emerald-800" : "text-red-800"}`}>
-                {transitionResult.success ? "Stage Advanced Successfully" : "Stage Advance Blocked"}
-              </p>
-              <p className={`text-xs mt-0.5 ${transitionResult.success ? "text-emerald-700" : "text-red-700"}`}>
-                {transitionResult.message}
-              </p>
+              <p className="text-sm font-semibold text-red-800">Stage Advance Blocked</p>
+              <p className="text-xs mt-0.5 text-red-700">{transitionResult.message}</p>
               {transitionResult.validationErrors.length > 1 && (
                 <ul className="mt-2 space-y-1">
                   {transitionResult.validationErrors.map((err, i) => (
@@ -121,7 +303,7 @@ export default function WorkspaceDetail() {
               <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground">
                 <span>From: {getStageDisplayName(transitionResult.fromStage)}</span>
                 {transitionResult.nextStage && <span>To: {getStageDisplayName(transitionResult.nextStage)}</span>}
-                <span>Result: {transitionResult.success ? "success" : "blocked"}</span>
+                <span>Result: blocked</span>
               </div>
             </div>
             <Button variant="ghost" size="sm" onClick={dismissResult} className="text-xs h-7 shrink-0">Dismiss</Button>
@@ -241,6 +423,42 @@ export default function WorkspaceDetail() {
         </TabsContent>
 
         <TabsContent value="audit">
+          {/* Stage History Section */}
+          {wsStageHistory.length > 0 && (
+            <Card className="border border-border shadow-none mb-4">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-serif flex items-center gap-2">
+                  <ArrowRightLeft className="w-4 h-4 text-muted-foreground" />
+                  Stage History
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="divide-y divide-border">
+                  {wsStageHistory.map(entry => (
+                    <div key={entry.id} className="flex items-center gap-3 px-4 py-2.5">
+                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${entry.action === "advanced" ? "bg-emerald-500" : "bg-amber-500"}`} />
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <Badge variant="outline" className="text-[10px] shrink-0">{getStageDisplayName(entry.fromStage)}</Badge>
+                        <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                        <Badge variant={entry.action === "advanced" ? "default" : "secondary"} className="text-[10px] shrink-0">
+                          {getStageDisplayName(entry.toStage)}
+                        </Badge>
+                        {entry.action === "reverted" && (
+                          <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700 shrink-0">
+                            <Undo2 className="w-2.5 h-2.5 mr-0.5" />Reverted
+                          </Badge>
+                        )}
+                      </div>
+                      <span className="text-xs text-muted-foreground shrink-0">{entry.userName}</span>
+                      <span className="text-[10px] text-muted-foreground data-value shrink-0">{new Date(entry.timestamp).toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* General Audit Trail */}
           <Card className="border border-border shadow-none"><CardContent className="p-0">
             <div className="divide-y divide-border">
               {wsAudit.map(entry => (

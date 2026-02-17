@@ -18,6 +18,7 @@ import {
   type Workspace,
   type AuditEntry,
   quotes,
+  proposals,
   approvalRecords,
   auditLog,
   workspaces,
@@ -31,7 +32,43 @@ export interface TransitionResult {
   nextStage: WorkspaceStage | null;
   fromStage: WorkspaceStage;
   validationErrors: string[];
+  /** Populated on success — ISO timestamp of the transition */
+  transitionTimestamp?: string;
 }
+
+// ─── STAGE HISTORY ──────────────────────────────────────────
+// Immutable log of every stage change (advance or revert).
+// Separate from the general audit trail for dedicated display.
+
+export interface StageHistoryEntry {
+  id: string;
+  workspaceId: string;
+  fromStage: WorkspaceStage;
+  toStage: WorkspaceStage;
+  action: "advanced" | "reverted";
+  userId: string;
+  userName: string;
+  timestamp: string;
+  reason: string;
+}
+
+export const stageHistory: StageHistoryEntry[] = [];
+
+// ─── UNDO STATE ─────────────────────────────────────────────
+// Tracks the last successful transition per workspace for undo.
+
+export interface UndoRecord {
+  workspaceId: string;
+  fromStage: WorkspaceStage;
+  toStage: WorkspaceStage;
+  timestamp: number; // epoch ms
+  userId: string;
+  userName: string;
+}
+
+const undoRecords: Map<string, UndoRecord> = new Map();
+
+const UNDO_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
 export interface TransitionContext {
   workspace: Workspace;
@@ -297,8 +334,32 @@ export function advanceStage(workspaceId: string): TransitionResult {
   workspace.daysInStage = 0;
   workspace.updatedAt = new Date().toISOString().slice(0, 10);
 
+  const now = new Date();
   const successMsg = `Stage advanced from ${getStageDisplayName(fromStage)} to ${getStageDisplayName(toStage)}.`;
   logTransitionAudit(workspace, fromStage, toStage, true, successMsg);
+
+  // Record in stage history
+  stageHistory.unshift({
+    id: `sh-${Date.now()}`,
+    workspaceId: workspace.id,
+    fromStage,
+    toStage,
+    action: "advanced",
+    userId: "u1",
+    userName: "Amin Al-Rashid",
+    timestamp: now.toISOString(),
+    reason: successMsg,
+  });
+
+  // Store undo record
+  undoRecords.set(workspace.id, {
+    workspaceId: workspace.id,
+    fromStage,
+    toStage,
+    timestamp: now.getTime(),
+    userId: "u1",
+    userName: "Amin Al-Rashid",
+  });
 
   return {
     success: true,
@@ -306,6 +367,7 @@ export function advanceStage(workspaceId: string): TransitionResult {
     nextStage: toStage,
     fromStage,
     validationErrors: [],
+    transitionTimestamp: now.toISOString(),
   };
 }
 
@@ -325,4 +387,150 @@ export function registerTransitionRule(rule: TransitionRule): void {
  */
 export function getRegisteredRules(): readonly TransitionRule[] {
   return rules;
+}
+
+// ─── UNDO / REVERT ──────────────────────────────────────────
+
+export interface UndoEligibility {
+  eligible: boolean;
+  reasons: string[];
+  remainingMs: number;
+}
+
+/**
+ * Check whether an undo is eligible for a workspace.
+ * Undo is blocked if:
+ *   - No undo record exists
+ *   - More than 5 minutes have elapsed
+ *   - New approvals have been started since the transition
+ *   - New dependent documents (quotes/proposals) were created since the transition
+ */
+export function checkUndoEligibility(workspaceId: string): UndoEligibility {
+  const record = undoRecords.get(workspaceId);
+  if (!record) {
+    return { eligible: false, reasons: ["No recent transition to undo."], remainingMs: 0 };
+  }
+
+  const elapsed = Date.now() - record.timestamp;
+  const remaining = Math.max(0, UNDO_WINDOW_MS - elapsed);
+  const reasons: string[] = [];
+
+  // Time window check
+  if (elapsed > UNDO_WINDOW_MS) {
+    reasons.push("Undo window expired (5 minutes).");
+  }
+
+  // Approvals started since transition
+  const newApprovals = approvalRecords.filter(
+    a => a.workspaceId === workspaceId && new Date(a.timestamp).getTime() > record.timestamp
+  );
+  if (newApprovals.length > 0) {
+    reasons.push(`${newApprovals.length} approval(s) started since transition.`);
+  }
+
+  // Dependent documents created since transition
+  const newQuotes = quotes.filter(
+    q => q.workspaceId === workspaceId && new Date(q.createdAt).getTime() > record.timestamp
+  );
+  const newProposals = proposals.filter(
+    p => p.workspaceId === workspaceId && new Date(p.createdAt).getTime() > record.timestamp
+  );
+  if (newQuotes.length + newProposals.length > 0) {
+    reasons.push(`${newQuotes.length + newProposals.length} document(s) created since transition.`);
+  }
+
+  return {
+    eligible: reasons.length === 0,
+    reasons,
+    remainingMs: remaining,
+  };
+}
+
+export interface RevertResult {
+  success: boolean;
+  message: string;
+  revertedFrom: WorkspaceStage;
+  revertedTo: WorkspaceStage;
+}
+
+/**
+ * Revert the last stage transition for a workspace.
+ * Does NOT re-run validation rules — this is a governance undo, not a new transition.
+ */
+export function revertStage(workspaceId: string): RevertResult {
+  const eligibility = checkUndoEligibility(workspaceId);
+  if (!eligibility.eligible) {
+    const record = undoRecords.get(workspaceId);
+    return {
+      success: false,
+      message: eligibility.reasons.join(" "),
+      revertedFrom: record?.toStage ?? "qualified",
+      revertedTo: record?.fromStage ?? "qualified",
+    };
+  }
+
+  const record = undoRecords.get(workspaceId)!;
+  const workspace = workspaces.find(w => w.id === workspaceId);
+  if (!workspace) {
+    return { success: false, message: "Workspace not found.", revertedFrom: record.toStage, revertedTo: record.fromStage };
+  }
+
+  // Revert the stage
+  const revertedFrom = workspace.stage;
+  workspace.stage = record.fromStage;
+  workspace.daysInStage = 0;
+  workspace.updatedAt = new Date().toISOString().slice(0, 10);
+
+  const now = new Date();
+  const msg = `Stage reverted from '${getStageDisplayName(revertedFrom)}' to '${getStageDisplayName(record.fromStage)}' (undo).`;
+
+  // Audit log
+  const entry: AuditEntry = {
+    id: `al-rv-${Date.now()}`,
+    entityType: "workspace",
+    entityId: workspaceId,
+    action: "stage_reverted",
+    userId: "u1",
+    userName: "Amin Al-Rashid",
+    timestamp: now.toISOString(),
+    details: msg,
+  };
+  auditLog.unshift(entry);
+
+  // Stage history
+  stageHistory.unshift({
+    id: `sh-rv-${Date.now()}`,
+    workspaceId,
+    fromStage: revertedFrom,
+    toStage: record.fromStage,
+    action: "reverted",
+    userId: "u1",
+    userName: "Amin Al-Rashid",
+    timestamp: now.toISOString(),
+    reason: msg,
+  });
+
+  // Clear the undo record (one undo per transition)
+  undoRecords.delete(workspaceId);
+
+  return {
+    success: true,
+    message: msg,
+    revertedFrom,
+    revertedTo: record.fromStage,
+  };
+}
+
+/**
+ * Get stage history entries for a specific workspace.
+ */
+export function getStageHistory(workspaceId: string): readonly StageHistoryEntry[] {
+  return stageHistory.filter(h => h.workspaceId === workspaceId);
+}
+
+/**
+ * Check if an undo record exists for a workspace.
+ */
+export function hasUndoRecord(workspaceId: string): boolean {
+  return undoRecords.has(workspaceId);
 }
