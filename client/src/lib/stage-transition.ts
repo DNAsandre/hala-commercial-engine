@@ -556,6 +556,217 @@ export function advanceStage(workspaceId: string, options?: AdvanceStageOptions)
   };
 }
 
+// ─── MULTI-STEP TRANSITION (for Kanban drag-and-drop) ──────
+
+/**
+ * Pre-flight validation for a multi-step transition.
+ * Checks all intermediate transitions from current stage to target stage.
+ * Returns aggregated validation failures across all steps.
+ */
+export function preflightToStage(
+  workspaceId: string,
+  targetStage: WorkspaceStage,
+): ValidationFailure[] {
+  const workspace = workspaces.find(w => w.id === workspaceId);
+  if (!workspace) return [];
+
+  const fromIdx = getStageIndex(workspace.stage);
+  const toIdx = getStageIndex(targetStage);
+  if (fromIdx === -1 || toIdx === -1 || toIdx <= fromIdx) return [];
+
+  const allFailures: ValidationFailure[] = [];
+  for (let i = fromIdx; i < toIdx; i++) {
+    const from = STAGE_ORDER[i];
+    const to = STAGE_ORDER[i + 1];
+    const ctx: TransitionContext = { workspace, fromStage: from, toStage: to };
+    const failures = runValidationsDetailed(ctx);
+    for (const f of failures) {
+      // Avoid duplicates
+      if (!allFailures.some(af => af.ruleName === f.ruleName && af.error === f.error)) {
+        allFailures.push(f);
+      }
+    }
+  }
+  return allFailures;
+}
+
+/**
+ * Advance a workspace to a specific target stage (may skip intermediate stages).
+ * Runs validation for each intermediate step. In soft governance mode, all
+ * intermediate warnings are collected and can be overridden with a single reason.
+ * Uses the same audit logging and governance override system as advanceStage().
+ */
+export function advanceToStage(
+  workspaceId: string,
+  targetStage: WorkspaceStage,
+  options?: AdvanceStageOptions,
+): TransitionResult {
+  const workspace = workspaces.find(w => w.id === workspaceId);
+  if (!workspace) {
+    return {
+      success: false,
+      message: "Workspace not found.",
+      nextStage: null,
+      fromStage: "qualified",
+      validationErrors: ["Workspace ID does not exist."],
+    };
+  }
+
+  const originalStage = workspace.stage;
+  const fromIdx = getStageIndex(originalStage);
+  const toIdx = getStageIndex(targetStage);
+
+  // Backward movement not allowed
+  if (toIdx <= fromIdx) {
+    return {
+      success: false,
+      message: "Cannot move backward. Only forward stage transitions are allowed.",
+      nextStage: null,
+      fromStage: originalStage,
+      validationErrors: ["Backward stage movement is not permitted."],
+    };
+  }
+
+  // Outside controlled sequence
+  if (fromIdx === -1 || toIdx === -1) {
+    return {
+      success: false,
+      message: "One or both stages are outside the controlled transition sequence.",
+      nextStage: null,
+      fromStage: originalStage,
+      validationErrors: ["Stage is not part of the controlled stage order."],
+    };
+  }
+
+  // Collect all validation failures across intermediate steps
+  const allFailures = preflightToStage(workspaceId, targetStage);
+
+  if (allFailures.length > 0) {
+    const errors = allFailures.map(f => f.error);
+
+    // Strict mode: hard block
+    if (strict_mode) {
+      const msg = errors.join(" ");
+      logTransitionAudit(workspace, originalStage, targetStage, false, msg);
+      return {
+        success: false,
+        message: errors[0],
+        nextStage: targetStage,
+        fromStage: originalStage,
+        validationErrors: errors,
+      };
+    }
+
+    // Soft mode without override reason: block
+    if (!options?.overrideReason) {
+      const msg = errors.join(" ");
+      logTransitionAudit(workspace, originalStage, targetStage, false, msg);
+      return {
+        success: false,
+        message: errors[0],
+        nextStage: targetStage,
+        fromStage: originalStage,
+        validationErrors: errors,
+      };
+    }
+
+    // Soft mode with override reason: proceed
+    const now = new Date();
+    const overrideRecord: GovernanceOverride = {
+      overrideReason: options.overrideReason,
+      userId: "u1",
+      userName: "Amin Al-Rashid",
+      timestamp: now.toISOString(),
+      overriddenRules: allFailures.map(f => f.ruleName),
+      fromStage: originalStage,
+      toStage: targetStage,
+      workspaceId,
+    };
+
+    governanceOverrides.unshift(overrideRecord);
+
+    workspace.stage = targetStage;
+    workspace.daysInStage = 0;
+    workspace.updatedAt = now.toISOString().slice(0, 10);
+
+    const successMsg = `Stage advanced from ${getStageDisplayName(originalStage)} to ${getStageDisplayName(targetStage)} (governance override).`;
+    logTransitionAudit(workspace, originalStage, targetStage, true, successMsg, overrideRecord);
+
+    stageHistory.unshift({
+      id: `sh-${Date.now()}`,
+      workspaceId: workspace.id,
+      fromStage: originalStage,
+      toStage: targetStage,
+      action: "advanced_with_override",
+      userId: "u1",
+      userName: "Amin Al-Rashid",
+      timestamp: now.toISOString(),
+      reason: successMsg,
+      overrideRecord,
+    });
+
+    undoRecords.set(workspace.id, {
+      workspaceId: workspace.id,
+      fromStage: originalStage,
+      toStage: targetStage,
+      timestamp: now.getTime(),
+      userId: "u1",
+      userName: "Amin Al-Rashid",
+    });
+
+    return {
+      success: true,
+      message: successMsg,
+      nextStage: targetStage,
+      fromStage: originalStage,
+      validationErrors: errors,
+      transitionTimestamp: now.toISOString(),
+      governanceOverride: true,
+      overrideRecord,
+    };
+  }
+
+  // No validation failures — advance directly
+  const now = new Date();
+  workspace.stage = targetStage;
+  workspace.daysInStage = 0;
+  workspace.updatedAt = now.toISOString().slice(0, 10);
+
+  const successMsg = `Stage advanced from ${getStageDisplayName(originalStage)} to ${getStageDisplayName(targetStage)}.`;
+  logTransitionAudit(workspace, originalStage, targetStage, true, successMsg);
+
+  stageHistory.unshift({
+    id: `sh-${Date.now()}`,
+    workspaceId: workspace.id,
+    fromStage: originalStage,
+    toStage: targetStage,
+    action: "advanced",
+    userId: "u1",
+    userName: "Amin Al-Rashid",
+    timestamp: now.toISOString(),
+    reason: successMsg,
+  });
+
+  undoRecords.set(workspace.id, {
+    workspaceId: workspace.id,
+    fromStage: originalStage,
+    toStage: targetStage,
+    timestamp: now.getTime(),
+    userId: "u1",
+    userName: "Amin Al-Rashid",
+  });
+
+  return {
+    success: true,
+    message: successMsg,
+    nextStage: targetStage,
+    fromStage: originalStage,
+    validationErrors: [],
+    transitionTimestamp: now.toISOString(),
+    governanceOverride: false,
+  };
+}
+
 // ─── RULE REGISTRY (for future expansion) ───────────────────
 
 /**

@@ -18,6 +18,7 @@ import PnLCalculator from "./pages/PnLCalculator";
 import CRMSync from "./pages/CRMSync";
 import Documents from "./pages/Documents";
 import Tenders from "./pages/Tenders";
+import TenderBoard from "./pages/TenderBoard";
 import Handover from "./pages/Handover";
 import AdminGovernance from "./pages/AdminGovernance";
 import AdminPanel from "./pages/AdminPanel";
@@ -51,6 +52,7 @@ function AppRouter() {
       <Route path="/crm-sync" component={CRMSync} />
       <Route path="/documents" component={Documents} />
       <Route path="/tenders" component={Tenders} />
+      <Route path="/tender-board" component={TenderBoard} />
       <Route path="/handover" component={Handover} />
       <Route path="/editor" component={Editor} />
       <Route path="/admin" component={AdminGovernance} />
