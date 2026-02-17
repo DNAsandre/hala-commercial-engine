@@ -8,6 +8,8 @@
  *   2. TransitionRule[] — per-transition validation functions
  *   3. advanceStage() — entry point returning a structured TransitionResult
  *   4. Audit logging on every attempt (success or failure)
+ *   5. Soft Governance Mode — warnings allow override with reason + logging
+ *   6. strict_mode flag — when true, warnings become hard blocks
  *
  * Designed for future rule expansion: add a TransitionRule to the registry
  * and the engine picks it up automatically.
@@ -24,7 +26,33 @@ import {
   workspaces,
 } from "./store";
 
+// ─── GOVERNANCE MODE ───────────────────────────────────────
+// When strict_mode = false (default), validation failures are
+// treated as warnings that can be overridden with a reason.
+// When strict_mode = true, warnings become hard blocks.
+
+export let strict_mode = false;
+
+export function setStrictMode(enabled: boolean): void {
+  strict_mode = enabled;
+}
+
+export function getStrictMode(): boolean {
+  return strict_mode;
+}
+
 // ─── TYPES ──────────────────────────────────────────────────
+
+export interface GovernanceOverride {
+  overrideReason: string;
+  userId: string;
+  userName: string;
+  timestamp: string;
+  overriddenRules: string[];
+  fromStage: WorkspaceStage;
+  toStage: WorkspaceStage;
+  workspaceId: string;
+}
 
 export interface TransitionResult {
   success: boolean;
@@ -34,6 +62,30 @@ export interface TransitionResult {
   validationErrors: string[];
   /** Populated on success — ISO timestamp of the transition */
   transitionTimestamp?: string;
+  /** True if the transition succeeded via governance override */
+  governanceOverride?: boolean;
+  /** The override record, if applicable */
+  overrideRecord?: GovernanceOverride;
+}
+
+// ─── OVERRIDE LOG ──────────────────────────────────────────
+// Immutable log of every governance override applied.
+
+export const governanceOverrides: GovernanceOverride[] = [];
+
+/**
+ * Get override records for a specific workspace.
+ */
+export function getWorkspaceOverrides(workspaceId: string): readonly GovernanceOverride[] {
+  return governanceOverrides.filter(o => o.workspaceId === workspaceId);
+}
+
+/**
+ * Get the most recent override for a workspace (if any).
+ */
+export function getLatestOverride(workspaceId: string): GovernanceOverride | null {
+  const overrides = governanceOverrides.filter(o => o.workspaceId === workspaceId);
+  return overrides.length > 0 ? overrides[0] : null;
 }
 
 // ─── STAGE HISTORY ──────────────────────────────────────────
@@ -45,11 +97,13 @@ export interface StageHistoryEntry {
   workspaceId: string;
   fromStage: WorkspaceStage;
   toStage: WorkspaceStage;
-  action: "advanced" | "reverted";
+  action: "advanced" | "reverted" | "advanced_with_override";
   userId: string;
   userName: string;
   timestamp: string;
   reason: string;
+  /** If this was an override, store the override record */
+  overrideRecord?: GovernanceOverride;
 }
 
 export const stageHistory: StageHistoryEntry[] = [];
@@ -226,19 +280,45 @@ const rules: TransitionRule[] = [
 
 /**
  * Run all applicable rules for a given transition.
- * Returns an array of error messages (empty = all passed).
+ * Returns an array of { ruleName, error } pairs (empty = all passed).
  */
-function runValidations(ctx: TransitionContext): string[] {
-  const errors: string[] = [];
+export interface ValidationFailure {
+  ruleName: string;
+  error: string;
+}
+
+function runValidationsDetailed(ctx: TransitionContext): ValidationFailure[] {
+  const failures: ValidationFailure[] = [];
   for (const rule of rules) {
     const fromMatch = rule.from === "*" || rule.from === ctx.fromStage;
     const toMatch = rule.to === "*" || rule.to === ctx.toStage;
     if (fromMatch && toMatch) {
       const err = rule.validate(ctx);
-      if (err) errors.push(err);
+      if (err) failures.push({ ruleName: rule.name, error: err });
     }
   }
-  return errors;
+  return failures;
+}
+
+/**
+ * Run all applicable rules for a given transition.
+ * Returns an array of error messages (empty = all passed).
+ */
+function runValidations(ctx: TransitionContext): string[] {
+  return runValidationsDetailed(ctx).map(f => f.error);
+}
+
+/**
+ * Pre-flight check: returns validation failures with rule names
+ * so the UI can display them before the user commits.
+ */
+export function preflightValidation(workspaceId: string): ValidationFailure[] {
+  const workspace = workspaces.find(w => w.id === workspaceId);
+  if (!workspace) return [];
+  const fromStage = workspace.stage;
+  const toStage = getNextStage(fromStage);
+  if (!toStage) return [];
+  return runValidationsDetailed({ workspace, fromStage, toStage });
 }
 
 /**
@@ -250,29 +330,57 @@ function logTransitionAudit(
   toStage: WorkspaceStage | null,
   success: boolean,
   message: string,
+  override?: GovernanceOverride,
 ): void {
+  const action = override
+    ? "stage_advanced_override"
+    : success
+      ? "stage_advanced"
+      : "stage_advance_blocked";
+
+  const overrideDetails = override
+    ? ` [GOVERNANCE OVERRIDE] Reason: "${override.overrideReason}" | Rules overridden: ${override.overriddenRules.join(", ")} | Approver: ${override.userName}`
+    : "";
+
   const entry: AuditEntry = {
     id: `al-st-${Date.now()}`,
     entityType: "workspace",
     entityId: workspace.id,
-    action: success ? "stage_advanced" : "stage_advance_blocked",
+    action,
     userId: "u1", // current user (Amin Al-Rashid — admin)
     userName: "Amin Al-Rashid",
     timestamp: new Date().toISOString(),
     details: success
-      ? `Stage advanced from '${getStageDisplayName(fromStage)}' to '${getStageDisplayName(toStage!)}'. ${message}`
+      ? `Stage advanced from '${getStageDisplayName(fromStage)}' to '${getStageDisplayName(toStage!)}'. ${message}${overrideDetails}`
       : `Stage advance blocked at '${getStageDisplayName(fromStage)}'. ${message}`,
   };
   auditLog.unshift(entry);
 }
 
 /**
+ * Options for advanceStage — supports governance override.
+ */
+export interface AdvanceStageOptions {
+  /** If provided, allows transition despite validation warnings (soft governance mode) */
+  overrideReason?: string;
+}
+
+/**
  * Primary entry point. Attempts to advance a workspace to the next stage.
  *
+ * In soft governance mode (strict_mode = false):
+ *   - Validation failures are treated as warnings
+ *   - If overrideReason is provided, the transition proceeds with logging
+ *   - If overrideReason is NOT provided, the transition is blocked
+ *
+ * In strict governance mode (strict_mode = true):
+ *   - Validation failures are hard blocks regardless of overrideReason
+ *
  * @param workspaceId - The workspace to advance
+ * @param options - Optional override configuration
  * @returns TransitionResult with success, message, nextStage, and any validation errors
  */
-export function advanceStage(workspaceId: string): TransitionResult {
+export function advanceStage(workspaceId: string, options?: AdvanceStageOptions): TransitionResult {
   const workspace = workspaces.find(w => w.id === workspaceId);
 
   if (!workspace) {
@@ -314,22 +422,98 @@ export function advanceStage(workspaceId: string): TransitionResult {
 
   // Run validations
   const ctx: TransitionContext = { workspace, fromStage, toStage };
-  const errors = runValidations(ctx);
+  const failures = runValidationsDetailed(ctx);
+  const errors = failures.map(f => f.error);
 
-  if (errors.length > 0) {
-    const msg = errors.join(" ");
-    logTransitionAudit(workspace, fromStage, toStage, false, msg);
+  if (failures.length > 0) {
+    // ── STRICT MODE: hard block regardless of override ──
+    if (strict_mode) {
+      const msg = errors.join(" ");
+      logTransitionAudit(workspace, fromStage, toStage, false, msg);
+      return {
+        success: false,
+        message: errors[0],
+        nextStage: toStage,
+        fromStage,
+        validationErrors: errors,
+      };
+    }
+
+    // ── SOFT MODE: allow override if reason provided ──
+    if (!options?.overrideReason) {
+      // No override reason — block (user hasn't provided justification yet)
+      const msg = errors.join(" ");
+      logTransitionAudit(workspace, fromStage, toStage, false, msg);
+      return {
+        success: false,
+        message: errors[0],
+        nextStage: toStage,
+        fromStage,
+        validationErrors: errors,
+      };
+    }
+
+    // Override reason provided — proceed with governance override
+    const now = new Date();
+    const overrideRecord: GovernanceOverride = {
+      overrideReason: options.overrideReason,
+      userId: "u1",
+      userName: "Amin Al-Rashid",
+      timestamp: now.toISOString(),
+      overriddenRules: failures.map(f => f.ruleName),
+      fromStage,
+      toStage,
+      workspaceId,
+    };
+
+    // Store override record
+    governanceOverrides.unshift(overrideRecord);
+
+    // Mutate workspace
+    workspace.stage = toStage;
+    workspace.daysInStage = 0;
+    workspace.updatedAt = now.toISOString().slice(0, 10);
+
+    const successMsg = `Stage advanced from ${getStageDisplayName(fromStage)} to ${getStageDisplayName(toStage)} (governance override).`;
+    logTransitionAudit(workspace, fromStage, toStage, true, successMsg, overrideRecord);
+
+    // Record in stage history
+    stageHistory.unshift({
+      id: `sh-${Date.now()}`,
+      workspaceId: workspace.id,
+      fromStage,
+      toStage,
+      action: "advanced_with_override",
+      userId: "u1",
+      userName: "Amin Al-Rashid",
+      timestamp: now.toISOString(),
+      reason: successMsg,
+      overrideRecord,
+    });
+
+    // Store undo record
+    undoRecords.set(workspace.id, {
+      workspaceId: workspace.id,
+      fromStage,
+      toStage,
+      timestamp: now.getTime(),
+      userId: "u1",
+      userName: "Amin Al-Rashid",
+    });
+
     return {
-      success: false,
-      message: errors[0], // primary error for display
+      success: true,
+      message: successMsg,
       nextStage: toStage,
       fromStage,
-      validationErrors: errors,
+      validationErrors: errors, // still report the warnings that were overridden
+      transitionTimestamp: now.toISOString(),
+      governanceOverride: true,
+      overrideRecord,
     };
   }
 
-  // ── Transition succeeds ──
-  // Mutate workspace in-place (mock store — no DB)
+  // ── Transition succeeds (no validation issues) ──
   workspace.stage = toStage;
   workspace.daysInStage = 0;
   workspace.updatedAt = new Date().toISOString().slice(0, 10);
@@ -368,6 +552,7 @@ export function advanceStage(workspaceId: string): TransitionResult {
     fromStage,
     validationErrors: [],
     transitionTimestamp: now.toISOString(),
+    governanceOverride: false,
   };
 }
 
