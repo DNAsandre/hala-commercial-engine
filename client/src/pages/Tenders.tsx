@@ -29,6 +29,10 @@ import {
   ShieldAlert,
   History,
   X,
+  Upload,
+  FolderOpen,
+  Archive,
+  Eye,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -62,6 +66,10 @@ import {
   type WorkspaceSuggestion,
 } from "@/lib/tender-engine";
 import { useLocation } from "wouter";
+import {
+  getDocumentsByTender, createDocument, getFileTypeColor, getCategoryIcon,
+  DOCUMENT_CATEGORIES, type DocumentCategory, type DocumentStatus, type UnifiedDocument,
+} from "@/lib/document-vault";
 
 // ─── STATUS FLOW DISPLAY ───────────────────────────────────
 
@@ -603,6 +611,7 @@ export default function Tenders() {
             <Tabs defaultValue="team">
               <TabsList>
                 <TabsTrigger value="team">Team</TabsTrigger>
+                <TabsTrigger value="documents">Documents</TabsTrigger>
                 <TabsTrigger value="audit">Audit Trail</TabsTrigger>
                 <TabsTrigger value="notes">Notes</TabsTrigger>
               </TabsList>
@@ -630,6 +639,42 @@ export default function Tenders() {
                     </div>
                   </CardContent>
                 </Card>
+              </TabsContent>
+
+              <TabsContent value="documents">
+                {(() => {
+                  const tenderDocs = getDocumentsByTender(selectedTender.id);
+                  return (
+                    <Card className="border border-border shadow-none">
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between mb-4">
+                          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                            <FolderOpen className="w-3.5 h-3.5" /> Tender Documents ({tenderDocs.length})
+                          </h4>
+                        </div>
+                        {tenderDocs.length > 0 ? (
+                          <div className="space-y-2">
+                            {tenderDocs.map(doc => (
+                              <div key={doc.id} className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
+                                <Badge variant="outline" className={`text-[9px] shrink-0 ${getFileTypeColor(doc.fileType)}`}>{doc.fileType}</Badge>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium truncate">{doc.name}</p>
+                                  <p className="text-xs text-muted-foreground truncate">{doc.fileName} · v{doc.currentVersion} · {doc.uploadedBy} · {doc.uploadDate}</p>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <Badge variant="outline" className="text-[9px]">{getCategoryIcon(doc.category)} {doc.category}</Badge>
+                                  <Badge variant={doc.status === "Final" ? "default" : "secondary"} className="text-[9px]">{doc.status}</Badge>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground text-center py-6">No documents linked to this tender. Upload documents from the Customer Vault.</p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })()}
               </TabsContent>
 
               <TabsContent value="audit">

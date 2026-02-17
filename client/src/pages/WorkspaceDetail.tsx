@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, Link } from "wouter";
-import { ArrowLeft, FileText, ShieldCheck, FileCheck, Clock, ChevronRight, AlertTriangle, CheckCircle2, XCircle, Undo2, Timer, ArrowRightLeft, ShieldAlert, ShieldOff, Info } from "lucide-react";
+import { ArrowLeft, FileText, ShieldCheck, FileCheck, Clock, ChevronRight, AlertTriangle, CheckCircle2, XCircle, Undo2, Timer, ArrowRightLeft, ShieldAlert, ShieldOff, Info, FolderOpen } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,10 @@ import {
   type ValidationFailure,
 } from "@/lib/stage-transition";
 import { toast } from "sonner";
+import {
+  getDocumentsByWorkspace, getFileTypeColor, getCategoryIcon,
+  type UnifiedDocument,
+} from "@/lib/document-vault";
 
 export default function WorkspaceDetail() {
   const { id } = useParams<{ id: string }>();
@@ -458,6 +462,7 @@ export default function WorkspaceDetail() {
             <TabsTrigger value="quotes">Quotes ({wsQuotes.length})</TabsTrigger>
             <TabsTrigger value="proposals">Proposals ({wsProposals.length})</TabsTrigger>
             <TabsTrigger value="approvals">Approvals</TabsTrigger>
+            <TabsTrigger value="documents">Documents</TabsTrigger>
             <TabsTrigger value="audit">Audit Trail</TabsTrigger>
           </TabsList>
 
@@ -529,6 +534,36 @@ export default function WorkspaceDetail() {
                 </div>
               </div>
             ))}</div> : <Card className="border border-border shadow-none"><CardContent className="py-12 text-center text-sm text-muted-foreground">No approval records yet</CardContent></Card>}
+          </TabsContent>
+
+          <TabsContent value="documents">
+            {(() => {
+              const wsDocs = getDocumentsByWorkspace(ws.id);
+              return wsDocs.length > 0 ? (
+                <div className="space-y-2">
+                  {wsDocs.map(doc => (
+                    <div key={doc.id} className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
+                      <Badge variant="outline" className={`text-[9px] shrink-0 ${getFileTypeColor(doc.fileType)}`}>{doc.fileType}</Badge>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{doc.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">{doc.fileName} · v{doc.currentVersion} · {doc.uploadedBy} · {doc.uploadDate}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Badge variant="outline" className="text-[9px]">{getCategoryIcon(doc.category)} {doc.category}</Badge>
+                        <Badge variant={doc.status === "Final" ? "default" : "secondary"} className="text-[9px]">{doc.status}</Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Card className="border border-border shadow-none">
+                  <CardContent className="py-12 text-center text-sm text-muted-foreground">
+                    <FolderOpen className="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />
+                    No documents linked to this workspace. Upload documents from the Customer Vault.
+                  </CardContent>
+                </Card>
+              );
+            })()}
           </TabsContent>
 
           <TabsContent value="audit">
