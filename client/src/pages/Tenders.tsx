@@ -284,6 +284,7 @@ export default function Tenders() {
   // Document viewer state
   const [viewerDoc, setViewerDoc] = useState<UnifiedDocument | null>(null);
   const [showUpload, setShowUpload] = useState(false);
+  const [showDocArchived, setShowDocArchived] = useState(false);
 
   // Initialize mock files
   useState(() => { initializeMockFiles(); });
@@ -652,7 +653,7 @@ export default function Tenders() {
 
               <TabsContent value="documents">
                 {(() => {
-                  const tenderDocs = getDocumentsByTender(selectedTender.id);
+                  const tenderDocs = getDocumentsByTender(selectedTender.id, showDocArchived);
                   return (
                     <Card className="border border-border shadow-none">
                       <CardContent className="p-4">
@@ -660,9 +661,14 @@ export default function Tenders() {
                           <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                             <FolderOpen className="w-3.5 h-3.5" /> Tender Documents ({tenderDocs.length})
                           </h4>
+                          <div className="flex items-center gap-2">
+                          <Button size="sm" variant={showDocArchived ? "default" : "outline"} className="gap-1.5 text-xs" onClick={() => setShowDocArchived(!showDocArchived)}>
+                            {showDocArchived ? "Showing Archived" : "Show Archived"}
+                          </Button>
                           <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => setShowUpload(true)}>
                             <Upload className="w-3 h-3" /> Upload
                           </Button>
+                          </div>
                         </div>
                         {tenderDocs.length > 0 ? (
                           <div className="space-y-2">
@@ -805,7 +811,7 @@ export default function Tenders() {
       )}
 
       {/* Document Viewer */}
-      <DocumentViewer document={viewerDoc} open={!!viewerDoc} onClose={() => setViewerDoc(null)} />
+      <DocumentViewer document={viewerDoc} open={!!viewerDoc} onClose={() => setViewerDoc(null)} onDocumentChanged={() => setTick(t => t + 1)} />
 
       {/* Upload Dialog */}
       {selectedTender && (

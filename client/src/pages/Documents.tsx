@@ -2,24 +2,25 @@
  * Document Engine — PDF Compiler, Versioning, CRM Export
  * Swiss Precision Instrument Design
  * Generates Hala-branded PDFs for all document types
+ *
+ * Sprint 6 Fix: All previews open in-app modal, never new tab/print dialog.
  */
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   FileText,
   Download,
   Plus,
   Eye,
   Send,
-  Printer,
   FileCheck,
   Calculator,
   Users,
   ClipboardList,
-  ChevronRight,
   CheckCircle,
   Clock,
   AlertTriangle,
+  X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -45,7 +46,6 @@ import {
   customers,
   quotes,
   proposals,
-  formatSAR,
 } from "@/lib/store";
 import {
   generateQuotePDF,
@@ -53,7 +53,6 @@ import {
   generatePnLPDF,
   generateECRScorecardPDF,
   generateSLAPDF,
-  openPDFPreview,
 } from "@/lib/pdf-compiler";
 import type { PDFDocumentType } from "@/lib/pdf-compiler";
 
@@ -110,6 +109,33 @@ export default function Documents() {
   const [selectedCustomer, setSelectedCustomer] = useState("");
   const [docs] = useState(mockGeneratedDocs);
 
+  // In-app PDF preview state (replaces window.open + print)
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [previewTitle, setPreviewTitle] = useState("");
+
+  /** Open PDF in an in-app modal instead of a new browser tab */
+  const openInAppPreview = useCallback((html: string, title: string) => {
+    setPreviewHtml(html);
+    setPreviewTitle(title);
+    setPreviewOpen(true);
+  }, []);
+
+  /** Download the generated HTML as a file */
+  const handleDownloadHtml = useCallback(() => {
+    if (!previewHtml) return;
+    const blob = new Blob([previewHtml], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${previewTitle.replace(/[^a-zA-Z0-9]/g, "_")}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success("Document downloaded");
+  }, [previewHtml, previewTitle]);
+
   const handleGenerate = () => {
     if (selectedType === "ecr_scorecard") {
       const customer = customers.find(c => c.id === selectedCustomer);
@@ -118,7 +144,7 @@ export default function Documents() {
         return;
       }
       const html = generateECRScorecardPDF(customer);
-      openPDFPreview(html, `ECR Scorecard — ${customer.name}`);
+      openInAppPreview(html, `ECR Scorecard — ${customer.name}`);
       toast.success("ECR Scorecard generated", { description: `${customer.name} — Grade ${customer.grade}` });
     } else {
       const ws = workspaces.find(w => w.id === selectedWorkspace);
@@ -139,7 +165,7 @@ export default function Documents() {
           return;
         }
         const html = generateQuotePDF(quote, ws, customer);
-        openPDFPreview(html, `Quote — ${customer.name}`);
+        openInAppPreview(html, `Quote — ${customer.name}`);
         toast.success("Quote PDF generated", { description: `${customer.name} — v${quote.version}` });
       } else if (selectedType === "proposal") {
         const proposal = proposals.find(p => p.workspaceId === ws.id);
@@ -148,7 +174,7 @@ export default function Documents() {
           return;
         }
         const html = generateProposalPDF(proposal, ws, customer);
-        openPDFPreview(html, `Proposal — ${customer.name}`);
+        openInAppPreview(html, `Proposal — ${customer.name}`);
         toast.success("Proposal PDF generated", { description: `${customer.name} — v${proposal.version}` });
       } else if (selectedType === "pnl") {
         const quote = quotes.find(q => q.workspaceId === ws.id);
@@ -157,11 +183,11 @@ export default function Documents() {
           return;
         }
         const html = generatePnLPDF(ws, customer, quote);
-        openPDFPreview(html, `P&L Summary — ${customer.name}`);
+        openInAppPreview(html, `P&L Summary — ${customer.name}`);
         toast.success("P&L Summary generated", { description: customer.name });
       } else if (selectedType === "sla") {
         const html = generateSLAPDF(ws, customer);
-        openPDFPreview(html, `SLA — ${customer.name}`);
+        openInAppPreview(html, `SLA — ${customer.name}`);
         toast.success("SLA document generated", { description: customer.name });
       }
     }
@@ -175,12 +201,12 @@ export default function Documents() {
   };
 
   const handlePreview = (doc: GeneratedDoc) => {
-    // Find matching data and generate preview
+    // Generate HTML and open in-app modal (NOT new tab)
     if (doc.type === "ecr_scorecard") {
       const customer = customers.find(c => c.name === doc.customer);
       if (customer) {
         const html = generateECRScorecardPDF(customer);
-        openPDFPreview(html, doc.name);
+        openInAppPreview(html, doc.name);
       }
     } else {
       const ws = workspaces.find(w => w.title === doc.workspace);
@@ -189,20 +215,20 @@ export default function Documents() {
         if (customer) {
           if (doc.type === "quote") {
             const quote = quotes.find(q => q.workspaceId === ws.id);
-            if (quote) openPDFPreview(generateQuotePDF(quote, ws, customer), doc.name);
+            if (quote) openInAppPreview(generateQuotePDF(quote, ws, customer), doc.name);
           } else if (doc.type === "proposal") {
             const proposal = proposals.find(p => p.workspaceId === ws.id);
-            if (proposal) openPDFPreview(generateProposalPDF(proposal, ws, customer), doc.name);
+            if (proposal) openInAppPreview(generateProposalPDF(proposal, ws, customer), doc.name);
           } else if (doc.type === "pnl") {
             const quote = quotes.find(q => q.workspaceId === ws.id);
-            if (quote) openPDFPreview(generatePnLPDF(ws, customer, quote), doc.name);
+            if (quote) openInAppPreview(generatePnLPDF(ws, customer, quote), doc.name);
           } else if (doc.type === "sla") {
-            openPDFPreview(generateSLAPDF(ws, customer), doc.name);
+            openInAppPreview(generateSLAPDF(ws, customer), doc.name);
           }
         }
       }
     }
-    toast.info("Opening PDF preview...");
+    toast.info("Opening document preview...");
   };
 
   const filteredDocs = (type: string) =>
@@ -271,7 +297,8 @@ export default function Documents() {
                     return (
                       <div
                         key={doc.id}
-                        className="flex items-center gap-4 p-4 hover:bg-muted/30 transition-colors group"
+                        className="flex items-center gap-4 p-4 hover:bg-accent/30 transition-colors group cursor-pointer"
+                        onClick={() => handlePreview(doc)}
                       >
                         <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${typeColors[doc.type]}`}>
                           <Icon className="w-5 h-5" />
@@ -309,25 +336,16 @@ export default function Documents() {
                             variant="ghost"
                             size="sm"
                             className="h-8 w-8 p-0"
-                            onClick={() => handlePreview(doc)}
-                            title="Preview PDF"
+                            onClick={(e) => { e.stopPropagation(); handlePreview(doc); }}
+                            title="Preview document"
                           >
                             <Eye className="w-4 h-4" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-8 w-8 p-0"
-                            onClick={() => handlePreview(doc)}
-                            title="Print / Save as PDF"
-                          >
-                            <Printer className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
                             className="h-8 text-xs px-2"
-                            onClick={() => handleExportToCRM(doc)}
+                            onClick={(e) => { e.stopPropagation(); handleExportToCRM(doc); }}
                             title="Export to Zoho CRM"
                           >
                             <Send className="w-3.5 h-3.5 mr-1" />
@@ -458,9 +476,44 @@ export default function Documents() {
             </div>
 
             <Button className="w-full" onClick={handleGenerate}>
-              <Printer className="w-4 h-4 mr-1.5" />
-              Generate & Preview PDF
+              <FileText className="w-4 h-4 mr-1.5" />
+              Generate & Preview
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* In-App PDF Preview Modal */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col p-0">
+          <div className="px-6 pt-5 pb-3 border-b border-border/50 flex items-center justify-between flex-shrink-0">
+            <div>
+              <h3 className="text-lg font-serif font-semibold">{previewTitle}</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">Generated PDF preview — in-app viewer</p>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Button size="sm" variant="outline" onClick={handleDownloadHtml} className="gap-1.5">
+                <Download className="h-3.5 w-3.5" />
+                Download
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setPreviewOpen(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-auto bg-muted/30">
+            {previewHtml ? (
+              <iframe
+                srcDoc={previewHtml}
+                className="w-full h-full min-h-[600px] border-0"
+                title={previewTitle}
+                sandbox="allow-same-origin"
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full min-h-[400px]">
+                <p className="text-muted-foreground">No preview available</p>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

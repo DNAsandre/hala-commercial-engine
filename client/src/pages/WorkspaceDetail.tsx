@@ -47,6 +47,7 @@ export default function WorkspaceDetail() {
   // Document viewer state
   const [viewerDoc, setViewerDoc] = useState<UnifiedDocument | null>(null);
   const [showDocUpload, setShowDocUpload] = useState(false);
+  const [showDocArchived, setShowDocArchived] = useState(false);
 
   // Initialize mock files
   useState(() => { initializeMockFiles(); });
@@ -547,16 +548,21 @@ export default function WorkspaceDetail() {
 
           <TabsContent value="documents">
             {(() => {
-              const wsDocs = getDocumentsByWorkspace(ws.id);
+              const wsDocs = getDocumentsByWorkspace(ws.id, showDocArchived);
               return (
                 <>
                   <div className="flex items-center justify-between mb-4">
                     <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                       <FolderOpen className="w-3.5 h-3.5" /> Workspace Documents ({wsDocs.length})
                     </h4>
+                    <div className="flex items-center gap-2">
+                    <Button size="sm" variant={showDocArchived ? "default" : "outline"} className="gap-1.5 text-xs" onClick={() => setShowDocArchived(!showDocArchived)}>
+                      {showDocArchived ? "Showing Archived" : "Show Archived"}
+                    </Button>
                     <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => setShowDocUpload(true)}>
                       <Upload className="w-3 h-3" /> Upload
                     </Button>
+                    </div>
                   </div>
                   {wsDocs.length > 0 ? (
                     <div className="space-y-2">
@@ -597,7 +603,7 @@ export default function WorkspaceDetail() {
                       </CardContent>
                     </Card>
                   )}
-                  <DocumentViewer document={viewerDoc} open={!!viewerDoc} onClose={() => setViewerDoc(null)} />
+                  <DocumentViewer document={viewerDoc} open={!!viewerDoc} onClose={() => setViewerDoc(null)} onDocumentChanged={() => forceUpdate(n => n + 1)} />
                   <UploadDialog
                     open={showDocUpload}
                     onClose={() => setShowDocUpload(false)}

@@ -718,12 +718,12 @@ export function getAllDocumentsByCustomer(customerId: string): UnifiedDocument[]
   return documentVault.filter(d => d.customerId === customerId);
 }
 
-export function getDocumentsByWorkspace(workspaceId: string): UnifiedDocument[] {
-  return documentVault.filter(d => d.workspaceId === workspaceId && d.status !== "Archived");
+export function getDocumentsByWorkspace(workspaceId: string, includeArchived = false): UnifiedDocument[] {
+  return documentVault.filter(d => d.workspaceId === workspaceId && (includeArchived || d.status !== "Archived"));
 }
 
-export function getDocumentsByTender(tenderId: string): UnifiedDocument[] {
-  return documentVault.filter(d => d.tenderId === tenderId && d.status !== "Archived");
+export function getDocumentsByTender(tenderId: string, includeArchived = false): UnifiedDocument[] {
+  return documentVault.filter(d => d.tenderId === tenderId && (includeArchived || d.status !== "Archived"));
 }
 
 export function getDocumentsByCategory(customerId: string, category: DocumentCategory): UnifiedDocument[] {
@@ -1005,6 +1005,41 @@ export function archiveDocument(docId: string): UnifiedDocument | null {
   doc.status = "Archived";
   doc.updatedAt = new Date().toISOString().slice(0, 10);
   logDocumentAction(doc, "document_archived", `Document "${doc.name}" archived by admin.`);
+  return doc;
+}
+
+/**
+ * Soft delete: sets status to "Archived", keeps in vault, logs audit.
+ * Document remains searchable under "Show Archived".
+ */
+export function softDeleteDocument(docId: string): UnifiedDocument | null {
+  const doc = documentVault.find(d => d.id === docId);
+  if (!doc) return null;
+  const previousStatus = doc.status;
+  doc.status = "Archived";
+  doc.updatedAt = new Date().toISOString().slice(0, 10);
+  const linkedInfo = [doc.customerName, doc.workspaceName, doc.tenderName].filter(Boolean).join(", ");
+  logDocumentAction(
+    doc,
+    "document_deleted",
+    `Document "${doc.name}" soft-deleted (was ${previousStatus}). Linked: ${linkedInfo}. File retained in audit history.`
+  );
+  return doc;
+}
+
+/**
+ * Restore: sets status back to "Draft" (safe default), logs audit.
+ */
+export function restoreDocument(docId: string): UnifiedDocument | null {
+  const doc = documentVault.find(d => d.id === docId);
+  if (!doc) return null;
+  doc.status = "Draft";
+  doc.updatedAt = new Date().toISOString().slice(0, 10);
+  logDocumentAction(
+    doc,
+    "document_restored",
+    `Document "${doc.name}" restored from archive by user. Status set to Draft.`
+  );
   return doc;
 }
 

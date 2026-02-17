@@ -510,7 +510,7 @@ export default function CustomerDetail() {
             )}
 
             {/* Document Viewer Modal */}
-            <DocumentViewer document={viewerDoc} open={!!viewerDoc} onClose={() => setViewerDoc(null)} />
+            <DocumentViewer document={viewerDoc} open={!!viewerDoc} onClose={() => setViewerDoc(null)} onDocumentChanged={() => forceUpdate(n => n + 1)} />
           </TabsContent>
 
           {/* ═══ Opportunities Tab ═══ */}
