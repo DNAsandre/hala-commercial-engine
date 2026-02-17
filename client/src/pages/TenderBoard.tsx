@@ -1,29 +1,32 @@
 /*
- * Tender Board — Kanban View of Workspaces by Stage
+ * Tender Board — Kanban View of Tenders by Status
  * Swiss Precision Instrument Design
  *
- * Reuses the EXACT same stage transition engine, governance checks,
- * and audit logging from stage-transition.ts. No duplicated business logic.
+ * Uses the SAME centralized tender transition handler from tender-engine.ts.
+ * No duplicate logic paths. All governance checks, audit logging, and undo
+ * flow through advanceTenderStatus().
  *
  * Drag-and-drop powered by native HTML5 drag events.
  */
 
-import { useState, useCallback, useRef, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   Kanban,
   GripVertical,
   AlertTriangle,
   ShieldAlert,
-  ChevronRight,
-  Filter,
   X,
-  Building2,
   User,
   MapPin,
   DollarSign,
   Clock,
   ArrowRight,
   ExternalLink,
+  Target,
+  Undo2,
+  Link2,
+  FileText,
+  CalendarDays,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -40,72 +43,83 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
+import { formatSAR, workspaces } from "@/lib/store";
 import {
-  type Workspace,
-  type WorkspaceStage,
-  workspaces,
-  formatSAR,
-  getStageLabel,
-  getStageColor,
-} from "@/lib/store";
-import {
-  STAGE_ORDER,
-  getStageDisplayName,
-  getStageIndex,
-  preflightToStage,
-  advanceToStage,
-  advanceStage,
-  getStrictMode,
-  type ValidationFailure,
-  type TransitionResult,
-  type GovernanceOverride,
-} from "@/lib/stage-transition";
+  tenders,
+  type Tender,
+  type TenderStatus,
+  TENDER_KANBAN_COLUMNS,
+  getTenderStatusDisplayName,
+  getTenderStatusColor,
+  getTenderStatusIndex,
+  advanceTenderStatus,
+  preflightTenderValidation,
+  checkTenderUndoEligibility,
+  revertTenderStatus,
+  getTenderMetrics,
+  type TenderValidationFailure,
+  type WorkspaceSuggestion,
+} from "@/lib/tender-engine";
 
 // ─── CONSTANTS ─────────────────────────────────────────────
 
-const GP_THRESHOLD = 22; // Same threshold used in workspace margin warning
+const GP_THRESHOLD = 22;
 
-const STAGE_COLUMN_COLORS: Record<string, string> = {
-  qualified: "border-t-blue-400",
-  solution_design: "border-t-indigo-400",
-  quoting: "border-t-violet-400",
-  proposal_active: "border-t-purple-400",
-  negotiation: "border-t-amber-400",
-  commercial_approved: "border-t-emerald-400",
-  sla_drafting: "border-t-teal-400",
-  contract_ready: "border-t-cyan-400",
+const STATUS_COLUMN_COLORS: Record<TenderStatus, string> = {
+  draft: "border-t-slate-400",
+  in_preparation: "border-t-blue-400",
+  submitted: "border-t-violet-400",
+  under_evaluation: "border-t-amber-400",
+  won: "border-t-emerald-400",
+  lost: "border-t-red-400",
+  withdrawn: "border-t-gray-400",
 };
 
-const STAGE_HEADER_BG: Record<string, string> = {
-  qualified: "bg-blue-50",
-  solution_design: "bg-indigo-50",
-  quoting: "bg-violet-50",
-  proposal_active: "bg-purple-50",
-  negotiation: "bg-amber-50",
-  commercial_approved: "bg-emerald-50",
-  sla_drafting: "bg-teal-50",
-  contract_ready: "bg-cyan-50",
+const STATUS_HEADER_BG: Record<TenderStatus, string> = {
+  draft: "bg-slate-50 dark:bg-slate-900/30",
+  in_preparation: "bg-blue-50 dark:bg-blue-900/30",
+  submitted: "bg-violet-50 dark:bg-violet-900/30",
+  under_evaluation: "bg-amber-50 dark:bg-amber-900/30",
+  won: "bg-emerald-50 dark:bg-emerald-900/30",
+  lost: "bg-red-50 dark:bg-red-900/30",
+  withdrawn: "bg-gray-50 dark:bg-gray-900/30",
 };
+
+// Valid forward transitions map
+function isValidForwardMove(from: TenderStatus, to: TenderStatus): boolean {
+  // Terminal statuses cannot move
+  if (from === "won" || from === "lost" || from === "withdrawn") return false;
+  // Won/Lost can be reached from under_evaluation (or with override from submitted)
+  if (to === "won" || to === "lost") {
+    return from === "under_evaluation" || from === "submitted";
+  }
+  const fromIdx = getTenderStatusIndex(from);
+  const toIdx = getTenderStatusIndex(to);
+  // Only forward, and only to the next status (no skipping in normal flow)
+  return toIdx > fromIdx && toIdx <= fromIdx + 1;
+}
 
 // ─── TYPES ─────────────────────────────────────────────────
 
 interface DragState {
-  workspaceId: string;
-  fromStage: WorkspaceStage;
+  tenderId: string;
+  fromStatus: TenderStatus;
 }
 
 interface ConfirmationModal {
   open: boolean;
-  workspace: Workspace | null;
-  fromStage: WorkspaceStage;
-  toStage: WorkspaceStage;
-  warnings: ValidationFailure[];
+  tender: Tender | null;
+  fromStatus: TenderStatus;
+  toStatus: TenderStatus;
+  warnings: TenderValidationFailure[];
 }
 
 // ─── COMPONENT ─────────────────────────────────────────────
 
 export default function TenderBoard() {
+  const [, navigate] = useLocation();
+
   // Filters
   const [ownerFilter, setOwnerFilter] = useState<string>("all");
   const [regionFilter, setRegionFilter] = useState<string>("all");
@@ -113,63 +127,68 @@ export default function TenderBoard() {
 
   // Drag state
   const [dragState, setDragState] = useState<DragState | null>(null);
-  const [dropTarget, setDropTarget] = useState<WorkspaceStage | null>(null);
+  const [dropTarget, setDropTarget] = useState<TenderStatus | null>(null);
 
   // Confirmation modal
   const [modal, setModal] = useState<ConfirmationModal>({
     open: false,
-    workspace: null,
-    fromStage: "qualified",
-    toStage: "qualified",
+    tender: null,
+    fromStatus: "draft",
+    toStatus: "draft",
     warnings: [],
   });
   const [overrideReason, setOverrideReason] = useState("");
   const [confirmText, setConfirmText] = useState("");
 
+  // Undo banner
+  const [undoBanner, setUndoBanner] = useState<{ tenderId: string; title: string } | null>(null);
+
+  // Workspace suggestion
+  const [wsSuggestion, setWsSuggestion] = useState<WorkspaceSuggestion | null>(null);
+
   // Refresh trigger
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Get unique owners and regions from workspaces
+  // Unique owners and regions
   const owners = useMemo(() => {
-    const set = new Set(workspaces.map(w => w.owner));
-    return Array.from(set).sort();
+    return Array.from(new Set(tenders.map(t => t.assignedOwner))).sort();
   }, []);
 
   const regions = useMemo(() => {
-    const set = new Set(workspaces.map(w => w.region));
-    return Array.from(set).sort();
+    return Array.from(new Set(tenders.map(t => t.region))).sort();
   }, []);
 
-  // Filter workspaces
-  const filteredWorkspaces = useMemo(() => {
-    return workspaces.filter(w => {
-      // Only show workspaces in the controlled stage order
-      if (getStageIndex(w.stage) === -1) return false;
-      if (ownerFilter !== "all" && w.owner !== ownerFilter) return false;
-      if (regionFilter !== "all" && w.region !== regionFilter) return false;
-      if (riskOnly && w.gpPercent >= GP_THRESHOLD) return false;
+  // Filter tenders
+  const filteredTenders = useMemo(() => {
+    return tenders.filter(t => {
+      if (t.status === "withdrawn") return false;
+      if (ownerFilter !== "all" && t.assignedOwner !== ownerFilter) return false;
+      if (regionFilter !== "all" && t.region !== regionFilter) return false;
+      if (riskOnly && t.targetGpPercent >= GP_THRESHOLD) return false;
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownerFilter, regionFilter, riskOnly, refreshKey]);
 
-  // Group workspaces by stage
+  // Group tenders by status
   const columns = useMemo(() => {
-    const map = new Map<WorkspaceStage, Workspace[]>();
-    for (const stage of STAGE_ORDER) {
-      map.set(stage, []);
+    const map = new Map<TenderStatus, Tender[]>();
+    for (const status of TENDER_KANBAN_COLUMNS) {
+      map.set(status, []);
     }
-    for (const ws of filteredWorkspaces) {
-      const col = map.get(ws.stage);
-      if (col) col.push(ws);
+    for (const t of filteredTenders) {
+      const col = map.get(t.status);
+      if (col) col.push(t);
     }
     return map;
-  }, [filteredWorkspaces]);
+  }, [filteredTenders]);
+
+  const metrics = useMemo(() => getTenderMetrics(), [refreshKey, tenders.length]);
 
   // ─── DRAG HANDLERS ─────────────────────────────────────
 
-  const handleDragStart = useCallback((ws: Workspace) => {
-    setDragState({ workspaceId: ws.id, fromStage: ws.stage });
+  const handleDragStart = useCallback((tender: Tender) => {
+    setDragState({ tenderId: tender.id, fromStatus: tender.status });
   }, []);
 
   const handleDragEnd = useCallback(() => {
@@ -178,10 +197,10 @@ export default function TenderBoard() {
   }, []);
 
   const handleDragOver = useCallback(
-    (e: React.DragEvent, stage: WorkspaceStage) => {
+    (e: React.DragEvent, status: TenderStatus) => {
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
-      setDropTarget(stage);
+      setDropTarget(status);
     },
     []
   );
@@ -191,61 +210,46 @@ export default function TenderBoard() {
   }, []);
 
   const handleDrop = useCallback(
-    (e: React.DragEvent, targetStage: WorkspaceStage) => {
+    (e: React.DragEvent, targetStatus: TenderStatus) => {
       e.preventDefault();
       setDropTarget(null);
 
       if (!dragState) return;
-      const { workspaceId, fromStage } = dragState;
+      const { tenderId, fromStatus } = dragState;
       setDragState(null);
 
       // Same column — no-op
-      if (fromStage === targetStage) return;
+      if (fromStatus === targetStatus) return;
 
-      // Backward movement — reject immediately
-      const fromIdx = getStageIndex(fromStage);
-      const toIdx = getStageIndex(targetStage);
-      if (toIdx < fromIdx) {
-        toast.error("Backward stage movement is not permitted.", {
-          description: "Only forward transitions are allowed on the Tender Board.",
-        });
-        return;
-      }
-
-      // Find workspace
-      const workspace = workspaces.find(w => w.id === workspaceId);
-      if (!workspace) return;
+      const tender = tenders.find(t => t.id === tenderId);
+      if (!tender) return;
 
       // Pre-flight validation
-      const warnings = preflightToStage(workspaceId, targetStage);
+      const warnings = preflightTenderValidation(tenderId, targetStatus);
 
-      // If no warnings, check if it's a single-step advance
       if (warnings.length === 0) {
-        // Single step — use advanceStage; multi-step — use advanceToStage
-        const isNextStep = toIdx === fromIdx + 1;
-        const result = isNextStep
-          ? advanceStage(workspaceId)
-          : advanceToStage(workspaceId, targetStage);
-
+        // No warnings — attempt direct transition
+        const result = advanceTenderStatus(tenderId, targetStatus);
         if (result.success) {
-          toast.success("Stage Advanced", {
-            description: result.message,
-          });
+          toast.success("Status Advanced", { description: result.message });
+          setUndoBanner({ tenderId, title: tender.title });
+          setTimeout(() => setUndoBanner(b => b?.tenderId === tenderId ? null : b), 5 * 60 * 1000);
+          if (result.workspaceSuggestion) {
+            setWsSuggestion(result.workspaceSuggestion);
+          }
           setRefreshKey(k => k + 1);
         } else {
-          toast.error("Transition Failed", {
-            description: result.message,
-          });
+          toast.error("Transition Failed", { description: result.message });
         }
         return;
       }
 
-      // Warnings exist — open confirmation modal
+      // Warnings exist — open confirmation modal (no silent transitions)
       setModal({
         open: true,
-        workspace,
-        fromStage,
-        toStage: targetStage,
+        tender,
+        fromStatus,
+        toStatus: targetStatus,
         warnings,
       });
       setOverrideReason("");
@@ -257,63 +261,75 @@ export default function TenderBoard() {
   // ─── MODAL HANDLERS ───────────────────────────────────
 
   const handleConfirmMove = useCallback(() => {
-    if (!modal.workspace) return;
+    if (!modal.tender) return;
 
-    const targetStageName = getStageDisplayName(modal.toStage);
-    if (confirmText !== targetStageName) {
-      toast.error("Type the destination stage name exactly to confirm.");
+    const targetName = getTenderStatusDisplayName(modal.toStatus);
+    if (confirmText !== targetName) {
+      toast.error("Type the destination status name exactly to confirm.");
       return;
     }
 
-    const isNextStep =
-      getStageIndex(modal.toStage) === getStageIndex(modal.fromStage) + 1;
-
-    const result = isNextStep
-      ? advanceStage(modal.workspace.id, { overrideReason: overrideReason || undefined })
-      : advanceToStage(modal.workspace.id, modal.toStage, {
-          overrideReason: overrideReason || undefined,
-        });
+    const result = advanceTenderStatus(modal.tender.id, modal.toStatus, {
+      overrideReason: overrideReason || undefined,
+    });
 
     if (result.success) {
-      toast.success("Stage Advanced (Governance Override)", {
-        description: result.message,
-      });
-      setModal({ open: false, workspace: null, fromStage: "qualified", toStage: "qualified", warnings: [] });
+      toast.success("Status Advanced (Governance Override)", { description: result.message });
+      setModal({ open: false, tender: null, fromStatus: "draft", toStatus: "draft", warnings: [] });
+      setUndoBanner({ tenderId: modal.tender.id, title: modal.tender.title });
+      setTimeout(() => setUndoBanner(b => b?.tenderId === modal.tender?.id ? null : b), 5 * 60 * 1000);
+      if (result.workspaceSuggestion) {
+        setWsSuggestion(result.workspaceSuggestion);
+      }
       setRefreshKey(k => k + 1);
     } else {
-      toast.error("Transition Failed", {
-        description: result.message,
-      });
+      toast.error("Transition Failed", { description: result.message });
     }
   }, [modal, confirmText, overrideReason]);
 
   const handleCancelModal = useCallback(() => {
-    setModal({ open: false, workspace: null, fromStage: "qualified", toStage: "qualified", warnings: [] });
+    setModal({ open: false, tender: null, fromStatus: "draft", toStatus: "draft", warnings: [] });
     setOverrideReason("");
     setConfirmText("");
   }, []);
 
+  const handleUndo = useCallback(() => {
+    if (!undoBanner) return;
+    const eligibility = checkTenderUndoEligibility(undoBanner.tenderId);
+    if (eligibility.requiresReason) {
+      toast.info("Undo window expired. Use the Tender detail page to revert with a reason.");
+      return;
+    }
+    const result = revertTenderStatus(undoBanner.tenderId);
+    if (result.success) {
+      toast.success("Transition Undone", { description: result.message });
+      setUndoBanner(null);
+      setRefreshKey(k => k + 1);
+    } else {
+      toast.error("Undo Failed", { description: result.message });
+    }
+  }, [undoBanner]);
+
   // ─── STATS ─────────────────────────────────────────────
 
-  const totalValue = filteredWorkspaces.reduce((s, w) => s + w.estimatedValue, 0);
-  const riskCount = filteredWorkspaces.filter(w => w.gpPercent < GP_THRESHOLD).length;
+  const totalValue = filteredTenders.reduce((s, t) => s + t.estimatedValue, 0);
+  const riskCount = filteredTenders.filter(t => t.targetGpPercent < GP_THRESHOLD).length;
   const activeFilters = (ownerFilter !== "all" ? 1 : 0) + (regionFilter !== "all" ? 1 : 0) + (riskOnly ? 1 : 0);
 
   return (
     <div className="p-4 h-[calc(100vh-4rem)] flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 shrink-0">
+      <div className="flex items-center justify-between mb-3 shrink-0">
         <div>
           <div className="flex items-center gap-2">
             <Kanban className="w-5 h-5 text-[var(--color-hala-navy)]" />
             <h1 className="text-xl font-serif font-bold">Tender Board</h1>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {filteredWorkspaces.length} workspaces · {formatSAR(totalValue)} pipeline
+            {filteredTenders.length} tenders · {formatSAR(totalValue)} pipeline
+            · Win rate: {metrics.winRate.toFixed(0)}%
             {riskCount > 0 && (
-              <span className="text-[var(--color-rag-amber)] ml-2">
-                · {riskCount} at risk
-              </span>
+              <span className="text-[var(--color-rag-amber)] ml-2">· {riskCount} low GP</span>
             )}
           </p>
         </div>
@@ -354,7 +370,7 @@ export default function TenderBoard() {
               className="scale-75"
             />
             <Label htmlFor="risk-filter" className="text-xs text-muted-foreground whitespace-nowrap">
-              Risk only
+              Low GP only
             </Label>
           </div>
 
@@ -376,45 +392,84 @@ export default function TenderBoard() {
         </div>
       </div>
 
+      {/* Undo Banner */}
+      {undoBanner && (
+        <div className="mb-3 p-2.5 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2 text-xs">
+            <Undo2 className="w-3.5 h-3.5 text-blue-600" />
+            <span className="text-blue-800 dark:text-blue-200">
+              "{undoBanner.title}" moved. Undo available for 5 minutes.
+            </span>
+          </div>
+          <Button variant="outline" size="sm" onClick={handleUndo} className="text-blue-700 border-blue-300 h-7 text-xs">
+            <Undo2 className="w-3 h-3 mr-1" /> Undo
+          </Button>
+        </div>
+      )}
+
+      {/* Workspace Suggestion Banner */}
+      {wsSuggestion && (
+        <div className="mb-3 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2 text-xs">
+            <Link2 className="w-3.5 h-3.5 text-amber-600" />
+            <span className="text-amber-800 dark:text-amber-200">{wsSuggestion.message}</span>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-amber-700 border-amber-300 h-7 text-xs"
+              onClick={() => {
+                navigate(`/workspaces/${wsSuggestion.workspaceId}`);
+                setWsSuggestion(null);
+              }}
+            >
+              Go to Workspace
+            </Button>
+            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setWsSuggestion(null)}>
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Kanban Board */}
       <div className="flex-1 overflow-x-auto overflow-y-hidden">
         <div className="flex gap-3 h-full min-w-max pb-2">
-          {STAGE_ORDER.map(stage => {
-            const cards = columns.get(stage) ?? [];
-            const isDropping = dropTarget === stage && dragState?.fromStage !== stage;
-            const stageIdx = getStageIndex(stage);
-            const dragFromIdx = dragState ? getStageIndex(dragState.fromStage) : -1;
-            const isValidTarget = dragState && stageIdx > dragFromIdx;
-            const isInvalidTarget = dragState && stageIdx <= dragFromIdx && stage !== dragState.fromStage;
-            const stageValue = cards.reduce((s, w) => s + w.estimatedValue, 0);
+          {TENDER_KANBAN_COLUMNS.map(status => {
+            const cards = columns.get(status) ?? [];
+            const isDropping = dropTarget === status && dragState?.fromStatus !== status;
+            const canDrop = dragState ? isValidForwardMove(dragState.fromStatus, status) || status === "won" || status === "lost" : false;
+            const isInvalidTarget = dragState && !canDrop && status !== dragState.fromStatus;
+            const colValue = cards.reduce((s, t) => s + t.estimatedValue, 0);
 
             return (
               <div
-                key={stage}
+                key={status}
                 className={`
-                  w-[220px] shrink-0 rounded-lg border-t-[3px] flex flex-col
+                  w-[230px] shrink-0 rounded-lg border-t-[3px] flex flex-col
                   transition-all duration-150
-                  ${STAGE_COLUMN_COLORS[stage] ?? "border-t-gray-300"}
-                  ${isDropping && isValidTarget ? "bg-primary/5 ring-2 ring-primary/20" : "bg-muted/30"}
+                  ${STATUS_COLUMN_COLORS[status]}
+                  ${isDropping && canDrop ? "bg-primary/5 ring-2 ring-primary/20" : "bg-muted/30"}
                   ${isInvalidTarget ? "opacity-40" : ""}
                 `}
-                onDragOver={(e) => isValidTarget ? handleDragOver(e, stage) : e.preventDefault()}
+                onDragOver={(e) => canDrop ? handleDragOver(e, status) : e.preventDefault()}
                 onDragLeave={handleDragLeave}
-                onDrop={(e) => isValidTarget ? handleDrop(e, stage) : undefined}
+                onDrop={(e) => canDrop ? handleDrop(e, status) : undefined}
               >
                 {/* Column Header */}
-                <div className={`px-3 py-2.5 rounded-t-lg ${STAGE_HEADER_BG[stage] ?? "bg-muted/40"}`}>
+                <div className={`px-3 py-2.5 rounded-t-lg ${STATUS_HEADER_BG[status]}`}>
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-semibold tracking-wide uppercase">
-                      {getStageDisplayName(stage)}
+                      {getTenderStatusDisplayName(status)}
                     </span>
                     <Badge variant="secondary" className="text-[10px] h-5 px-1.5 font-mono">
                       {cards.length}
                     </Badge>
                   </div>
-                  {stageValue > 0 && (
+                  {colValue > 0 && (
                     <p className="text-[10px] text-muted-foreground font-mono mt-0.5">
-                      {formatSAR(stageValue)}
+                      {formatSAR(colValue)}
                     </p>
                   )}
                 </div>
@@ -423,22 +478,22 @@ export default function TenderBoard() {
                 <div className="flex-1 overflow-y-auto px-2 py-2 space-y-2">
                   {cards.length === 0 && (
                     <div className="text-center py-6 text-[10px] text-muted-foreground/50">
-                      No workspaces
+                      No tenders
                     </div>
                   )}
-                  {cards.map(ws => (
-                    <WorkspaceCard
-                      key={ws.id}
-                      workspace={ws}
+                  {cards.map(tender => (
+                    <TenderCard
+                      key={tender.id}
+                      tender={tender}
                       onDragStart={handleDragStart}
                       onDragEnd={handleDragEnd}
-                      isDragging={dragState?.workspaceId === ws.id}
+                      isDragging={dragState?.tenderId === tender.id}
                     />
                   ))}
                 </div>
 
                 {/* Drop indicator */}
-                {isDropping && isValidTarget && (
+                {isDropping && canDrop && (
                   <div className="mx-2 mb-2 h-8 rounded border-2 border-dashed border-primary/30 flex items-center justify-center">
                     <span className="text-[10px] text-primary/50">Drop here</span>
                   </div>
@@ -450,8 +505,8 @@ export default function TenderBoard() {
       </div>
 
       {/* Governance Confirmation Modal */}
-      {modal.open && modal.workspace && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      {modal.open && modal.tender && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-card rounded-lg shadow-xl border border-border w-[520px] max-h-[80vh] overflow-y-auto">
             {/* Modal Header */}
             <div className="px-5 py-4 border-b border-border">
@@ -462,10 +517,10 @@ export default function TenderBoard() {
                 </span>
               </div>
               <h3 className="text-base font-serif font-bold">
-                Confirm Stage Transition
+                Confirm Tender Transition
               </h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {modal.workspace.customerName} — {modal.workspace.title}
+                {modal.tender.customerName} — {modal.tender.title}
               </p>
             </div>
 
@@ -473,16 +528,16 @@ export default function TenderBoard() {
             <div className="px-5 py-3 bg-muted/30">
               <div className="flex items-center gap-3">
                 <div className="flex-1">
-                  <p className="text-[10px] text-muted-foreground uppercase mb-1">From Stage</p>
-                  <Badge variant="outline" className={`text-xs ${getStageColor(modal.fromStage)}`}>
-                    {getStageDisplayName(modal.fromStage)}
+                  <p className="text-[10px] text-muted-foreground uppercase mb-1">From Status</p>
+                  <Badge variant="outline" className={`text-xs ${getTenderStatusColor(modal.fromStatus)}`}>
+                    {getTenderStatusDisplayName(modal.fromStatus)}
                   </Badge>
                 </div>
                 <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
                 <div className="flex-1">
-                  <p className="text-[10px] text-muted-foreground uppercase mb-1">To Stage</p>
-                  <Badge variant="outline" className={`text-xs ${getStageColor(modal.toStage)}`}>
-                    {getStageDisplayName(modal.toStage)}
+                  <p className="text-[10px] text-muted-foreground uppercase mb-1">To Status</p>
+                  <Badge variant="outline" className={`text-xs ${getTenderStatusColor(modal.toStatus)}`}>
+                    {getTenderStatusDisplayName(modal.toStatus)}
                   </Badge>
                 </div>
               </div>
@@ -496,9 +551,9 @@ export default function TenderBoard() {
               </p>
               <div className="space-y-2">
                 {modal.warnings.map((w, i) => (
-                  <div key={i} className="rounded border border-amber-200 bg-amber-50/50 p-2.5">
-                    <p className="text-[10px] font-semibold text-amber-800 mb-0.5">{w.ruleName}</p>
-                    <p className="text-[11px] text-amber-700">{w.error}</p>
+                  <div key={i} className="rounded border border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-800 p-2.5">
+                    <p className="text-[10px] font-semibold text-amber-800 dark:text-amber-200 mb-0.5">{w.ruleName}</p>
+                    <p className="text-[11px] text-amber-700 dark:text-amber-300">{w.error}</p>
                     <Badge variant="outline" className="mt-1 text-[9px] border-amber-300 text-amber-600">
                       Override Available
                     </Badge>
@@ -523,10 +578,10 @@ export default function TenderBoard() {
             {/* Type to Confirm */}
             <div className="px-5 py-3 border-t border-border">
               <Label className="text-xs text-muted-foreground mb-1.5 block">
-                Type <span className="font-mono font-bold text-foreground">"{getStageDisplayName(modal.toStage)}"</span> to confirm
+                Type <span className="font-mono font-bold text-foreground">"{getTenderStatusDisplayName(modal.toStatus)}"</span> to confirm
               </Label>
               <Input
-                placeholder={getStageDisplayName(modal.toStage)}
+                placeholder={getTenderStatusDisplayName(modal.toStatus)}
                 value={confirmText}
                 onChange={e => setConfirmText(e.target.value)}
                 className="text-xs h-8 font-mono"
@@ -541,13 +596,13 @@ export default function TenderBoard() {
               <Button
                 size="sm"
                 className={`${
-                  overrideReason.trim().length > 0 && confirmText === getStageDisplayName(modal.toStage)
+                  overrideReason.trim().length > 0 && confirmText === getTenderStatusDisplayName(modal.toStatus)
                     ? "bg-amber-600 hover:bg-amber-700 text-white"
                     : ""
                 }`}
                 disabled={
                   overrideReason.trim().length === 0 ||
-                  confirmText !== getStageDisplayName(modal.toStage)
+                  confirmText !== getTenderStatusDisplayName(modal.toStatus)
                 }
                 onClick={handleConfirmMove}
               >
@@ -562,89 +617,97 @@ export default function TenderBoard() {
   );
 }
 
-// ─── WORKSPACE CARD ────────────────────────────────────────
+// ─── TENDER CARD ──────────────────────────────────────────
 
-interface WorkspaceCardProps {
-  workspace: Workspace;
-  onDragStart: (ws: Workspace) => void;
+interface TenderCardProps {
+  tender: Tender;
+  onDragStart: (t: Tender) => void;
   onDragEnd: () => void;
   isDragging: boolean;
 }
 
-function WorkspaceCard({ workspace, onDragStart, onDragEnd, isDragging }: WorkspaceCardProps) {
-  const isRisk = workspace.gpPercent < GP_THRESHOLD;
-  const isCritical = workspace.gpPercent < 10;
+function TenderCard({ tender, onDragStart, onDragEnd, isDragging }: TenderCardProps) {
+  const isRisk = tender.targetGpPercent < GP_THRESHOLD;
+  const isCritical = tender.targetGpPercent < 15;
+  const daysLeft = Math.ceil((new Date(tender.submissionDeadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  const isTerminal = tender.status === "won" || tender.status === "lost";
 
   return (
     <div
-      draggable
+      draggable={!isTerminal}
       onDragStart={(e) => {
+        if (isTerminal) { e.preventDefault(); return; }
         e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", workspace.id);
-        onDragStart(workspace);
+        e.dataTransfer.setData("text/plain", tender.id);
+        onDragStart(tender);
       }}
       onDragEnd={onDragEnd}
       className={`
         group rounded-md border bg-card shadow-sm hover:shadow-md
-        transition-all duration-150 cursor-grab active:cursor-grabbing
+        transition-all duration-150
+        ${isTerminal ? "cursor-default" : "cursor-grab active:cursor-grabbing"}
         ${isDragging ? "opacity-40 scale-95 ring-2 ring-primary/30" : ""}
-        ${isRisk ? "border-l-2 border-l-[var(--color-rag-amber)]" : "border-border"}
-        ${isCritical ? "border-l-[var(--color-rag-red)]" : ""}
+        ${isRisk && !isTerminal ? "border-l-2 border-l-[var(--color-rag-amber)]" : "border-border"}
+        ${isCritical && !isTerminal ? "border-l-[var(--color-rag-red)]" : ""}
       `}
     >
       <div className="p-2.5">
         {/* Drag handle + Customer */}
         <div className="flex items-start gap-1.5 mb-1.5">
-          <GripVertical className="w-3 h-3 text-muted-foreground/30 mt-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+          {!isTerminal && (
+            <GripVertical className="w-3 h-3 text-muted-foreground/30 mt-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+          )}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1 mb-0.5">
-              <Building2 className="w-3 h-3 text-muted-foreground shrink-0" />
               <span className="text-[11px] font-semibold truncate">
-                {workspace.customerName}
+                {tender.customerName}
               </span>
+              {tender.linkedWorkspaceId && (
+                <Link2 className="w-2.5 h-2.5 text-muted-foreground/50 shrink-0" />
+              )}
             </div>
-            <p className="text-[10px] text-muted-foreground truncate pl-4">
-              {workspace.title}
+            <p className="text-[10px] text-muted-foreground truncate" style={{ paddingLeft: isTerminal ? 0 : "1rem" }}>
+              {tender.title}
             </p>
           </div>
         </div>
 
         {/* Metrics */}
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2 pl-4">
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2" style={{ paddingLeft: isTerminal ? 0 : "1rem" }}>
           <div>
             <p className="text-[9px] text-muted-foreground/60 uppercase">Value</p>
-            <p className="text-[11px] font-mono font-medium">{formatSAR(workspace.estimatedValue)}</p>
+            <p className="text-[11px] font-mono font-medium">{formatSAR(tender.estimatedValue)}</p>
           </div>
           <div>
-            <p className="text-[9px] text-muted-foreground/60 uppercase">GP%</p>
+            <p className="text-[9px] text-muted-foreground/60 uppercase">Target GP%</p>
             <p className={`text-[11px] font-mono font-bold ${
               isCritical ? "text-[var(--color-rag-red)]" :
               isRisk ? "text-[var(--color-rag-amber)]" :
               "text-[var(--color-rag-green)]"
             }`}>
-              {workspace.gpPercent.toFixed(1)}%
+              {tender.targetGpPercent.toFixed(1)}%
             </p>
           </div>
           <div>
-            <p className="text-[9px] text-muted-foreground/60 uppercase">Days</p>
-            <p className={`text-[11px] font-mono ${workspace.daysInStage > 10 ? "text-[var(--color-rag-amber)]" : ""}`}>
-              {workspace.daysInStage}d
+            <p className="text-[9px] text-muted-foreground/60 uppercase">Deadline</p>
+            <p className={`text-[11px] font-mono ${daysLeft <= 14 ? "text-[var(--color-rag-red)]" : daysLeft <= 30 ? "text-[var(--color-rag-amber)]" : ""}`}>
+              {daysLeft > 0 ? `${daysLeft}d` : "Passed"}
             </p>
           </div>
           <div>
-            <p className="text-[9px] text-muted-foreground/60 uppercase">Region</p>
-            <p className="text-[11px]">{workspace.region}</p>
+            <p className="text-[9px] text-muted-foreground/60 uppercase">Prob.</p>
+            <p className="text-[11px] font-mono">{tender.probabilityPercent}%</p>
           </div>
         </div>
 
         {/* Footer: Owner + Risk Badge */}
-        <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-border/50 pl-4">
+        <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-border/50" style={{ paddingLeft: isTerminal ? 0 : "1rem" }}>
           <span className="text-[10px] text-muted-foreground flex items-center gap-1">
             <User className="w-2.5 h-2.5" />
-            {workspace.owner}
+            {tender.assignedOwner}
           </span>
           <div className="flex items-center gap-1">
-            {isRisk && (
+            {isRisk && !isTerminal && (
               <Badge
                 variant="outline"
                 className={`text-[9px] h-4 px-1 ${
@@ -654,10 +717,10 @@ function WorkspaceCard({ workspace, onDragStart, onDragEnd, isDragging }: Worksp
                 }`}
               >
                 <AlertTriangle className="w-2.5 h-2.5 mr-0.5" />
-                {isCritical ? "Critical" : "Low Margin"}
+                {isCritical ? "Critical" : "Low GP"}
               </Badge>
             )}
-            <Link href={`/workspaces/${workspace.id}`}>
+            <Link href="/tenders">
               <span className="text-muted-foreground/40 hover:text-primary transition-colors">
                 <ExternalLink className="w-3 h-3" />
               </span>
