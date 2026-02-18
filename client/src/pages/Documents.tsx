@@ -486,6 +486,7 @@ export default function Documents() {
       {/* In-App PDF Preview Modal */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col p-0">
+          <DialogTitle className="sr-only">{previewTitle || 'Document Preview'}</DialogTitle>
           <div className="px-6 pt-5 pb-3 border-b border-border/50 flex items-center justify-between flex-shrink-0">
             <div>
               <h3 className="text-lg font-serif font-semibold">{previewTitle}</h3>

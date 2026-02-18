@@ -35,6 +35,9 @@ import EcrRuleSets from "./pages/EcrRuleSets";
 import EcrSnapshots from "./pages/EcrSnapshots";
 import EcrScoring from "./pages/EcrScoring";
 import EcrConnectors from "./pages/EcrConnectors";
+import Renewals from "./pages/Renewals";
+import RenewalDetail from "./pages/RenewalDetail";
+import RenewalGates from "./pages/RenewalGates";
 
 function AppRouter() {
   return (
@@ -68,6 +71,9 @@ function AppRouter() {
       <Route path="/ecr-snapshots" component={EcrSnapshots} />
       <Route path="/ecr-scoring" component={EcrScoring} />
       <Route path="/ecr-connectors" component={EcrConnectors} />
+      <Route path="/renewals" component={Renewals} />
+      <Route path="/renewals/:id" component={RenewalDetail} />
+      <Route path="/renewal-gates" component={RenewalGates} />
       <Route component={NotFound} />
     </Switch>
   );

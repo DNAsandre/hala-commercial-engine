@@ -39,6 +39,8 @@ import {
   Camera,
   BarChart3,
   Plug,
+  RotateCcw,
+  Shield,
 } from "lucide-react";
 import { currentUser, getRoleLabel, signals } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -70,6 +72,8 @@ const navItems = [
   { path: "/ecr-snapshots", label: "Snapshots", icon: Camera, group: "ecr" },
   { path: "/ecr-scoring", label: "Scoring", icon: BarChart3, group: "ecr" },
   { path: "/ecr-connectors", label: "Connectors", icon: Plug, group: "ecr" },
+  { path: "/renewals", label: "Renewals", icon: RotateCcw, group: "renewals" },
+  { path: "/renewal-gates", label: "Policy Gates", icon: Shield, group: "renewals" },
 ];
 
 const groupLabels: Record<string, string> = {
@@ -80,6 +84,7 @@ const groupLabels: Record<string, string> = {
   system: "SYSTEM",
   bots: "BOT GOVERNANCE",
   ecr: "CUSTOMER RATING",
+  renewals: "RENEWAL ENGINE",
 };
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -87,7 +92,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [collapsed, setCollapsed] = useState(false);
   const redCount = signals.filter(s => s.severity === "red").length;
 
-  const groups = ["core", "deals", "authoring", "output", "system", "bots", "ecr"];
+  const groups = ["core", "deals", "authoring", "output", "system", "bots", "ecr", "renewals"];
 
   return (
     <div className="flex h-screen overflow-hidden">
