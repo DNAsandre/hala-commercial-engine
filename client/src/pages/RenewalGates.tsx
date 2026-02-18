@@ -1,4 +1,6 @@
 // ─── Renewal Policy Gate Config ───
+// Design: Swiss Precision — white cards, left-border accents, enterprise SaaS aesthetic
+// Aligned with AdminGovernance, ECR Dashboard, Proposals
 // Admin screen for configuring renewal-specific gates with enforce/warn/off modes
 import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,15 +19,21 @@ import {
 import { Shield, Settings, AlertTriangle, CheckCircle, XCircle, Ban, Edit, Save, RotateCcw, Info } from "lucide-react";
 
 const MODE_COLORS: Record<RenewalGateMode, string> = {
-  enforce: "text-red-400 bg-red-400/10 border-red-400/30",
-  warn: "text-amber-400 bg-amber-400/10 border-amber-400/30",
-  off: "text-zinc-500 bg-zinc-800 border-zinc-700",
+  enforce: "text-red-700 bg-red-50 border-red-200",
+  warn: "text-amber-700 bg-amber-50 border-amber-200",
+  off: "text-gray-500 bg-gray-50 border-gray-200",
 };
 
 const MODE_ICONS: Record<RenewalGateMode, React.ReactNode> = {
   enforce: <XCircle className="w-3.5 h-3.5" />,
   warn: <AlertTriangle className="w-3.5 h-3.5" />,
   off: <Ban className="w-3.5 h-3.5" />,
+};
+
+const MODE_BORDER: Record<RenewalGateMode, string> = {
+  enforce: "border-l-red-500",
+  warn: "border-l-amber-500",
+  off: "border-l-gray-300",
 };
 
 export default function RenewalGates() {
@@ -73,93 +81,93 @@ export default function RenewalGates() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 max-w-[1400px] mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Renewal Policy Gates</h1>
-          <p className="text-sm text-muted-foreground mt-1">Configure validation gates for renewal transitions — enforce, warn, or disable</p>
+          <h1 className="text-2xl font-serif font-bold text-[#1B2A4A]">Renewal Policy Gates</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Configure validation gates for renewal transitions — enforce, warn, or disable</p>
         </div>
-        <Badge variant="outline" className="text-xs font-mono border-zinc-700 text-zinc-400">
+        <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
           {gates.length} gates configured
         </Badge>
       </div>
 
       {/* Metrics */}
-      <div className="grid grid-cols-3 gap-3">
-        <Card className="bg-zinc-900/50 border-zinc-800">
+      <div className="grid grid-cols-3 gap-4">
+        <Card className="border border-gray-200 bg-red-50">
           <CardContent className="p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-red-400/10 flex items-center justify-center">
-              <XCircle className="w-5 h-5 text-red-400" />
+            <div className="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center">
+              <XCircle className="w-5 h-5 text-red-600" />
             </div>
             <div>
-              <div className="text-2xl font-bold text-red-400">{enforceCount}</div>
-              <div className="text-xs text-muted-foreground">Enforced (Hard Block)</div>
+              <div className="text-2xl font-bold text-red-700">{enforceCount}</div>
+              <div className="text-xs text-gray-500">Enforced (Hard Block)</div>
             </div>
           </CardContent>
         </Card>
-        <Card className="bg-zinc-900/50 border-zinc-800">
+        <Card className="border border-gray-200 bg-amber-50">
           <CardContent className="p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-amber-400/10 flex items-center justify-center">
-              <AlertTriangle className="w-5 h-5 text-amber-400" />
+            <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center">
+              <AlertTriangle className="w-5 h-5 text-amber-600" />
             </div>
             <div>
-              <div className="text-2xl font-bold text-amber-400">{warnCount}</div>
-              <div className="text-xs text-muted-foreground">Warning (Soft Gate)</div>
+              <div className="text-2xl font-bold text-amber-700">{warnCount}</div>
+              <div className="text-xs text-gray-500">Warning (Soft Gate)</div>
             </div>
           </CardContent>
         </Card>
-        <Card className="bg-zinc-900/50 border-zinc-800">
+        <Card className="border border-gray-200 bg-gray-50">
           <CardContent className="p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center">
-              <Ban className="w-5 h-5 text-zinc-500" />
+            <div className="w-10 h-10 rounded-lg bg-gray-200 flex items-center justify-center">
+              <Ban className="w-5 h-5 text-gray-500" />
             </div>
             <div>
-              <div className="text-2xl font-bold text-zinc-500">{offCount}</div>
-              <div className="text-xs text-muted-foreground">Disabled</div>
+              <div className="text-2xl font-bold text-gray-600">{offCount}</div>
+              <div className="text-xs text-gray-500">Disabled</div>
             </div>
           </CardContent>
         </Card>
       </div>
 
       {/* Info Banner */}
-      <div className="p-3 rounded-lg bg-blue-400/5 border border-blue-400/20 flex items-start gap-2">
-        <Info className="w-4 h-4 text-blue-400 mt-0.5 shrink-0" />
-        <div className="text-sm text-blue-300">
-          <span className="font-medium">Gate Modes:</span> <span className="text-red-400">Enforce</span> blocks the transition entirely. <span className="text-amber-400">Warn</span> allows override with a reason. <span className="text-zinc-400">Off</span> disables the gate check. Gates marked as <span className="font-medium">overridable</span> can be bypassed with justification.
+      <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 flex items-start gap-2">
+        <Info className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+        <div className="text-sm text-slate-700">
+          <span className="font-medium">Gate Modes:</span> <span className="text-red-700">Enforce</span> blocks the transition entirely. <span className="text-amber-700">Warn</span> allows override with a reason. <span className="text-gray-500">Off</span> disables the gate check. Gates marked as <span className="font-medium">overridable</span> can be bypassed with justification.
         </div>
       </div>
 
       {/* Gate Cards */}
       <div className="space-y-3">
         {gates.map(gate => (
-          <Card key={gate.key} className={`border ${gate.mode === "off" ? "bg-zinc-900/30 border-zinc-800 opacity-60" : "bg-zinc-900/50 border-zinc-800"}`}>
+          <Card key={gate.key} className={`border border-gray-200 shadow-none border-l-4 ${MODE_BORDER[gate.mode]} ${gate.mode === "off" ? "opacity-60" : ""}`}>
             <CardContent className="p-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 space-y-2">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Shield className="w-4 h-4 text-zinc-500" />
-                    <span className="font-semibold text-sm">{gate.name}</span>
+                    <Shield className={`w-4 h-4 ${gate.mode === "enforce" ? "text-red-600" : gate.mode === "warn" ? "text-amber-600" : "text-gray-400"}`} />
+                    <span className="font-semibold text-sm text-slate-900">{gate.name}</span>
                     <Badge variant="outline" className={`text-[10px] border ${MODE_COLORS[gate.mode]}`}>
                       {MODE_ICONS[gate.mode]}
                       <span className="ml-1">{gate.mode.toUpperCase()}</span>
                     </Badge>
                     {gate.overridable && gate.mode !== "off" && (
-                      <Badge variant="outline" className="text-[10px] border-zinc-700 text-zinc-400">Overridable</Badge>
+                      <Badge variant="outline" className="text-[10px] border-gray-200 text-gray-500">Overridable</Badge>
                     )}
                     {!gate.overridable && gate.mode !== "off" && (
-                      <Badge variant="outline" className="text-[10px] border-red-800 text-red-400">Non-overridable</Badge>
+                      <Badge variant="outline" className="text-[10px] border-red-200 text-red-700 bg-red-50">Non-overridable</Badge>
                     )}
                   </div>
-                  <p className="text-sm text-muted-foreground">{gate.description}</p>
-                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                    <span>Key: <code className="text-zinc-400 bg-zinc-800 px-1 rounded">{gate.key}</code></span>
+                  <p className="text-sm text-gray-500">{gate.description}</p>
+                  <div className="flex items-center gap-4 text-xs text-gray-500">
+                    <span>Key: <code className="text-slate-700 bg-gray-100 px-1 rounded">{gate.key}</code></span>
                     {Object.keys(gate.thresholds).length > 0 && (
-                      <span>Thresholds: {Object.entries(gate.thresholds).map(([k,v]) => <span key={k} className="text-zinc-300 font-mono ml-1">{k}: {v}</span>)}</span>
+                      <span>Thresholds: {Object.entries(gate.thresholds).map(([k,v]) => <span key={k} className="text-slate-700 font-mono ml-1">{k}: {v}</span>)}</span>
                     )}
                   </div>
                 </div>
-                <Button variant="outline" size="sm" className="border-zinc-700 shrink-0" onClick={() => openEdit(gate)}>
+                <Button variant="outline" size="sm" className="shrink-0" onClick={() => openEdit(gate)}>
                   <Edit className="w-3.5 h-3.5 mr-1" /> Configure
                 </Button>
               </div>
@@ -170,7 +178,7 @@ export default function RenewalGates() {
 
       {/* Edit Modal */}
       <Dialog open={!!editGate} onOpenChange={() => setEditGate(null)}>
-        <DialogContent className="bg-zinc-900 border-zinc-800 max-w-md">
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="text-base flex items-center gap-2">
               <Settings className="w-4 h-4" /> Configure: {editGate?.name}
@@ -178,9 +186,9 @@ export default function RenewalGates() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-xs text-muted-foreground block mb-1">Gate Mode</label>
+              <label className="text-xs text-gray-500 block mb-1">Gate Mode</label>
               <Select value={editMode} onValueChange={v => setEditMode(v as RenewalGateMode)}>
-                <SelectTrigger className="bg-zinc-800 border-zinc-700"><SelectValue /></SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="enforce">Enforce (Hard Block)</SelectItem>
                   <SelectItem value="warn">Warn (Soft Gate)</SelectItem>
@@ -190,22 +198,22 @@ export default function RenewalGates() {
             </div>
             {editGate && Object.keys(editGate.thresholds).length > 0 && (
               <div>
-                <label className="text-xs text-muted-foreground block mb-1">Threshold Value</label>
-                <Input type="number" value={editThreshold} onChange={e => setEditThreshold(e.target.value)} className="bg-zinc-800 border-zinc-700" />
+                <label className="text-xs text-gray-500 block mb-1">Threshold Value</label>
+                <Input type="number" value={editThreshold} onChange={e => setEditThreshold(e.target.value)} />
               </div>
             )}
             <div className="flex items-center justify-between">
-              <label className="text-sm">Allow Override</label>
+              <label className="text-sm text-slate-700">Allow Override</label>
               <Switch checked={editOverridable} onCheckedChange={setEditOverridable} />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground block mb-1">Description</label>
-              <Textarea value={editDescription} onChange={e => setEditDescription(e.target.value)} className="bg-zinc-800 border-zinc-700" rows={3} />
+              <label className="text-xs text-gray-500 block mb-1">Description</label>
+              <Textarea value={editDescription} onChange={e => setEditDescription(e.target.value)} rows={3} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" size="sm" className="border-zinc-700" onClick={() => setEditGate(null)}>Cancel</Button>
-            <Button size="sm" onClick={saveEdit}><Save className="w-3.5 h-3.5 mr-1" /> Save Configuration</Button>
+            <Button variant="outline" size="sm" onClick={() => setEditGate(null)}>Cancel</Button>
+            <Button size="sm" onClick={saveEdit} className="bg-[#1B2A4A] hover:bg-[#2A3F6A]"><Save className="w-3.5 h-3.5 mr-1" /> Save Configuration</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

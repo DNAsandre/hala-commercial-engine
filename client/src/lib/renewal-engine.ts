@@ -496,45 +496,45 @@ export function evaluateRenewalGates(workspace: RenewalWorkspace, version: Renew
 
 export function getStatusColor(status: RenewalWorkspaceStatus): string {
   switch (status) {
-    case "draft": return "text-zinc-400 bg-zinc-400/10 border-zinc-400/20";
-    case "under_review": return "text-amber-400 bg-amber-400/10 border-amber-400/20";
-    case "approved": return "text-emerald-400 bg-emerald-400/10 border-emerald-400/20";
-    case "rejected": return "text-red-400 bg-red-400/10 border-red-400/20";
-    case "locked": return "text-blue-400 bg-blue-400/10 border-blue-400/20";
+    case "draft": return "text-gray-600 bg-gray-50 border-gray-200";
+    case "under_review": return "text-amber-700 bg-amber-50 border-amber-200";
+    case "approved": return "text-emerald-700 bg-emerald-50 border-emerald-200";
+    case "rejected": return "text-red-700 bg-red-50 border-red-200";
+    case "locked": return "text-blue-700 bg-blue-50 border-blue-200";
   }
 }
 
 export function getDecisionColor(decision: RenewalDecision): string {
   switch (decision) {
-    case "renew": return "text-emerald-400 bg-emerald-400/10 border-emerald-400/20";
-    case "renegotiate": return "text-amber-400 bg-amber-400/10 border-amber-400/20";
-    case "exit": return "text-red-400 bg-red-400/10 border-red-400/20";
-    case "pending": return "text-zinc-400 bg-zinc-400/10 border-zinc-400/20";
+    case "renew": return "text-emerald-700 bg-emerald-50 border-emerald-200";
+    case "renegotiate": return "text-amber-700 bg-amber-50 border-amber-200";
+    case "exit": return "text-red-700 bg-red-50 border-red-200";
+    case "pending": return "text-gray-600 bg-gray-50 border-gray-200";
   }
 }
 
 export function getGateResultColor(result: GateResult): string {
   switch (result) {
-    case "pass": return "text-emerald-400";
-    case "warn": return "text-amber-400";
-    case "block": return "text-red-400";
+    case "pass": return "text-emerald-700";
+    case "warn": return "text-amber-700";
+    case "block": return "text-red-700";
   }
 }
 
 export function getGateResultBg(result: GateResult): string {
   switch (result) {
-    case "pass": return "bg-emerald-400/10 border-emerald-400/20";
-    case "warn": return "bg-amber-400/10 border-amber-400/20";
-    case "block": return "bg-red-400/10 border-red-400/20";
+    case "pass": return "bg-emerald-50 border-emerald-200";
+    case "warn": return "bg-amber-50 border-amber-200";
+    case "block": return "bg-red-50 border-red-200";
   }
 }
 
 export function getDeltaSeverityColor(severity: DeltaDetail["severity"]): string {
   switch (severity) {
-    case "positive": return "text-emerald-400";
-    case "warning": return "text-amber-400";
-    case "critical": return "text-red-400";
-    case "neutral": return "text-zinc-400";
+    case "positive": return "text-emerald-700";
+    case "warning": return "text-amber-700";
+    case "critical": return "text-red-700";
+    case "neutral": return "text-gray-500";
   }
 }
 
@@ -555,11 +555,11 @@ export function getDaysUntilExpiry(endDate: string): number {
 }
 
 export function getExpiryUrgency(daysLeft: number): { label: string; color: string } {
-  if (daysLeft < 0) return { label: "Expired", color: "text-red-500 bg-red-500/10" };
-  if (daysLeft <= 30) return { label: "Critical", color: "text-red-400 bg-red-400/10" };
-  if (daysLeft <= 90) return { label: "Urgent", color: "text-amber-400 bg-amber-400/10" };
-  if (daysLeft <= 180) return { label: "Approaching", color: "text-yellow-400 bg-yellow-400/10" };
-  return { label: "Healthy", color: "text-emerald-400 bg-emerald-400/10" };
+  if (daysLeft < 0) return { label: "Expired", color: "text-red-700 bg-red-50" };
+  if (daysLeft <= 30) return { label: "Critical", color: "text-red-600 bg-red-50" };
+  if (daysLeft <= 90) return { label: "Urgent", color: "text-amber-700 bg-amber-50" };
+  if (daysLeft <= 180) return { label: "Approaching", color: "text-yellow-700 bg-yellow-50" };
+  return { label: "Healthy", color: "text-emerald-700 bg-emerald-50" };
 }
 
 export function formatSAR(value: number): string {

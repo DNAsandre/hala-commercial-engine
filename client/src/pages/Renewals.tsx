@@ -1,6 +1,6 @@
 // ─── Renewals List Page ───
-// Design: Dark industrial dashboard with amber/emerald accents
-// Filters: status, decision, owner, expiry window, risk flags
+// Design: Swiss Precision — white cards, subtle borders, enterprise SaaS aesthetic
+// Aligned with Workspaces, Proposals, Document Engine, ECR Dashboard
 import { useState, useMemo } from "react";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
@@ -86,74 +86,62 @@ export default function Renewals() {
   const activeFilters = [statusFilter !== "all", decisionFilter !== "all", ownerFilter !== "all", expiryFilter !== "all", riskOnly].filter(Boolean).length;
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 max-w-[1400px] mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Renewal Engine</h1>
-          <p className="text-sm text-muted-foreground mt-1">Baseline → Renewal → Locked cycle with delta comparison and policy gates</p>
+          <h1 className="text-2xl font-serif font-bold text-[#1B2A4A]">Renewal Engine</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Baseline → Renewal → Locked cycle with delta comparison and policy gates</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-xs font-mono border-zinc-700 text-zinc-400">
-            {enriched.length} baselines
-          </Badge>
-        </div>
+        <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+          {enriched.length} baselines
+        </Badge>
       </div>
 
       {/* Metrics Strip */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <Card className="bg-zinc-900/50 border-zinc-800">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+        <Card className="border border-gray-200 bg-blue-50">
           <CardContent className="p-4">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-              <RefreshCw className="w-3.5 h-3.5" /> Active Renewals
-            </div>
-            <div className="text-2xl font-bold">{metrics.active}</div>
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Active Renewals</p>
+            <p className="text-2xl font-bold text-[#1B2A4A] mt-1">{metrics.active}</p>
           </CardContent>
         </Card>
-        <Card className="bg-zinc-900/50 border-zinc-800">
+        <Card className="border border-gray-200 bg-amber-50">
           <CardContent className="p-4">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-              <AlertTriangle className="w-3.5 h-3.5" /> With Warnings
-            </div>
-            <div className="text-2xl font-bold text-amber-400">{metrics.withWarnings}</div>
+            <p className="text-xs text-gray-500 uppercase tracking-wider">With Warnings</p>
+            <p className="text-2xl font-bold text-amber-700 mt-1">{metrics.withWarnings}</p>
           </CardContent>
         </Card>
-        <Card className="bg-zinc-900/50 border-zinc-800">
+        <Card className="border border-gray-200 bg-gray-50">
           <CardContent className="p-4">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-              <TrendingUp className="w-3.5 h-3.5" /> Baseline Revenue
-            </div>
-            <div className="text-2xl font-bold">{formatSAR(metrics.totalBaselineRev)}</div>
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Baseline Revenue</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{formatSAR(metrics.totalBaselineRev)}</p>
           </CardContent>
         </Card>
-        <Card className="bg-zinc-900/50 border-zinc-800">
+        <Card className="border border-gray-200 bg-emerald-50">
           <CardContent className="p-4">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-              <TrendingUp className="w-3.5 h-3.5" /> Renewal Revenue
-            </div>
-            <div className="text-2xl font-bold text-emerald-400">{formatSAR(metrics.totalRenewalRev)}</div>
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Renewal Revenue</p>
+            <p className="text-2xl font-bold text-emerald-700 mt-1">{formatSAR(metrics.totalRenewalRev)}</p>
           </CardContent>
         </Card>
-        <Card className="bg-zinc-900/50 border-zinc-800">
+        <Card className="border border-gray-200 bg-indigo-50">
           <CardContent className="p-4">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-              <Shield className="w-3.5 h-3.5" /> Avg GP% Delta
-            </div>
-            <div className={`text-2xl font-bold ${metrics.avgGpDelta >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Avg GP% Delta</p>
+            <p className={`text-2xl font-bold mt-1 ${metrics.avgGpDelta >= 0 ? "text-emerald-700" : "text-red-700"}`}>
               {metrics.avgGpDelta >= 0 ? "+" : ""}{metrics.avgGpDelta.toFixed(1)}%
-            </div>
+            </p>
           </CardContent>
         </Card>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="Search renewals..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9 bg-zinc-900/50 border-zinc-800" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <Input placeholder="Search renewals..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9 h-9 text-sm" />
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[140px] bg-zinc-900/50 border-zinc-800"><SelectValue placeholder="Status" /></SelectTrigger>
+          <SelectTrigger className="w-[140px] h-9 text-sm"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="draft">Draft</SelectItem>
@@ -164,7 +152,7 @@ export default function Renewals() {
           </SelectContent>
         </Select>
         <Select value={decisionFilter} onValueChange={setDecisionFilter}>
-          <SelectTrigger className="w-[140px] bg-zinc-900/50 border-zinc-800"><SelectValue placeholder="Decision" /></SelectTrigger>
+          <SelectTrigger className="w-[140px] h-9 text-sm"><SelectValue placeholder="Decision" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Decisions</SelectItem>
             <SelectItem value="renew">Renew</SelectItem>
@@ -174,14 +162,14 @@ export default function Renewals() {
           </SelectContent>
         </Select>
         <Select value={ownerFilter} onValueChange={setOwnerFilter}>
-          <SelectTrigger className="w-[160px] bg-zinc-900/50 border-zinc-800"><SelectValue placeholder="Owner" /></SelectTrigger>
+          <SelectTrigger className="w-[160px] h-9 text-sm"><SelectValue placeholder="Owner" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Owners</SelectItem>
             {owners.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={expiryFilter} onValueChange={setExpiryFilter}>
-          <SelectTrigger className="w-[150px] bg-zinc-900/50 border-zinc-800"><SelectValue placeholder="Expiry" /></SelectTrigger>
+          <SelectTrigger className="w-[150px] h-9 text-sm"><SelectValue placeholder="Expiry" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Expiry</SelectItem>
             <SelectItem value="expired">Expired</SelectItem>
@@ -190,11 +178,11 @@ export default function Renewals() {
             <SelectItem value="approaching">Approaching (&lt;180d)</SelectItem>
           </SelectContent>
         </Select>
-        <Button variant={riskOnly ? "default" : "outline"} size="sm" onClick={() => setRiskOnly(!riskOnly)} className={riskOnly ? "bg-amber-600 hover:bg-amber-700" : "border-zinc-700"}>
+        <Button variant={riskOnly ? "default" : "outline"} size="sm" onClick={() => setRiskOnly(!riskOnly)} className={riskOnly ? "bg-amber-600 hover:bg-amber-700" : ""}>
           <AlertTriangle className="w-3.5 h-3.5 mr-1" /> Risk Only
         </Button>
         {activeFilters > 0 && (
-          <Button variant="ghost" size="sm" onClick={() => { setStatusFilter("all"); setDecisionFilter("all"); setOwnerFilter("all"); setExpiryFilter("all"); setRiskOnly(false); setSearch(""); }} className="text-zinc-400">
+          <Button variant="ghost" size="sm" onClick={() => { setStatusFilter("all"); setDecisionFilter("all"); setOwnerFilter("all"); setExpiryFilter("all"); setRiskOnly(false); setSearch(""); }} className="text-gray-500">
             Clear ({activeFilters})
           </Button>
         )}
@@ -203,21 +191,21 @@ export default function Renewals() {
       {/* Renewal Cards */}
       <div className="space-y-3">
         {filtered.length === 0 && (
-          <Card className="bg-zinc-900/50 border-zinc-800">
-            <CardContent className="p-8 text-center text-muted-foreground">
+          <Card className="border border-gray-200 shadow-none">
+            <CardContent className="p-8 text-center text-gray-500">
               No renewal workspaces match the current filters.
             </CardContent>
           </Card>
         )}
         {filtered.map(rw => (
           <Link key={rw.id} href={`/renewals/${rw.id}`}>
-            <Card className="bg-zinc-900/50 border-zinc-800 hover:border-zinc-600 transition-colors cursor-pointer group">
+            <Card className="border border-gray-200 shadow-none hover:shadow-sm transition-shadow cursor-pointer group">
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-4">
                   {/* Left: Info */}
                   <div className="flex-1 min-w-0 space-y-2">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-sm truncate">{rw.renewalCycleName}</span>
+                      <span className="font-semibold text-sm text-slate-900 truncate">{rw.renewalCycleName}</span>
                       <Badge variant="outline" className={`text-[10px] border ${getStatusColor(rw.status)}`}>
                         {rw.status.replace("_", " ")}
                       </Badge>
@@ -225,12 +213,12 @@ export default function Renewals() {
                         {rw.renewalDecision}
                       </Badge>
                       {rw.ecr && (
-                        <Badge variant="outline" className="text-[10px] border-zinc-700 text-zinc-400">
+                        <Badge variant="outline" className="text-[10px] border-gray-200 text-gray-600">
                           ECR {rw.ecr.grade}
                         </Badge>
                       )}
                     </div>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-4 text-xs text-gray-500">
                       <span>{rw.customerName}</span>
                       <span>Owner: {rw.ownerName}</span>
                       <span>Target: {rw.targetStartDate} → {rw.targetEndDate}</span>
@@ -243,14 +231,14 @@ export default function Renewals() {
                       </Badge>
                       {/* Gate result */}
                       {rw.gateEval && (
-                        <Badge variant="outline" className={`text-[10px] border-0 ${rw.gateEval.result === "pass" ? "text-emerald-400 bg-emerald-400/10" : rw.gateEval.result === "warn" ? "text-amber-400 bg-amber-400/10" : "text-red-400 bg-red-400/10"}`}>
+                        <Badge variant="outline" className={`text-[10px] border-0 ${rw.gateEval.result === "pass" ? "text-emerald-700 bg-emerald-50" : rw.gateEval.result === "warn" ? "text-amber-700 bg-amber-50" : "text-red-700 bg-red-50"}`}>
                           <Shield className="w-3 h-3 mr-1" />
                           Gates: {rw.gateEval.result}
                         </Badge>
                       )}
                       {/* Risk flags */}
                       {rw.delta && rw.delta.riskFlagsJson.length > 0 && (
-                        <Badge variant="outline" className="text-[10px] border-0 text-amber-400 bg-amber-400/10">
+                        <Badge variant="outline" className="text-[10px] border-0 text-amber-700 bg-amber-50">
                           <AlertTriangle className="w-3 h-3 mr-1" />
                           {rw.delta.riskFlagsJson.length} risk flag{rw.delta.riskFlagsJson.length > 1 ? "s" : ""}
                         </Badge>
@@ -261,20 +249,20 @@ export default function Renewals() {
                   {/* Right: Financials */}
                   <div className="flex items-center gap-6 text-right shrink-0">
                     <div>
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Baseline Rev</div>
-                      <div className="text-sm font-mono">{rw.baseline ? formatSAR(rw.baseline.pricingSnapshot.annualRevenue) : "—"}</div>
+                      <div className="text-[10px] text-gray-500 uppercase tracking-wider">Baseline Rev</div>
+                      <div className="text-sm font-mono text-slate-700">{rw.baseline ? formatSAR(rw.baseline.pricingSnapshot.annualRevenue) : "—"}</div>
                     </div>
                     <div>
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Renewal Rev</div>
-                      <div className="text-sm font-mono">{rw.latestVersion ? formatSAR(rw.latestVersion.pricingSnapshot.annualRevenue) : "—"}</div>
+                      <div className="text-[10px] text-gray-500 uppercase tracking-wider">Renewal Rev</div>
+                      <div className="text-sm font-mono text-slate-700">{rw.latestVersion ? formatSAR(rw.latestVersion.pricingSnapshot.annualRevenue) : "—"}</div>
                     </div>
                     <div>
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">GP% Δ</div>
-                      <div className={`text-sm font-mono font-bold ${rw.gpDelta >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      <div className="text-[10px] text-gray-500 uppercase tracking-wider">GP% Δ</div>
+                      <div className={`text-sm font-mono font-bold ${rw.gpDelta >= 0 ? "text-emerald-700" : "text-red-700"}`}>
                         {rw.gpDelta >= 0 ? "+" : ""}{rw.gpDelta.toFixed(1)}%
                       </div>
                     </div>
-                    <ArrowRight className="w-4 h-4 text-zinc-600 group-hover:text-zinc-400 transition-colors" />
+                    <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-gray-500 transition-colors" />
                   </div>
                 </div>
               </CardContent>
