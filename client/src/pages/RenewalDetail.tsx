@@ -54,6 +54,8 @@ import {
   ShieldCheck, ShieldAlert, Users, GitBranch, Eye,
 } from "lucide-react";
 import { toast } from "sonner";
+import EcrUpgradeModal from "@/components/EcrUpgradeModal";
+import { Dna } from "lucide-react";
 
 export default function RenewalDetail() {
   const params = useParams<{ id: string }>();
@@ -87,6 +89,9 @@ export default function RenewalDetail() {
   // Decision modal
   const [decisionModal, setDecisionModal] = useState(false);
   const [newDecision, setNewDecision] = useState<RenewalDecision>("pending");
+
+  // ECR Upgrade modal
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   if (!workspace || !baseline) {
     return (
@@ -211,6 +216,9 @@ export default function RenewalDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setShowUpgradeModal(true)} className="border-violet-200 text-violet-700 hover:bg-violet-50">
+            <Dna className="w-3.5 h-3.5 mr-1" /> Upgrade ECR
+          </Button>
           <Button variant="outline" size="sm" onClick={runIntegrityCheck} className="border-blue-200 text-blue-700 hover:bg-blue-50">
             <ShieldCheck className="w-3.5 h-3.5 mr-1" /> Integrity Check
           </Button>
@@ -826,6 +834,18 @@ export default function RenewalDetail() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ECR Upgrade Modal */}
+      <EcrUpgradeModal
+        open={showUpgradeModal}
+        onOpenChange={setShowUpgradeModal}
+        contextType="renewal"
+        contextId={workspace.id}
+        customerId={workspace.customerId}
+        customerName={workspace.customerName}
+        currentRuleSetId={ecr?.ruleSetId || 'rs-2'}
+        onUpgradeRequested={() => forceUpdate()}
+      />
 
       {/* Decision Modal */}
       <Dialog open={decisionModal} onOpenChange={setDecisionModal}>

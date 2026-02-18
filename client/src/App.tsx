@@ -39,6 +39,7 @@ import Renewals from "./pages/Renewals";
 import RenewalDetail from "./pages/RenewalDetail";
 import RenewalGates from "./pages/RenewalGates";
 import RevenueExposure from "./pages/RevenueExposure";
+import EcrUpgrades from "./pages/EcrUpgrades";
 
 function AppRouter() {
   return (
@@ -76,6 +77,7 @@ function AppRouter() {
       <Route path="/renewals/:id" component={RenewalDetail} />
       <Route path="/renewal-gates" component={RenewalGates} />
       <Route path="/revenue-exposure" component={RevenueExposure} />
+      <Route path="/ecr-upgrades" component={EcrUpgrades} />
       <Route component={NotFound} />
     </Switch>
   );

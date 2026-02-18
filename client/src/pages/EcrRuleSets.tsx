@@ -3,42 +3,51 @@
  * Design: Swiss Precision Instrument — Deep navy + warm white
  * Create/edit rule sets, adjust weights with 100% validation,
  * activate rule sets, view version history.
+ * + Evolution Controls card (Part A/C of ECR Evolution Patch)
  */
-import { useState, useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState } from 'react';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { Slider } from '@/components/ui/slider';
 import { toast } from 'sonner';
 import {
-  Plus, CheckCircle2, Archive, FileEdit, Scale, AlertTriangle,
-  Clock, User, ChevronDown, ChevronUp, Shield, Layers, Lock
+  Plus, CheckCircle2, Archive, FileEdit, AlertTriangle,
+  Clock, User, ChevronDown, ChevronUp, Shield, Layers, Lock,
+  Dna, Info
 } from 'lucide-react';
 import {
   mockRuleSets, mockRuleWeights, mockMetrics,
-  getTotalWeight, getRuleSetWeights,
   type EcrRuleSet, type EcrRuleWeight, type RuleSetStatus
 } from '@/lib/ecr';
+import {
+  getEvolutionControls, updateEvolutionControls,
+  type MissingMetricMode, type DefaultValueStrategy
+} from '@/lib/ecr-evolution';
 
 const statusConfig: Record<RuleSetStatus, { label: string; color: string; icon: React.ReactNode }> = {
   active: { label: 'Active', color: 'bg-emerald-100 text-emerald-700 border-emerald-200', icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
   draft: { label: 'Draft', color: 'bg-amber-100 text-amber-700 border-amber-200', icon: <FileEdit className="w-3.5 h-3.5" /> },
   archived: { label: 'Archived', color: 'bg-slate-100 text-slate-500 border-slate-200', icon: <Archive className="w-3.5 h-3.5" /> },
-  locked: { label: 'Locked', color: 'bg-blue-100 text-blue-700 border-blue-200', icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
+  locked: { label: 'Locked', color: 'bg-blue-100 text-blue-700 border-blue-200', icon: <Lock className="w-3.5 h-3.5" /> },
 };
 
 export default function EcrRuleSets() {
   const [ruleSets, setRuleSets] = useState<EcrRuleSet[]>(mockRuleSets);
   const [weights, setWeights] = useState<EcrRuleWeight[]>(mockRuleWeights);
-  const [expandedId, setExpandedId] = useState<string | null>('rs-2'); // Active one expanded by default
+  const [expandedId, setExpandedId] = useState<string | null>('rs-2');
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  // Force re-render when evolution controls change
+  const [evoVersion, setEvoVersion] = useState(0);
 
   const activeMetrics = mockMetrics.filter(m => m.active);
 
@@ -57,7 +66,6 @@ export default function EcrRuleSets() {
       createdBy: 'Amin Al-Rashid',
       createdAt: new Date().toISOString(),
     };
-    // Create default weights from active metrics
     const newWeights: EcrRuleWeight[] = activeMetrics.map((m, i) => ({
       id: `rw-new-${Date.now()}-${i}`,
       ruleSetId: newRuleSet.id,
@@ -94,6 +102,13 @@ export default function EcrRuleSets() {
         ? { ...w, weight: newWeight }
         : w
     ));
+  };
+
+  const handleEvolutionUpdate = (ruleSetId: string, field: string, value: unknown) => {
+    const updates: Record<string, unknown> = { [field]: value };
+    updateEvolutionControls(ruleSetId, updates as any, 'user-admin', 'Amin Al-Rashid');
+    setEvoVersion(v => v + 1);
+    toast.success('Evolution controls updated');
   };
 
   return (
@@ -141,6 +156,7 @@ export default function EcrRuleSets() {
           const totalW = rsWeights.reduce((sum, w) => sum + w.weight, 0);
           const isValid = totalW === 100;
           const status = statusConfig[rs.status];
+          const evoControls = getEvolutionControls(rs.id);
 
           return (
             <Card key={rs.id} className={`${rs.status === 'archived' ? 'opacity-70' : ''} transition-shadow hover:shadow-sm`}>
@@ -162,6 +178,12 @@ export default function EcrRuleSets() {
                           <span className="ml-1">{status.label}</span>
                         </Badge>
                         <span className="text-xs text-slate-400">v{rs.versionNumber}</span>
+                        {evoControls.evolution_enabled && (
+                          <Badge variant="outline" className="text-xs bg-violet-50 text-violet-700 border-violet-200">
+                            <Dna className="w-3 h-3 mr-1" />
+                            Evolution
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-sm text-slate-500 mt-0.5">{rs.description}</p>
                     </div>
@@ -178,9 +200,9 @@ export default function EcrRuleSets() {
                   </div>
                 </div>
 
-                {/* Expanded: Weight Editor */}
+                {/* Expanded Content */}
                 {isExpanded && (
-                  <div className="mt-6 pt-4 border-t space-y-4">
+                  <div className="mt-6 pt-4 border-t space-y-6">
                     {/* Weight Validation Bar */}
                     <div className="flex items-center gap-4">
                       <div className="flex-1">
@@ -205,7 +227,7 @@ export default function EcrRuleSets() {
                       {activeMetrics.map(metric => {
                         const rw = rsWeights.find(w => w.metricId === metric.id);
                         const weight = rw?.weight ?? 0;
-                        const isLocked = rs.status === 'archived' || rs.status === 'active';
+                        const isLocked = rs.status === 'archived' || rs.status === 'active' || rs.status === 'locked';
 
                         return (
                           <div key={metric.id} className="flex items-center gap-4 p-3 rounded-lg bg-slate-50/50 border border-slate-100">
@@ -245,11 +267,132 @@ export default function EcrRuleSets() {
                       })}
                     </div>
 
+                    {/* ═══════════════════════════════════════════════════════════
+                        EVOLUTION CONTROLS CARD — Admin only
+                        Screen 1 from ECR Evolution Patch spec
+                    ═══════════════════════════════════════════════════════════ */}
+                    <div className="border border-violet-200 rounded-xl bg-violet-50/30 p-5 space-y-5">
+                      <div className="flex items-center gap-2">
+                        <Dna className="w-5 h-5 text-violet-600" />
+                        <h4 className="font-semibold text-slate-900">Evolution Controls</h4>
+                        <Badge variant="outline" className="text-xs bg-violet-100 text-violet-700 border-violet-200">Admin</Badge>
+                      </div>
+
+                      {/* ECR Evolution Mode Toggle */}
+                      <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-slate-200">
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-slate-700">ECR Evolution Mode</p>
+                          <p className="text-xs text-slate-500 mt-0.5">Allow this rule set to compute scores even when new metrics are missing</p>
+                        </div>
+                        <Switch
+                          checked={evoControls.evolution_enabled}
+                          onCheckedChange={(v) => handleEvolutionUpdate(rs.id, 'evolution_enabled', v)}
+                        />
+                      </div>
+
+                      {/* Missing Metric Handling */}
+                      <div className="p-3 bg-white rounded-lg border border-slate-200 space-y-3">
+                        <div>
+                          <Label className="text-sm font-medium text-slate-700">Missing Metric Handling</Label>
+                          <Select
+                            value={evoControls.missing_metric_mode}
+                            onValueChange={(v) => handleEvolutionUpdate(rs.id, 'missing_metric_mode', v as MissingMetricMode)}
+                          >
+                            <SelectTrigger className="mt-1">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="strict">Strict (Block if missing)</SelectItem>
+                              <SelectItem value="graceful_reweight">Graceful (Reweight available metrics)</SelectItem>
+                              <SelectItem value="default_value">Default Values (Fill missing with deterministic defaults)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {/* Default Value Strategy — only if default_value mode */}
+                        {evoControls.missing_metric_mode === 'default_value' && (
+                          <div>
+                            <Label className="text-sm font-medium text-slate-700">Default Value Strategy</Label>
+                            <Select
+                              value={evoControls.missing_metric_default_strategy}
+                              onValueChange={(v) => handleEvolutionUpdate(rs.id, 'missing_metric_default_strategy', v as DefaultValueStrategy)}
+                            >
+                              <SelectTrigger className="mt-1">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="zero">Zero</SelectItem>
+                                <SelectItem value="neutral">Neutral (midpoint of range)</SelectItem>
+                                <SelectItem value="custom">Custom (per metric, future)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Confidence Penalty */}
+                      <div className="p-3 bg-white rounded-lg border border-slate-200">
+                        <Label className="text-sm font-medium text-slate-700">Confidence Penalty per Missing Metric</Label>
+                        <div className="flex items-center gap-3 mt-1">
+                          <Input
+                            type="number"
+                            value={evoControls.missing_metric_confidence_penalty_per_metric}
+                            onChange={(e) => handleEvolutionUpdate(rs.id, 'missing_metric_confidence_penalty_per_metric', Number(e.target.value))}
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            className="w-28 text-sm"
+                          />
+                          <span className="text-xs text-slate-500">
+                            {(evoControls.missing_metric_confidence_penalty_per_metric * 100).toFixed(0)}% penalty per missing metric
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Min Confidence to Display Grade */}
+                      <div className="p-3 bg-white rounded-lg border border-slate-200">
+                        <Label className="text-sm font-medium text-slate-700">Minimum Confidence to Display Grade</Label>
+                        <div className="flex items-center gap-3 mt-1">
+                          <Input
+                            type="number"
+                            value={evoControls.min_confidence_to_display_grade}
+                            onChange={(e) => handleEvolutionUpdate(rs.id, 'min_confidence_to_display_grade', Number(e.target.value))}
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            className="w-28 text-sm"
+                          />
+                          <span className="text-xs text-slate-500">
+                            Scores below {(evoControls.min_confidence_to_display_grade * 100).toFixed(0)}% confidence will not display a grade
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Manual Upgrade Required — locked ON */}
+                      <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-slate-200">
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-slate-700">Manual Upgrade Required</p>
+                          <p className="text-xs text-slate-500 mt-0.5">Manual upgrade only (no silent changes)</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Switch checked={true} disabled />
+                          <Lock className="w-3.5 h-3.5 text-slate-400" />
+                        </div>
+                      </div>
+
+                      {/* Footer note */}
+                      <div className="flex items-start gap-2 text-xs text-slate-500 bg-slate-50 rounded-lg p-3 border border-slate-200">
+                        <Info className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
+                        <span>Rule changes never rewrite history. New scores use new versions. Upgrades are manual and audited.</span>
+                      </div>
+                    </div>
+
                     {/* Actions */}
                     <div className="flex items-center justify-between pt-2">
                       <div className="text-xs text-slate-400">
                         {rs.status === 'active' && 'This is the active rule set. Weights are locked.'}
                         {rs.status === 'archived' && 'Archived rule sets are read-only.'}
+                        {rs.status === 'locked' && 'This rule set is locked (referenced by an evaluation).'}
                         {rs.status === 'draft' && 'Adjust weights and activate when ready.'}
                       </div>
                       {rs.status === 'draft' && (

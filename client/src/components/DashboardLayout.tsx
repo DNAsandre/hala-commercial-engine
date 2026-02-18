@@ -42,6 +42,7 @@ import {
   RotateCcw,
   Shield,
   TrendingDown,
+  Dna,
 } from "lucide-react";
 import { currentUser, getRoleLabel, signals } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -73,6 +74,7 @@ const navItems = [
   { path: "/ecr-snapshots", label: "Snapshots", icon: Camera, group: "ecr" },
   { path: "/ecr-scoring", label: "Scoring", icon: BarChart3, group: "ecr" },
   { path: "/ecr-connectors", label: "Connectors", icon: Plug, group: "ecr" },
+  { path: "/ecr-upgrades", label: "ECR Upgrades", icon: Dna, group: "ecr" },
   { path: "/renewals", label: "Renewals", icon: RotateCcw, group: "renewals" },
   { path: "/renewal-gates", label: "Policy Gates", icon: Shield, group: "renewals" },
   { path: "/revenue-exposure", label: "Revenue Exposure", icon: TrendingDown, group: "renewals" },

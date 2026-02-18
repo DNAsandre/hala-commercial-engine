@@ -20,10 +20,11 @@ import {
   User, Link2, Hash, Percent, Clock, BarChart3, Shield, Info
 } from 'lucide-react';
 import {
-  mockMetrics, mockMetricMappings, mockConnectors,
-  getSourceModeLabel, getSourceModeColor,
+  mockMetrics, mockMetricMappings, mockConnectors, mockRuleWeights,
+  getSourceModeLabel, getSourceModeColor, getActiveRuleSet,
   type EcrMetric, type SourceMode, type MetricUnit
 } from '@/lib/ecr';
+import { getEvolutionControls } from '@/lib/ecr-evolution';
 
 const unitIcons: Record<MetricUnit, React.ReactNode> = {
   '%': <Percent className="w-3.5 h-3.5" />,
@@ -211,6 +212,28 @@ export default function EcrMetrics() {
                       <span className={`px-1.5 py-0.5 rounded ${getSourceModeColor(metric.defaultSourceMode)}`}>
                         {getSourceModeLabel(metric.defaultSourceMode)}
                       </span>
+                    </div>
+
+                    {/* Evolution Indicators (Screen 2 enhancement) */}
+                    <div className="flex items-center gap-4 mt-3 ml-9">
+                      {(() => {
+                        const activeRS = getActiveRuleSet();
+                        const isRequired = activeRS ? mockRuleWeights.some(w => w.ruleSetId === activeRS.id && w.metricId === metric.id && w.weight > 0) : false;
+                        const evoControls = activeRS ? getEvolutionControls(activeRS.id) : null;
+                        const hasDefaultConfig = evoControls?.missing_metric_mode === 'default_value';
+                        return (
+                          <>
+                            <span className={`text-xs px-2 py-0.5 rounded border ${isRequired ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+                              {isRequired ? 'Required by active rule set' : 'Not in active rule set'}
+                            </span>
+                            {hasDefaultConfig && (
+                              <span className="text-xs px-2 py-0.5 rounded border bg-violet-50 text-violet-700 border-violet-200">
+                                Default value: configured
+                              </span>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
 
                     {/* Mapping Slots */}
