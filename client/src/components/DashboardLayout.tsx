@@ -41,6 +41,7 @@ import {
   Plug,
   RotateCcw,
   Shield,
+  TrendingDown,
 } from "lucide-react";
 import { currentUser, getRoleLabel, signals } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -74,6 +75,7 @@ const navItems = [
   { path: "/ecr-connectors", label: "Connectors", icon: Plug, group: "ecr" },
   { path: "/renewals", label: "Renewals", icon: RotateCcw, group: "renewals" },
   { path: "/renewal-gates", label: "Policy Gates", icon: Shield, group: "renewals" },
+  { path: "/revenue-exposure", label: "Revenue Exposure", icon: TrendingDown, group: "renewals" },
 ];
 
 const groupLabels: Record<string, string> = {

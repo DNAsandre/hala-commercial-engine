@@ -7,7 +7,7 @@
 // ─── TYPES ───────────────────────────────────────────────────
 
 export type SourceMode = 'manual' | 'spreadsheet' | 'connector';
-export type RuleSetStatus = 'draft' | 'active' | 'archived';
+export type RuleSetStatus = 'draft' | 'active' | 'archived' | 'locked';
 export type Grade = 'A' | 'B' | 'C' | 'D';
 export type MetricUnit = '%' | 'days' | 'number' | 'band';
 export type ConnectorType = 'finance' | 'ops' | 'tableau' | 'crm' | 'custom';
