@@ -1,15 +1,16 @@
 /**
- * Document Composer v2 — Unified Editor
- * Single editor used everywhere: Proposals, Quotes, SLAs, Documents
- * Features:
- *   - Between-block insert rows ("+ Add Block / + Add Section / Block Library")
- *   - Enriched right sidebar: customer card (grade, pallets, DSO, contact), doc info, block navigator with scroll-to, bindings, governance pill
- *   - Single sticky toolbar wired to active block's editor instance
- *   - Token insert modal, image insert, block add confirmation
- *   - PDF compile with preview viewer + missing tokens panel
- *   - Draft / Canon tabs (no Structure mode)
- *   - Legacy migration detection
- *   - No-AI-creep constraints enforced at block level
+ * Document Composer v3 — Complete Rewrite
+ * 
+ * FIXES from v2:
+ *   1. Header: Split into two clean rows (info row + action row)
+ *   2. Sticky toolbar: Uses native overflow-y-auto container (not Radix ScrollArea)
+ *      so CSS `sticky top-0` actually works inside the scroll container
+ *   3. Editor wiring: `activeEditor` is React STATE (not a ref), so toolbar re-renders
+ *      when user clicks different blocks
+ *   4. Block focus: `onActivate(editor)` callback sets both activeBlockId AND activeEditor
+ *      in a single state update batch
+ *   5. Navigation: Uses wouter's useLocation for Output Studio link
+ *   6. All entry points: Works standalone (/editor), embedded (Proposals, Quotes, SLAs)
  */
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
@@ -27,6 +28,7 @@ import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import { TextStyle } from "@tiptap/extension-text-style";
 import Color from "@tiptap/extension-color";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -53,7 +55,7 @@ import {
   XCircle, RefreshCw, ChevronRight, Hash, DollarSign,
   Calendar, Phone, Users, BarChart3, Type, ToggleLeft,
   Percent, Image as ImageLucide, Mail, Star, MapPin,
-  CreditCard, Package, Activity, ShieldCheck
+  CreditCard, Package, Activity, ShieldCheck, ArrowLeft
 } from "lucide-react";
 import { customers, type Customer, formatSAR } from "@/lib/store";
 import {
@@ -487,9 +489,9 @@ function PDFPreviewModal({ open, onClose, compiledHtml, missingTokens, onRecompi
             {blockingErrors.length > 0 ? (
               <span className="text-red-600 font-medium">Cannot approve — {blockingErrors.length} blocking error(s)</span>
             ) : warnings.length > 0 ? (
-              <span className="text-amber-600">⚠ {warnings.length} warning(s) — review before approving</span>
+              <span className="text-amber-600">Warning: {warnings.length} warning(s) — review before approving</span>
             ) : (
-              <span className="text-emerald-600">✓ Ready to approve</span>
+              <span className="text-emerald-600">Ready to approve</span>
             )}
           </div>
           <div className="flex gap-2">
@@ -508,7 +510,7 @@ function PDFPreviewModal({ open, onClose, compiledHtml, missingTokens, onRecompi
 }
 
 // ============================================================
-// STICKY TOOLBAR
+// STICKY TOOLBAR — receives activeEditor as STATE prop
 // ============================================================
 
 function StickyToolbar({ activeEditor, isLocked, isReadonly, blockKey, onInsertToken, onInsertImage }: {
@@ -532,7 +534,7 @@ function StickyToolbar({ activeEditor, isLocked, isReadonly, blockKey, onInsertT
         isActive ? "bg-[#1B2A4A] text-white" : "text-gray-600 hover:bg-gray-100"
       } ${(btnDisabled || disabled) ? "opacity-30 cursor-not-allowed" : "cursor-pointer"}`}
     >
-      <Icon size={15} />
+      <Icon size={14} />
     </button>
   );
 
@@ -545,8 +547,8 @@ function StickyToolbar({ activeEditor, isLocked, isReadonly, blockKey, onInsertT
           <Badge variant="outline" className="text-[10px] h-5 capitalize">
             {BLOCK_FAMILY_CONFIG[blockDef.family]?.label || blockDef.family}
           </Badge>
-          <span className="text-[10px] text-gray-400">{blockDef.display_name}</span>
-          {isReadonly && <Badge className="text-[9px] h-4 bg-gray-100 text-gray-500 border-0">Read-Only (Bound)</Badge>}
+          <span className="text-[10px] text-gray-400 max-w-[120px] truncate">{blockDef.display_name}</span>
+          {isReadonly && <Badge className="text-[9px] h-4 bg-gray-100 text-gray-500 border-0">Read-Only</Badge>}
         </div>
       ) : (
         <div className="flex items-center gap-1.5 mr-2 pr-2 border-r border-gray-200">
@@ -587,20 +589,18 @@ function StickyToolbar({ activeEditor, isLocked, isReadonly, blockKey, onInsertT
       <ToolBtn onClick={() => activeEditor?.chain().focus().toggleHighlight().run()} isActive={activeEditor?.isActive("highlight")} icon={Highlighter} title="Highlight" />
       <Separator orientation="vertical" className="h-5 mx-1" />
 
-      {/* Insert Custom Value */}
       <button onClick={onInsertToken} disabled={disabled} title="Insert Custom Value (Token)"
         className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
           disabled ? "opacity-30 cursor-not-allowed text-gray-400" : "text-blue-600 hover:bg-blue-50 cursor-pointer"
         }`}>
-        <Variable size={14} /> Token
+        <Variable size={13} /> Token
       </button>
 
-      {/* Insert Image */}
       <button onClick={onInsertImage} disabled={disabled} title="Insert Image"
         className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
           disabled ? "opacity-30 cursor-not-allowed text-gray-400" : "text-emerald-600 hover:bg-emerald-50 cursor-pointer"
         }`}>
-        <ImageIcon size={14} /> Image
+        <ImageIcon size={13} /> Image
       </button>
 
       <div className="ml-auto flex items-center gap-1.5">
@@ -612,18 +612,19 @@ function StickyToolbar({ activeEditor, isLocked, isReadonly, blockKey, onInsertT
 }
 
 // ============================================================
-// BLOCK EDITOR — Individual block with inline editor
+// BLOCK EDITOR — Individual block with inline TipTap editor
+// KEY FIX: onActivate(editor) callback replaces onFocus + onEditorReady
 // ============================================================
 
 function BlockEditor({
-  block, mode, isActive, onFocus, onContentChange, onLock, onDelete,
+  block, mode, isActive, onActivate, onContentChange, onLock, onDelete,
   onAIGenerate, aiStaging, onAcceptAI, onRejectAI, onMoveUp, onMoveDown,
-  isFirst, isLast, onEditorReady, blockRef,
+  isFirst, isLast, blockRef,
 }: {
   block: ComposerBlock;
   mode: ComposerMode;
   isActive: boolean;
-  onFocus: () => void;
+  onActivate: (editor: Editor | null) => void;
   onContentChange: (content: string) => void;
   onLock: () => void;
   onDelete: () => void;
@@ -635,7 +636,6 @@ function BlockEditor({
   onMoveDown: () => void;
   isFirst: boolean;
   isLast: boolean;
-  onEditorReady: (editor: Editor) => void;
   blockRef: (el: HTMLDivElement | null) => void;
 }) {
   const blockDef = getBlockByKey(block.block_key);
@@ -659,14 +659,28 @@ function BlockEditor({
     content: block.content,
     editable: canEdit,
     onUpdate: ({ editor: e }) => { onContentChange(e.getHTML()); },
-    onFocus: () => { onFocus(); },
+    onFocus: () => {
+      // KEY FIX: When user clicks into the editor, call onActivate with this editor
+      // This sets BOTH activeBlockId and activeEditor as STATE in the parent
+    },
   });
 
+  // When user clicks the block wrapper OR the editor gets focus, activate this block
+  const handleClick = useCallback(() => {
+    onActivate(editor);
+  }, [editor, onActivate]);
+
+  // Also wire up editor focus event
   useEffect(() => {
-    if (editor && isActive) {
-      onEditorReady(editor);
-    }
-  }, [editor, isActive]);
+    if (!editor) return;
+    const handleFocus = () => {
+      onActivate(editor);
+    };
+    editor.on("focus", handleFocus);
+    return () => {
+      editor.off("focus", handleFocus);
+    };
+  }, [editor, onActivate]);
 
   useEffect(() => {
     if (editor && editor.isEditable !== canEdit) {
@@ -678,10 +692,10 @@ function BlockEditor({
     <div
       ref={blockRef}
       data-block-id={block.id}
-      className={`rounded-xl border transition-all ${
+      className={`rounded-xl border transition-all mb-2 ${
         isActive ? "border-[#1B2A4A]/40 shadow-md ring-1 ring-[#1B2A4A]/10" : "border-gray-200 shadow-none hover:shadow-sm"
       } ${isLocked ? "bg-gray-50/50" : "bg-white"}`}
-      onClick={onFocus}
+      onClick={handleClick}
     >
       {/* Block Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100">
@@ -798,9 +812,7 @@ function InsertRow({ onAddBlock, onAddSection, onOpenLibrary, visible }: {
       onMouseEnter={() => setShow(true)}
       onMouseLeave={() => setShow(false)}
     >
-      {/* Hover line */}
       <div className={`absolute inset-x-0 top-1/2 h-px transition-colors ${show ? "bg-[#1B2A4A]/20" : "bg-transparent"}`} />
-      {/* Center trigger */}
       <div className={`flex items-center justify-center gap-1.5 transition-all ${show ? "opacity-100" : "opacity-0"}`}>
         <button onClick={onAddSection}
           className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-gray-200 shadow-sm hover:border-[#1B2A4A]/30 hover:shadow text-[10px] font-medium text-gray-600 transition-all">
@@ -849,7 +861,7 @@ function BlockLibrarySidebar({ onAddBlock, onClose, docType }: {
   }, [filtered]);
 
   return (
-    <div className="w-64 border-l border-gray-200 bg-white flex flex-col">
+    <div className="w-64 border-l border-gray-200 bg-white flex flex-col shrink-0">
       <div className="p-3 border-b border-gray-200 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-[#1B2A4A] flex items-center gap-1.5">
           <LayoutTemplate size={14} /> Block Library
@@ -997,6 +1009,7 @@ export default function DocumentComposer({
   documentType, workspaceId = "", customerId = "", customerName = "",
   existingInstanceId, onSave, onExportPDF, onBack, backLabel = "Back",
 }: DocumentComposerProps) {
+  const [, navigate] = useLocation();
   const [mode, setMode] = useState<ComposerMode>("draft");
   const [showBlockLibrary, setShowBlockLibrary] = useState(false);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
@@ -1015,8 +1028,9 @@ export default function DocumentComposer({
   const [blockToAdd, setBlockToAdd] = useState<DocBlock | null>(null);
   const [showBlockConfirm, setShowBlockConfirm] = useState(false);
 
-  // Active editor ref for toolbar wiring
-  const activeEditorRef = useRef<Editor | null>(null);
+  // KEY FIX: activeEditor is STATE, not a ref — changes trigger re-renders
+  const [activeEditor, setActiveEditor] = useState<Editor | null>(null);
+
   // Block element refs for scroll-to
   const blockRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -1131,6 +1145,12 @@ export default function DocumentComposer({
     toast.success(`Template "${template.name}" loaded with ${blocks.length} blocks`);
   }, []);
 
+  // KEY FIX: Block activation handler — sets both blockId and editor in one batch
+  const handleBlockActivate = useCallback((blockId: string, editor: Editor | null) => {
+    setActiveBlockId(blockId);
+    setActiveEditor(editor);
+  }, []);
+
   // Block operations — with confirmation
   const requestAddBlock = useCallback((blockKey: string) => {
     const blockDef = getBlockByKey(blockKey);
@@ -1165,7 +1185,7 @@ export default function DocumentComposer({
     setInsertAfterBlockId(null);
   }, [blockToAdd, document.blocks.length, activeBlockId, insertAfterBlockId]);
 
-  // Quick add section (WYSIWYG block)
+  // Quick add section
   const addQuickSection = useCallback((afterBlockId: string | null) => {
     const newBlock: ComposerBlock = {
       id: `blk-section-${Date.now()}`, block_key: "intro.narrative",
@@ -1187,7 +1207,6 @@ export default function DocumentComposer({
     toast.success("New section added");
   }, [document.blocks.length]);
 
-  // Quick add block from library (opens library with insert context)
   const openLibraryForInsert = useCallback((afterBlockId: string | null) => {
     setInsertAfterBlockId(afterBlockId);
     setShowBlockLibrary(true);
@@ -1213,8 +1232,12 @@ export default function DocumentComposer({
       ...prev, updated_at: new Date().toISOString(),
       blocks: prev.blocks.filter(b => b.id !== blockId),
     }));
+    if (activeBlockId === blockId) {
+      setActiveBlockId(null);
+      setActiveEditor(null);
+    }
     toast.success("Block removed");
-  }, []);
+  }, [activeBlockId]);
 
   const moveBlock = useCallback((blockId: string, direction: "up" | "down") => {
     setDocument(prev => {
@@ -1228,25 +1251,25 @@ export default function DocumentComposer({
     });
   }, []);
 
-  // Token insert
+  // Token insert — uses activeEditor STATE
   const handleInsertToken = useCallback((tokenKey: string) => {
-    if (activeEditorRef.current && activeEditorRef.current.isEditable) {
-      activeEditorRef.current.chain().focus().insertContent(`{{${tokenKey}}}`).run();
+    if (activeEditor && activeEditor.isEditable) {
+      activeEditor.chain().focus().insertContent(`{{${tokenKey}}}`).run();
       toast.success(`Inserted {{${tokenKey}}}`);
     } else {
       toast.error("No editable block selected — click a block first");
     }
-  }, []);
+  }, [activeEditor]);
 
   // Image insert
   const handleInsertImage = useCallback((url: string, alt: string) => {
-    if (activeEditorRef.current && activeEditorRef.current.isEditable) {
-      activeEditorRef.current.chain().focus().setImage({ src: url, alt }).run();
+    if (activeEditor && activeEditor.isEditable) {
+      activeEditor.chain().focus().setImage({ src: url, alt }).run();
       toast.success("Image inserted");
     } else {
       toast.error("No editable block selected — click a block first");
     }
-  }, []);
+  }, [activeEditor]);
 
   // AI operations
   const handleAIGenerate = useCallback((blockId: string) => {
@@ -1332,11 +1355,6 @@ export default function DocumentComposer({
     toast.success("PDF approved and saved to Documents");
   }, [document, onExportPDF]);
 
-  // Lock to Canon
-  const lockAllBlocks = useCallback(() => {
-    handleCompilePDF();
-  }, [handleCompilePDF]);
-
   const handleCanonLock = useCallback(() => {
     setDocument(prev => ({
       ...prev, status: "canon", updated_at: new Date().toISOString(),
@@ -1365,11 +1383,6 @@ export default function DocumentComposer({
     toast.success(`Bound ${bindingKey.replace(/_/g, " ")}`);
   }, [document.customer_id]);
 
-  // Editor ready callback
-  const handleEditorReady = useCallback((editor: Editor) => {
-    activeEditorRef.current = editor;
-  }, []);
-
   // Scroll to block
   const scrollToBlock = useCallback((blockId: string) => {
     setActiveBlockId(blockId);
@@ -1385,61 +1398,81 @@ export default function DocumentComposer({
   const docTypeConfig = DOC_TYPE_CONFIG[documentType];
   const activeBlockName = activeBlock ? (getBlockByKey(activeBlock.block_key)?.display_name || activeBlock.block_key) : "";
 
-  // Grade color helper
   const gradeColor = (grade: string) => {
     const map: Record<string, string> = { A: "text-emerald-700 bg-emerald-50", B: "text-blue-700 bg-blue-50", C: "text-amber-700 bg-amber-50", D: "text-orange-700 bg-orange-50", F: "text-red-700 bg-red-50" };
     return map[grade] || "text-gray-700 bg-gray-50";
   };
 
+  // ============================================================
+  // RENDER
+  // ============================================================
+
   return (
     <div className="flex h-full bg-white">
       {/* Main Editor Area */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Bar */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200 bg-white">
-          <div className="flex items-center gap-3">
-            {onBack && (
-              <Button variant="ghost" size="sm" onClick={onBack} className="text-xs h-7 mr-1">
-                <ChevronRight size={12} className="rotate-180 mr-1" /> {backLabel}
-              </Button>
-            )}
-            {/* Doc Type Pill */}
-            <Badge className={`text-xs h-6 px-2.5 ${
-              docTypeConfig.family === "legal" ? "bg-purple-100 text-purple-700 border-purple-200" : "bg-blue-100 text-blue-700 border-blue-200"
-            }`}>
-              {docTypeConfig.label}
-            </Badge>
-            <div>
-              <Input value={document.title} onChange={(e) => setDocument(prev => ({ ...prev, title: e.target.value }))}
-                className="h-7 text-base font-semibold border-none bg-transparent p-0 focus-visible:ring-0 w-[350px]" disabled={mode === "canon"} />
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-xs text-gray-500">v{document.version}</span>
-                {linkedCustomer && (
-                  <>
-                    <span className="text-xs text-gray-300">·</span>
-                    <span className="text-xs font-medium text-[#1B2A4A]">{linkedCustomer.name}</span>
-                  </>
-                )}
-                {brandingProfile && (
-                  <>
-                    <span className="text-xs text-gray-300">·</span>
-                    <div className="flex items-center gap-1">
-                      <div className="w-2.5 h-2.5 rounded" style={{ backgroundColor: brandingProfile.primary_color }} />
-                      <span className="text-[10px] text-gray-400">{brandingProfile.name}</span>
-                    </div>
-                  </>
-                )}
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+
+        {/* ===== ROW 1: Document Info Header ===== */}
+        <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-200 bg-white shrink-0">
+          {onBack && (
+            <Button variant="ghost" size="sm" onClick={onBack} className="text-xs h-7 shrink-0">
+              <ArrowLeft size={12} className="mr-1" /> {backLabel}
+            </Button>
+          )}
+          <Badge className={`text-xs h-6 px-2.5 shrink-0 ${
+            docTypeConfig.family === "legal" ? "bg-purple-100 text-purple-700 border-purple-200" : "bg-blue-100 text-blue-700 border-blue-200"
+          }`}>
+            {docTypeConfig.label}
+          </Badge>
+          <div className="flex-1 min-w-0">
+            <Input value={document.title} onChange={(e) => setDocument(prev => ({ ...prev, title: e.target.value }))}
+              className="h-7 text-sm font-semibold border-none bg-transparent p-0 focus-visible:ring-0 w-full" disabled={mode === "canon"} />
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-xs text-gray-500">v{document.version}</span>
+            {linkedCustomer && (
+              <>
                 <span className="text-xs text-gray-300">·</span>
-                <Badge variant={document.status === "canon" ? "default" : "outline"} className="text-[10px] h-4 capitalize">{document.status}</Badge>
-                {document.is_compiled && (
-                  <Badge className="text-[10px] h-4 bg-emerald-100 text-emerald-700 border-emerald-200">
-                    <CheckCircle2 size={9} className="mr-0.5" /> Compiled
-                  </Badge>
-                )}
+                <span className="text-xs font-medium text-[#1B2A4A] max-w-[140px] truncate">{linkedCustomer.name}</span>
+              </>
+            )}
+            {brandingProfile && (
+              <>
+                <span className="text-xs text-gray-300">·</span>
+                <div className="w-2.5 h-2.5 rounded shrink-0" style={{ backgroundColor: brandingProfile.primary_color }} />
+              </>
+            )}
+            <Badge variant={document.status === "canon" ? "default" : "outline"} className="text-[10px] h-4 capitalize">{document.status}</Badge>
+            {document.is_compiled && (
+              <Badge className="text-[10px] h-4 bg-emerald-100 text-emerald-700 border-emerald-200">
+                <CheckCircle2 size={9} className="mr-0.5" /> Compiled
+              </Badge>
+            )}
+          </div>
+        </div>
+
+        {/* ===== ROW 2: Actions + Mode Tabs ===== */}
+        <div className="flex items-center justify-between px-4 py-1.5 border-b border-gray-100 bg-white shrink-0">
+          <Tabs value={mode} onValueChange={(v) => setMode(v as ComposerMode)}>
+            <TabsList className="bg-gray-100/80 h-8">
+              <TabsTrigger value="draft" className="text-xs gap-1 h-6" disabled={mode === "canon"}>
+                <PenTool size={11} /> Draft
+              </TabsTrigger>
+              <TabsTrigger value="canon" className="text-xs gap-1 h-6">
+                <Shield size={11} /> Canon
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 mr-2 text-xs text-gray-400">
+              <span>{lockedCount}/{totalCount} locked</span>
+              <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                <div className="h-full bg-[#1B2A4A] rounded-full transition-all duration-500"
+                  style={{ width: `${totalCount > 0 ? (lockedCount / totalCount) * 100 : 0}%` }} />
               </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
+            <Separator orientation="vertical" className="h-5" />
             <Button variant="outline" size="sm" onClick={() => setShowTemplateSelector(true)} className="text-xs h-7" disabled={mode === "canon"}>
               <LayoutTemplate size={12} className="mr-1" /> Template
             </Button>
@@ -1451,145 +1484,127 @@ export default function DocumentComposer({
               <Save size={12} className="mr-1" /> Save
             </Button>
             <Button variant="outline" size="sm" onClick={handleCompilePDF} className="text-xs h-7">
-              <Download size={12} className="mr-1" /> Compile PDF
+              <Download size={12} className="mr-1" /> Compile
             </Button>
             <Button variant="outline" size="sm" onClick={() => {
-              handleCompilePDF();
-              window.location.href = `/composer/${document.id}/view`;
+              navigate(`/composer/${document.id}/view`);
             }} className="text-xs h-7">
               <Eye size={12} className="mr-1" /> Output Studio
             </Button>
             {mode !== "canon" && (
-              <Button variant="default" size="sm" onClick={lockAllBlocks} className="bg-[#1B2A4A] hover:bg-[#2A3F6A] text-xs h-7">
-                <Lock size={12} className="mr-1" /> Lock as Canon
+              <Button variant="default" size="sm" onClick={() => handleCompilePDF()} className="bg-[#1B2A4A] hover:bg-[#2A3F6A] text-xs h-7">
+                <Lock size={12} className="mr-1" /> Lock Canon
               </Button>
             )}
           </div>
         </div>
 
-        {/* Mode Tabs */}
-        <div className="px-4 pt-2 border-b border-gray-100 flex items-center justify-between">
-          <Tabs value={mode} onValueChange={(v) => setMode(v as ComposerMode)}>
-            <TabsList className="bg-gray-100/80 h-8">
-              <TabsTrigger value="draft" className="text-xs gap-1 h-6" disabled={mode === "canon"}>
-                <PenTool size={12} /> Draft
-              </TabsTrigger>
-              <TabsTrigger value="canon" className="text-xs gap-1 h-6">
-                <Shield size={12} /> Canon
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-          <div className="flex items-center gap-2 text-xs text-gray-400">
-            <span>{lockedCount}/{totalCount} blocks locked</span>
-            <div className="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-              <div className="h-full bg-[#1B2A4A] rounded-full transition-all duration-500"
-                style={{ width: `${totalCount > 0 ? (lockedCount / totalCount) * 100 : 0}%` }} />
+        {/* ===== SCROLLABLE CONTENT with STICKY TOOLBAR ===== */}
+        {/* KEY FIX: Using native overflow-y-auto div instead of Radix ScrollArea.
+            Radix ScrollArea creates a custom viewport that breaks CSS sticky positioning.
+            With native overflow, the toolbar's `sticky top-0` works correctly. */}
+        <div className="flex-1 overflow-y-auto">
+          {/* Sticky Toolbar — inside the scroll container so it sticks */}
+          <StickyToolbar
+            activeEditor={activeEditor}
+            isLocked={activeBlock?.is_locked || mode === "canon" || false}
+            isReadonly={activeBlockDef?.editor_mode === "readonly" || false}
+            blockKey={activeBlock?.block_key || null}
+            onInsertToken={() => setShowTokenModal(true)}
+            onInsertImage={() => setShowImageModal(true)}
+          />
+
+          {/* Content Area */}
+          <div className="p-4">
+            <div className="max-w-4xl mx-auto">
+              {document.blocks.length === 0 && (
+                <div className="text-center py-16">
+                  <LayoutTemplate size={48} className="mx-auto mb-4 text-gray-300" />
+                  <h3 className="text-lg font-medium text-gray-500 mb-2">No blocks loaded</h3>
+                  <p className="text-sm text-gray-400 mb-4">Select a template to load a document recipe, or add blocks from the library</p>
+                  <div className="flex items-center justify-center gap-3">
+                    <Button variant="outline" onClick={() => setShowTemplateSelector(true)}>
+                      <LayoutTemplate size={14} className="mr-1.5" /> Load Template
+                    </Button>
+                    <Button variant="outline" onClick={() => setShowBlockLibrary(true)}>
+                      <Layers size={14} className="mr-1.5" /> Open Block Library
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {document.blocks.map((block, idx) => (
+                <div key={block.id}>
+                  {idx > 0 && (
+                    <InsertRow
+                      visible={mode === "draft"}
+                      onAddSection={() => addQuickSection(document.blocks[idx - 1].id)}
+                      onAddBlock={() => {
+                        setInsertAfterBlockId(document.blocks[idx - 1].id);
+                        setShowBlockLibrary(true);
+                      }}
+                      onOpenLibrary={() => openLibraryForInsert(document.blocks[idx - 1].id)}
+                    />
+                  )}
+                  <BlockEditor
+                    block={block}
+                    mode={mode}
+                    isActive={activeBlockId === block.id}
+                    onActivate={(editor) => handleBlockActivate(block.id, editor)}
+                    onContentChange={(content) => updateBlockContent(block.id, content)}
+                    onLock={() => lockBlock(block.id)}
+                    onDelete={() => removeBlock(block.id)}
+                    onAIGenerate={() => handleAIGenerate(block.id)}
+                    aiStaging={aiStagingMap[block.id] || null}
+                    onAcceptAI={() => handleAcceptAI(block.id)}
+                    onRejectAI={() => handleRejectAI(block.id)}
+                    onMoveUp={() => moveBlock(block.id, "up")}
+                    onMoveDown={() => moveBlock(block.id, "down")}
+                    isFirst={idx === 0}
+                    isLast={idx === document.blocks.length - 1}
+                    blockRef={(el) => { blockRefs.current[block.id] = el; }}
+                  />
+                </div>
+              ))}
+
+              {/* Bottom Insert Row */}
+              {mode === "draft" && document.blocks.length > 0 && (
+                <div className="flex items-center gap-2 mt-3 mb-4 pt-3 border-t border-dashed border-gray-200">
+                  <Button variant="outline" size="sm" onClick={() => addQuickSection(null)} className="text-xs">
+                    <Plus size={14} className="mr-1" /> Add Section
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setShowBlockLibrary(true)} className="text-xs">
+                    <Layers size={14} className="mr-1" /> Block Library
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setShowPromptBox(!showPromptBox)}
+                    className="text-xs border-amber-300 text-amber-700 hover:bg-amber-50">
+                    <Sparkles size={14} className="mr-1" /> AI Prompt
+                  </Button>
+                </div>
+              )}
+
+              {/* AI Prompt Box */}
+              {showPromptBox && mode === "draft" && (
+                <Card className="mb-4 border-amber-300 bg-amber-50/30">
+                  <CardHeader className="py-3 px-4">
+                    <CardTitle className="text-sm flex items-center gap-2 text-amber-800">
+                      <Sparkles size={14} /> AI Prompt Box
+                      <button onClick={() => setShowPromptBox(false)} className="ml-auto text-gray-400 hover:text-gray-600"><X size={14} /></button>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-4 pb-3">
+                    <p className="text-xs text-amber-700 mb-2">Describe what you need. AI will generate a new narrative block. Human reviews before it enters the document.</p>
+                    <Textarea value={promptText} onChange={(e) => setPromptText(e.target.value)}
+                      placeholder="e.g., Write an executive summary for a warehousing proposal for a petrochemical client in Jubail..." className="text-sm mb-2 min-h-[80px]" />
+                    <Button size="sm" onClick={handlePromptSubmit} className="bg-amber-600 hover:bg-amber-700 text-white">
+                      <Send size={14} className="mr-1" /> Generate
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
             </div>
           </div>
         </div>
-
-        {/* Sticky Toolbar */}
-        <StickyToolbar
-          activeEditor={activeEditorRef.current}
-          isLocked={activeBlock?.is_locked || mode === "canon" || false}
-          isReadonly={activeBlockDef?.editor_mode === "readonly" || false}
-          blockKey={activeBlock?.block_key || null}
-          onInsertToken={() => setShowTokenModal(true)}
-          onInsertImage={() => setShowImageModal(true)}
-        />
-
-        {/* Content Area */}
-        <ScrollArea className="flex-1 p-4">
-          <div className="max-w-4xl mx-auto">
-            {document.blocks.length === 0 && (
-              <div className="text-center py-16">
-                <LayoutTemplate size={48} className="mx-auto mb-4 text-gray-300" />
-                <h3 className="text-lg font-medium text-gray-500 mb-2">No blocks loaded</h3>
-                <p className="text-sm text-gray-400 mb-4">Select a template to load a document recipe, or add blocks from the library</p>
-                <div className="flex items-center justify-center gap-3">
-                  <Button variant="outline" onClick={() => setShowTemplateSelector(true)}>
-                    <LayoutTemplate size={14} className="mr-1.5" /> Load Template
-                  </Button>
-                  <Button variant="outline" onClick={() => setShowBlockLibrary(true)}>
-                    <Layers size={14} className="mr-1.5" /> Open Block Library
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            {document.blocks.map((block, idx) => (
-              <div key={block.id}>
-                {/* Between-block insert row (before each block except first) */}
-                {idx > 0 && (
-                  <InsertRow
-                    visible={mode === "draft"}
-                    onAddSection={() => addQuickSection(document.blocks[idx - 1].id)}
-                    onAddBlock={() => {
-                      setInsertAfterBlockId(document.blocks[idx - 1].id);
-                      setShowBlockLibrary(true);
-                    }}
-                    onOpenLibrary={() => openLibraryForInsert(document.blocks[idx - 1].id)}
-                  />
-                )}
-                <BlockEditor
-                  block={block}
-                  mode={mode}
-                  isActive={activeBlockId === block.id}
-                  onFocus={() => setActiveBlockId(block.id)}
-                  onContentChange={(content) => updateBlockContent(block.id, content)}
-                  onLock={() => lockBlock(block.id)}
-                  onDelete={() => removeBlock(block.id)}
-                  onAIGenerate={() => handleAIGenerate(block.id)}
-                  aiStaging={aiStagingMap[block.id] || null}
-                  onAcceptAI={() => handleAcceptAI(block.id)}
-                  onRejectAI={() => handleRejectAI(block.id)}
-                  onMoveUp={() => moveBlock(block.id, "up")}
-                  onMoveDown={() => moveBlock(block.id, "down")}
-                  isFirst={idx === 0}
-                  isLast={idx === document.blocks.length - 1}
-                  onEditorReady={handleEditorReady}
-                  blockRef={(el) => { blockRefs.current[block.id] = el; }}
-                />
-              </div>
-            ))}
-
-            {/* Bottom Insert Row */}
-            {mode === "draft" && document.blocks.length > 0 && (
-              <div className="flex items-center gap-2 mt-3 mb-4 pt-3 border-t border-dashed border-gray-200">
-                <Button variant="outline" size="sm" onClick={() => addQuickSection(null)} className="text-xs">
-                  <Plus size={14} className="mr-1" /> Add Section
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setShowBlockLibrary(true)} className="text-xs">
-                  <Layers size={14} className="mr-1" /> Block Library
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setShowPromptBox(!showPromptBox)}
-                  className="text-xs border-amber-300 text-amber-700 hover:bg-amber-50">
-                  <Sparkles size={14} className="mr-1" /> AI Prompt
-                </Button>
-              </div>
-            )}
-
-            {/* AI Prompt Box */}
-            {showPromptBox && mode === "draft" && (
-              <Card className="mb-4 border-amber-300 bg-amber-50/30">
-                <CardHeader className="py-3 px-4">
-                  <CardTitle className="text-sm flex items-center gap-2 text-amber-800">
-                    <Sparkles size={14} /> AI Prompt Box
-                    <button onClick={() => setShowPromptBox(false)} className="ml-auto text-gray-400 hover:text-gray-600"><X size={14} /></button>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-4 pb-3">
-                  <p className="text-xs text-amber-700 mb-2">Describe what you need. AI will generate a new narrative block. Human reviews before it enters the document.</p>
-                  <Textarea value={promptText} onChange={(e) => setPromptText(e.target.value)}
-                    placeholder="e.g., Write an executive summary for a warehousing proposal for a petrochemical client in Jubail..." className="text-sm mb-2 min-h-[80px]" />
-                  <Button size="sm" onClick={handlePromptSubmit} className="bg-amber-600 hover:bg-amber-700 text-white">
-                    <Send size={14} className="mr-1" /> Generate
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        </ScrollArea>
       </div>
 
       {/* Right Sidebar — Block Library (conditional) */}
@@ -1599,7 +1614,7 @@ export default function DocumentComposer({
 
       {/* Right Sidebar — Full Info Panel (when block library is closed) */}
       {!showBlockLibrary && (
-        <div className="w-72 border-l border-gray-200 bg-[#F8F9FB] flex flex-col overflow-y-auto">
+        <div className="w-72 border-l border-gray-200 bg-[#F8F9FB] flex flex-col overflow-y-auto shrink-0">
           {/* Governance Status Pill */}
           <div className="p-3 border-b border-gray-200">
             <div className="flex items-center gap-2">
@@ -1609,7 +1624,7 @@ export default function DocumentComposer({
             </div>
           </div>
 
-          {/* Linked Customer Card — Full Details */}
+          {/* Linked Customer Card */}
           {linkedCustomer && (
             <div className="p-3 border-b border-gray-200">
               <h3 className="text-xs font-semibold text-[#1B2A4A] mb-2 flex items-center gap-1.5">
@@ -1696,18 +1711,18 @@ export default function DocumentComposer({
             </div>
           </div>
 
-          {/* Block Navigator — with scroll-to-block */}
+          {/* Block Navigator */}
           <div className="p-3 border-b border-gray-200">
             <h3 className="text-xs font-semibold text-[#1B2A4A] mb-2">Block Navigator</h3>
             <ScrollArea className="max-h-[200px]">
               <div className="space-y-0.5">
                 {document.blocks.map((b, i) => {
                   const def = getBlockByKey(b.block_key);
-                  const isActive = activeBlockId === b.id;
+                  const isBlockActive = activeBlockId === b.id;
                   return (
                     <button key={b.id} onClick={() => scrollToBlock(b.id)}
                       className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors ${
-                        isActive ? "bg-white border border-[#1B2A4A]/20 shadow-sm" : "hover:bg-white"
+                        isBlockActive ? "bg-white border border-[#1B2A4A]/20 shadow-sm" : "hover:bg-white"
                       }`}>
                       <span className="text-gray-400 w-4 text-[10px]">{i + 1}</span>
                       <span className="truncate flex-1 text-[11px]">{def?.display_name || b.block_key}</span>

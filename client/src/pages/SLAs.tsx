@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { customers } from "@/lib/store";
+import { resolveOrCreateDocInstance } from "@/lib/document-composer";
 import { toast } from "sonner";
 import DocumentComposer, { type ComposerDocument } from "@/components/DocumentComposer";
 import OverrideDialog from "@/components/OverrideDialog";
@@ -102,7 +103,7 @@ const kpiStatusColors: Record<string, string> = {
 };
 
 export default function SLAs() {
-  const [editingSLA, setEditingSLA] = useState<{ customerName: string; customerId: string; slaId: string } | null>(null);
+  const [editingSLA, setEditingSLA] = useState<{ customerName: string; customerId: string; slaId: string; existingInstanceId?: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const { checkGate, lastEvaluation, showOverrideDialog, executeOverride, cancelOverride } = useGateCheck();
   const { logAction, logApproval } = useAuditLog();
@@ -122,7 +123,7 @@ export default function SLAs() {
       contextData: { action: "create_sla" },
     }, () => {
       logAction("sla", "new", "sla_create_initiated", "New SLA creation initiated");
-      setEditingSLA({ customerName: "", customerId: "", slaId: "new" });
+      setEditingSLA({ customerName: "", customerId: "", slaId: "new", existingInstanceId: undefined });
     });
   };
 
@@ -148,6 +149,7 @@ export default function SLAs() {
           documentType="sla"
           customerId={editingSLA.customerId}
           customerName={editingSLA.customerName}
+          existingInstanceId={editingSLA.existingInstanceId}
           onBack={() => setEditingSLA(null)}
           backLabel="Back to SLAs"
           onSave={(doc: ComposerDocument) => {
@@ -265,7 +267,18 @@ export default function SLAs() {
                     <Button variant="ghost" size="sm" className="h-7 text-xs"
                       onClick={() => {
                         logAction("sla", sla.id, "sla_edit_opened", `SLA "${sla.title}" opened for editing`);
-                        setEditingSLA({ customerName: sla.customerName, customerId: sla.customerId, slaId: sla.id });
+                        try {
+                          const instance = resolveOrCreateDocInstance({
+                            doc_type: "sla",
+                            linked_entity_type: "sla_version",
+                            linked_entity_id: sla.id,
+                            customer_id: sla.customerId,
+                            customer_name: sla.customerName,
+                          });
+                          setEditingSLA({ customerName: sla.customerName, customerId: sla.customerId, slaId: sla.id, existingInstanceId: instance.id });
+                        } catch {
+                          setEditingSLA({ customerName: sla.customerName, customerId: sla.customerId, slaId: sla.id });
+                        }
                       }}>
                       <Edit size={12} className="mr-1" /> Edit in Composer
                     </Button>

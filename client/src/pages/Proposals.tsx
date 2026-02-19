@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { proposals, workspaces, customers, formatSAR } from "@/lib/store";
+import { resolveOrCreateDocInstance } from "@/lib/document-composer";
 import { getEcrScoreByCustomerName, getGradeBg, type EcrScore } from "@/lib/ecr";
 import { Star } from "lucide-react";
 import { toast } from "sonner";
@@ -36,7 +37,7 @@ const stateIcons: Record<string, typeof CheckCircle> = {
 };
 
 export default function Proposals() {
-  const [editingProposal, setEditingProposal] = useState<{ customerName: string; customerId: string; proposalId: string; workspaceId: string } | null>(null);
+  const [editingProposal, setEditingProposal] = useState<{ customerName: string; customerId: string; proposalId: string; workspaceId: string; existingInstanceId?: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const { checkGate, lastEvaluation, showOverrideDialog, executeOverride, cancelOverride } = useGateCheck();
   const { logAction, logApproval } = useAuditLog();
@@ -57,7 +58,7 @@ export default function Proposals() {
       contextData: { action: "create_proposal" },
     }, () => {
       logAction("proposal", "new", "proposal_create_initiated", "New proposal creation initiated");
-      setEditingProposal({ customerName: "", customerId: "", proposalId: "new", workspaceId: "" });
+      setEditingProposal({ customerName: "", customerId: "", proposalId: "new", workspaceId: "", existingInstanceId: undefined });
     });
   };
 
@@ -98,6 +99,7 @@ export default function Proposals() {
           customerId={editingProposal.customerId}
           customerName={editingProposal.customerName}
           workspaceId={editingProposal.workspaceId}
+          existingInstanceId={editingProposal.existingInstanceId}
           onBack={() => setEditingProposal(null)}
           backLabel="Back to Proposals"
           onSave={(doc: ComposerDocument) => {
@@ -218,12 +220,31 @@ export default function Proposals() {
                     <Button variant="ghost" size="sm" className="h-7 text-xs"
                       onClick={() => {
                         logAction("proposal", p.id, "proposal_edit_opened", `Proposal "${p.title}" opened for editing`);
-                        setEditingProposal({
-                          customerName,
-                          customerId: customer?.id || "",
-                          proposalId: p.id,
-                          workspaceId: p.workspaceId,
-                        });
+                        try {
+                          const instance = resolveOrCreateDocInstance({
+                            doc_type: "proposal",
+                            linked_entity_type: "proposal_version",
+                            linked_entity_id: p.id,
+                            customer_id: customer?.id || "",
+                            customer_name: customerName,
+                            workspace_id: p.workspaceId,
+                            workspace_name: ws?.title,
+                          });
+                          setEditingProposal({
+                            customerName,
+                            customerId: customer?.id || "",
+                            proposalId: p.id,
+                            workspaceId: p.workspaceId,
+                            existingInstanceId: instance.id,
+                          });
+                        } catch {
+                          setEditingProposal({
+                            customerName,
+                            customerId: customer?.id || "",
+                            proposalId: p.id,
+                            workspaceId: p.workspaceId,
+                          });
+                        }
                       }}>
                       <Edit size={12} className="mr-1" /> Edit in Composer
                     </Button>

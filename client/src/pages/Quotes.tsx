@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { quotes, workspaces, customers, formatSAR, formatPercent } from "@/lib/store";
+import { resolveOrCreateDocInstance } from "@/lib/document-composer";
 import { getEcrScoreByCustomerName, getGradeBg, type EcrScore } from "@/lib/ecr";
 import { Star } from "lucide-react";
 import { toast } from "sonner";
@@ -36,7 +37,7 @@ const stateIcons: Record<string, typeof CheckCircle> = {
 };
 
 export default function Quotes() {
-  const [editingQuote, setEditingQuote] = useState<{ customerName: string; customerId: string; quoteId: string; workspaceId: string } | null>(null);
+  const [editingQuote, setEditingQuote] = useState<{ customerName: string; customerId: string; quoteId: string; workspaceId: string; existingInstanceId?: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const { checkGate, lastEvaluation, showOverrideDialog, executeOverride, cancelOverride } = useGateCheck();
   const { logAction, logApproval } = useAuditLog();
@@ -57,7 +58,7 @@ export default function Quotes() {
       contextData: { action: "create_quote" },
     }, () => {
       logAction("quote", "new", "quote_create_initiated", "New quote creation initiated");
-      setEditingQuote({ customerName: "", customerId: "", quoteId: "new", workspaceId: "" });
+      setEditingQuote({ customerName: "", customerId: "", quoteId: "new", workspaceId: "", existingInstanceId: undefined });
     });
   };
 
@@ -84,6 +85,7 @@ export default function Quotes() {
           customerId={editingQuote.customerId}
           customerName={editingQuote.customerName}
           workspaceId={editingQuote.workspaceId}
+          existingInstanceId={editingQuote.existingInstanceId}
           onBack={() => setEditingQuote(null)}
           backLabel="Back to Quotes"
           onSave={(doc: ComposerDocument) => {
@@ -202,12 +204,31 @@ export default function Quotes() {
                     <Button variant="ghost" size="sm" className="h-7 text-xs"
                       onClick={() => {
                         logAction("quote", q.id, "quote_edit_opened", `Quote ${q.id} opened for editing`);
-                        setEditingQuote({
-                          customerName,
-                          customerId: customer?.id || "",
-                          quoteId: q.id,
-                          workspaceId: q.workspaceId,
-                        });
+                        try {
+                          const instance = resolveOrCreateDocInstance({
+                            doc_type: "quote",
+                            linked_entity_type: "quote_version",
+                            linked_entity_id: q.id,
+                            customer_id: customer?.id || "",
+                            customer_name: customerName,
+                            workspace_id: q.workspaceId,
+                            workspace_name: ws?.title,
+                          });
+                          setEditingQuote({
+                            customerName,
+                            customerId: customer?.id || "",
+                            quoteId: q.id,
+                            workspaceId: q.workspaceId,
+                            existingInstanceId: instance.id,
+                          });
+                        } catch {
+                          setEditingQuote({
+                            customerName,
+                            customerId: customer?.id || "",
+                            quoteId: q.id,
+                            workspaceId: q.workspaceId,
+                          });
+                        }
                       }}>
                       <Edit size={12} className="mr-1" /> Edit in Composer
                     </Button>
