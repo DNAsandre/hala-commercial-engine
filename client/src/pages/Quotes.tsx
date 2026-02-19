@@ -15,7 +15,7 @@ import { quotes, workspaces, customers, formatSAR, formatPercent } from "@/lib/s
 import { getEcrScoreByCustomerName, getGradeBg, type EcrScore } from "@/lib/ecr";
 import { Star } from "lucide-react";
 import { toast } from "sonner";
-import CommercialEditor, { type EditorDocument } from "@/components/CommercialEditor";
+import DocumentComposer, { type ComposerDocument } from "@/components/DocumentComposer";
 import OverrideDialog from "@/components/OverrideDialog";
 import { useGateCheck, useAuditLog } from "@/hooks/useGovernance";
 
@@ -75,40 +75,26 @@ export default function Quotes() {
     });
   };
 
-  // If editing a quote, show the full editor
+  // If editing a quote, show the unified Document Composer
   if (editingQuote) {
     return (
-      <div className="h-[calc(100vh-3.5rem)] flex flex-col">
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 bg-white">
-          <Button variant="ghost" size="sm" onClick={() => setEditingQuote(null)} className="text-xs">
-            <ArrowLeft size={14} className="mr-1" /> Back to Quotes
-          </Button>
-          <span className="text-xs text-gray-400">|</span>
-          <span className="text-xs text-gray-600">
-            {editingQuote.customerName
-              ? <>Editing quote for <strong>{editingQuote.customerName}</strong></>
-              : <>New Quote — select customer in editor</>}
-          </span>
-          <Badge variant="outline" className="ml-auto text-[10px] bg-emerald-50 text-emerald-700">
-            <Shield size={10} className="mr-1" /> Governance Active
-          </Badge>
-        </div>
-        <div className="flex-1">
-          <CommercialEditor
-            documentType="quote"
-            customerId={editingQuote.customerId}
-            customerName={editingQuote.customerName}
-            workspaceId={editingQuote.workspaceId}
-            onSave={(doc: EditorDocument) => {
-              logAction("quote", doc.id, "quote_saved", `Quote "${doc.title}" saved — v${doc.version}`, { version: doc.version });
-              toast.success(`Quote saved — ${doc.title}`);
-            }}
-            onExportPDF={(doc: EditorDocument) => {
-              logAction("quote", doc.id, "quote_pdf_exported", `Quote "${doc.title}" PDF exported`, { version: doc.version });
-              toast.success("Quote PDF export initiated");
-            }}
-          />
-        </div>
+      <div className="h-[calc(100vh-3.5rem)]">
+        <DocumentComposer
+          documentType="quote"
+          customerId={editingQuote.customerId}
+          customerName={editingQuote.customerName}
+          workspaceId={editingQuote.workspaceId}
+          onBack={() => setEditingQuote(null)}
+          backLabel="Back to Quotes"
+          onSave={(doc: ComposerDocument) => {
+            logAction("quote", doc.id, "quote_saved", `Quote "${doc.title}" saved — v${doc.version}`, { version: doc.version });
+            toast.success(`Quote saved — ${doc.title}`);
+          }}
+          onExportPDF={(doc: ComposerDocument) => {
+            logAction("quote", doc.id, "quote_pdf_exported", `Quote "${doc.title}" PDF exported`, { version: doc.version });
+            toast.success("Quote PDF export initiated");
+          }}
+        />
       </div>
     );
   }
@@ -223,7 +209,7 @@ export default function Quotes() {
                           workspaceId: q.workspaceId,
                         });
                       }}>
-                      <Edit size={12} className="mr-1" /> Edit in Editor
+                      <Edit size={12} className="mr-1" /> Edit in Composer
                     </Button>
                     <Button variant="ghost" size="sm" className="h-7 text-xs"
                       onClick={() => {

@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { customers } from "@/lib/store";
 import { toast } from "sonner";
-import CommercialEditor, { type EditorDocument } from "@/components/CommercialEditor";
+import DocumentComposer, { type ComposerDocument } from "@/components/DocumentComposer";
 import OverrideDialog from "@/components/OverrideDialog";
 import { useGateCheck, useAuditLog } from "@/hooks/useGovernance";
 
@@ -140,39 +140,25 @@ export default function SLAs() {
     });
   };
 
-  // If editing an SLA, show the full editor
+  // If editing an SLA, show the unified Document Composer
   if (editingSLA) {
     return (
-      <div className="h-[calc(100vh-3.5rem)] flex flex-col">
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 bg-white">
-          <Button variant="ghost" size="sm" onClick={() => setEditingSLA(null)} className="text-xs">
-            <ArrowLeft size={14} className="mr-1" /> Back to SLAs
-          </Button>
-          <span className="text-xs text-gray-400">|</span>
-          <span className="text-xs text-gray-600">
-            {editingSLA.customerName
-              ? <>Editing SLA for <strong>{editingSLA.customerName}</strong></>
-              : <>New SLA — select customer in editor</>}
-          </span>
-          <Badge variant="outline" className="ml-auto text-[10px] bg-emerald-50 text-emerald-700">
-            <Shield size={10} className="mr-1" /> Governance Active
-          </Badge>
-        </div>
-        <div className="flex-1">
-          <CommercialEditor
-            documentType="sla"
-            customerId={editingSLA.customerId}
-            customerName={editingSLA.customerName}
-            onSave={(doc: EditorDocument) => {
-              logAction("sla", doc.id, "sla_saved", `SLA "${doc.title}" saved — v${doc.version}`, { version: doc.version });
-              toast.success(`SLA saved — ${doc.title}`);
-            }}
-            onExportPDF={(doc: EditorDocument) => {
-              logAction("sla", doc.id, "sla_pdf_exported", `SLA "${doc.title}" PDF exported`, { version: doc.version });
-              toast.success("SLA PDF export initiated");
-            }}
-          />
-        </div>
+      <div className="h-[calc(100vh-3.5rem)]">
+        <DocumentComposer
+          documentType="sla"
+          customerId={editingSLA.customerId}
+          customerName={editingSLA.customerName}
+          onBack={() => setEditingSLA(null)}
+          backLabel="Back to SLAs"
+          onSave={(doc: ComposerDocument) => {
+            logAction("sla", doc.id, "sla_saved", `SLA "${doc.title}" saved — v${doc.version}`, { version: doc.version });
+            toast.success(`SLA saved — ${doc.title}`);
+          }}
+          onExportPDF={(doc: ComposerDocument) => {
+            logAction("sla", doc.id, "sla_pdf_exported", `SLA "${doc.title}" PDF exported`, { version: doc.version });
+            toast.success("SLA PDF export initiated");
+          }}
+        />
       </div>
     );
   }
@@ -281,7 +267,7 @@ export default function SLAs() {
                         logAction("sla", sla.id, "sla_edit_opened", `SLA "${sla.title}" opened for editing`);
                         setEditingSLA({ customerName: sla.customerName, customerId: sla.customerId, slaId: sla.id });
                       }}>
-                      <Edit size={12} className="mr-1" /> Edit in Editor
+                      <Edit size={12} className="mr-1" /> Edit in Composer
                     </Button>
                     <Button variant="ghost" size="sm" className="h-7 text-xs"
                       onClick={() => {

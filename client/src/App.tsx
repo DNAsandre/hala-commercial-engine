@@ -44,6 +44,7 @@ import TemplateManager from "./pages/TemplateManager";
 import BrandingProfiles from "./pages/BrandingProfiles";
 import BlockLibrary from "./pages/BlockLibrary";
 import BlockBuilder from "./pages/BlockBuilder";
+import VariablesManager from "./pages/VariablesManager";
 
 function AppRouter() {
   return (
@@ -86,6 +87,7 @@ function AppRouter() {
       <Route path="/branding-profiles" component={BrandingProfiles} />
       <Route path="/block-library" component={BlockLibrary} />
       <Route path="/block-builder" component={BlockBuilder} />
+      <Route path="/variables" component={VariablesManager} />
       <Route component={NotFound} />
     </Switch>
   );
