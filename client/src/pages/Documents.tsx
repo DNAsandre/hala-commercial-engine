@@ -84,6 +84,7 @@ const typeIcons: Record<PDFDocumentType, React.ElementType> = {
   pnl: Calculator,
   ecr_scorecard: Users,
   sla: ClipboardList,
+  composer: FileText,
 };
 
 const typeLabels: Record<PDFDocumentType, string> = {
@@ -92,6 +93,7 @@ const typeLabels: Record<PDFDocumentType, string> = {
   pnl: "P&L Summary",
   ecr_scorecard: "ECR Scorecard",
   sla: "SLA",
+  composer: "Composed Document",
 };
 
 const typeColors: Record<PDFDocumentType, string> = {
@@ -100,6 +102,7 @@ const typeColors: Record<PDFDocumentType, string> = {
   pnl: "bg-emerald-100 text-emerald-800",
   ecr_scorecard: "bg-violet-100 text-violet-800",
   sla: "bg-teal-100 text-teal-800",
+  composer: "bg-amber-100 text-amber-800",
 };
 
 export default function Documents() {

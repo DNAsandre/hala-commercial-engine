@@ -40,6 +40,9 @@ import RenewalDetail from "./pages/RenewalDetail";
 import RenewalGates from "./pages/RenewalGates";
 import RevenueExposure from "./pages/RevenueExposure";
 import EcrUpgrades from "./pages/EcrUpgrades";
+import TemplateManager from "./pages/TemplateManager";
+import BrandingProfiles from "./pages/BrandingProfiles";
+import BlockLibrary from "./pages/BlockLibrary";
 
 function AppRouter() {
   return (
@@ -78,6 +81,9 @@ function AppRouter() {
       <Route path="/renewal-gates" component={RenewalGates} />
       <Route path="/revenue-exposure" component={RevenueExposure} />
       <Route path="/ecr-upgrades" component={EcrUpgrades} />
+      <Route path="/template-manager" component={TemplateManager} />
+      <Route path="/branding-profiles" component={BrandingProfiles} />
+      <Route path="/block-library" component={BlockLibrary} />
       <Route component={NotFound} />
     </Switch>
   );
