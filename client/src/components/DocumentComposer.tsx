@@ -1453,6 +1453,12 @@ export default function DocumentComposer({
             <Button variant="outline" size="sm" onClick={handleCompilePDF} className="text-xs h-7">
               <Download size={12} className="mr-1" /> Compile PDF
             </Button>
+            <Button variant="outline" size="sm" onClick={() => {
+              handleCompilePDF();
+              window.location.href = `/composer/${document.id}/view`;
+            }} className="text-xs h-7">
+              <Eye size={12} className="mr-1" /> Output Studio
+            </Button>
             {mode !== "canon" && (
               <Button variant="default" size="sm" onClick={lockAllBlocks} className="bg-[#1B2A4A] hover:bg-[#2A3F6A] text-xs h-7">
                 <Lock size={12} className="mr-1" /> Lock as Canon

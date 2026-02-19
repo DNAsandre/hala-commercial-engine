@@ -463,7 +463,7 @@ interface ComposerBlock {
   config: Record<string, string>;
 }
 
-interface ComposerPDFInput {
+export interface ComposerPDFInput {
   title: string;
   doc_type: DocType;
   customer_name: string;

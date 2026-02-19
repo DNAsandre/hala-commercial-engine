@@ -839,6 +839,181 @@ export function canLockToCanon(instance: DocInstance): { allowed: boolean; reaso
   return { allowed: true, reason: "All checks passed" };
 }
 
+// ============================================================
+// RESOLVE OR CREATE DOC INSTANCE (Part A)
+// ============================================================
+
+export function resolveOrCreateDocInstance(params: {
+  doc_type: DocType;
+  linked_entity_type: LinkedEntityType;
+  linked_entity_id: string;
+  customer_id: string;
+  customer_name: string;
+  workspace_id?: string;
+  workspace_name?: string;
+}): DocInstance {
+  // Search existing instances by (linked_entity_type, linked_entity_id, doc_type)
+  const existing = docInstances.find(
+    di => di.doc_type === params.doc_type &&
+          di.linked_entity_type === params.linked_entity_type &&
+          di.linked_entity_id === params.linked_entity_id
+  );
+  if (existing) return existing;
+
+  // Also search by customer + doc_type (fallback for loose linking)
+  const byCustomer = docInstances.find(
+    di => di.doc_type === params.doc_type && di.customer_id === params.customer_id
+  );
+  if (byCustomer) return byCustomer;
+
+  // Create new instance using default published template
+  const publishedTemplates = getPublishedTemplates().filter(t => t.doc_type === params.doc_type);
+  const template = publishedTemplates[0];
+  if (!template) {
+    throw new Error(`No published template found for doc type: ${params.doc_type}`);
+  }
+  const templateVersion = getPublishedTemplateVersion(template);
+  if (!templateVersion) {
+    throw new Error(`No published version found for template: ${template.name}`);
+  }
+
+  // Build blocks from template recipe
+  const blocks: InstanceBlock[] = templateVersion.recipe.map(r => {
+    const blockDef = getBlockByKey(r.block_key);
+    return {
+      block_key: r.block_key,
+      order: r.order,
+      content: r.default_content_override || blockDef?.default_content || '',
+      is_locked: false,
+      is_ai_generated: false,
+      config: { ...r.config_override },
+    };
+  });
+
+  const now = new Date().toISOString().split('T')[0];
+  const instanceId = `di-auto-${Date.now()}`;
+  const versionId = `div-auto-${Date.now()}`;
+
+  const newInstance: DocInstance = {
+    id: instanceId,
+    doc_type: params.doc_type,
+    template_version_id: templateVersion.id,
+    status: 'draft',
+    linked_entity_type: params.linked_entity_type,
+    linked_entity_id: params.linked_entity_id,
+    customer_id: params.customer_id,
+    customer_name: params.customer_name,
+    workspace_id: params.workspace_id || null,
+    workspace_name: params.workspace_name || null,
+    current_version_id: versionId,
+    versions: [{
+      id: versionId,
+      doc_instance_id: instanceId,
+      version_number: 1,
+      blocks,
+      bindings: { pricing_snapshot_id: null, scope_snapshot_id: null, ecr_score_id: null, sla_snapshot_id: null },
+      created_by: 'Amin Al-Rashid',
+      created_at: now,
+    }],
+    created_by: 'Amin Al-Rashid',
+    created_at: now,
+    updated_at: now,
+  };
+
+  docInstances.push(newInstance);
+  return newInstance;
+}
+
+// ============================================================
+// DOCUMENT VAULT TYPES (Part E)
+// ============================================================
+
+export type VaultAssetStatus = 'preview' | 'final' | 'superseded';
+
+export interface VaultAsset {
+  id: string;
+  doc_instance_id: string;
+  doc_instance_version_id: string;
+  compiled_document_id: string;
+  title: string;
+  doc_type: DocType;
+  customer_id: string;
+  customer_name: string;
+  workspace_id: string | null;
+  workspace_name: string | null;
+  status: VaultAssetStatus;
+  branding_profile_id: string;
+  file_url: string;
+  checksum: string;
+  created_by: string;
+  created_at: string;
+  sent_to_crm: boolean;
+  crm_export_status: 'not_sent' | 'pending' | 'sent' | 'failed' | null;
+  crm_export_at: string | null;
+}
+
+export const vaultAssets: VaultAsset[] = [
+  {
+    id: 'va-001',
+    doc_instance_id: 'di-002',
+    doc_instance_version_id: 'div-002-1',
+    compiled_document_id: 'cd-001',
+    title: "Ma'aden Quotation — HCS-Q-2026-012",
+    doc_type: 'quote',
+    customer_id: 'c2',
+    customer_name: "Ma'aden",
+    workspace_id: 'ws-2',
+    workspace_name: "Ma'aden Ras Al Khair",
+    status: 'final',
+    branding_profile_id: 'bp-001',
+    file_url: '/vault/maaden-quote-final.pdf',
+    checksum: 'sha256:a1b2c3d4e5f6',
+    created_by: 'Nadia Al-Harbi',
+    created_at: '2026-01-30T14:30:00Z',
+    sent_to_crm: true,
+    crm_export_status: 'sent',
+    crm_export_at: '2026-01-31T09:00:00Z',
+  },
+];
+
+export function saveToVault(params: {
+  doc_instance_id: string;
+  doc_instance_version_id: string;
+  compiled_document_id: string;
+  title: string;
+  doc_type: DocType;
+  customer_id: string;
+  customer_name: string;
+  workspace_id: string | null;
+  workspace_name: string | null;
+  branding_profile_id: string;
+  status: VaultAssetStatus;
+}): VaultAsset {
+  const asset: VaultAsset = {
+    id: `va-${Date.now()}`,
+    ...params,
+    file_url: `/vault/${params.doc_instance_id}-${params.status}.pdf`,
+    checksum: `sha256:${Math.random().toString(36).substring(2, 14)}`,
+    created_by: 'Amin Al-Rashid',
+    created_at: new Date().toISOString(),
+    sent_to_crm: false,
+    crm_export_status: null,
+    crm_export_at: null,
+  };
+  vaultAssets.push(asset);
+  return asset;
+}
+
+export function exportToCRM(vaultAssetId: string): { success: boolean; message: string } {
+  const asset = vaultAssets.find(a => a.id === vaultAssetId);
+  if (!asset) return { success: false, message: 'Vault asset not found' };
+  if (asset.status !== 'final') return { success: false, message: 'Only final PDFs can be exported to CRM' };
+  asset.sent_to_crm = true;
+  asset.crm_export_status = 'sent';
+  asset.crm_export_at = new Date().toISOString();
+  return { success: true, message: `Document exported to CRM — ${asset.title}` };
+}
+
 // Family display config
 export const BLOCK_FAMILY_CONFIG: Record<BlockFamily, { label: string; color: string; bg: string }> = {
   commercial: { label: "Commercial", color: "text-blue-700", bg: "bg-blue-50 border-blue-200" },

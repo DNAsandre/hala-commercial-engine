@@ -5,6 +5,7 @@
  */
 
 import { useState, useMemo } from "react";
+import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ const DOC_TYPE_ICONS: Record<string, typeof FileText> = {
 };
 
 export default function TemplateManager() {
+  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
@@ -161,6 +163,9 @@ export default function TemplateManager() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" className="text-xs h-7" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}/designer`); }}>
+                      <Settings2 size={12} className="mr-1" /> Design
+                    </Button>
                     {template.status === "draft" && (
                       <Button variant="outline" size="sm" className="text-xs h-7" onClick={(e) => { e.stopPropagation(); toast.success(`Template "${template.name}" published`); }}>
                         <Send size={12} className="mr-1" /> Publish

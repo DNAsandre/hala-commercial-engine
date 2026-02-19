@@ -45,6 +45,8 @@ import BrandingProfiles from "./pages/BrandingProfiles";
 import BlockLibrary from "./pages/BlockLibrary";
 import BlockBuilder from "./pages/BlockBuilder";
 import VariablesManager from "./pages/VariablesManager";
+import TemplateDesigner from "./pages/TemplateDesigner";
+import OutputStudio from "./pages/OutputStudio";
 
 function AppRouter() {
   return (
@@ -88,6 +90,8 @@ function AppRouter() {
       <Route path="/block-library" component={BlockLibrary} />
       <Route path="/block-builder" component={BlockBuilder} />
       <Route path="/variables" component={VariablesManager} />
+      <Route path="/templates/:templateId/designer" component={TemplateDesigner} />
+      <Route path="/composer/:docInstanceId/view" component={OutputStudio} />
       <Route component={NotFound} />
     </Switch>
   );
