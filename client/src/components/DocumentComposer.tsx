@@ -1,18 +1,19 @@
 /*
- * Document Composer v1 — Template-driven block editor with single sticky toolbar
- * Replaces CommercialEditor with:
- *   - Template selector (load a template recipe into the editor)
- *   - Block library sidebar with drag/drop composition
- *   - Single sticky WYSIWYG toolbar (applies to focused block)
+ * Document Composer v1.1 — Full-featured block editor
+ * Features:
+ *   - Doc Type pill in header (immutable after creation)
+ *   - Token insert modal (searchable, grouped by namespace)
+ *   - Block add confirmation dialog
+ *   - Proper sticky toolbar wiring with active editor ref
+ *   - Image insert in WYSIWYG
+ *   - Bindings panel with token resolution + "Bind now" actions
+ *   - PDF compile with preview viewer + missing tokens panel
  *   - Draft / Canon tabs
- *   - Data-bound blocks (pricing, scope, SLA) auto-bind to current snapshot
- *   - Branding profile selector for PDF compilation
  *   - No-AI-creep constraints enforced at block level
- * Design: White cards, subtle borders, enterprise SaaS aesthetic
  */
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Underline from "@tiptap/extension-underline";
@@ -23,6 +24,7 @@ import TableRow from "@tiptap/extension-table-row";
 import TableCell from "@tiptap/extension-table-cell";
 import TableHeader from "@tiptap/extension-table-header";
 import Link from "@tiptap/extension-link";
+import Image from "@tiptap/extension-image";
 import { TextStyle } from "@tiptap/extension-text-style";
 import Color from "@tiptap/extension-color";
 import { Button } from "@/components/ui/button";
@@ -34,7 +36,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
@@ -42,13 +44,15 @@ import {
   List, ListOrdered, Quote, Heading1, Heading2, Heading3,
   Table as TableIcon, Link as LinkIcon, Highlighter,
   Undo2, Redo2, FileText, Save, Lock,
-  Sparkles, Send, ChevronDown, ChevronRight, Plus,
+  Sparkles, Send, ChevronDown, Plus,
   Trash2, GripVertical, X, Download,
   BookOpen, FileCheck, FileSignature, ClipboardList,
   Layers, PenTool, Shield, LayoutTemplate, Wand2, Check,
-  Building2, User, Phone, Mail, MapPin, DollarSign,
-  Calendar, Hash, Eye, Columns2, Palette, FileCode,
-  Bot, Scale, Truck, Warehouse
+  Building2, Palette, ImageIcon, Variable, Eye,
+  Bot, Scale, Truck, Warehouse, AlertTriangle, CheckCircle2,
+  XCircle, RefreshCw, ChevronRight, Hash, DollarSign,
+  Calendar, Phone, Users, BarChart3, Type, ToggleLeft,
+  Percent, Image as ImageLucide
 } from "lucide-react";
 import { customers, type Customer, formatSAR } from "@/lib/store";
 import {
@@ -63,6 +67,14 @@ import {
   BLOCK_FAMILY_CONFIG, EDITOR_MODE_CONFIG,
   DOC_TYPE_CONFIG, TEMPLATE_STATUS_CONFIG, DOC_INSTANCE_STATUS_CONFIG,
 } from "@/lib/document-composer";
+import {
+  type VariableDefinition, type MissingToken, type TokenResolutionResult,
+  type ResolutionContext,
+  variableDefinitions, NAMESPACE_CONFIG, DATA_TYPE_CONFIG,
+  getVariablesGroupedByNamespace, getVariablesForDocType,
+  buildResolutionContext, resolveTokens, resolveDocumentTokens,
+  checkCompileReadiness, getOverridesForInstance, setVariableOverride,
+} from "@/lib/semantic-variables";
 
 // ============================================================
 // TYPES
@@ -105,23 +117,409 @@ export interface ComposerDocument {
 const AI_SUGGESTIONS: Record<string, string> = {
   "commercial": "<p>Hala Supply Chain Services, a leading 3PL provider in the Kingdom of Saudi Arabia, is pleased to present this comprehensive warehousing and logistics solution. With over two decades of operational excellence across the Eastern, Central, and Western regions, we bring unmatched expertise in temperature-controlled storage, multi-modal distribution, and value-added services.</p>",
   "legal": "<p>This agreement shall be governed by the laws of the Kingdom of Saudi Arabia. All disputes shall be resolved through amicable negotiation in the first instance, with arbitration as the final recourse under the rules of the Saudi Center for Commercial Arbitration.</p>",
-  "annexure": "<p>The following annexure details the operational parameters, service configurations, and performance benchmarks that form an integral part of this agreement. All specifications herein are binding upon execution.</p>",
+  "annexure": "<p>The following annexure details the operational parameters, service configurations, and performance benchmarks that form an integral part of this agreement.</p>",
   "asset": "<p>Our state-of-the-art facilities across the Kingdom provide the infrastructure backbone for reliable, scalable logistics operations.</p>",
   "data_bound": "",
 };
 
 // ============================================================
-// STICKY TOOLBAR — Single toolbar for the active block
+// NAMESPACE ICON MAP
 // ============================================================
 
-function StickyToolbar({ editor, isLocked, isReadonly, blockKey }: {
-  editor: ReturnType<typeof useEditor>;
+const NS_ICON_MAP: Record<string, typeof Building2> = {
+  Building2, Users, FileCheck, BookOpen, FileSignature, DollarSign,
+  Calendar, Phone, ClipboardList, BarChart3, Type, Hash,
+  ToggleLeft, ImageLucide, TableIcon, Percent,
+};
+
+function getNamespaceIcon(iconName: string) {
+  return NS_ICON_MAP[iconName] || Variable;
+}
+
+// ============================================================
+// TOKEN INSERT MODAL
+// ============================================================
+
+function TokenInsertModal({ open, onClose, onInsert, docType }: {
+  open: boolean;
+  onClose: () => void;
+  onInsert: (tokenKey: string) => void;
+  docType: DocType;
+}) {
+  const [search, setSearch] = useState("");
+  const [expandedNs, setExpandedNs] = useState<Record<string, boolean>>({});
+
+  const grouped = useMemo(() => getVariablesGroupedByNamespace(docType), [docType]);
+
+  const filteredGrouped = useMemo(() => {
+    if (!search.trim()) return grouped;
+    const s = search.toLowerCase();
+    const result: Record<string, VariableDefinition[]> = {};
+    for (const [ns, vars] of Object.entries(grouped)) {
+      const filtered = vars.filter(v =>
+        v.label.toLowerCase().includes(s) ||
+        v.key.toLowerCase().includes(s) ||
+        v.description.toLowerCase().includes(s)
+      );
+      if (filtered.length > 0) result[ns] = filtered;
+    }
+    return result;
+  }, [grouped, search]);
+
+  const toggleNs = (ns: string) => {
+    setExpandedNs(prev => ({ ...prev, [ns]: !prev[ns] }));
+  };
+
+  // Auto-expand all when searching
+  useEffect(() => {
+    if (search.trim()) {
+      const allExpanded: Record<string, boolean> = {};
+      Object.keys(filteredGrouped).forEach(ns => { allExpanded[ns] = true; });
+      setExpandedNs(allExpanded);
+    }
+  }, [search, filteredGrouped]);
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg max-h-[70vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="text-[#1B2A4A] font-serif flex items-center gap-2">
+            <Variable size={18} /> Insert Custom Value
+          </DialogTitle>
+          <DialogDescription className="text-xs text-gray-500">
+            Select a token to insert at cursor position. Tokens resolve deterministically from bound data.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="py-2">
+          <Input value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search variables by name, key, or description..."
+            className="h-8 text-xs" autoFocus />
+        </div>
+        <ScrollArea className="flex-1 -mx-6 px-6">
+          <div className="space-y-1 pb-4">
+            {Object.entries(filteredGrouped).map(([ns, vars]) => {
+              const nsCfg = NAMESPACE_CONFIG[ns];
+              const isExpanded = expandedNs[ns] !== false; // default open
+              const Icon = nsCfg ? getNamespaceIcon(nsCfg.icon) : Variable;
+              return (
+                <div key={ns}>
+                  <button onClick={() => toggleNs(ns)}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 text-left">
+                    <ChevronRight size={12} className={`text-gray-400 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                    <div className={`p-1 rounded ${nsCfg?.bg || "bg-gray-100"}`}>
+                      <Icon size={12} className={nsCfg?.color || "text-gray-600"} />
+                    </div>
+                    <span className="text-xs font-semibold text-[#1B2A4A]">{nsCfg?.label || ns}</span>
+                    <Badge variant="outline" className="text-[10px] h-4 ml-auto">{vars.length}</Badge>
+                  </button>
+                  {isExpanded && (
+                    <div className="ml-7 space-y-0.5 mb-2">
+                      {vars.map(v => (
+                        <button key={v.id} onClick={() => { onInsert(v.key); onClose(); }}
+                          className="w-full flex items-center gap-3 px-2 py-1.5 rounded hover:bg-blue-50 text-left transition-colors group">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium text-[#1B2A4A]">{v.label}</span>
+                              <code className="text-[9px] bg-gray-100 text-gray-500 px-1 rounded font-mono">{`{{${v.key}}}`}</code>
+                            </div>
+                            <p className="text-[10px] text-gray-400 truncate">{v.description}</p>
+                          </div>
+                          <Badge variant="outline" className="text-[9px] h-4 shrink-0">
+                            {DATA_TYPE_CONFIG[v.data_type]?.label || v.data_type}
+                          </Badge>
+                          <Plus size={12} className="text-gray-300 group-hover:text-blue-500 shrink-0" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {Object.keys(filteredGrouped).length === 0 && (
+              <p className="text-sm text-gray-400 text-center py-6">No variables match your search</p>
+            )}
+          </div>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
+// BLOCK ADD CONFIRMATION DIALOG
+// ============================================================
+
+function BlockAddConfirmDialog({ open, onClose, onConfirm, block, insertionPoint }: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: (position: "after_current" | "end") => void;
+  block: DocBlock | null;
+  insertionPoint: string;
+}) {
+  const [position, setPosition] = useState<"after_current" | "end">("end");
+
+  if (!block) return null;
+  const familyCfg = BLOCK_FAMILY_CONFIG[block.family];
+  const modeCfg = EDITOR_MODE_CONFIG[block.editor_mode];
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-[#1B2A4A] font-serif flex items-center gap-2">
+            <Plus size={16} /> Add Block
+          </DialogTitle>
+          <DialogDescription className="text-xs text-gray-500">
+            Confirm adding this block to your document
+          </DialogDescription>
+        </DialogHeader>
+        <div className="py-3">
+          <Card className="border border-gray-200">
+            <CardContent className="p-4">
+              <div className="flex items-start gap-3">
+                <div className={`p-2 rounded-lg ${familyCfg.bg}`}>
+                  <Layers size={16} className={familyCfg.color} />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-sm font-semibold text-[#1B2A4A]">{block.display_name}</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">{block.description}</p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <Badge variant="outline" className={`text-[10px] h-4 ${familyCfg.bg} ${familyCfg.color}`}>
+                      {familyCfg.label}
+                    </Badge>
+                    <Badge variant="outline" className="text-[10px] h-4">{modeCfg.label}</Badge>
+                    {block.permissions.ai_allowed && (
+                      <Badge variant="outline" className="text-[10px] h-4 border-amber-300 text-amber-700 bg-amber-50">AI</Badge>
+                    )}
+                  </div>
+                  {block.schema.variable_slots.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {block.schema.variable_slots.map((slot, i) => (
+                        <code key={i} className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">{`{{${slot}}}`}</code>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <div className="mt-3">
+            <label className="text-xs font-medium text-gray-700 mb-1.5 block">Insertion Point</label>
+            <Select value={position} onValueChange={(v) => setPosition(v as "after_current" | "end")}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="after_current">After current block{insertionPoint ? ` (${insertionPoint})` : ""}</SelectItem>
+                <SelectItem value="end">At end of document</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose} className="text-xs">Cancel</Button>
+          <Button size="sm" onClick={() => { onConfirm(position); onClose(); }}
+            className="bg-[#1B2A4A] hover:bg-[#2A3F6A] text-xs">
+            <Plus size={12} className="mr-1" /> Add Block
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
+// IMAGE INSERT DIALOG
+// ============================================================
+
+function ImageInsertDialog({ open, onClose, onInsert }: {
+  open: boolean;
+  onClose: () => void;
+  onInsert: (url: string, alt: string) => void;
+}) {
+  const [url, setUrl] = useState("");
+  const [alt, setAlt] = useState("");
+
+  const sampleImages = [
+    { url: "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?w=800", alt: "Warehouse Operations" },
+    { url: "https://images.unsplash.com/photo-1553413077-190dd305871c?w=800", alt: "Logistics Fleet" },
+    { url: "https://images.unsplash.com/photo-1578575437130-527eed3abbec?w=800", alt: "Supply Chain" },
+    { url: "https://images.unsplash.com/photo-1565793298595-6a879b1d9492?w=800", alt: "Industrial Facility" },
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-[#1B2A4A] font-serif flex items-center gap-2">
+            <ImageIcon size={16} /> Insert Image
+          </DialogTitle>
+          <DialogDescription className="text-xs text-gray-500">
+            Enter an image URL or select from the asset library
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div>
+            <label className="text-xs font-medium text-gray-700 mb-1 block">Image URL</label>
+            <Input value={url} onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://..." className="h-8 text-xs" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-700 mb-1 block">Alt Text</label>
+            <Input value={alt} onChange={(e) => setAlt(e.target.value)}
+              placeholder="Describe the image..." className="h-8 text-xs" />
+          </div>
+          <Separator />
+          <div>
+            <label className="text-xs font-medium text-gray-700 mb-2 block">Asset Library</label>
+            <div className="grid grid-cols-2 gap-2">
+              {sampleImages.map((img, i) => (
+                <button key={i} onClick={() => { setUrl(img.url); setAlt(img.alt); }}
+                  className={`rounded-lg border-2 overflow-hidden transition-all ${
+                    url === img.url ? "border-[#1B2A4A] shadow-md" : "border-gray-200 hover:border-gray-300"
+                  }`}>
+                  <img src={img.url} alt={img.alt} className="w-full h-20 object-cover" />
+                  <div className="px-2 py-1 text-[10px] text-gray-500 truncate">{img.alt}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose} className="text-xs">Cancel</Button>
+          <Button size="sm" disabled={!url.trim()} onClick={() => { onInsert(url, alt); onClose(); setUrl(""); setAlt(""); }}
+            className="bg-[#1B2A4A] hover:bg-[#2A3F6A] text-xs">
+            <ImageIcon size={12} className="mr-1" /> Insert
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
+// PDF PREVIEW VIEWER MODAL
+// ============================================================
+
+function PDFPreviewModal({ open, onClose, compiledHtml, missingTokens, onRecompile, onApprove }: {
+  open: boolean;
+  onClose: () => void;
+  compiledHtml: string;
+  missingTokens: MissingToken[];
+  onRecompile: () => void;
+  onApprove: () => void;
+}) {
+  const blockingErrors = missingTokens.filter(t => t.severity === "error");
+  const warnings = missingTokens.filter(t => t.severity === "warning");
+  const infos = missingTokens.filter(t => t.severity === "info");
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="text-[#1B2A4A] font-serif flex items-center gap-2">
+            <Eye size={18} /> PDF Preview
+          </DialogTitle>
+          <DialogDescription className="text-xs text-gray-500">
+            Review the compiled document before saving. Resolve any missing tokens marked below.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex-1 flex gap-4 overflow-hidden">
+          {/* PDF Preview */}
+          <div className="flex-1 border border-gray-200 rounded-lg overflow-auto bg-white">
+            <div className="p-8 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: compiledHtml }} />
+          </div>
+          {/* Missing Tokens Panel */}
+          <div className="w-64 flex flex-col">
+            <h3 className="text-xs font-semibold text-[#1B2A4A] mb-2">Token Status</h3>
+            <div className="space-y-2 flex-1 overflow-auto">
+              {blockingErrors.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <XCircle size={12} className="text-red-500" />
+                    <span className="text-[10px] font-semibold text-red-700">Blocking Errors ({blockingErrors.length})</span>
+                  </div>
+                  {blockingErrors.map((t, i) => (
+                    <div key={i} className="px-2 py-1 bg-red-50 border border-red-200 rounded text-[10px] text-red-700 mb-1">
+                      <span className="font-medium">{t.label}</span>
+                      <code className="ml-1 text-[9px] bg-red-100 px-1 rounded">{`{{${t.key}}}`}</code>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {warnings.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <AlertTriangle size={12} className="text-amber-500" />
+                    <span className="text-[10px] font-semibold text-amber-700">Warnings ({warnings.length})</span>
+                  </div>
+                  {warnings.map((t, i) => (
+                    <div key={i} className="px-2 py-1 bg-amber-50 border border-amber-200 rounded text-[10px] text-amber-700 mb-1">
+                      <span className="font-medium">{t.label}</span>
+                      <code className="ml-1 text-[9px] bg-amber-100 px-1 rounded">{`{{${t.key}}}`}</code>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {infos.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <CheckCircle2 size={12} className="text-gray-400" />
+                    <span className="text-[10px] font-semibold text-gray-500">Empty Fallbacks ({infos.length})</span>
+                  </div>
+                  {infos.map((t, i) => (
+                    <div key={i} className="px-2 py-1 bg-gray-50 border border-gray-200 rounded text-[10px] text-gray-500 mb-1">
+                      <span className="font-medium">{t.label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {missingTokens.length === 0 && (
+                <div className="text-center py-4">
+                  <CheckCircle2 size={24} className="mx-auto mb-2 text-emerald-500" />
+                  <p className="text-xs text-emerald-700 font-medium">All tokens resolved</p>
+                  <p className="text-[10px] text-gray-400 mt-1">Document is ready for approval</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        <DialogFooter className="flex items-center justify-between">
+          <div className="text-xs text-gray-500">
+            {blockingErrors.length > 0 ? (
+              <span className="text-red-600 font-medium">Cannot approve — {blockingErrors.length} blocking error(s)</span>
+            ) : warnings.length > 0 ? (
+              <span className="text-amber-600">⚠ {warnings.length} warning(s) — review before approving</span>
+            ) : (
+              <span className="text-emerald-600">✓ Ready to approve</span>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={onRecompile} className="text-xs">
+              <RefreshCw size={12} className="mr-1" /> Fix & Recompile
+            </Button>
+            <Button size="sm" disabled={blockingErrors.length > 0} onClick={onApprove}
+              className="bg-[#1B2A4A] hover:bg-[#2A3F6A] text-xs">
+              <Check size={12} className="mr-1" /> Approve & Save to Documents
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
+// STICKY TOOLBAR — Wired to active block's editor instance
+// ============================================================
+
+function StickyToolbar({ activeEditor, isLocked, isReadonly, blockKey, onInsertToken, onInsertImage }: {
+  activeEditor: Editor | null;
   isLocked: boolean;
   isReadonly: boolean;
   blockKey: string | null;
+  onInsertToken: () => void;
+  onInsertImage: () => void;
 }) {
-  if (!editor) return null;
-  const disabled = isLocked || isReadonly;
+  const disabled = isLocked || isReadonly || !activeEditor;
 
   const ToolBtn = ({ onClick, isActive, icon: Icon, title, btnDisabled }: {
     onClick: () => void; isActive?: boolean; icon: typeof Bold; title: string; btnDisabled?: boolean;
@@ -143,52 +541,66 @@ function StickyToolbar({ editor, isLocked, isReadonly, blockKey }: {
   return (
     <div className="flex items-center gap-0.5 flex-wrap px-3 py-1.5 border-b border-gray-200 bg-white sticky top-0 z-20 shadow-sm">
       {/* Active block indicator */}
-      {blockDef && (
+      {blockDef ? (
         <div className="flex items-center gap-1.5 mr-2 pr-2 border-r border-gray-200">
           <Badge variant="outline" className="text-[10px] h-5 capitalize">
             {BLOCK_FAMILY_CONFIG[blockDef.family]?.label || blockDef.family}
           </Badge>
           <span className="text-[10px] text-gray-400">{blockDef.display_name}</span>
         </div>
-      )}
-      {!blockDef && (
+      ) : (
         <div className="flex items-center gap-1.5 mr-2 pr-2 border-r border-gray-200">
           <span className="text-[10px] text-gray-400 italic">Click a block to edit</span>
         </div>
       )}
 
-      <ToolBtn onClick={() => editor.chain().focus().undo().run()} icon={Undo2} title="Undo" btnDisabled={!editor.can().undo()} />
-      <ToolBtn onClick={() => editor.chain().focus().redo().run()} icon={Redo2} title="Redo" btnDisabled={!editor.can().redo()} />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().undo().run()} icon={Undo2} title="Undo" btnDisabled={!activeEditor?.can().undo()} />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().redo().run()} icon={Redo2} title="Redo" btnDisabled={!activeEditor?.can().redo()} />
       <Separator orientation="vertical" className="h-5 mx-1" />
-      <ToolBtn onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} isActive={editor.isActive("heading", { level: 1 })} icon={Heading1} title="Heading 1" />
-      <ToolBtn onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} isActive={editor.isActive("heading", { level: 2 })} icon={Heading2} title="Heading 2" />
-      <ToolBtn onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} isActive={editor.isActive("heading", { level: 3 })} icon={Heading3} title="Heading 3" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().toggleHeading({ level: 1 }).run()} isActive={activeEditor?.isActive("heading", { level: 1 })} icon={Heading1} title="Heading 1" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().toggleHeading({ level: 2 }).run()} isActive={activeEditor?.isActive("heading", { level: 2 })} icon={Heading2} title="Heading 2" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().toggleHeading({ level: 3 }).run()} isActive={activeEditor?.isActive("heading", { level: 3 })} icon={Heading3} title="Heading 3" />
       <Separator orientation="vertical" className="h-5 mx-1" />
-      <ToolBtn onClick={() => editor.chain().focus().toggleBold().run()} isActive={editor.isActive("bold")} icon={Bold} title="Bold" />
-      <ToolBtn onClick={() => editor.chain().focus().toggleItalic().run()} isActive={editor.isActive("italic")} icon={Italic} title="Italic" />
-      <ToolBtn onClick={() => editor.chain().focus().toggleUnderline().run()} isActive={editor.isActive("underline")} icon={UnderlineIcon} title="Underline" />
-      <ToolBtn onClick={() => editor.chain().focus().toggleStrike().run()} isActive={editor.isActive("strike")} icon={Strikethrough} title="Strikethrough" />
-      <ToolBtn onClick={() => editor.chain().focus().toggleHighlight().run()} isActive={editor.isActive("highlight")} icon={Highlighter} title="Highlight" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().toggleBold().run()} isActive={activeEditor?.isActive("bold")} icon={Bold} title="Bold" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().toggleItalic().run()} isActive={activeEditor?.isActive("italic")} icon={Italic} title="Italic" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().toggleUnderline().run()} isActive={activeEditor?.isActive("underline")} icon={UnderlineIcon} title="Underline" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().toggleStrike().run()} isActive={activeEditor?.isActive("strike")} icon={Strikethrough} title="Strikethrough" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().toggleHighlight().run()} isActive={activeEditor?.isActive("highlight")} icon={Highlighter} title="Highlight" />
       <Separator orientation="vertical" className="h-5 mx-1" />
-      <ToolBtn onClick={() => editor.chain().focus().setTextAlign("left").run()} isActive={editor.isActive({ textAlign: "left" })} icon={AlignLeft} title="Align Left" />
-      <ToolBtn onClick={() => editor.chain().focus().setTextAlign("center").run()} isActive={editor.isActive({ textAlign: "center" })} icon={AlignCenter} title="Align Center" />
-      <ToolBtn onClick={() => editor.chain().focus().setTextAlign("right").run()} isActive={editor.isActive({ textAlign: "right" })} icon={AlignRight} title="Align Right" />
-      <ToolBtn onClick={() => editor.chain().focus().setTextAlign("justify").run()} isActive={editor.isActive({ textAlign: "justify" })} icon={AlignJustify} title="Justify" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().setTextAlign("left").run()} isActive={activeEditor?.isActive({ textAlign: "left" })} icon={AlignLeft} title="Align Left" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().setTextAlign("center").run()} isActive={activeEditor?.isActive({ textAlign: "center" })} icon={AlignCenter} title="Align Center" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().setTextAlign("right").run()} isActive={activeEditor?.isActive({ textAlign: "right" })} icon={AlignRight} title="Align Right" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().setTextAlign("justify").run()} isActive={activeEditor?.isActive({ textAlign: "justify" })} icon={AlignJustify} title="Justify" />
       <Separator orientation="vertical" className="h-5 mx-1" />
-      <ToolBtn onClick={() => editor.chain().focus().toggleBulletList().run()} isActive={editor.isActive("bulletList")} icon={List} title="Bullet List" />
-      <ToolBtn onClick={() => editor.chain().focus().toggleOrderedList().run()} isActive={editor.isActive("orderedList")} icon={ListOrdered} title="Numbered List" />
-      <ToolBtn onClick={() => editor.chain().focus().toggleBlockquote().run()} isActive={editor.isActive("blockquote")} icon={Quote} title="Blockquote" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().toggleBulletList().run()} isActive={activeEditor?.isActive("bulletList")} icon={List} title="Bullet List" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().toggleOrderedList().run()} isActive={activeEditor?.isActive("orderedList")} icon={ListOrdered} title="Numbered List" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().toggleBlockquote().run()} isActive={activeEditor?.isActive("blockquote")} icon={Quote} title="Blockquote" />
       <Separator orientation="vertical" className="h-5 mx-1" />
-      <ToolBtn onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} icon={TableIcon} title="Insert Table" />
+      <ToolBtn onClick={() => activeEditor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} icon={TableIcon} title="Insert Table" />
       <ToolBtn onClick={() => {
         const url = window.prompt("Enter URL:");
-        if (url) editor.chain().focus().setLink({ href: url }).run();
-      }} isActive={editor.isActive("link")} icon={LinkIcon} title="Insert Link" />
+        if (url) activeEditor?.chain().focus().setLink({ href: url }).run();
+      }} isActive={activeEditor?.isActive("link")} icon={LinkIcon} title="Insert Link" />
+      <Separator orientation="vertical" className="h-5 mx-1" />
+      {/* Insert Custom Value */}
+      <button onClick={onInsertToken} disabled={disabled} title="Insert Custom Value"
+        className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+          disabled ? "opacity-30 cursor-not-allowed text-gray-400" : "text-blue-700 bg-blue-50 hover:bg-blue-100 cursor-pointer"
+        }`}>
+        <Variable size={13} /> Token
+      </button>
+      {/* Insert Image */}
+      <button onClick={onInsertImage} disabled={disabled} title="Insert Image"
+        className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+          disabled ? "opacity-30 cursor-not-allowed text-gray-400" : "text-emerald-700 bg-emerald-50 hover:bg-emerald-100 cursor-pointer"
+        }`}>
+        <ImageIcon size={13} /> Image
+      </button>
 
       {/* Status indicators */}
       <div className="ml-auto flex items-center gap-1.5">
         {isReadonly && <Badge className="text-[10px] h-5 bg-gray-100 text-gray-600 border-0">Read-Only</Badge>}
-        {isLocked && <Badge className="text-[10px] h-5 bg-[#1B2A4A]/10 text-[#1B2A4A] border-0"><Lock size={10} className="mr-0.5" /> Locked</Badge>}
+        {isLocked && <Badge className="text-[10px] h-5 bg-[#1B2A4A]/10 text-[#1B2A4A] border-0">Locked</Badge>}
       </div>
     </div>
   );
@@ -201,7 +613,7 @@ function StickyToolbar({ editor, isLocked, isReadonly, blockKey }: {
 function BlockEditor({
   block, mode, isActive, onFocus, onContentChange, onLock, onDelete,
   onAIGenerate, aiStaging, onAcceptAI, onRejectAI, onMoveUp, onMoveDown,
-  isFirst, isLast,
+  isFirst, isLast, onEditorReady,
 }: {
   block: ComposerBlock;
   mode: ComposerMode;
@@ -218,6 +630,7 @@ function BlockEditor({
   onMoveDown: () => void;
   isFirst: boolean;
   isLast: boolean;
+  onEditorReady: (editor: Editor) => void;
 }) {
   const blockDef = getBlockByKey(block.block_key);
   const familyCfg = blockDef ? BLOCK_FAMILY_CONFIG[blockDef.family] : null;
@@ -235,12 +648,20 @@ function BlockEditor({
       Highlight.configure({ multicolor: true }),
       Table.configure({ resizable: true }), TableRow, TableCell, TableHeader,
       Link.configure({ openOnClick: false }), TextStyle, Color,
+      Image.configure({ inline: false, allowBase64: true }),
     ],
     content: block.content,
     editable: canEdit,
     onUpdate: ({ editor: e }) => { onContentChange(e.getHTML()); },
     onFocus: () => { onFocus(); },
   });
+
+  // Report editor instance to parent for toolbar wiring
+  useEffect(() => {
+    if (editor && isActive) {
+      onEditorReady(editor);
+    }
+  }, [editor, isActive]);
 
   useEffect(() => {
     if (editor && editor.isEditable !== canEdit) {
@@ -334,7 +755,7 @@ function BlockEditor({
       {/* Block Content */}
       {editor && (
         <div className={`px-4 py-3 ${isLocked ? "opacity-80" : ""}`}>
-          <EditorContent editor={editor} className="prose prose-sm max-w-none focus:outline-none [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[40px] [&_.ProseMirror_table]:border-collapse [&_.ProseMirror_td]:border [&_.ProseMirror_td]:border-gray-300 [&_.ProseMirror_td]:p-2 [&_.ProseMirror_th]:border [&_.ProseMirror_th]:border-gray-300 [&_.ProseMirror_th]:p-2 [&_.ProseMirror_th]:bg-gray-100 [&_.ProseMirror_th]:font-semibold" />
+          <EditorContent editor={editor} className="prose prose-sm max-w-none focus:outline-none [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[40px] [&_.ProseMirror_table]:border-collapse [&_.ProseMirror_td]:border [&_.ProseMirror_td]:border-gray-300 [&_.ProseMirror_td]:p-2 [&_.ProseMirror_th]:border [&_.ProseMirror_th]:border-gray-300 [&_.ProseMirror_th]:p-2 [&_.ProseMirror_th]:bg-gray-100 [&_.ProseMirror_th]:font-semibold [&_.ProseMirror_img]:max-w-full [&_.ProseMirror_img]:rounded-lg [&_.ProseMirror_img]:my-2" />
         </div>
       )}
 
@@ -375,15 +796,18 @@ function CustomerBanner({ customer }: { customer: Customer | null }) {
 }
 
 // ============================================================
-// BLOCK LIBRARY SIDEBAR
+// BLOCK LIBRARY SIDEBAR — with confirmation
 // ============================================================
 
-function BlockLibrarySidebar({ onAddBlock, onClose }: {
+function BlockLibrarySidebar({ onAddBlock, onClose, docType }: {
   onAddBlock: (blockKey: string) => void;
   onClose: () => void;
+  docType: DocType;
 }) {
   const [filterFamily, setFilterFamily] = useState<string>("all");
   const [search, setSearch] = useState("");
+
+  const docTypeFamily = DOC_TYPE_CONFIG[docType]?.family;
 
   const filtered = useMemo(() => {
     return blockLibrary.filter(b => {
@@ -473,6 +897,7 @@ function TemplateSelector({ open, onClose, onSelect, docType }: {
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="text-[#1B2A4A] font-serif">Select Template</DialogTitle>
+          <DialogDescription className="text-xs text-gray-500">Choose a template and branding profile for your document</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <div>
@@ -558,6 +983,18 @@ export default function DocumentComposer({
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   const [aiStagingMap, setAiStagingMap] = useState<Record<string, string>>({});
 
+  // v1.1 state
+  const [showTokenModal, setShowTokenModal] = useState(false);
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [showPDFPreview, setShowPDFPreview] = useState(false);
+  const [compiledPreviewHtml, setCompiledPreviewHtml] = useState("");
+  const [previewMissingTokens, setPreviewMissingTokens] = useState<MissingToken[]>([]);
+  const [blockToAdd, setBlockToAdd] = useState<DocBlock | null>(null);
+  const [showBlockConfirm, setShowBlockConfirm] = useState(false);
+
+  // Active editor ref for toolbar wiring
+  const activeEditorRef = useRef<Editor | null>(null);
+
   // Load existing instance or create empty document
   const [document, setDocument] = useState<ComposerDocument>(() => {
     if (existingInstanceId) {
@@ -618,18 +1055,27 @@ export default function DocumentComposer({
     return activeBlock ? getBlockByKey(activeBlock.block_key) : null;
   }, [activeBlock]);
 
-  // Create a shared editor for the sticky toolbar to reference
-  const toolbarEditor = useEditor({
-    extensions: [
-      StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
-      Underline, TextAlign.configure({ types: ["heading", "paragraph"] }),
-      Highlight.configure({ multicolor: true }),
-      Table.configure({ resizable: true }), TableRow, TableCell, TableHeader,
-      Link.configure({ openOnClick: false }), TextStyle, Color,
-    ],
-    content: "",
-    editable: false,
-  });
+  // Build resolution context for token resolution
+  const resolutionContext = useMemo(() => {
+    const customerData = linkedCustomer ? {
+      name: linkedCustomer.name,
+      code: linkedCustomer.code,
+      industry: linkedCustomer.industry,
+      city: linkedCustomer.city,
+      contactName: linkedCustomer.contactName || "",
+      contactEmail: linkedCustomer.contactEmail || "",
+      contactPhone: linkedCustomer.contactPhone || "",
+      accountManager: linkedCustomer.accountOwner || "",
+      contractExpiry: linkedCustomer.contractExpiry,
+    } : null;
+
+    return buildResolutionContext(
+      document.id,
+      document.doc_type,
+      customerData as Record<string, unknown> | null,
+      {}
+    );
+  }, [document.id, document.doc_type, linkedCustomer]);
 
   // Template loading
   const handleTemplateSelect = useCallback((template: DocTemplate, version: TemplateVersion, brandingId: string) => {
@@ -658,22 +1104,37 @@ export default function DocumentComposer({
     toast.success(`Template "${template.name}" loaded with ${blocks.length} blocks`);
   }, []);
 
-  // Block operations
-  const addBlock = useCallback((blockKey: string) => {
+  // Block operations — with confirmation
+  const requestAddBlock = useCallback((blockKey: string) => {
     const blockDef = getBlockByKey(blockKey);
     if (!blockDef) return;
+    setBlockToAdd(blockDef);
+    setShowBlockConfirm(true);
+  }, []);
+
+  const confirmAddBlock = useCallback((position: "after_current" | "end") => {
+    if (!blockToAdd) return;
     const newBlock: ComposerBlock = {
-      id: `blk-${Date.now()}`, block_key: blockKey,
+      id: `blk-${Date.now()}`, block_key: blockToAdd.block_key,
       order: document.blocks.length + 1,
-      content: blockDef.default_content,
+      content: blockToAdd.default_content,
       is_locked: false, is_ai_generated: false, config: {},
     };
-    setDocument(prev => ({
-      ...prev, updated_at: new Date().toISOString(),
-      blocks: [...prev.blocks, newBlock],
-    }));
-    toast.success(`Added "${blockDef.display_name}"`);
-  }, [document.blocks.length]);
+
+    setDocument(prev => {
+      if (position === "after_current" && activeBlockId) {
+        const idx = prev.blocks.findIndex(b => b.id === activeBlockId);
+        if (idx >= 0) {
+          const newBlocks = [...prev.blocks];
+          newBlocks.splice(idx + 1, 0, newBlock);
+          return { ...prev, blocks: newBlocks.map((b, i) => ({ ...b, order: i + 1 })), updated_at: new Date().toISOString() };
+        }
+      }
+      return { ...prev, blocks: [...prev.blocks, newBlock], updated_at: new Date().toISOString() };
+    });
+    toast.success(`Added "${blockToAdd.display_name}"`);
+    setBlockToAdd(null);
+  }, [blockToAdd, document.blocks.length, activeBlockId]);
 
   const updateBlockContent = useCallback((blockId: string, content: string) => {
     setDocument(prev => ({
@@ -708,6 +1169,26 @@ export default function DocumentComposer({
       [newBlocks[idx], newBlocks[newIdx]] = [newBlocks[newIdx], newBlocks[idx]];
       return { ...prev, blocks: newBlocks.map((b, i) => ({ ...b, order: i + 1 })), updated_at: new Date().toISOString() };
     });
+  }, []);
+
+  // Token insert — inserts {{key}} at cursor in active block
+  const handleInsertToken = useCallback((tokenKey: string) => {
+    if (activeEditorRef.current && activeEditorRef.current.isEditable) {
+      activeEditorRef.current.chain().focus().insertContent(`{{${tokenKey}}}`).run();
+      toast.success(`Inserted {{${tokenKey}}}`);
+    } else {
+      toast.error("No editable block selected — click a block first");
+    }
+  }, []);
+
+  // Image insert
+  const handleInsertImage = useCallback((url: string, alt: string) => {
+    if (activeEditorRef.current && activeEditorRef.current.isEditable) {
+      activeEditorRef.current.chain().focus().setImage({ src: url, alt }).run();
+      toast.success("Image inserted");
+    } else {
+      toast.error("No editable block selected — click a block first");
+    }
   }, []);
 
   // AI operations
@@ -765,31 +1246,79 @@ export default function DocumentComposer({
     }, 1500);
   }, [promptText, document.blocks.length]);
 
-  // Save & Export
+  // Save
   const handleSave = useCallback(() => {
     if (onSave) onSave(document);
     toast.success("Document saved");
   }, [document, onSave]);
 
-  const handleExportPDF = useCallback(() => {
+  // PDF Compile — now opens preview viewer
+  const handleCompilePDF = useCallback(() => {
+    const results = resolveDocumentTokens(
+      document.blocks.map(b => ({ content: b.content, block_key: b.block_key })),
+      resolutionContext,
+      document.doc_type,
+    );
+
+    const allMissing = results.flatMap(r => r.result.missingTokens);
+    const compiledHtml = results.map(r => r.result.renderedText).join("\n<hr style='margin:2rem 0;border-color:#e5e7eb;' />\n");
+
+    setCompiledPreviewHtml(compiledHtml);
+    setPreviewMissingTokens(allMissing);
+    setShowPDFPreview(true);
+  }, [document, resolutionContext]);
+
+  const handleApproveCompile = useCallback(() => {
+    setShowPDFPreview(false);
     if (onExportPDF) onExportPDF(document);
-    toast.success("PDF compile initiated — document will be available in Documents shell");
+    toast.success("PDF approved and saved to Documents");
   }, [document, onExportPDF]);
 
+  // Lock to Canon
   const lockAllBlocks = useCallback(() => {
+    // Run compile first
+    handleCompilePDF();
+  }, [handleCompilePDF]);
+
+  const handleCanonLock = useCallback(() => {
     setDocument(prev => ({
       ...prev, status: "canon", updated_at: new Date().toISOString(),
       blocks: prev.blocks.map(b => ({ ...b, is_locked: true })),
     }));
     setMode("canon");
-    toast.success("Document locked as Canon — immutable version created");
+    setShowPDFPreview(false);
+    if (onExportPDF) onExportPDF(document);
+    toast.success("Document locked as Canon — immutable version created, final PDF compiled");
+  }, [document, onExportPDF]);
+
+  // Bind now action
+  const handleBindNow = useCallback((bindingKey: keyof Bindings) => {
+    const mockBindings: Record<string, string> = {
+      pricing_snapshot_id: `ps-${document.customer_id}-${Date.now()}`,
+      scope_snapshot_id: `ss-${document.customer_id}-${Date.now()}`,
+      ecr_score_id: `ecr-${document.customer_id}-${Date.now()}`,
+      sla_snapshot_id: `sla-${document.customer_id}-${Date.now()}`,
+    };
+    setDocument(prev => ({
+      ...prev,
+      bindings: { ...prev.bindings, [bindingKey]: mockBindings[bindingKey] || `bound-${Date.now()}` },
+      updated_at: new Date().toISOString(),
+    }));
+    toast.success(`Bound ${bindingKey.replace(/_/g, " ")}`);
+  }, [document.customer_id]);
+
+  // Editor ready callback — stores ref for toolbar
+  const handleEditorReady = useCallback((editor: Editor) => {
+    activeEditorRef.current = editor;
   }, []);
 
   const lockedCount = document.blocks.filter(b => b.is_locked).length;
   const totalCount = document.blocks.length;
   const brandingProfile = getBrandingProfile(document.branding_profile_id);
-
   const docTypeConfig = DOC_TYPE_CONFIG[documentType];
+
+  // Active block name for insertion point
+  const activeBlockName = activeBlock ? (getBlockByKey(activeBlock.block_key)?.display_name || activeBlock.block_key) : "";
 
   return (
     <div className="flex h-full bg-white">
@@ -798,15 +1327,16 @@ export default function DocumentComposer({
         {/* Top Bar */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200 bg-white">
           <div className="flex items-center gap-3">
-            <div className="p-1.5 rounded-lg bg-[#F8F9FB]">
-              <FileText size={18} className="text-[#1B2A4A]" />
-            </div>
+            {/* Doc Type Pill */}
+            <Badge className={`text-xs h-6 px-2.5 ${
+              docTypeConfig.family === "legal" ? "bg-purple-100 text-purple-700 border-purple-200" : "bg-blue-100 text-blue-700 border-blue-200"
+            }`}>
+              {docTypeConfig.label}
+            </Badge>
             <div>
               <Input value={document.title} onChange={(e) => setDocument(prev => ({ ...prev, title: e.target.value }))}
                 className="h-7 text-base font-semibold border-none bg-transparent p-0 focus-visible:ring-0 w-[400px]" disabled={mode === "canon"} />
               <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-xs text-gray-500">{docTypeConfig.label}</span>
-                <span className="text-xs text-gray-300">·</span>
                 <span className="text-xs text-gray-500">v{document.version}</span>
                 {linkedCustomer && (
                   <>
@@ -839,7 +1369,7 @@ export default function DocumentComposer({
             <Button variant="outline" size="sm" onClick={handleSave} disabled={mode === "canon"} className="text-xs h-7">
               <Save size={12} className="mr-1" /> Save
             </Button>
-            <Button variant="outline" size="sm" onClick={handleExportPDF} className="text-xs h-7">
+            <Button variant="outline" size="sm" onClick={handleCompilePDF} className="text-xs h-7">
               <Download size={12} className="mr-1" /> Compile PDF
             </Button>
             {mode !== "canon" && (
@@ -874,12 +1404,14 @@ export default function DocumentComposer({
           </div>
         </div>
 
-        {/* Sticky Toolbar */}
+        {/* Sticky Toolbar — wired to active block's editor */}
         <StickyToolbar
-          editor={toolbarEditor}
+          activeEditor={activeEditorRef.current}
           isLocked={activeBlock?.is_locked || mode === "canon" || false}
           isReadonly={activeBlockDef?.editor_mode === "readonly" || false}
           blockKey={activeBlock?.block_key || null}
+          onInsertToken={() => setShowTokenModal(true)}
+          onInsertImage={() => setShowImageModal(true)}
         />
 
         {/* Content Area */}
@@ -919,6 +1451,7 @@ export default function DocumentComposer({
                 onMoveDown={() => moveBlock(block.id, "down")}
                 isFirst={idx === 0}
                 isLast={idx === document.blocks.length - 1}
+                onEditorReady={handleEditorReady}
               />
             ))}
 
@@ -960,10 +1493,10 @@ export default function DocumentComposer({
 
       {/* Right Sidebar — Block Library (conditional) */}
       {showBlockLibrary && (
-        <BlockLibrarySidebar onAddBlock={addBlock} onClose={() => setShowBlockLibrary(false)} />
+        <BlockLibrarySidebar onAddBlock={requestAddBlock} onClose={() => setShowBlockLibrary(false)} docType={documentType} />
       )}
 
-      {/* Right Sidebar — Document Info (when block library is closed) */}
+      {/* Right Sidebar — Document Info + Bindings (when block library is closed) */}
       {!showBlockLibrary && (
         <div className="w-64 border-l border-gray-200 bg-[#F8F9FB] flex flex-col overflow-y-auto">
           {/* Customer Card */}
@@ -1016,7 +1549,6 @@ export default function DocumentComposer({
             <div className="space-y-1.5 text-[11px]">
               <div className="flex justify-between"><span className="text-gray-500">Type</span><span className="font-medium">{docTypeConfig.label}</span></div>
               <div className="flex justify-between"><span className="text-gray-500">Version</span><span className="font-medium">v{document.version}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Status</span><Badge variant="outline" className="text-[10px] h-4 capitalize">{document.status}</Badge></div>
               <div className="flex justify-between"><span className="text-gray-500">Blocks</span><span className="font-medium">{totalCount}</span></div>
               <div className="flex justify-between"><span className="text-gray-500">Locked</span><span className="font-medium">{lockedCount}</span></div>
             </div>
@@ -1025,7 +1557,7 @@ export default function DocumentComposer({
           {/* Block Navigator */}
           <div className="p-3 border-b border-gray-200">
             <h3 className="text-xs font-semibold text-[#1B2A4A] mb-2">Block Navigator</h3>
-            <ScrollArea className="max-h-[250px]">
+            <ScrollArea className="max-h-[200px]">
               <div className="space-y-0.5">
                 {document.blocks.map((b, i) => {
                   const def = getBlockByKey(b.block_key);
@@ -1046,22 +1578,25 @@ export default function DocumentComposer({
             </ScrollArea>
           </div>
 
-          {/* Bindings */}
+          {/* Data Bindings — with "Bind now" actions */}
           <div className="p-3">
             <h3 className="text-xs font-semibold text-[#1B2A4A] mb-2">Data Bindings</h3>
             <div className="space-y-1.5 text-[10px]">
-              {[
-                { label: "Pricing Snapshot", value: document.bindings.pricing_snapshot_id },
-                { label: "Scope Snapshot", value: document.bindings.scope_snapshot_id },
-                { label: "ECR Score", value: document.bindings.ecr_score_id },
-                { label: "SLA Snapshot", value: document.bindings.sla_snapshot_id },
-              ].map((binding, i) => (
+              {([
+                { label: "Pricing Snapshot", key: "pricing_snapshot_id" as keyof Bindings, value: document.bindings.pricing_snapshot_id },
+                { label: "Scope Snapshot", key: "scope_snapshot_id" as keyof Bindings, value: document.bindings.scope_snapshot_id },
+                { label: "ECR Score", key: "ecr_score_id" as keyof Bindings, value: document.bindings.ecr_score_id },
+                { label: "SLA Snapshot", key: "sla_snapshot_id" as keyof Bindings, value: document.bindings.sla_snapshot_id },
+              ]).map((binding, i) => (
                 <div key={i} className="flex items-center justify-between p-1.5 bg-white rounded border border-gray-100">
                   <span className="text-gray-500">{binding.label}</span>
                   {binding.value ? (
                     <code className="text-[9px] text-emerald-600 bg-emerald-50 px-1 rounded">{binding.value}</code>
                   ) : (
-                    <span className="text-gray-300 italic">Not bound</span>
+                    <button onClick={() => handleBindNow(binding.key)}
+                      className="text-[9px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded hover:bg-blue-100 transition-colors font-medium">
+                      Bind now
+                    </button>
                   )}
                 </div>
               ))}
@@ -1070,12 +1605,42 @@ export default function DocumentComposer({
         </div>
       )}
 
-      {/* Template Selector Dialog */}
+      {/* Dialogs */}
       <TemplateSelector
         open={showTemplateSelector}
         onClose={() => setShowTemplateSelector(false)}
         onSelect={handleTemplateSelect}
         docType={documentType}
+      />
+
+      <TokenInsertModal
+        open={showTokenModal}
+        onClose={() => setShowTokenModal(false)}
+        onInsert={handleInsertToken}
+        docType={documentType}
+      />
+
+      <ImageInsertDialog
+        open={showImageModal}
+        onClose={() => setShowImageModal(false)}
+        onInsert={handleInsertImage}
+      />
+
+      <BlockAddConfirmDialog
+        open={showBlockConfirm}
+        onClose={() => { setShowBlockConfirm(false); setBlockToAdd(null); }}
+        onConfirm={confirmAddBlock}
+        block={blockToAdd}
+        insertionPoint={activeBlockName}
+      />
+
+      <PDFPreviewModal
+        open={showPDFPreview}
+        onClose={() => setShowPDFPreview(false)}
+        compiledHtml={compiledPreviewHtml}
+        missingTokens={previewMissingTokens}
+        onRecompile={() => { setShowPDFPreview(false); toast.info("Fix the missing tokens and recompile"); }}
+        onApprove={handleApproveCompile}
       />
     </div>
   );

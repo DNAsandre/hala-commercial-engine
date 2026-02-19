@@ -43,6 +43,7 @@ import EcrUpgrades from "./pages/EcrUpgrades";
 import TemplateManager from "./pages/TemplateManager";
 import BrandingProfiles from "./pages/BrandingProfiles";
 import BlockLibrary from "./pages/BlockLibrary";
+import BlockBuilder from "./pages/BlockBuilder";
 
 function AppRouter() {
   return (
@@ -84,6 +85,7 @@ function AppRouter() {
       <Route path="/template-manager" component={TemplateManager} />
       <Route path="/branding-profiles" component={BrandingProfiles} />
       <Route path="/block-library" component={BlockLibrary} />
+      <Route path="/block-builder" component={BlockBuilder} />
       <Route component={NotFound} />
     </Switch>
   );

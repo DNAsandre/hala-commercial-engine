@@ -60,6 +60,7 @@ const navItems = [
   { path: "/template-manager", label: "Templates", icon: Layers, group: "authoring" },
   { path: "/branding-profiles", label: "Branding", icon: Star, group: "authoring" },
   { path: "/block-library", label: "Block Library", icon: Database, group: "authoring" },
+  { path: "/block-builder", label: "Block Builder", icon: Wrench, group: "authoring" },
   { path: "/documents", label: "Documents", icon: FolderOpen, group: "output" },
   { path: "/tenders", label: "Tenders", icon: Gavel, group: "output" },
   { path: "/tender-board", label: "Tender Board", icon: Kanban, group: "output" },
