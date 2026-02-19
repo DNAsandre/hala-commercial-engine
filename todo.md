@@ -102,3 +102,38 @@
 ## Phase 7: Testing & Delivery
 - [ ] All acceptance test paths verified
 - [ ] Feature flag toggle verified
+
+
+---
+
+# Navigation Simplification v1
+
+## Phase 1 — Sidebar Simplification
+- [ ] Add `navigationV1` feature flag (default ON)
+- [ ] Sidebar CORE: Dashboard, Customers, Workspaces, Tenders only
+- [ ] Sidebar SYSTEM: Governance, Admin, Audit Trail only
+- [ ] Hide from sidebar (keep routes): Quotes, Proposals, SLAs, Document Composer, Documents, Templates, Block Library, Block Builder, Variables, Branding, ECR Dashboard, Bot Governance, Signal Engine, Bot Audit, P&L Calculator, Approvals, Handover, Renewals, Policy Gates, Revenue Exposure, Connectors, Scoring, Snapshots, Rule Sets, Metrics, ECR Upgrades, Tender Board
+
+## Phase 2 — Rewire Entry Points
+- [ ] Workspace Documents tab: New Quote, New Proposal, New SLA, New Supporting Document buttons
+- [ ] Open in Editor: auto-create docInstance if missing, bind to workspace+customer, open Composer directly
+
+## Phase 3 — Admin Sub-sections
+- [ ] Admin → Document System: Templates, Variables, Block Library, Block Builder, Branding
+- [ ] Admin → Automation: Bot Governance, Signal Engine, Bot Audit
+- [ ] Admin → ECR: ECR Dashboard, ECR Config
+
+## Phase 4 — Legacy Banners
+- [ ] Add banner to /quotes, /proposals, /slas, /editor, /templates, /block-library, /block-builder, /variables, /branding, /documents
+
+## Phase 5 — Workspace Tab Upgrade
+- [ ] Unified Documents tab: Quotes, Proposals, SLAs, P&L, ECR, Supporting Docs sections
+- [ ] Contracts tab (if applicable)
+
+## Acceptance Criteria
+- [ ] Sidebar shows only: Dashboard, Customers, Workspaces, Tenders, Governance, Admin, Audit
+- [ ] Workspace allows full deal lifecycle without leaving
+- [ ] Templates/Variables/Blocks only under Admin
+- [ ] No TypeScript errors
+- [ ] No broken routes
+- [ ] All previous functionality accessible via direct URL

@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import DocumentComposer, { type ComposerDocument } from "@/components/DocumentComposer";
 import OverrideDialog from "@/components/OverrideDialog";
 import { useGateCheck, useAuditLog } from "@/hooks/useGovernance";
+import { navigationV1 } from "@/components/DashboardLayout";
 
 interface SLARecord {
   id: string;
@@ -173,6 +174,12 @@ export default function SLAs() {
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
+      {/* Legacy Banner */}
+      {navigationV1 && (
+        <div className="mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 flex items-center gap-2">
+          <span className="text-xs text-amber-800">This page is legacy. Please access documents via <a href="/workspaces" className="underline font-semibold hover:text-amber-900">Workspace</a>.</span>
+        </div>
+      )}
       {/* Override Dialog */}
       <OverrideDialog
         open={showOverrideDialog}

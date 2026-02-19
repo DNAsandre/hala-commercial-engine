@@ -30,6 +30,7 @@ import {
   NAMESPACE_CONFIG,
   addVariableDefinition,
 } from "@/lib/semantic-variables";
+import { navigationV1 } from "@/components/DashboardLayout";
 
 const namespaceIcons: Record<string, typeof Tag> = {
   customer: Users,
@@ -117,6 +118,12 @@ export default function VariablesManager() {
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
+      {/* Legacy Banner */}
+      {navigationV1 && (
+        <div className="mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 flex items-center gap-2">
+          <span className="text-xs text-amber-800">This page is now accessible via <a href="/admin" className="underline font-semibold hover:text-amber-900">Admin</a>.</span>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

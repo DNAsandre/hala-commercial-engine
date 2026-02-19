@@ -1,13 +1,18 @@
 /*
  * Admin Panel — System Configuration, User Management, Integration Settings
- * Separate from AdminGovernance (policy gates/RBAC) — this is operational admin
+ * Navigation Simplification v1: Now also serves as the gateway to
+ *   Document System (Templates, Variables, Block Library, Block Builder, Branding)
+ *   Automation (Bot Governance, Signal Engine, Bot Audit)
+ *   ECR (ECR Dashboard, ECR Config)
  */
-
 import { useState } from "react";
+import { Link } from "wouter";
 import {
   Users, Settings, Database, Link2, Bell, Shield, Key, Globe,
-  Plus, Edit3, Trash2, Check, X, RefreshCw, Server, HardDrive,
+  Plus, Edit3, Trash2, Check, RefreshCw, Server, HardDrive,
   Mail, Building2, UserPlus, Search, ChevronRight,
+  Layers, Wrench, Star, Bot, Radio, Activity, BarChart3,
+  FileText, Palette, BookOpen, Blocks, Variable,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { users } from "@/lib/store";
+import { navigationV1 } from "@/components/DashboardLayout";
 import { toast } from "sonner";
 
 const systemModules = [
@@ -37,6 +43,54 @@ const integrations = [
   { name: "Email (SMTP)", status: "planned", description: "Notification emails, document sharing", apiKey: "Not configured", icon: Mail },
   { name: "Supabase", status: "planned", description: "Cloud database migration target", apiKey: "Not configured", icon: Globe },
 ];
+
+/* ─── Document System links ─── */
+const docSystemLinks = [
+  { path: "/template-manager", label: "Templates", desc: "Manage document templates for quotes, proposals, and SLAs", icon: Layers, count: "12 templates" },
+  { path: "/variables", label: "Variables", desc: "Define and manage custom variables used in document tokens", icon: Variable, count: "48 variables" },
+  { path: "/block-library", label: "Block Library", desc: "Reusable content blocks shared across templates", icon: BookOpen, count: "24 blocks" },
+  { path: "/block-builder", label: "Block Builder", desc: "Visual block editor for creating new content blocks", icon: Blocks, count: "Builder" },
+  { path: "/branding-profiles", label: "Branding", desc: "Brand profiles controlling colors, fonts, and logos on documents", icon: Palette, count: "3 profiles" },
+];
+
+/* ─── Automation links ─── */
+const automationLinks = [
+  { path: "/bot-registry", label: "Bot Governance", desc: "Manage AI bots, permissions, and authority boundaries", icon: Bot, count: "5 bots" },
+  { path: "/signal-engine", label: "Signal Engine", desc: "Configure automated signals, alerts, and escalation triggers", icon: Radio, count: "12 signals" },
+  { path: "/bot-audit", label: "Bot Audit", desc: "Review all bot actions, decisions, and override attempts", icon: Activity, count: "Audit log" },
+];
+
+/* ─── ECR links ─── */
+const ecrLinks = [
+  { path: "/ecr", label: "ECR Dashboard", desc: "Customer rating overview with risk scores and trends", icon: BarChart3, count: "11 customers" },
+  { path: "/ecr-rule-sets", label: "Rule Sets", desc: "Configure scoring rules for customer evaluation", icon: Layers, count: "4 rule sets" },
+  { path: "/ecr-scoring", label: "Scoring", desc: "View and manage individual customer scores", icon: Star, count: "Scores" },
+  { path: "/ecr-connectors", label: "Connectors", desc: "Data source connectors for external rating inputs", icon: Link2, count: "3 connectors" },
+  { path: "/ecr-metrics", label: "Metrics", desc: "ECR performance metrics and analytics", icon: Database, count: "Metrics" },
+];
+
+function AdminLinkCard({ item }: { item: { path: string; label: string; desc: string; icon: React.ElementType; count: string } }) {
+  const Icon = item.icon;
+  return (
+    <Link href={item.path}>
+      <Card className="border border-border shadow-none hover:border-primary/30 hover:shadow-sm transition-all cursor-pointer group">
+        <CardContent className="p-4">
+          <div className="flex items-start justify-between mb-3">
+            <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
+              <Icon className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+            </div>
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span>{item.count}</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </div>
+          </div>
+          <h3 className="text-sm font-semibold mb-0.5 group-hover:text-primary transition-colors">{item.label}</h3>
+          <p className="text-xs text-muted-foreground leading-relaxed">{item.desc}</p>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
 
 export default function AdminPanel() {
   const [userSearch, setUserSearch] = useState("");
@@ -63,7 +117,7 @@ export default function AdminPanel() {
   };
 
   return (
-    <div className="p-6 max-w-[1400px] mx-auto">
+    <div className="max-w-[1400px] mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-serif font-bold">Admin Panel</h1>
@@ -71,15 +125,73 @@ export default function AdminPanel() {
         </div>
       </div>
 
-      <Tabs defaultValue="users">
-        <TabsList>
+      <Tabs defaultValue={navigationV1 ? "doc-system" : "users"}>
+        <TabsList className="flex-wrap h-auto gap-1">
+          {navigationV1 && (
+            <>
+              <TabsTrigger value="doc-system"><FileText className="w-3.5 h-3.5 mr-1.5" />Document System</TabsTrigger>
+              <TabsTrigger value="automation"><Bot className="w-3.5 h-3.5 mr-1.5" />Automation</TabsTrigger>
+              <TabsTrigger value="ecr"><BarChart3 className="w-3.5 h-3.5 mr-1.5" />ECR</TabsTrigger>
+            </>
+          )}
           <TabsTrigger value="users"><Users className="w-3.5 h-3.5 mr-1.5" />Users ({users.length})</TabsTrigger>
           <TabsTrigger value="system"><Server className="w-3.5 h-3.5 mr-1.5" />System Modules</TabsTrigger>
           <TabsTrigger value="integrations"><Link2 className="w-3.5 h-3.5 mr-1.5" />Integrations</TabsTrigger>
           <TabsTrigger value="settings"><Settings className="w-3.5 h-3.5 mr-1.5" />Settings</TabsTrigger>
         </TabsList>
 
-        {/* Users Tab */}
+        {/* ─── Document System Tab (navigationV1 only) ─── */}
+        {navigationV1 && (
+          <TabsContent value="doc-system" className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-serif font-semibold">Document System</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Templates, variables, blocks, and branding profiles used by the Document Composer</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {docSystemLinks.map(item => (
+                <AdminLinkCard key={item.path} item={item} />
+              ))}
+            </div>
+          </TabsContent>
+        )}
+
+        {/* ─── Automation Tab (navigationV1 only) ─── */}
+        {navigationV1 && (
+          <TabsContent value="automation" className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-serif font-semibold">Automation</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">AI bots, signal engine, and automated governance</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {automationLinks.map(item => (
+                <AdminLinkCard key={item.path} item={item} />
+              ))}
+            </div>
+          </TabsContent>
+        )}
+
+        {/* ─── ECR Tab (navigationV1 only) ─── */}
+        {navigationV1 && (
+          <TabsContent value="ecr" className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-serif font-semibold">ECR — Enterprise Customer Rating</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Customer scoring, rule sets, and data connectors</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {ecrLinks.map(item => (
+                <AdminLinkCard key={item.path} item={item} />
+              ))}
+            </div>
+          </TabsContent>
+        )}
+
+        {/* ─── Users Tab ─── */}
         <TabsContent value="users" className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="relative w-72">
@@ -96,7 +208,6 @@ export default function AdminPanel() {
             </Button>
           </div>
 
-          {/* Add User Form */}
           {showAddUser && (
             <Card className="border-2 border-primary/20 shadow-none">
               <CardContent className="p-4">
@@ -147,7 +258,6 @@ export default function AdminPanel() {
             </Card>
           )}
 
-          {/* Users Table */}
           <Card className="border border-border shadow-none">
             <CardContent className="p-0">
               <table className="w-full">
@@ -201,7 +311,7 @@ export default function AdminPanel() {
           </Card>
         </TabsContent>
 
-        {/* System Modules Tab */}
+        {/* ─── System Modules Tab ─── */}
         <TabsContent value="system" className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
             {systemModules.map(mod => {
@@ -230,7 +340,7 @@ export default function AdminPanel() {
           </div>
         </TabsContent>
 
-        {/* Integrations Tab */}
+        {/* ─── Integrations Tab ─── */}
         <TabsContent value="integrations" className="space-y-3">
           {integrations.map(int => {
             const Icon = int.icon;
@@ -286,7 +396,7 @@ export default function AdminPanel() {
           </Card>
         </TabsContent>
 
-        {/* Settings Tab */}
+        {/* ─── Settings Tab ─── */}
         <TabsContent value="settings" className="space-y-4">
           <Card className="border border-border shadow-none">
             <CardHeader className="pb-3"><CardTitle className="text-base font-serif">General Settings</CardTitle></CardHeader>
@@ -350,6 +460,10 @@ export default function AdminPanel() {
                 <div className="flex items-center justify-between">
                   <div><span className="text-sm">Audit Trail Export</span><p className="text-xs text-muted-foreground">Allow exporting audit trail as CSV/PDF</p></div>
                   <Switch defaultChecked />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div><span className="text-sm">Navigation v1</span><p className="text-xs text-muted-foreground">Simplified sidebar — Workspace-centric navigation (currently {navigationV1 ? "ON" : "OFF"})</p></div>
+                  <Switch checked={navigationV1} onCheckedChange={() => toast("Feature flag change requires code deployment")} />
                 </div>
                 <div className="flex items-center justify-between">
                   <div><span className="text-sm">Dark Mode</span><p className="text-xs text-muted-foreground">Enable dark theme option for users</p></div>

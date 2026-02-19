@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { customers } from "@/lib/store";
+import { navigationV1 } from "@/components/DashboardLayout";
 import {
   type DocType, docInstances, DOC_TYPE_CONFIG, DOC_INSTANCE_STATUS_CONFIG,
   getPublishedTemplates,
@@ -264,6 +265,12 @@ export default function Editor() {
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
+      {/* Legacy Banner */}
+      {navigationV1 && (
+        <div className="mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 flex items-center gap-2">
+          <span className="text-xs text-amber-800">This page is legacy. Please access documents via <a href="/workspaces" className="underline font-semibold hover:text-amber-900">Workspace</a>.</span>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-start justify-between mb-8">
         <div>

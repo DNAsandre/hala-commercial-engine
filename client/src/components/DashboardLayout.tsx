@@ -3,6 +3,12 @@
  * Design: Swiss Precision Instrument
  * Deep navy sidebar, warm white content area
  * IBM Plex Sans typography, 8px grid
+ *
+ * Navigation Simplification v1:
+ *   When navigationV1 flag is ON, sidebar shows only:
+ *     CORE: Dashboard, Customers, Workspaces, Tenders
+ *     SYSTEM: Governance, Admin, Audit Trail
+ *   All other routes remain accessible via direct URL.
  */
 
 import { Link, useLocation } from "wouter";
@@ -27,7 +33,6 @@ import {
   ChevronRight,
   Bell,
   Search,
-  LogOut,
   Edit3,
   Wrench,
   Bot,
@@ -47,7 +52,15 @@ import {
 import { currentUser, getRoleLabel, signals } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
-const navItems = [
+// ============================================================
+// FEATURE FLAG
+// ============================================================
+export const navigationV1 = true; // default ON — set to false to restore legacy sidebar
+
+// ============================================================
+// FULL NAV ITEMS (legacy — all items)
+// ============================================================
+const allNavItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard, group: "core" },
   { path: "/workspaces", label: "Workspaces", icon: Briefcase, group: "core" },
   { path: "/customers", label: "Customers", icon: Users, group: "core" },
@@ -85,7 +98,20 @@ const navItems = [
   { path: "/revenue-exposure", label: "Revenue Exposure", icon: TrendingDown, group: "renewals" },
 ];
 
-const groupLabels: Record<string, string> = {
+// ============================================================
+// SIMPLIFIED NAV ITEMS (navigationV1)
+// ============================================================
+const simplifiedNavItems = [
+  { path: "/", label: "Dashboard", icon: LayoutDashboard, group: "core" },
+  { path: "/customers", label: "Customers", icon: Users, group: "core" },
+  { path: "/workspaces", label: "Workspaces", icon: Briefcase, group: "core" },
+  { path: "/tenders", label: "Tenders", icon: Gavel, group: "core" },
+  { path: "/admin", label: "Governance", icon: Settings, group: "system" },
+  { path: "/admin-panel", label: "Admin", icon: Wrench, group: "system" },
+  { path: "/audit", label: "Audit Trail", icon: ClipboardList, group: "system" },
+];
+
+const allGroupLabels: Record<string, string> = {
   core: "CORE",
   deals: "DEAL ENGINE",
   authoring: "DOCUMENT COMPOSER",
@@ -96,12 +122,22 @@ const groupLabels: Record<string, string> = {
   renewals: "RENEWAL ENGINE",
 };
 
+const simplifiedGroupLabels: Record<string, string> = {
+  core: "CORE",
+  system: "SYSTEM",
+};
+
+const allGroups = ["core", "deals", "authoring", "output", "system", "bots", "ecr", "renewals"];
+const simplifiedGroups = ["core", "system"];
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const redCount = signals.filter(s => s.severity === "red").length;
 
-  const groups = ["core", "deals", "authoring", "output", "system", "bots", "ecr", "renewals"];
+  const navItems = navigationV1 ? simplifiedNavItems : allNavItems;
+  const groupLabels = navigationV1 ? simplifiedGroupLabels : allGroupLabels;
+  const groups = navigationV1 ? simplifiedGroups : allGroups;
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -134,16 +170,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-2">
-          {groups.map(group => (
-            <div key={group} className="mb-3">
-              {!collapsed && (
-                <div className="px-2 mb-1.5 text-[10px] font-semibold tracking-wider text-sidebar-foreground/40 uppercase">
-                  {groupLabels[group]}
-                </div>
-              )}
-              {navItems
-                .filter(item => item.group === group)
-                .map(item => {
+          {groups.map(group => {
+            const groupItems = navItems.filter(item => item.group === group);
+            if (groupItems.length === 0) return null;
+            return (
+              <div key={group} className="mb-3">
+                {!collapsed && (
+                  <div className="px-2 mb-1.5 text-[10px] font-semibold tracking-wider text-sidebar-foreground/40 uppercase">
+                    {groupLabels[group]}
+                  </div>
+                )}
+                {groupItems.map(item => {
                   const isActive = location === item.path || (item.path !== "/" && location.startsWith(item.path));
                   const Icon = item.icon;
                   return (
@@ -162,8 +199,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </Link>
                   );
                 })}
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </nav>
 
         {/* Collapse toggle */}

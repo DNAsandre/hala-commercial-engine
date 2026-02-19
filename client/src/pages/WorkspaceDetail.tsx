@@ -33,6 +33,7 @@ import {
 import { DocumentViewer, UploadDialog } from "@/components/DocumentViewer";
 import DocumentComposer, { type ComposerDocument } from "@/components/DocumentComposer";
 import { resolveOrCreateDocInstance } from "@/lib/document-composer";
+import { navigationV1 } from "@/components/DashboardLayout";
 import {
   isWorkspaceIntegrationEnabled, getOrCreateCycle, startRenewal, updateRenewalOwner,
   getDaysToExpiry, isInRenewalWindow, getSupportingDocs, uploadSupportingDoc,
@@ -625,11 +626,18 @@ export default function WorkspaceDetail() {
         <Tabs defaultValue="overview" className="space-y-4">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="quotes">Quotes ({wsQuotes.length})</TabsTrigger>
-            <TabsTrigger value="proposals">Proposals ({wsProposals.length})</TabsTrigger>
-            <TabsTrigger value="slas">SLAs ({wsSLAs.length})</TabsTrigger>
+            {navigationV1 ? (
+              <TabsTrigger value="documents">Documents</TabsTrigger>
+            ) : (
+              <>
+                <TabsTrigger value="quotes">Quotes ({wsQuotes.length})</TabsTrigger>
+                <TabsTrigger value="proposals">Proposals ({wsProposals.length})</TabsTrigger>
+                <TabsTrigger value="slas">SLAs ({wsSLAs.length})</TabsTrigger>
+              </>
+            )}
+            {navigationV1 && <TabsTrigger value="contracts">Contracts</TabsTrigger>}
             <TabsTrigger value="approvals">Approvals</TabsTrigger>
-            <TabsTrigger value="documents">{integrationEnabled ? "Supporting Docs" : "Documents"}</TabsTrigger>
+            {!navigationV1 && <TabsTrigger value="documents">{integrationEnabled ? "Supporting Docs" : "Documents"}</TabsTrigger>}
             <TabsTrigger value="audit">Audit Trail</TabsTrigger>
           </TabsList>
 
@@ -666,8 +674,310 @@ export default function WorkspaceDetail() {
             <Card className="border border-border shadow-none mt-6"><CardHeader className="pb-3"><CardTitle className="text-base font-serif">Notes</CardTitle></CardHeader><CardContent className="pt-0"><p className="text-sm text-muted-foreground">{ws.notes}</p></CardContent></Card>
           </TabsContent>
 
-          {/* ═══ QUOTES TAB ═══ */}
-          <TabsContent value="quotes">
+          {/* ═══ UNIFIED DOCUMENTS TAB (navigationV1) ═══ */}
+          {navigationV1 && (
+            <TabsContent value="documents">
+              {/* ── Document Type Sections ── */}
+              <div className="space-y-8">
+                {/* ── Quotes Section ── */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-muted-foreground" /> Quotes
+                      <Badge variant="secondary" className="text-[10px]">{wsQuotes.length}</Badge>
+                    </h3>
+                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => openInComposer("quote", `new-${ws.id}`)}>
+                      <Plus className="w-3 h-3 mr-1" /> New Quote
+                    </Button>
+                  </div>
+                  {wsQuotes.length > 0 ? <div className="space-y-2">{wsQuotes.map(q => (
+                    <div key={q.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">Quote v{q.version}</span>
+                            <Badge variant="outline" className="text-[10px]">{q.state}</Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground">{formatSAR(q.annualRevenue)}/yr · GP {formatPercent(q.gpPercent)} · {q.createdAt}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openInComposer("quote", q.id)}>
+                          <Edit className="w-3 h-3 mr-1" /> Edit
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                          try {
+                            const inst = resolveOrCreateDocInstance({ doc_type: "quote", linked_entity_type: "quote_version", linked_entity_id: q.id, customer_id: ws.customerId, customer_name: ws.customerName, workspace_id: ws.id });
+                            navigate(`/composer/${inst.id}/view`);
+                          } catch { toast.error("Could not open viewer"); }
+                        }}>
+                          <Eye className="w-3 h-3 mr-1" /> View
+                        </Button>
+                      </div>
+                    </div>
+                  ))}</div> : <p className="text-xs text-muted-foreground">No quotes yet. <Button variant="link" className="text-xs p-0" onClick={() => openInComposer("quote", `new-${ws.id}`)}>Create one</Button></p>}
+                </div>
+
+                <hr className="border-border" />
+
+                {/* ── Proposals Section ── */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      <FileCheck className="w-4 h-4 text-muted-foreground" /> Proposals
+                      <Badge variant="secondary" className="text-[10px]">{wsProposals.length}</Badge>
+                    </h3>
+                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => openInComposer("proposal", `new-${ws.id}`)}>
+                      <Plus className="w-3 h-3 mr-1" /> New Proposal
+                    </Button>
+                  </div>
+                  {wsProposals.length > 0 ? <div className="space-y-2">{wsProposals.map(p => (
+                    <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <FileCheck className="w-4 h-4 text-muted-foreground shrink-0" />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">{p.title}</span>
+                            <Badge variant="outline" className="text-[10px]">{p.state}</Badge>
+                            <span className="text-xs text-muted-foreground">v{p.version}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1 mt-1">{p.sections.slice(0, 4).map(s => <Badge key={s} variant="secondary" className="text-[9px]">{s}</Badge>)}{p.sections.length > 4 && <Badge variant="secondary" className="text-[9px]">+{p.sections.length - 4}</Badge>}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openInComposer("proposal", p.id)}>
+                          <Edit className="w-3 h-3 mr-1" /> Edit
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                          try {
+                            const inst = resolveOrCreateDocInstance({ doc_type: "proposal", linked_entity_type: "proposal_version", linked_entity_id: p.id, customer_id: ws.customerId, customer_name: ws.customerName, workspace_id: ws.id });
+                            navigate(`/composer/${inst.id}/view`);
+                          } catch { toast.error("Could not open viewer"); }
+                        }}>
+                          <Eye className="w-3 h-3 mr-1" /> View
+                        </Button>
+                      </div>
+                    </div>
+                  ))}</div> : <p className="text-xs text-muted-foreground">No proposals yet. <Button variant="link" className="text-xs p-0" onClick={() => openInComposer("proposal", `new-${ws.id}`)}>Create one</Button></p>}
+                </div>
+
+                <hr className="border-border" />
+
+                {/* ── SLAs Section ── */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      <FileSignature className="w-4 h-4 text-muted-foreground" /> SLAs
+                      <Badge variant="secondary" className="text-[10px]">{wsSLAs.length}</Badge>
+                    </h3>
+                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => openInComposer("sla", `new-${ws.id}`)}>
+                      <Plus className="w-3 h-3 mr-1" /> New SLA
+                    </Button>
+                  </div>
+                  {wsSLAs.length > 0 ? <div className="space-y-2">{wsSLAs.map(sla => {
+                    const slaStatusColor = sla.status === "active" ? "bg-emerald-100 text-emerald-700" : sla.status === "draft" ? "bg-gray-100 text-gray-700" : sla.status === "expired" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
+                    return (
+                      <div key={sla.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <FileSignature className="w-4 h-4 text-muted-foreground shrink-0" />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium">{sla.title}</span>
+                              <Badge variant="outline" className={`text-[10px] ${slaStatusColor}`}>{sla.status}</Badge>
+                              <span className="text-xs text-muted-foreground">v{sla.version}</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">Effective: {sla.effectiveDate} · Expires: {sla.expiryDate}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openInComposer("sla", sla.id)}>
+                            <Edit className="w-3 h-3 mr-1" /> Edit
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                            try {
+                              const inst = resolveOrCreateDocInstance({ doc_type: "sla", linked_entity_type: "sla_version", linked_entity_id: sla.id, customer_id: sla.customerId, customer_name: sla.customerName, workspace_id: ws.id });
+                              navigate(`/composer/${inst.id}/view`);
+                            } catch { toast.error("Could not open viewer"); }
+                          }}>
+                            <Eye className="w-3 h-3 mr-1" /> View
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}</div> : <p className="text-xs text-muted-foreground">No SLAs yet. <Button variant="link" className="text-xs p-0" onClick={() => openInComposer("sla", `new-${ws.id}`)}>Create one</Button></p>}
+                </div>
+
+                <hr className="border-border" />
+
+                {/* ── Supporting Docs Section ── */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      <FolderOpen className="w-4 h-4 text-muted-foreground" /> Supporting Documents
+                      <Badge variant="secondary" className="text-[10px]">{wsSupportDocs.length}</Badge>
+                    </h3>
+                    <div className="flex items-center gap-2">
+                      <Select value={supportDocFilter} onValueChange={setSupportDocFilter}>
+                        <SelectTrigger className="h-7 w-[130px] text-xs"><SelectValue placeholder="All Categories" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Categories</SelectItem>
+                          {SUPPORT_DOC_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setShowSupportUpload(true)}>
+                        <Upload className="w-3 h-3 mr-1" /> Upload
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Upload form */}
+                  {showSupportUpload && (
+                    <Card className="border border-blue-200 bg-blue-50/30 shadow-none mb-3">
+                      <CardContent className="p-4 space-y-3">
+                        <p className="text-xs font-semibold text-blue-800">Upload Supporting Document</p>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[10px] text-muted-foreground uppercase block mb-1">Document Name</label>
+                            <Input value={supportUploadName} onChange={e => setSupportUploadName(e.target.value)} placeholder="e.g. Trade License 2025" className="h-8 text-xs" />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-muted-foreground uppercase block mb-1">Category</label>
+                            <Select value={supportUploadCategory} onValueChange={v => setSupportUploadCategory(v as SupportDocCategory)}>
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {SUPPORT_DOC_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button size="sm" className="text-xs h-7 bg-[#1B2A4A] hover:bg-[#2A3F6A]" onClick={handleSupportDocUpload}>
+                            <FileUp className="w-3 h-3 mr-1" /> Upload
+                          </Button>
+                          <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setShowSupportUpload(false)}>Cancel</Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {(() => {
+                    const filtered = supportDocFilter === "all" ? wsSupportDocs : wsSupportDocs.filter(d => d.category === supportDocFilter);
+                    return filtered.length > 0 ? (
+                      <div className="space-y-2">
+                        {filtered.map(doc => (
+                          <div key={doc.id} className={`flex items-center gap-3 p-3 rounded-lg border border-border transition-colors hover:bg-muted/30 ${doc.status === "archived" ? "opacity-60" : ""}`}>
+                            <Badge variant="outline" className="text-[9px] shrink-0">{doc.category}</Badge>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate flex items-center gap-1.5">
+                                {doc.name}
+                                {doc.isRequiredForContractReady && <Badge variant="outline" className="text-[9px] border-emerald-300 bg-emerald-50 text-emerald-700">Required</Badge>}
+                              </p>
+                              <p className="text-xs text-muted-foreground truncate">{doc.fileName} · v{doc.version} · {doc.uploadedBy}</p>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => { toggleRequiredForContract(doc.id); forceUpdate(n => n + 1); }}>
+                                {doc.isRequiredForContractReady ? <ToggleRight className="w-3.5 h-3.5 text-emerald-600" /> : <ToggleLeft className="w-3.5 h-3.5 text-muted-foreground" />}
+                              </Button>
+                              {doc.status === "active" ? (
+                                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => { archiveSupportingDoc(doc.id); forceUpdate(n => n + 1); toast.success(`"${doc.name}" archived`); }}>
+                                  <Archive className="w-3.5 h-3.5 text-muted-foreground" />
+                                </Button>
+                              ) : (
+                                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => { restoreSupportingDoc(doc.id); forceUpdate(n => n + 1); toast.success(`"${doc.name}" restored`); }}>
+                                  <RotateCcw className="w-3.5 h-3.5 text-muted-foreground" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <p className="text-xs text-muted-foreground">No supporting documents yet. <Button variant="link" className="text-xs p-0" onClick={() => setShowSupportUpload(true)}>Upload one</Button></p>;
+                  })()}
+                </div>
+              </div>
+            </TabsContent>
+          )}
+
+          {/* ═══ CONTRACTS TAB (navigationV1) ═══ */}
+          {navigationV1 && (
+            <TabsContent value="contracts">
+              {activeCycle ? (
+                <div className="space-y-4">
+                  <Card className="border border-border shadow-none">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base font-serif flex items-center gap-2">
+                        <CalendarClock className="w-4 h-4" /> Contract Cycle #{activeCycle.cycleNumber}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Status</p><Badge variant="outline" className={`mt-1 text-[10px] ${cycleStatusConfig[activeCycle.status]?.color || ""}`}>{cycleStatusConfig[activeCycle.status]?.label || activeCycle.status}</Badge></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Start Date</p><p className="text-sm font-medium mt-0.5 data-value">{activeCycle.startDate}</p></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">End Date</p><p className="text-sm font-medium mt-0.5 data-value">{activeCycle.endDate}</p></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Days to Expiry</p><p className={`text-sm font-medium mt-0.5 data-value ${daysToExpiry !== null && daysToExpiry < 90 ? "text-red-600" : ""}`}>{daysToExpiry ?? "N/A"}</p></div>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Annual Value</p><p className="text-sm font-medium mt-0.5 data-value">{formatSAR(wsQuotes[0]?.annualRevenue ?? 0)}</p></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Renewal Window</p><p className="text-sm font-medium mt-0.5">{activeCycle.renewalWindowDays} days</p></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Renewal Owner</p><p className="text-sm font-medium mt-0.5">{activeCycle.renewalOwnerName || "Unassigned"}</p></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">In Renewal Window</p><p className="text-sm font-medium mt-0.5">{inRenewalWindow ? "Yes" : "No"}</p></div>
+                      </div>
+                      {/* Contract Ready Checks */}
+                      {contractReadyChecks.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-border">
+                          <p className="text-xs font-semibold mb-2">Contract Ready Checklist</p>
+                          <div className="space-y-1.5">
+                            {contractReadyChecks.map((check, i) => (
+                              <div key={i} className="flex items-center gap-2 text-xs">
+                                {check.passed ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <XCircle className="w-3.5 h-3.5 text-red-400" />}
+                                <span className={check.passed ? "text-muted-foreground" : "font-medium"}>{check.label}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* SLA Summary in Contracts */}
+                  {wsSLAs.length > 0 && (
+                    <Card className="border border-border shadow-none">
+                      <CardHeader className="pb-3"><CardTitle className="text-sm font-serif">Linked SLAs</CardTitle></CardHeader>
+                      <CardContent className="p-0">
+                        <div className="divide-y divide-border">
+                          {wsSLAs.map(sla => {
+                            const slaStatusColor = sla.status === "active" ? "bg-emerald-100 text-emerald-700" : sla.status === "draft" ? "bg-gray-100 text-gray-700" : sla.status === "expired" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
+                            return (
+                              <div key={sla.id} className="flex items-center justify-between px-4 py-3">
+                                <div className="flex items-center gap-2">
+                                  <FileSignature className="w-4 h-4 text-muted-foreground" />
+                                  <span className="text-sm font-medium">{sla.title}</span>
+                                  <Badge variant="outline" className={`text-[10px] ${slaStatusColor}`}>{sla.status}</Badge>
+                                </div>
+                                <span className="text-xs text-muted-foreground">Expires: {sla.expiryDate}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              ) : (
+                <Card className="border border-border shadow-none">
+                  <CardContent className="py-12 text-center text-sm text-muted-foreground">
+                    <CalendarClock className="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />
+                    No contract cycle created yet.
+                    <p className="text-xs mt-1">Contract cycles are created when the workspace reaches the Contract Ready stage.</p>
+                  </CardContent>
+                </Card>
+              )}
+            </TabsContent>
+          )}
+
+          {/* ═══ LEGACY QUOTES TAB (non-navigationV1) ═══ */}
+          {!navigationV1 && <TabsContent value="quotes">
             <div className="flex items-center justify-between mb-4">
               <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Workspace Quotes</h4>
               <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => openInComposer("quote", `new-${ws.id}`)}>
@@ -709,10 +1019,10 @@ export default function WorkspaceDetail() {
                 </div>
               </CardContent></Card>
             ))}</div> : <Card className="border border-border shadow-none"><CardContent className="py-12 text-center text-sm text-muted-foreground">No quotes created yet. <Button variant="link" className="text-xs p-0 ml-1" onClick={() => openInComposer("quote", `new-${ws.id}`)}>Create one</Button></CardContent></Card>}
-          </TabsContent>
+          </TabsContent>}
 
-          {/* ═══ PROPOSALS TAB ═══ */}
-          <TabsContent value="proposals">
+          {/* ═══ LEGACY PROPOSALS TAB (non-navigationV1) ═══ */}
+          {!navigationV1 && <TabsContent value="proposals">
             <div className="flex items-center justify-between mb-4">
               <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Workspace Proposals</h4>
               <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => openInComposer("proposal", `new-${ws.id}`)}>
@@ -746,10 +1056,10 @@ export default function WorkspaceDetail() {
                 <div className="flex flex-wrap gap-1.5">{p.sections.map(s => <Badge key={s} variant="secondary" className="text-[10px]">{s}</Badge>)}</div>
               </CardContent></Card>
             ))}</div> : <Card className="border border-border shadow-none"><CardContent className="py-12 text-center text-sm text-muted-foreground">No proposals created yet. <Button variant="link" className="text-xs p-0 ml-1" onClick={() => openInComposer("proposal", `new-${ws.id}`)}>Create one</Button></CardContent></Card>}
-          </TabsContent>
+          </TabsContent>}
 
-          {/* ═══ SLAs TAB ═══ */}
-          <TabsContent value="slas">
+          {/* ═══ LEGACY SLAs TAB (non-navigationV1) ═══ */}
+          {!navigationV1 && <TabsContent value="slas">
             <div className="flex items-center justify-between mb-4">
               <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Workspace SLAs</h4>
               <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => openInComposer("sla", `new-${ws.id}`)}>
@@ -789,7 +1099,7 @@ export default function WorkspaceDetail() {
                 </CardContent></Card>
               );
             })}</div> : <Card className="border border-border shadow-none"><CardContent className="py-12 text-center text-sm text-muted-foreground">No SLAs created yet. <Button variant="link" className="text-xs p-0 ml-1" onClick={() => openInComposer("sla", `new-${ws.id}`)}>Create one</Button></CardContent></Card>}
-          </TabsContent>
+          </TabsContent>}
 
           {/* ═══ APPROVALS TAB ═══ */}
           <TabsContent value="approvals">
