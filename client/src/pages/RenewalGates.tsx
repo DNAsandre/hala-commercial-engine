@@ -1,3 +1,4 @@
+import { Link } from "wouter";
 // ─── Renewal Policy Gates Admin Page ───
 // Design: Swiss Precision — white cards, left-border accents, enterprise SaaS aesthetic
 // Governance Hardened: override role configs, rule set mutation protection, lock indicators
@@ -22,7 +23,7 @@ import {
   aiIsolationRules,
   aiAllowedActions,
 } from "@/lib/commercial-integrity";
-import { Shield, Settings, AlertTriangle, CheckCircle, XCircle, Ban, Edit, Save, Info, Users, Lock, GitBranch, ShieldAlert, Bot } from "lucide-react";
+import { Shield, Settings, AlertTriangle, CheckCircle, XCircle, Ban, Edit, Save, Info, Users, Lock, GitBranch, ShieldAlert, Bot , ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 
 const MODE_COLORS: Record<RenewalGateMode, string> = {
@@ -92,6 +93,13 @@ export default function RenewalGates() {
   return (
     <div className="p-6 max-w-[1400px] mx-auto space-y-6">
       {/* Header */}
+      <div className="mb-4">
+        <Link href="/admin">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Governance
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-3">

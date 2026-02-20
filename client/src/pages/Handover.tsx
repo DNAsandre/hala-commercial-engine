@@ -1,3 +1,4 @@
+import { Link } from "wouter";
 /*
  * Handover Process — Sales & Commercial to Operations
  * Swiss Precision Instrument Design
@@ -18,7 +19,7 @@ import {
   FileText,
   AlertTriangle,
   Plus,
-} from "lucide-react";
+  ArrowLeft } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -178,6 +179,13 @@ export default function Handover() {
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
       {/* Header */}
+      <div className="mb-4">
+        <Link href="/workspaces">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Workspaces
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-serif font-bold">Handover Process</h1>

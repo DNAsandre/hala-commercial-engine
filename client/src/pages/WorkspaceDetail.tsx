@@ -36,7 +36,7 @@ import {
 } from "@/lib/document-vault";
 import { DocumentViewer, UploadDialog } from "@/components/DocumentViewer";
 import DocumentComposer, { type ComposerDocument } from "@/components/DocumentComposer";
-import { resolveOrCreateDocInstance } from "@/lib/document-composer";
+import { resolveOrCreateDocInstance, getTemplatesByDocType, type DocTemplate, type DocType } from "@/lib/document-composer";
 import { navigationV1 } from "@/components/DashboardLayout";
 import {
   isWorkspaceIntegrationEnabled, getOrCreateCycle, startRenewal, updateRenewalOwner,
@@ -103,6 +103,11 @@ export default function WorkspaceDetail() {
     customerId: string;
     workspaceId: string;
   } | null>(null);
+
+  // Template picker state
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [templatePickerDocType, setTemplatePickerDocType] = useState<DocType>("quote");
+  const [templatePickerTemplates, setTemplatePickerTemplates] = useState<DocTemplate[]>([]);
 
   // Supporting docs state
   const [supportDocFilter, setSupportDocFilter] = useState<string>("all");
@@ -240,6 +245,29 @@ export default function WorkspaceDetail() {
   const canConfirm = isStrictMode
     ? (confirmMatch && !hasWarnings)
     : (confirmMatch && (!hasWarnings || overrideReason.trim().length > 0));
+
+  // ── New Document (with template picker) ──
+  const handleNewDocument = (docType: DocType) => {
+    const templates = getTemplatesByDocType(docType).filter(t => t.status === "published");
+    if (templates.length === 0) {
+      toast.error(`No published templates found for ${docType}`);
+      return;
+    }
+    if (templates.length === 1) {
+      // Auto-select the only template
+      openInComposer(docType as "quote" | "proposal" | "sla", `new-${ws.id}`);
+      return;
+    }
+    // Show template picker
+    setTemplatePickerDocType(docType);
+    setTemplatePickerTemplates(templates);
+    setTemplatePickerOpen(true);
+  };
+
+  const handleTemplateSelect = (template: DocTemplate) => {
+    setTemplatePickerOpen(false);
+    openInComposer(templatePickerDocType as "quote" | "proposal" | "sla", `new-${ws.id}-${template.id}`);
+  };
 
   // ── Open in Composer ──
   const openInComposer = (type: "quote" | "proposal" | "sla", entityId: string) => {
@@ -731,7 +759,7 @@ export default function WorkspaceDetail() {
                       <FileText className="w-4 h-4 text-muted-foreground" /> Quotes
                       <Badge variant="secondary" className="text-[10px]">{wsQuotes.length}</Badge>
                     </h3>
-                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => openInComposer("quote", `new-${ws.id}`)}>
+                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => handleNewDocument("quote")}>
                       <Plus className="w-3 h-3 mr-1" /> New Quote
                     </Button>
                   </div>
@@ -773,7 +801,7 @@ export default function WorkspaceDetail() {
                       <FileCheck className="w-4 h-4 text-muted-foreground" /> Proposals
                       <Badge variant="secondary" className="text-[10px]">{wsProposals.length}</Badge>
                     </h3>
-                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => openInComposer("proposal", `new-${ws.id}`)}>
+                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => handleNewDocument("proposal")}>
                       <Plus className="w-3 h-3 mr-1" /> New Proposal
                     </Button>
                   </div>
@@ -816,7 +844,7 @@ export default function WorkspaceDetail() {
                       <FileSignature className="w-4 h-4 text-muted-foreground" /> SLAs
                       <Badge variant="secondary" className="text-[10px]">{wsSLAs.length}</Badge>
                     </h3>
-                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => openInComposer("sla", `new-${ws.id}`)}>
+                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => handleNewDocument("sla")}>
                       <Plus className="w-3 h-3 mr-1" /> New SLA
                     </Button>
                   </div>
@@ -1852,6 +1880,44 @@ export default function WorkspaceDetail() {
 
         </Tabs>
       </div>
+
+      {/* ═══ TEMPLATE PICKER MODAL ═══ */}
+      {templatePickerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100">
+              <h3 className="text-sm font-semibold">Choose a Template</h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                Select a template for your new {templatePickerDocType === "quote" ? "quote" : templatePickerDocType === "proposal" ? "proposal" : "SLA"}
+              </p>
+            </div>
+            <div className="p-4 space-y-2 max-h-80 overflow-y-auto">
+              {templatePickerTemplates.map(tpl => (
+                <button
+                  key={tpl.id}
+                  onClick={() => handleTemplateSelect(tpl)}
+                  className="w-full text-left p-4 rounded-lg border border-gray-200 hover:border-[#1B2A4A] hover:bg-[#1B2A4A]/5 transition-all group"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium group-hover:text-[#1B2A4A]">{tpl.name}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {tpl.doc_type.toUpperCase()} · {tpl.default_locale === "bilingual" ? "Bilingual (EN/AR)" : tpl.default_locale.toUpperCase()}
+                      </p>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-[#1B2A4A] transition-colors" />
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="px-6 py-3 border-t border-gray-100 flex justify-end">
+              <Button variant="ghost" size="sm" className="text-xs" onClick={() => setTemplatePickerOpen(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </TooltipProvider>
   );
 }

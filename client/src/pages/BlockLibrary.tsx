@@ -1,3 +1,4 @@
+import { Link } from "wouter";
 /*
  * Block Library — Admin page for browsing/managing document block types
  * Grouped by family, shows permissions, editor mode, and render key
@@ -15,7 +16,7 @@ import {
   Blocks, Search, Shield, ShieldAlert, ShieldCheck, Bot,
   Lock, Unlock, Eye, Pencil, FileCode, ChevronDown, ChevronRight,
   Code2, Layers, GripVertical
-} from "lucide-react";
+, ArrowLeft } from "lucide-react";
 import {
   blockLibrary, BLOCK_FAMILY_CONFIG, EDITOR_MODE_CONFIG,
   type DocBlock, type BlockFamily
@@ -60,6 +61,13 @@ export default function BlockLibraryPage() {
         </div>
       )}
       {/* Header */}
+      <div className="mb-4">
+        <Link href="/admin-panel">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Admin
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-[#1B2A4A] font-serif">Block Library</h1>

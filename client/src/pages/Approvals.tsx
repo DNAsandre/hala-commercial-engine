@@ -1,4 +1,6 @@
 import { ShieldCheck, Clock, CheckCircle, XCircle } from "lucide-react";
+import { Link } from "wouter";
+import { ArrowLeft } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,6 +13,13 @@ export default function Approvals() {
   const completed = approvalRecords.filter(a => a.decision !== "pending");
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
+      <div className="mb-4">
+        <Link href="/">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Dashboard
+          </Button>
+        </Link>
+      </div>
       <div className="mb-6"><h1 className="text-2xl font-serif font-bold">Approval Matrix</h1><p className="text-sm text-muted-foreground mt-0.5">{pending.length} pending approvals</p></div>
       <Tabs defaultValue="pending" className="space-y-4">
         <TabsList>

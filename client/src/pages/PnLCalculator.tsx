@@ -1,5 +1,6 @@
+import { Link } from "wouter";
 import { useState } from "react";
-import { Calculator, Download } from "lucide-react";
+import { Calculator, Download , ArrowLeft } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -35,6 +36,13 @@ export default function PnLCalculator() {
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
+      <div className="mb-4">
+        <Link href="/workspaces">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Workspaces
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between mb-6">
         <div><h1 className="text-2xl font-serif font-bold">P&L Calculator</h1><p className="text-sm text-muted-foreground mt-0.5">Deal-level profitability model</p></div>
         <Button variant="outline" onClick={() => toast("PDF export coming soon")}><Download className="w-4 h-4 mr-1.5" />Export P&L</Button>

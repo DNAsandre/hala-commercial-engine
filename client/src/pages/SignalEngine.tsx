@@ -1,3 +1,5 @@
+import { Link } from "wouter";
+import { ArrowLeft } from "lucide-react";
 /**
  * SIGNAL ENGINE PAGE
  * Design: Swiss Precision Instrument — Deep navy + warm white
@@ -75,7 +77,14 @@ export default function SignalEngine() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold font-serif text-slate-900">Signal Engine</h1>
+        <div className="mb-4">
+        <Link href="/admin-panel">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Admin
+          </Button>
+        </Link>
+      </div>
+      <h1 className="text-2xl font-bold font-serif text-slate-900">Signal Engine</h1>
         <p className="text-sm text-slate-500 mt-1">Monitor bots generate signals. Humans review and decide. No auto-action.</p>
       </div>
 

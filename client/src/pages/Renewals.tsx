@@ -25,7 +25,7 @@ import {
   type RenewalDecision,
 } from "@/lib/renewal-engine";
 import { getEcrScoreByCustomerName } from "@/lib/ecr";
-import { RefreshCw, Search, Filter, ArrowRight, AlertTriangle, CheckCircle, Clock, XCircle, Shield, TrendingUp } from "lucide-react";
+import { RefreshCw, Search, Filter, ArrowRight, AlertTriangle, CheckCircle, Clock, XCircle, Shield, TrendingUp , ArrowLeft } from "lucide-react";
 
 export default function Renewals() {
   const [search, setSearch] = useState("");
@@ -88,6 +88,13 @@ export default function Renewals() {
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
       {/* Header */}
+      <div className="mb-4">
+        <Link href="/">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Dashboard
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-serif font-bold text-[#1B2A4A]">Renewal Engine</h1>

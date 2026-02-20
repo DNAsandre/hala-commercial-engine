@@ -1500,7 +1500,11 @@ export default function DocumentComposer({
               <Download size={12} className="mr-1" /> Compile
             </Button>
             <Button variant="outline" size="sm" onClick={() => {
-              navigate(`/composer/${document.id}/view`);
+              const params = new URLSearchParams();
+              if (workspaceId) { params.set("from", "workspace"); params.set("workspaceId", workspaceId); }
+              else { params.set("from", "documents"); }
+              const qs = params.toString();
+              navigate(`/composer/${document.id}/view${qs ? `?${qs}` : ''}`);
             }} className="text-xs h-7">
               <Eye size={12} className="mr-1" /> Output Studio
             </Button>

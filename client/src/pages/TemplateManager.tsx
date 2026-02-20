@@ -5,7 +5,7 @@
  */
 
 import { useState, useMemo } from "react";
-import { useLocation } from "wouter";
+import { useLocation , Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,7 @@ import {
   Scale, Truck, Warehouse, ChevronDown, ChevronRight, Clock, User,
   CheckCircle2, Archive, FileText, Layers, Copy, Trash2, Send,
   Eye, Settings2, Hash
-} from "lucide-react";
+, ArrowLeft } from "lucide-react";
 import {
   docTemplates, blockLibrary, brandingProfiles, getLatestTemplateVersion,
   DOC_TYPE_CONFIG, TEMPLATE_STATUS_CONFIG, BLOCK_FAMILY_CONFIG,
@@ -76,6 +76,13 @@ export default function TemplateManager() {
         </div>
       )}
       {/* Header */}
+      <div className="mb-4">
+        <Link href="/admin-panel">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Admin
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-[#1B2A4A] font-serif">Template Manager</h1>

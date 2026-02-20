@@ -1,3 +1,5 @@
+import { Link } from "wouter";
+import { ArrowLeft } from "lucide-react";
 /**
  * ECR CUSTOMER DASHBOARD
  * Design: Swiss Precision Instrument — Deep navy + warm white
@@ -83,6 +85,13 @@ export default function EcrDashboard() {
   return (
     <div className="space-y-6">
       {/* Header */}
+      <div className="mb-4">
+        <Link href="/admin-panel">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Admin
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold font-serif text-slate-900">ECR Dashboard</h1>

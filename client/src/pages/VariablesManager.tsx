@@ -1,3 +1,4 @@
+import { Link } from "wouter";
 /*
  * Variables Manager — Admin page for managing semantic variables, sets, and overrides
  * CRUD for variable definitions with namespaces, types, and defaults
@@ -7,7 +8,7 @@
  */
 
 import { useState, useMemo } from "react";
-import { Braces, Plus, Search, Edit2, Copy, ChevronDown, ChevronRight, Tag, Layers, Users, ArrowRight, Shield, Lock } from "lucide-react";
+import { Braces, Plus, Search, Edit2, Copy, ChevronDown, ChevronRight, Tag, Layers, Users, ArrowRight, Shield, Lock , ArrowLeft } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -125,6 +126,13 @@ export default function VariablesManager() {
         </div>
       )}
       {/* Header */}
+      <div className="mb-4">
+        <Link href="/admin-panel">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Admin
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-serif font-bold text-[#1B2A4A]">Variables Manager</h1>

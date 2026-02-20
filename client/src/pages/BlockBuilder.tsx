@@ -1,3 +1,4 @@
+import { Link } from "wouter";
 /*
  * Block Builder — Admin page for creating and managing custom document blocks
  * Allows defining new block types with family, editor mode, variable slots, and permissions
@@ -21,7 +22,7 @@ import {
   BookOpen, FileCheck, FileSignature, Variable,
   ChevronRight, Code, LayoutTemplate, Wrench,
   AlertTriangle, CheckCircle2, Copy
-} from "lucide-react";
+, ArrowLeft } from "lucide-react";
 import {
   type DocBlock, type BlockFamily, type BlockEditorMode,
   blockLibrary, BLOCK_FAMILY_CONFIG, EDITOR_MODE_CONFIG,
@@ -123,7 +124,14 @@ function BlockDetailPanel({ block, onClose }: { block: DocBlock; onClose: () => 
                 {block.permissions.ai_allowed ? "Yes" : "No"}
               </Badge>
             </div>
-            <div className="flex items-center justify-between text-xs">
+            <div className="mb-4">
+        <Link href="/admin-panel">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Admin
+          </Button>
+        </Link>
+      </div>
+      <div className="flex items-center justify-between text-xs">
               <span className="text-gray-600 flex items-center gap-1.5"><Trash2 size={11} /> Editable in Draft</span>
               <Badge variant="outline" className={`text-[10px] ${block.permissions.editable_in_draft ? "text-emerald-700 bg-emerald-50" : "text-gray-500"}`}>
                 {block.permissions.editable_in_draft ? "Yes" : "No"}

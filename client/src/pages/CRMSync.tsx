@@ -1,4 +1,5 @@
-import { RefreshCw, ArrowDownLeft, ArrowUpRight, CheckCircle, Clock } from "lucide-react";
+import { Link } from "wouter";
+import { RefreshCw, ArrowDownLeft, ArrowUpRight, CheckCircle, Clock , ArrowLeft } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,13 @@ import { toast } from "sonner";
 export default function CRMSync() {
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
+      <div className="mb-4">
+        <Link href="/admin-panel">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Admin
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between mb-6">
         <div><h1 className="text-2xl font-serif font-bold">CRM Sync</h1><p className="text-sm text-muted-foreground mt-0.5">Zoho CRM Integration — Mock Mode</p></div>
         <div className="flex gap-2">

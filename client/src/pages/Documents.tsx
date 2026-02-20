@@ -7,6 +7,7 @@
  */
 
 import { useState, useCallback } from "react";
+import { Link } from "wouter";
 import {
   FileText,
   Download,
@@ -21,6 +22,7 @@ import {
   Clock,
   AlertTriangle,
   X,
+  ArrowLeft,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -246,6 +248,14 @@ export default function Documents() {
           <span className="text-xs text-amber-800">This page is now accessible via <a href="/admin" className="underline font-semibold hover:text-amber-900">Admin</a> or <a href="/workspaces" className="underline font-semibold hover:text-amber-900">Workspace</a>.</span>
         </div>
       )}
+      {/* Back Button */}
+      <div className="mb-4">
+        <Link href="/admin-panel">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Admin
+          </Button>
+        </Link>
+      </div>
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

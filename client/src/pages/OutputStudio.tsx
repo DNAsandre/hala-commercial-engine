@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useRoute, useLocation } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -50,25 +50,60 @@ function analyzeTokenHealth(blocks: InstanceBlock[]): TokenHealth {
     }
   }
 
-  const total = allTokenKeys.length;
-  const resolvedCount = total - missingKeys.length;
-
   return {
-    total,
-    resolved: resolvedCount,
+    total: allTokenKeys.length,
+    resolved: allTokenKeys.length - missingKeys.length,
     missing: missingKeys,
     status: missingKeys.length === 0 ? "healthy" : missingKeys.length <= 2 ? "warning" : "error",
   };
 }
 
 // ============================================================
-// OUTPUT STUDIO VIEWER
+// NAVIGATION CONTEXT HELPERS
 // ============================================================
 
+interface NavContext {
+  from: "workspace" | "documents" | "editor";
+  workspaceId?: string;
+}
+
+function readNavContext(): NavContext {
+  const params = new URLSearchParams(window.location.search);
+  const from = params.get("from") as NavContext["from"] || "editor";
+  const workspaceId = params.get("workspaceId") || undefined;
+  return { from, workspaceId };
+}
+
+function buildEditorUrl(docInstanceId: string, ctx: NavContext): string {
+  // When coming from workspace, navigate back to the workspace page
+  // which will re-render the inline composer for this instance
+  if (ctx.from === "workspace" && ctx.workspaceId) {
+    return `/workspaces/${ctx.workspaceId}?tab=documents&editInstance=${docInstanceId}`;
+  }
+  // When coming from documents list
+  if (ctx.from === "documents") {
+    return `/editor?instance=${docInstanceId}&from=documents`;
+  }
+  // Default: standalone editor
+  return `/editor?instance=${docInstanceId}`;
+}
+
+function buildBackLabel(ctx: NavContext): string {
+  if (ctx.from === "workspace" && ctx.workspaceId) return "Back to Workspace";
+  if (ctx.from === "documents") return "Back to Editor";
+  return "Back to Editor";
+}
+
+// ============================================================
+// OUTPUT STUDIO VIEWER
+// ============================================================
 export default function OutputStudio() {
   const [, params] = useRoute("/composer/:docInstanceId/view");
   const [, navigate] = useLocation();
   const docInstanceId = params?.docInstanceId || "";
+
+  // Navigation context — preserved from the referring page
+  const navCtx = useMemo(() => readNavContext(), []);
 
   // State
   const [selectedBrandingId, setSelectedBrandingId] = useState<string>("");
@@ -98,116 +133,148 @@ export default function OutputStudio() {
 
   // Check for existing compiled documents
   const existingCompiled = useMemo<CompiledDocument[]>(() => {
-    return compiledDocuments.filter(cd => cd.doc_instance_id === docInstanceId);
+    return compiledDocuments.filter(c => c.doc_instance_id === docInstanceId);
   }, [docInstanceId]);
 
-  // Check vault assets
+  // Check for existing vault assets
   const existingVaultAssets = useMemo(() => {
-    return vaultAssets.filter(va => va.doc_instance_id === docInstanceId);
+    return vaultAssets.filter(v => v.doc_instance_id === docInstanceId);
   }, [docInstanceId]);
 
-  // Render preview
-  const renderPreview = useCallback(() => {
-    if (!currentVersion || !branding || !docInstance) return;
-
-    const spacingMap = { compact: "16px", normal: "24px", relaxed: "36px" };
-    const spacing = spacingMap[spacingPreset];
-
-    const input: ComposerPDFInput = {
-      branding,
-      blocks: currentVersion.blocks.map((b, idx) => ({
-        id: `blk-${idx}`,
-        block_key: b.block_key,
-        content: b.content,
-        order: b.order,
-        is_locked: b.is_locked,
-        is_ai_generated: b.is_ai_generated,
-        config: b.config,
-      })),
-      doc_ref: `${DOC_TYPE_CONFIG[docInstance.doc_type].label} — ${docInstance.customer_name}`,
-      customer_name: docInstance.customer_name,
-      title: `${DOC_TYPE_CONFIG[docInstance.doc_type].label}`,
-      doc_type: docInstance.doc_type,
-      workspace_name: docInstance.workspace_name,
-      version: currentVersion.version_number,
-    };
-
-    const html = compileComposerPDF(input);
-    // Inject spacing override
-    const styledHtml = html.replace(
-      "margin-bottom:20px;",
-      `margin-bottom:${spacing};`
-    );
-    setCompiledHtml(styledHtml);
-  }, [currentVersion, branding, docInstance, spacingPreset]);
-
-  // Auto-render on mount
-  useMemo(() => {
-    if (currentVersion && branding && docInstance && !compiledHtml) {
+  // Auto-render preview on load
+  useEffect(() => {
+    if (currentVersion && branding) {
       renderPreview();
     }
-  }, [currentVersion, branding, docInstance, compiledHtml, renderPreview]);
+  }, [currentVersion?.id, branding?.id]);
 
-  // Compile final PDF
-  const compileFinalPDF = useCallback(() => {
+  // Contextual back URL
+  const editorUrl = docInstance ? buildEditorUrl(docInstance.id, navCtx) : "/editor";
+  const backLabel = buildBackLabel(navCtx);
+
+  // ── Render preview ──
+  function renderPreview() {
+    if (!docInstance || !currentVersion || !branding) return;
+
+    const blocks = currentVersion.blocks.map(b => {
+      const blockDef = getBlockByKey(b.block_key);
+      return {
+        key: b.block_key,
+        family: blockDef?.family || "narrative",
+        content: b.content,
+        order: b.order,
+      };
+    }).sort((a, b) => a.order - b.order);
+
+    // Build simple HTML preview
+    const primaryColor = branding.primary_color || "#1B2A4A";
+    const fontFamily = branding.font_family || "Inter, sans-serif";
+    const spacing = spacingPreset === "compact" ? "0.75rem" : spacingPreset === "relaxed" ? "2rem" : "1.25rem";
+
+    let html = `<div style="font-family: ${fontFamily}; color: #1a1a1a; max-width: 800px; margin: 0 auto; padding: 2rem;">`;
+
+    if (showCover) {
+      html += `<div style="text-align: center; padding: 4rem 2rem; margin-bottom: 2rem; border-bottom: 3px solid ${primaryColor};">`;
+      html += `<h1 style="font-size: 1.75rem; color: ${primaryColor}; margin-bottom: 0.5rem;">${docInstance.customer_name}</h1>`;
+      html += `<p style="color: #666; font-size: 0.875rem;">${DOC_TYPE_CONFIG[docInstance.doc_type].label} — v${currentVersion.version_number}</p>`;
+      html += `</div>`;
+    }
+
+    for (const block of blocks) {
+      const familyConfig = BLOCK_FAMILY_CONFIG[block.family as keyof typeof BLOCK_FAMILY_CONFIG];
+      const borderColor = familyConfig?.color || "#e5e7eb";
+
+      html += `<div style="margin-bottom: ${spacing}; padding: 1rem; border-left: 3px solid ${borderColor}; background: #fafafa; border-radius: 0 4px 4px 0;">`;
+      html += `<div style="font-size: 0.625rem; text-transform: uppercase; color: #999; margin-bottom: 0.5rem; letter-spacing: 0.05em;">${block.key.replace(/_/g, ' ')}</div>`;
+
+      // Resolve tokens in content
+      const resolved = resolveTokens(block.content, {
+        recordOverrides: {},
+        templateDefaults: {},
+        globalDefaults: {},
+        entityBindings: {},
+      }, docInstance.doc_type);
+
+      html += `<div style="font-size: 0.8125rem; line-height: 1.6;">${resolved.renderedText}</div>`;
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+    setCompiledHtml(html);
+  }
+
+  // ── Compile final PDF ──
+  function compileFinalPDF() {
     if (!docInstance || !currentVersion || !branding) return;
     setIsCompiling(true);
 
     setTimeout(() => {
-      // Create compiled document record
-      const compiled: CompiledDocument = {
-        id: `cd-${Date.now()}`,
-        doc_instance_version_id: currentVersion.id,
-        output_type: "pdf",
-        file_asset_id: `fa-${docInstance.id}-final`,
-        checksum: `sha256:${Math.random().toString(36).substring(2, 14)}`,
-        compiled_at: new Date().toISOString(),
-        compiled_by: "Amin Al-Rashid",
-        status: "success",
-        error_text: null,
-        branding_profile_id: effectiveBrandingId,
-        doc_instance_id: docInstance.id,
-        title: `${docInstance.customer_name} ${DOC_TYPE_CONFIG[docInstance.doc_type].label}`,
-      };
-      compiledDocuments.push(compiled);
+      try {
+        const blocks = currentVersion.blocks.map(b => ({
+          id: b.block_key,
+          block_key: b.block_key,
+          order: b.order,
+          content: b.content,
+          is_locked: b.is_locked ?? false,
+          is_ai_generated: b.is_ai_generated ?? false,
+          config: b.config ?? {},
+        }));
 
-      // Save to vault
-      saveToVault({
-        doc_instance_id: docInstance.id,
-        doc_instance_version_id: currentVersion.id,
-        compiled_document_id: compiled.id,
-        title: compiled.title,
-        doc_type: docInstance.doc_type,
-        customer_id: docInstance.customer_id,
-        customer_name: docInstance.customer_name,
-        workspace_id: docInstance.workspace_id,
-        workspace_name: docInstance.workspace_name,
-        branding_profile_id: effectiveBrandingId,
-        status: "final",
-      });
+        const input: ComposerPDFInput = {
+          title: docInstance.customer_name,
+          doc_type: docInstance.doc_type,
+          customer_name: docInstance.customer_name,
+          workspace_name: null,
+          blocks,
+          branding,
+          doc_ref: docInstance.id,
+          version: currentVersion.version_number,
+        };
 
-      setHasFinalPDF(true);
+        const html = compileComposerPDF(input);
+        if (html) {
+          // Create a versioned CompiledDocument record
+          const compiledId = `cd-${Date.now()}`;
+          const newCompiled: CompiledDocument = {
+            id: compiledId,
+            doc_instance_version_id: currentVersion.id,
+            output_type: "pdf",
+            file_asset_id: `fa-${compiledId}`,
+            checksum: btoa(html.slice(0, 50)).slice(0, 16),
+            compiled_at: new Date().toISOString().split("T")[0],
+            compiled_by: "Current User",
+            status: "success",
+            error_text: null,
+            branding_profile_id: branding.id,
+            doc_instance_id: docInstanceId || docInstance.id,
+            title: `${docInstance.customer_name} — ${DOC_TYPE_CONFIG[docInstance.doc_type]?.label || docInstance.doc_type} v${currentVersion.version_number}`,
+          };
+          compiledDocuments.push(newCompiled);
+          setHasFinalPDF(true);
+          setCompiledHtml(html);
+          toast.success(`PDF compiled — ${blocks.length} blocks, artifact ${compiledId}`);
+        } else {
+          toast.error("Compilation failed — check token health");
+        }
+      } catch {
+        toast.error("Compilation failed — unexpected error");
+      }
       setIsCompiling(false);
-      toast.success("Final PDF compiled and saved to Document Vault");
     }, 1500);
-  }, [docInstance, currentVersion, branding, effectiveBrandingId]);
+  }
 
-  // Send to CRM
-  const handleSendToCRM = useCallback(() => {
-    const finalAsset = vaultAssets.find(va => va.doc_instance_id === docInstanceId && va.status === "final");
-    if (!finalAsset) {
-      toast.error("No final PDF found — compile first");
-      return;
-    }
-    const result = exportToCRM(finalAsset.id);
+  // ── Send to CRM ──
+  function handleSendToCRM() {
+    if (!docInstance) return;
+    const result = exportToCRM(docInstance.id);
     if (result.success) {
       toast.success(result.message);
     } else {
-      toast.error(result.message);
+      toast.error(result.message || "CRM export failed");
     }
-  }, [docInstanceId]);
+  }
 
-  // Not found
+  // ── Not found state ──
   if (!docInstance || !currentVersion) {
     return (
       <div className="p-6 max-w-[1400px] mx-auto">
@@ -215,8 +282,8 @@ export default function OutputStudio() {
           <XCircle size={48} className="mx-auto mb-4 text-gray-300" />
           <h2 className="text-lg font-semibold text-gray-600">Document not found</h2>
           <p className="text-sm text-gray-400 mt-1">The document instance could not be resolved.</p>
-          <Button variant="outline" className="mt-4" onClick={() => navigate("/editor")}>
-            <ArrowLeft size={14} className="mr-1.5" /> Back to Composer
+          <Button variant="outline" className="mt-4" onClick={() => navigate(editorUrl)}>
+            <ArrowLeft size={14} className="mr-1.5" /> {backLabel}
           </Button>
         </div>
       </div>
@@ -230,8 +297,8 @@ export default function OutputStudio() {
       {/* Sticky Header */}
       <div className="sticky top-0 z-30 bg-white border-b border-gray-200 px-4 py-2.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate(`/editor?instance=${docInstance.id}`)} className="text-xs">
-            <ArrowLeft size={14} className="mr-1" /> Back to Editor
+          <Button variant="ghost" size="sm" onClick={() => navigate(editorUrl)} className="text-xs">
+            <ArrowLeft size={14} className="mr-1" /> {backLabel}
           </Button>
           <div className="h-5 w-px bg-gray-200" />
           <Badge className="bg-[#1B2A4A]/10 text-[#1B2A4A] border-0 text-xs">{docTypeConfig.label}</Badge>
@@ -240,56 +307,34 @@ export default function OutputStudio() {
           {docInstance.status === "canon" && <Lock size={12} className="text-amber-600" />}
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" className="text-xs" onClick={renderPreview}>
-            <RefreshCw size={12} className="mr-1" /> Re-render
-          </Button>
+          <Badge variant="outline" className={`text-[10px] ${
+            tokenHealth.status === "healthy" ? "border-emerald-300 text-emerald-700" :
+            tokenHealth.status === "warning" ? "border-amber-300 text-amber-700" :
+            "border-red-300 text-red-700"
+          }`}>
+            {tokenHealth.status === "healthy" ? <CheckCircle size={10} className="mr-1" /> :
+             tokenHealth.status === "warning" ? <AlertTriangle size={10} className="mr-1" /> :
+             <XCircle size={10} className="mr-1" />}
+            Tokens: {tokenHealth.resolved}/{tokenHealth.total}
+          </Badge>
           <Button
             size="sm"
-            className="text-xs bg-[#1B2A4A] hover:bg-[#2A3F6A]"
+            className="bg-[#1B2A4A] hover:bg-[#2A3F6A] text-xs h-7"
             onClick={compileFinalPDF}
             disabled={isCompiling}
           >
             <FileDown size={12} className="mr-1" />
-            {isCompiling ? "Compiling..." : "Compile Final PDF"}
+            {isCompiling ? "Compiling..." : "Compile PDF"}
           </Button>
-          {(hasFinalPDF || existingCompiled.length > 0) && (
-            <Button variant="outline" size="sm" className="text-xs text-emerald-700 border-emerald-200 hover:bg-emerald-50" onClick={handleSendToCRM}>
-              <Send size={12} className="mr-1" /> Send to CRM
-            </Button>
-          )}
         </div>
       </div>
 
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: Preview */}
-        <div className="flex-1 overflow-auto bg-gray-100 p-6">
-          <div className="max-w-[850px] mx-auto">
-            {compiledHtml ? (
-              <div className="bg-white shadow-lg rounded-lg overflow-hidden">
-                <iframe
-                  srcDoc={compiledHtml}
-                  className="w-full border-0"
-                  style={{ minHeight: "1200px", height: "100%" }}
-                  title="Document Preview"
-                />
-              </div>
-            ) : (
-              <div className="bg-white shadow-lg rounded-lg p-12 text-center">
-                <Eye size={48} className="mx-auto mb-4 text-gray-300" />
-                <h3 className="text-lg font-medium text-gray-600">No preview generated</h3>
-                <p className="text-sm text-gray-400 mt-1">Click "Re-render" to generate a preview of this document.</p>
-                <Button className="mt-4 bg-[#1B2A4A] hover:bg-[#2A3F6A]" onClick={renderPreview}>
-                  <RefreshCw size={14} className="mr-1.5" /> Generate Preview
-                </Button>
-              </div>
-            )}
-          </div>
-        </div>
+        {/* Left Sidebar — Controls */}
+        <div className="w-72 border-r border-gray-200 overflow-y-auto bg-gray-50/50 flex-shrink-0">
+          <div className="p-3 space-y-3">
 
-        {/* Right: Panels */}
-        <div className="w-[340px] border-l border-gray-200 bg-white overflow-auto">
-          <div className="p-4 space-y-3">
             {/* Token Health */}
             <Card className="border border-gray-200 shadow-none">
               <CardContent className="p-0">
@@ -298,29 +343,25 @@ export default function OutputStudio() {
                   onClick={() => setTokenHealthExpanded(!tokenHealthExpanded)}
                 >
                   <div className="flex items-center gap-2">
-                    {tokenHealth.status === "healthy" ? (
-                      <CheckCircle size={16} className="text-emerald-600" />
-                    ) : tokenHealth.status === "warning" ? (
-                      <AlertTriangle size={16} className="text-amber-600" />
-                    ) : (
-                      <XCircle size={16} className="text-red-600" />
-                    )}
+                    {tokenHealth.status === "healthy" ? <CheckCircle size={16} className="text-emerald-600" /> :
+                     tokenHealth.status === "warning" ? <AlertTriangle size={16} className="text-amber-600" /> :
+                     <XCircle size={16} className="text-red-600" />}
                     <span className="text-sm font-semibold text-[#1B2A4A]">Token Health</span>
                   </div>
                   {tokenHealthExpanded ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />}
                 </button>
                 {tokenHealthExpanded && (
-                  <div className="px-4 pb-3 border-t border-gray-100 pt-3">
-                    <div className="flex items-center gap-4 mb-3">
-                      <div className="text-center">
+                  <div className="px-4 pb-3 border-t border-gray-100 pt-3 space-y-3">
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div>
                         <div className="text-lg font-bold text-[#1B2A4A]">{tokenHealth.total}</div>
                         <div className="text-[10px] text-gray-500 uppercase">Total</div>
                       </div>
-                      <div className="text-center">
+                      <div>
                         <div className="text-lg font-bold text-emerald-600">{tokenHealth.resolved}</div>
                         <div className="text-[10px] text-gray-500 uppercase">Resolved</div>
                       </div>
-                      <div className="text-center">
+                      <div>
                         <div className="text-lg font-bold text-red-600">{tokenHealth.missing.length}</div>
                         <div className="text-[10px] text-gray-500 uppercase">Missing</div>
                       </div>
@@ -335,7 +376,7 @@ export default function OutputStudio() {
                               variant="ghost"
                               size="sm"
                               className="ml-auto h-5 text-[10px] text-red-600 hover:text-red-800 px-1"
-                              onClick={() => navigate(`/editor?instance=${docInstance.id}`)}
+                              onClick={() => navigate(editorUrl)}
                             >
                               Fix →
                             </Button>
@@ -362,24 +403,23 @@ export default function OutputStudio() {
                 >
                   <div className="flex items-center gap-2">
                     <Palette size={16} className="text-[#1B2A4A]" />
-                    <span className="text-sm font-semibold text-[#1B2A4A]">Styling Controls</span>
+                    <span className="text-sm font-semibold text-[#1B2A4A]">Styling</span>
                   </div>
                   {stylingExpanded ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />}
                 </button>
                 {stylingExpanded && (
                   <div className="px-4 pb-3 border-t border-gray-100 pt-3 space-y-3">
-                    {/* Branding Profile */}
                     <div>
-                      <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1 block">Branding Profile</label>
+                      <label className="text-[10px] text-gray-500 uppercase font-medium">Branding Profile</label>
                       <Select value={effectiveBrandingId} onValueChange={setSelectedBrandingId}>
-                        <SelectTrigger className="h-8 text-xs">
-                          <SelectValue placeholder="Select branding..." />
+                        <SelectTrigger className="h-8 text-xs mt-1">
+                          <SelectValue placeholder="Select branding" />
                         </SelectTrigger>
                         <SelectContent>
                           {brandingProfiles.map(bp => (
                             <SelectItem key={bp.id} value={bp.id}>
                               <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full" style={{ background: bp.primary_color }} />
+                                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: bp.primary_color }} />
                                 {bp.name}
                               </div>
                             </SelectItem>
@@ -387,12 +427,10 @@ export default function OutputStudio() {
                         </SelectContent>
                       </Select>
                     </div>
-
-                    {/* Spacing Preset */}
                     <div>
-                      <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1 block">Spacing</label>
-                      <Select value={spacingPreset} onValueChange={(v: string) => setSpacingPreset(v as "compact" | "normal" | "relaxed")}>
-                        <SelectTrigger className="h-8 text-xs">
+                      <label className="text-[10px] text-gray-500 uppercase font-medium">Spacing</label>
+                      <Select value={spacingPreset} onValueChange={(v) => setSpacingPreset(v as typeof spacingPreset)}>
+                        <SelectTrigger className="h-8 text-xs mt-1">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -402,35 +440,12 @@ export default function OutputStudio() {
                         </SelectContent>
                       </Select>
                     </div>
-
-                    {/* Cover Page Toggle */}
-                    <div className="flex items-center justify-between">
-                      <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Cover Page</label>
-                      <button
-                        className={`relative w-9 h-5 rounded-full transition-colors ${showCover ? "bg-[#1B2A4A]" : "bg-gray-300"}`}
-                        onClick={() => setShowCover(!showCover)}
-                      >
-                        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${showCover ? "left-[18px]" : "left-0.5"}`} />
-                      </button>
-                    </div>
-
-                    {/* Branding Preview */}
-                    {branding && (
-                      <div className="border border-gray-100 rounded-lg p-2.5 bg-gray-50">
-                        <div className="flex items-center gap-2 mb-2">
-                          <div className="w-4 h-4 rounded" style={{ background: branding.primary_color }} />
-                          <div className="w-4 h-4 rounded" style={{ background: branding.secondary_color }} />
-                          <div className="w-4 h-4 rounded" style={{ background: branding.accent_color }} />
-                          <span className="text-[10px] text-gray-500 ml-auto">{branding.font_family}</span>
-                        </div>
-                        <div className="text-[10px] text-gray-500">
-                          Header: {branding.header_style} · Footer: {branding.footer_format.show_page_numbers ? "Pages" : "No pages"}
-                        </div>
-                      </div>
-                    )}
-
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input type="checkbox" checked={showCover} onChange={(e) => setShowCover(e.target.checked)} className="rounded border-gray-300" />
+                      Show cover page
+                    </label>
                     <Button variant="outline" size="sm" className="w-full text-xs" onClick={renderPreview}>
-                      <RefreshCw size={12} className="mr-1" /> Apply & Re-render
+                      <RefreshCw size={12} className="mr-2" /> Apply & Re-render
                     </Button>
                   </div>
                 )}
@@ -452,8 +467,8 @@ export default function OutputStudio() {
                 </button>
                 {actionsExpanded && (
                   <div className="px-4 pb-3 border-t border-gray-100 pt-3 space-y-2">
-                    <Button variant="outline" size="sm" className="w-full text-xs justify-start" onClick={() => navigate(`/editor?instance=${docInstance.id}`)}>
-                      <ArrowLeft size={12} className="mr-2" /> Back to Editor
+                    <Button variant="outline" size="sm" className="w-full text-xs justify-start" onClick={() => navigate(editorUrl)}>
+                      <ArrowLeft size={12} className="mr-2" /> {backLabel}
                     </Button>
                     <Button variant="outline" size="sm" className="w-full text-xs justify-start" onClick={renderPreview}>
                       <RefreshCw size={12} className="mr-2" /> Re-render Preview
@@ -508,24 +523,36 @@ export default function OutputStudio() {
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        {existingVaultAssets.map(va => (
-                          <div key={va.id} className="flex items-center gap-2 px-2 py-2 bg-gray-50 rounded-lg text-xs">
-                            <div className={`w-1.5 h-8 rounded-full ${va.status === "final" ? "bg-emerald-500" : va.status === "preview" ? "bg-amber-500" : "bg-gray-400"}`} />
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium text-[#1B2A4A] truncate">{va.title}</div>
-                              <div className="text-[10px] text-gray-500 flex items-center gap-2">
-                                <Badge className={`text-[9px] h-3.5 border-0 ${va.status === "final" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                                  {va.status}
-                                </Badge>
-                                <span>{va.created_at.split("T")[0]}</span>
-                                {va.sent_to_crm && <Badge className="text-[9px] h-3.5 bg-blue-50 text-blue-700 border-0">CRM ✓</Badge>}
+                        {existingCompiled.map(comp => (
+                          <div key={comp.id} className="flex items-center justify-between p-2 bg-white rounded border border-gray-100">
+                            <div className="flex items-center gap-2">
+                              <FileDown size={12} className="text-[#1B2A4A]" />
+                              <div>
+                                <p className="text-[10px] font-medium">{comp.title}</p>
+                                <p className="text-[10px] text-gray-400">{comp.compiled_at}</p>
                               </div>
                             </div>
+                            <Badge className="bg-emerald-50 text-emerald-700 border-0 text-[10px]">{comp.status}</Badge>
                           </div>
                         ))}
-                        {hasFinalPDF && existingVaultAssets.length === 0 && (
-                          <div className="flex items-center gap-2 px-2 py-2 bg-emerald-50 rounded-lg text-xs text-emerald-700">
-                            <CheckCircle size={12} /> Final PDF compiled — saved to vault
+                        {existingVaultAssets.map(asset => (
+                          <div key={asset.id} className="flex items-center justify-between p-2 bg-white rounded border border-gray-100">
+                            <div className="flex items-center gap-2">
+                              <Archive size={12} className="text-[#1B2A4A]" />
+                              <div>
+                                <p className="text-[10px] font-medium">{asset.title}</p>
+                                <p className="text-[10px] text-gray-400">{asset.created_at}</p>
+                              </div>
+                            </div>
+                            <Badge className="bg-blue-50 text-blue-700 border-0 text-[10px]">{asset.status}</Badge>
+                          </div>
+                        ))}
+                        {hasFinalPDF && !existingCompiled.some(c => c.doc_instance_id === docInstanceId) && (
+                          <div className="flex items-center justify-between p-2 bg-emerald-50 rounded border border-emerald-100">
+                            <div className="flex items-center gap-2">
+                              <CheckCircle size={12} className="text-emerald-600" />
+                              <p className="text-[10px] text-emerald-700 font-medium">New PDF compiled — ready to save</p>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -534,30 +561,25 @@ export default function OutputStudio() {
                 )}
               </CardContent>
             </Card>
+          </div>
+        </div>
 
-            {/* Block Summary */}
-            <Card className="border border-gray-200 shadow-none">
-              <CardContent className="p-4">
-                <h3 className="text-sm font-semibold text-[#1B2A4A] mb-3">Block Summary</h3>
-                <div className="space-y-1.5">
-                  {currentVersion.blocks.map((block, idx) => {
-                    const blockDef = getBlockByKey(block.block_key);
-                    const familyCfg = blockDef ? BLOCK_FAMILY_CONFIG[blockDef.family] : null;
-                    return (
-                      <div key={idx} className="flex items-center gap-2 text-xs">
-                        <div className={`w-1.5 h-1.5 rounded-full ${block.is_locked ? "bg-amber-500" : "bg-emerald-500"}`} />
-                        <span className="text-gray-700 truncate flex-1">{blockDef?.display_name || block.block_key}</span>
-                        {familyCfg && (
-                          <Badge className={`text-[9px] h-3.5 border-0 ${familyCfg.bg} ${familyCfg.color}`}>
-                            {familyCfg.label}
-                          </Badge>
-                        )}
-                        {block.is_locked && <Lock size={9} className="text-amber-500" />}
-                        {block.is_ai_generated && <Badge className="text-[9px] h-3.5 bg-violet-50 text-violet-700 border-0">AI</Badge>}
-                      </div>
-                    );
-                  })}
-                </div>
+        {/* Right — Document Preview */}
+        <div className="flex-1 overflow-y-auto bg-gray-100">
+          <div className="p-6">
+            <Card className="border border-gray-200 shadow-sm max-w-4xl mx-auto">
+              <CardContent className="p-0">
+                {compiledHtml ? (
+                  <div dangerouslySetInnerHTML={{ __html: compiledHtml }} />
+                ) : (
+                  <div className="text-center py-20">
+                    <Eye size={32} className="mx-auto mb-3 text-gray-300" />
+                    <p className="text-sm text-gray-400">Preview will render automatically...</p>
+                    <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={renderPreview}>
+                      <RefreshCw size={12} className="mr-1" /> Render Now
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

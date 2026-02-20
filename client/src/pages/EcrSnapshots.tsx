@@ -1,3 +1,5 @@
+import { Link } from "wouter";
+import { ArrowLeft } from "lucide-react";
 /**
  * ECR INPUT SNAPSHOT SCREEN
  * Design: Swiss Precision Instrument — Deep navy + warm white
@@ -115,6 +117,13 @@ export default function EcrSnapshots() {
   return (
     <div className="space-y-6">
       {/* Header */}
+      <div className="mb-4">
+        <Link href="/ecr">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to ECR Dashboard
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold font-serif text-slate-900">ECR Input Snapshots</h1>

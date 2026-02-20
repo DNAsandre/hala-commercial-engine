@@ -8,6 +8,7 @@
 import { useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   AlertTriangle,
   Shield,
@@ -19,7 +20,7 @@ import {
   ShieldAlert,
   FileWarning,
   BarChart3,
-} from "lucide-react";
+  ArrowLeft } from "lucide-react";
 import { Link } from "wouter";
 import { computeRevenueExposure } from "@/lib/commercial-integrity";
 import { formatSAR } from "@/lib/renewal-engine";
@@ -87,6 +88,13 @@ export default function RevenueExposure() {
   return (
     <div className="p-6 max-w-[1400px] mx-auto space-y-6">
       {/* Header */}
+      <div className="mb-4">
+        <Link href="/">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Dashboard
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-3">

@@ -1,3 +1,4 @@
+import { Link } from "wouter";
 /*
  * Branding Profiles — Admin page for managing document branding/styler profiles
  * Create/edit brand profiles with colors, fonts, header/footer format, assets
@@ -16,7 +17,7 @@ import { toast } from "sonner";
 import {
   Palette, Plus, Paintbrush, Type, Image, FileText, Settings2,
   Check, Copy, Trash2, Eye, ChevronDown, ChevronRight
-} from "lucide-react";
+, ArrowLeft } from "lucide-react";
 import { brandingProfiles, type BrandingProfile, type FooterFormat } from "@/lib/document-composer";
 
 export default function BrandingProfilesPage() {
@@ -65,6 +66,13 @@ export default function BrandingProfilesPage() {
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
       {/* Header */}
+      <div className="mb-4">
+        <Link href="/admin-panel">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Admin
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-[#1B2A4A] font-serif">Branding Profiles</h1>

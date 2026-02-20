@@ -27,7 +27,7 @@ import {
   Link2,
   FileText,
   CalendarDays,
-} from "lucide-react";
+  ArrowLeft } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -319,6 +319,13 @@ export default function TenderBoard() {
   return (
     <div className="p-4 h-[calc(100vh-4rem)] flex flex-col">
       {/* Header */}
+      <div className="mb-4">
+        <Link href="/tenders">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Tenders
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between mb-3 shrink-0">
         <div>
           <div className="flex items-center gap-2">
