@@ -15,6 +15,12 @@ import {
   ArrowRight,
   ShieldCheck,
   ChevronRight,
+  RefreshCw,
+  DollarSign,
+  Radio,
+  ExternalLink,
+  Truck,
+  FileText,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +34,9 @@ import {
   getStageLabel,
   getStageColor,
   approvalRecords,
+  WORKSPACE_STAGES,
 } from "@/lib/store";
+import { navigationV1 } from "@/components/DashboardLayout";
 import type { Workspace } from "@/lib/store";
 
 function StatCard({ title, value, subtitle, icon: Icon, accent }: {
@@ -262,6 +270,95 @@ export default function Dashboard() {
           </Card>
         </div>
       </div>
+
+      {/* ═══ QUICK ACCESS CARDS (navigationV1) ═══ */}
+      {navigationV1 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+          {/* Pending Approvals Card */}
+          <Link href="/approvals">
+            <Card className="border border-border shadow-none hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center">
+                    <ShieldCheck className="w-5 h-5 text-amber-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold group-hover:text-primary transition-colors">Approvals</p>
+                    <p className="text-xs text-muted-foreground">{pendingApprovals.length} pending</p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+
+          {/* Renewals Card */}
+          <Link href="/renewals">
+            <Card className="border border-border shadow-none hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-violet-50 flex items-center justify-center">
+                    <RefreshCw className="w-5 h-5 text-violet-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold group-hover:text-primary transition-colors">Renewals</p>
+                    <p className="text-xs text-muted-foreground">{expiringContracts.length} expiring within 90d</p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+
+          {/* Revenue Exposure Card */}
+          <Link href="/revenue-exposure">
+            <Card className="border border-border shadow-none hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-red-50 flex items-center justify-center">
+                    <DollarSign className="w-5 h-5 text-red-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold group-hover:text-primary transition-colors">Revenue Exposure</p>
+                    <p className="text-xs text-muted-foreground">{formatSAR(expiringContracts.reduce((s, c) => s + c.revenue2025, 0))} at risk</p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+
+          {/* Signals Card */}
+          <Link href="/signal-engine">
+            <Card className="border border-border shadow-none hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-orange-50 flex items-center justify-center">
+                    <Radio className="w-5 h-5 text-orange-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold group-hover:text-primary transition-colors">Active Signals</p>
+                    <p className="text-xs text-muted-foreground">{signals.filter(s => s.severity === "red").length} critical, {signals.filter(s => s.severity === "amber").length} warnings</p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+        </div>
+      )}
+
+      {/* ═══ QUICK LINKS ROW (navigationV1) ═══ */}
+      {navigationV1 && (
+        <div className="mt-4 flex items-center gap-3 flex-wrap">
+          <span className="text-xs text-muted-foreground">Quick links:</span>
+          <Link href="/handover"><Badge variant="outline" className="text-xs cursor-pointer hover:bg-muted transition-colors gap-1"><Truck className="w-3 h-3" /> Handover</Badge></Link>
+          <Link href="/tender-board"><Badge variant="outline" className="text-xs cursor-pointer hover:bg-muted transition-colors gap-1"><FileText className="w-3 h-3" /> Tender Board</Badge></Link>
+          <Link href="/crm-sync"><Badge variant="outline" className="text-xs cursor-pointer hover:bg-muted transition-colors gap-1"><ExternalLink className="w-3 h-3" /> CRM Sync</Badge></Link>
+          <Link href="/documents"><Badge variant="outline" className="text-xs cursor-pointer hover:bg-muted transition-colors gap-1"><FileText className="w-3 h-3" /> Document Vault</Badge></Link>
+          <Link href="/renewal-gates"><Badge variant="outline" className="text-xs cursor-pointer hover:bg-muted transition-colors gap-1"><RefreshCw className="w-3 h-3" /> Policy Gates</Badge></Link>
+        </div>
+      )}
     </div>
   );
 }

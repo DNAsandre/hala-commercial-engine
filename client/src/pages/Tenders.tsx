@@ -33,6 +33,7 @@ import {
   FolderOpen,
   Archive,
   Eye,
+  ExternalLink,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -367,10 +368,16 @@ export default function Tenders() {
             Governed tender lifecycle — {tenders.length} tenders, {metrics.totalOpen} open
           </p>
         </div>
-        <Button onClick={() => setShowCreate(true)}>
-          <Plus className="w-4 h-4 mr-1.5" />
-          New Tender
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => navigate("/tender-board")}>
+            <ExternalLink className="w-4 h-4 mr-1.5" />
+            Tender Board
+          </Button>
+          <Button onClick={() => setShowCreate(true)}>
+            <Plus className="w-4 h-4 mr-1.5" />
+            New Tender
+          </Button>
+        </div>
       </div>
 
       {/* Undo Banner */}

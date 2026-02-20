@@ -51,13 +51,16 @@ const docSystemLinks = [
   { path: "/block-library", label: "Block Library", desc: "Reusable content blocks shared across templates", icon: BookOpen, count: "24 blocks" },
   { path: "/block-builder", label: "Block Builder", desc: "Visual block editor for creating new content blocks", icon: Blocks, count: "Builder" },
   { path: "/branding-profiles", label: "Branding", desc: "Brand profiles controlling colors, fonts, and logos on documents", icon: Palette, count: "3 profiles" },
+  { path: "/documents", label: "Document Vault", desc: "Central vault for all compiled documents, PDFs, and output files", icon: FileText, count: "Vault" },
 ];
 
 /* ─── Automation links ─── */
 const automationLinks = [
   { path: "/bot-registry", label: "Bot Governance", desc: "Manage AI bots, permissions, and authority boundaries", icon: Bot, count: "5 bots" },
+  { path: "/bot-builder", label: "Bot Builder", desc: "Visual builder for creating and configuring AI bots", icon: Wrench, count: "Builder" },
   { path: "/signal-engine", label: "Signal Engine", desc: "Configure automated signals, alerts, and escalation triggers", icon: Radio, count: "12 signals" },
   { path: "/bot-audit", label: "Bot Audit", desc: "Review all bot actions, decisions, and override attempts", icon: Activity, count: "Audit log" },
+  { path: "/crm-sync", label: "CRM Sync", desc: "Manage CRM synchronization, field mapping, and sync status", icon: Link2, count: "Sync" },
 ];
 
 /* ─── ECR links ─── */
@@ -67,6 +70,8 @@ const ecrLinks = [
   { path: "/ecr-scoring", label: "Scoring", desc: "View and manage individual customer scores", icon: Star, count: "Scores" },
   { path: "/ecr-connectors", label: "Connectors", desc: "Data source connectors for external rating inputs", icon: Link2, count: "3 connectors" },
   { path: "/ecr-metrics", label: "Metrics", desc: "ECR performance metrics and analytics", icon: Database, count: "Metrics" },
+  { path: "/ecr-snapshots", label: "Snapshots", desc: "Point-in-time ECR snapshots for audit and comparison", icon: Database, count: "Snapshots" },
+  { path: "/ecr-upgrades", label: "Upgrades", desc: "Customer grade upgrade requests and approval workflow", icon: Star, count: "Upgrades" },
 ];
 
 function AdminLinkCard({ item }: { item: { path: string; label: string; desc: string; icon: React.ElementType; count: string } }) {

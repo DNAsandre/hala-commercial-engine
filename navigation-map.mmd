@@ -1,0 +1,167 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1B2A4A', 'primaryTextColor': '#fff', 'primaryBorderColor': '#D4AF37', 'lineColor': '#666', 'secondaryColor': '#f0f4f8', 'tertiaryColor': '#fff8e1', 'fontSize': '13px'}}}%%
+graph TB
+    classDef visible fill:#1B2A4A,stroke:#D4AF37,stroke-width:2px,color:#fff
+    classDef hidden fill:#fff,stroke:#999,stroke-width:1px,stroke-dasharray:5 5,color:#333
+    classDef admin fill:#2a3d66,stroke:#D4AF37,stroke-width:2px,color:#fff
+    classDef workspace fill:#0d3320,stroke:#22c55e,stroke-width:2px,color:#fff
+    classDef subpage fill:#f8f9fa,stroke:#ccc,stroke-width:1px,color:#333
+    classDef composer fill:#7c2d12,stroke:#f97316,stroke-width:2px,color:#fff
+
+    %% ============================
+    %% SIDEBAR (VISIBLE)
+    %% ============================
+    SIDEBAR["🔲 SIDEBAR<br/><i>7 items visible</i>"]:::visible
+
+    DASH["/  Dashboard"]:::visible
+    CUST["/customers  Customers"]:::visible
+    WS["/workspaces  Workspaces"]:::visible
+    TEND["/tenders  Tenders"]:::visible
+    GOV["/admin  Governance"]:::visible
+    ADM["/admin-panel  Admin"]:::visible
+    AUD["/audit  Audit Trail"]:::visible
+
+    SIDEBAR --> DASH
+    SIDEBAR --> CUST
+    SIDEBAR --> WS
+    SIDEBAR --> TEND
+    SIDEBAR --> GOV
+    SIDEBAR --> ADM
+    SIDEBAR --> AUD
+
+    %% ============================
+    %% WORKSPACE DETAIL (hub)
+    %% ============================
+    WS --> WSD["/workspaces/:id<br/>Workspace Detail"]:::workspace
+
+    WSD --> WSD_OV["Overview Tab"]:::subpage
+    WSD --> WSD_DOC["Documents Tab<br/><i>unified hub</i>"]:::workspace
+    WSD --> WSD_CON["Contracts Tab"]:::subpage
+    WSD --> WSD_APP["Approvals Tab"]:::subpage
+    WSD --> WSD_AUD["Audit Trail Tab"]:::subpage
+
+    WSD_DOC --> WSD_Q["Quotes Section<br/>+ New Quote / Edit / View PDF"]:::subpage
+    WSD_DOC --> WSD_P["Proposals Section<br/>+ New Proposal / Edit / View PDF"]:::subpage
+    WSD_DOC --> WSD_S["SLAs Section<br/>+ New SLA / Edit / View PDF"]:::subpage
+    WSD_DOC --> WSD_SD["Supporting Docs Section<br/>Upload / Filter / Archive"]:::subpage
+
+    WSD_Q -->|"Open in Composer"| COMP
+    WSD_P -->|"Open in Composer"| COMP
+    WSD_S -->|"Open in Composer"| COMP
+    WSD_Q -->|"View PDF"| OUTPUT
+    WSD_P -->|"View PDF"| OUTPUT
+    WSD_S -->|"View PDF"| OUTPUT
+
+    %% ============================
+    %% CUSTOMER DETAIL
+    %% ============================
+    CUST --> CUSTD["/customers/:id<br/>Customer Detail"]:::subpage
+
+    %% ============================
+    %% ADMIN PANEL (hub for builder tools)
+    %% ============================
+    ADM --> ADM_DS["Document System Tab"]:::admin
+    ADM --> ADM_AU["Automation Tab"]:::admin
+    ADM --> ADM_EC["ECR Tab"]:::admin
+    ADM --> ADM_US["Users Tab"]:::subpage
+    ADM --> ADM_SM["System Modules Tab"]:::subpage
+    ADM --> ADM_IN["Integrations Tab"]:::subpage
+    ADM --> ADM_SE["Settings Tab"]:::subpage
+
+    ADM_DS -->|link| TMPL
+    ADM_DS -->|link| VARS
+    ADM_DS -->|link| BLIB
+    ADM_DS -->|link| BBLD
+    ADM_DS -->|link| BRAND
+
+    ADM_AU -->|link| BOTREG
+    ADM_AU -->|link| SIGENG
+    ADM_AU -->|link| BOTAUD
+
+    ADM_EC -->|link| ECRDASH
+    ADM_EC -->|link| ECRRS
+    ADM_EC -->|link| ECRSCO
+    ADM_EC -->|link| ECRCON
+    ADM_EC -->|link| ECRMET
+
+    %% ============================
+    %% TENDERS (visible in sidebar)
+    %% ============================
+    TEND --> TBOARD["/tender-board<br/>Tender Board"]:::hidden
+
+    %% ============================
+    %% HIDDEN PAGES — DEAL ENGINE
+    %% ============================
+    QUOTES["/quotes<br/>Quotes <i>global list</i>"]:::hidden
+    PROPOSALS["/proposals<br/>Proposals <i>global list</i>"]:::hidden
+    SLAS["/slas<br/>SLAs <i>global list</i>"]:::hidden
+    PNL["/pnl<br/>P&L Calculator"]:::hidden
+    APPROV["/approvals<br/>Approvals <i>global</i>"]:::hidden
+
+    QUOTES -->|"Edit in Composer"| COMP
+    PROPOSALS -->|"Edit in Composer"| COMP
+    SLAS -->|"Edit in Composer"| COMP
+
+    %% ============================
+    %% HIDDEN PAGES — DOCUMENT COMPOSER
+    %% ============================
+    COMP["/editor<br/>Document Composer"]:::composer
+    OUTPUT["/composer/:id/view<br/>Output Studio"]:::composer
+
+    COMP -->|"Output Studio btn"| OUTPUT
+
+    %% ============================
+    %% HIDDEN PAGES — DOCUMENT AUTHORING
+    %% ============================
+    TMPL["/template-manager<br/>Templates"]:::hidden
+    BRAND["/branding-profiles<br/>Branding"]:::hidden
+    BLIB["/block-library<br/>Block Library"]:::hidden
+    BBLD["/block-builder<br/>Block Builder"]:::hidden
+    VARS["/variables<br/>Variables"]:::hidden
+    DOCS["/documents<br/>Documents <i>engine</i>"]:::hidden
+    TDES["/templates/:id/designer<br/>Template Designer"]:::hidden
+
+    TMPL -->|"Design btn"| TDES
+
+    %% ============================
+    %% HIDDEN PAGES — BOT GOVERNANCE
+    %% ============================
+    BOTREG["/bot-registry<br/>Bot Governance"]:::hidden
+    BOTBLD["/bot-builder<br/>Bot Builder"]:::hidden
+    SIGENG["/signal-engine<br/>Signal Engine"]:::hidden
+    BOTAUD["/bot-audit<br/>Bot Audit"]:::hidden
+
+    BOTREG -->|"New Bot / Edit"| BOTBLD
+
+    %% ============================
+    %% HIDDEN PAGES — ECR
+    %% ============================
+    ECRDASH["/ecr<br/>ECR Dashboard"]:::hidden
+    ECRMET["/ecr-metrics<br/>Metrics"]:::hidden
+    ECRRS["/ecr-rule-sets<br/>Rule Sets"]:::hidden
+    ECRSNAP["/ecr-snapshots<br/>Snapshots"]:::hidden
+    ECRSCO["/ecr-scoring<br/>Scoring"]:::hidden
+    ECRCON["/ecr-connectors<br/>Connectors"]:::hidden
+    ECRUPG["/ecr-upgrades<br/>ECR Upgrades"]:::hidden
+
+    ECRDASH -->|"card links"| ECRMET
+    ECRDASH -->|"card links"| ECRRS
+    ECRDASH -->|"card links"| ECRSNAP
+    ECRDASH -->|"card links"| ECRSCO
+    ECRDASH -->|"card links"| ECRCON
+
+    %% ============================
+    %% HIDDEN PAGES — RENEWAL ENGINE
+    %% ============================
+    RENEW["/renewals<br/>Renewals"]:::hidden
+    RENEWD["/renewals/:id<br/>Renewal Detail"]:::hidden
+    RENGATES["/renewal-gates<br/>Policy Gates"]:::hidden
+    REVEXP["/revenue-exposure<br/>Revenue Exposure"]:::hidden
+
+    RENEW -->|"click renewal"| RENEWD
+    REVEXP -->|"link"| RENEWD
+
+    %% ============================
+    %% HIDDEN PAGES — SYSTEM
+    %% ============================
+    CRMSYNC["/crm-sync<br/>CRM Sync"]:::hidden
+    HANDOVER["/handover<br/>Handover"]:::hidden

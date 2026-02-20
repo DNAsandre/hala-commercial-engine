@@ -4,7 +4,9 @@
  * Implements all 9 compliance points with full configuration UI
  */
 import { useState } from "react";
-import { Shield, Lock, Bot, GitBranch, Settings, Activity, AlertTriangle, CheckCircle, XCircle, Eye, EyeOff, ChevronDown, ChevronRight, History, Zap, Server, Users } from "lucide-react";
+import { Shield, Lock, Bot, GitBranch, Settings, Activity, AlertTriangle, CheckCircle, XCircle, Eye, EyeOff, ChevronDown, ChevronRight, History, Zap, Server, Users, RefreshCw, DollarSign, ExternalLink } from "lucide-react";
+import { Link } from "wouter";
+import { navigationV1 } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -678,6 +680,16 @@ export default function AdminGovernance() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Renewal & Revenue Quick Links (navigationV1) */}
+      {navigationV1 && (
+        <div className="flex items-center gap-3 flex-wrap mb-4">
+          <span className="text-xs text-muted-foreground font-medium">Related:</span>
+          <Link href="/renewals"><Badge variant="outline" className="text-xs cursor-pointer hover:bg-muted transition-colors gap-1"><RefreshCw className="w-3 h-3" /> Renewals</Badge></Link>
+          <Link href="/renewal-gates"><Badge variant="outline" className="text-xs cursor-pointer hover:bg-muted transition-colors gap-1"><Shield className="w-3 h-3" /> Renewal Policy Gates</Badge></Link>
+          <Link href="/revenue-exposure"><Badge variant="outline" className="text-xs cursor-pointer hover:bg-muted transition-colors gap-1"><DollarSign className="w-3 h-3" /> Revenue Exposure</Badge></Link>
+        </div>
+      )}
 
       <Tabs defaultValue="compliance" className="space-y-4">
         <TabsList className="flex-wrap h-auto gap-1 p-1">

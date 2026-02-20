@@ -5,7 +5,8 @@ import {
   CheckCircle2, XCircle, Undo2, Timer, ArrowRightLeft, ShieldAlert, ShieldOff, Info,
   FolderOpen, Upload, Eye, Edit, Download, FileSignature, RefreshCw, CalendarClock,
   User, BarChart3, Plus, ToggleLeft, ToggleRight, Link2, Archive, RotateCcw,
-  FileUp, Filter, Search, Trash2
+  FileUp, Filter, Search, Trash2, DollarSign, TrendingUp, ExternalLink, Truck,
+  ClipboardList, PackageCheck, Landmark, Scale
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -293,6 +294,10 @@ export default function WorkspaceDetail() {
           existingInstanceId={composerTarget.instanceId}
           onBack={() => setComposerTarget(null)}
           backLabel={backLabel}
+          breadcrumb={[
+            { label: "Workspaces", href: "/workspaces" },
+            { label: ws.title, href: `/workspaces/${ws.id}` },
+          ]}
           onSave={(doc: ComposerDocument) => {
             toast.success(`${composerTarget.type} saved — ${doc.title}`);
           }}
@@ -635,8 +640,12 @@ export default function WorkspaceDetail() {
                 <TabsTrigger value="slas">SLAs ({wsSLAs.length})</TabsTrigger>
               </>
             )}
+            {navigationV1 && <TabsTrigger value="commercial">Commercial</TabsTrigger>}
             {navigationV1 && <TabsTrigger value="contracts">Contracts</TabsTrigger>}
             <TabsTrigger value="approvals">Approvals</TabsTrigger>
+            {navigationV1 && currentStageIdx >= WORKSPACE_STAGES.findIndex(s => s.value === "contract_signed") && (
+              <TabsTrigger value="handover">Handover</TabsTrigger>
+            )}
             {!navigationV1 && <TabsTrigger value="documents">{integrationEnabled ? "Supporting Docs" : "Documents"}</TabsTrigger>}
             <TabsTrigger value="audit">Audit Trail</TabsTrigger>
           </TabsList>
@@ -895,6 +904,157 @@ export default function WorkspaceDetail() {
                     ) : <p className="text-xs text-muted-foreground">No supporting documents yet. <Button variant="link" className="text-xs p-0" onClick={() => setShowSupportUpload(true)}>Upload one</Button></p>;
                   })()}
                 </div>
+
+                <hr className="border-border" />
+
+                {/* ── P&L Summary (read-only snapshot) ── */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      <DollarSign className="w-4 h-4 text-muted-foreground" /> P&L Summary
+                      <Badge variant="secondary" className="text-[10px]">Snapshot</Badge>
+                    </h3>
+                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => navigate(`/pnl?workspaceId=${ws.id}`)}>
+                      <ExternalLink className="w-3 h-3 mr-1" /> Open P&L Calculator
+                    </Button>
+                  </div>
+                  <Card className="border border-border shadow-none">
+                    <CardContent className="p-4">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Est. Revenue</p><p className="text-sm font-medium mt-0.5 data-value">{formatSAR(ws.estimatedValue)}</p></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">GP%</p><p className={`text-sm font-medium mt-0.5 data-value ${ws.gpPercent >= 22 ? "text-emerald-600" : ws.gpPercent >= 15 ? "text-amber-600" : "text-red-600"}`}>{formatPercent(ws.gpPercent)}</p></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Pallet Volume</p><p className="text-sm font-medium mt-0.5 data-value">{ws.palletVolume.toLocaleString()}</p></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Service Type</p><p className="text-sm font-medium mt-0.5">{customer?.serviceType || "N/A"}</p></div>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mt-3">Read-only snapshot. Open P&L Calculator for full analysis.</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <hr className="border-border" />
+
+                {/* ── ECR Snapshot (read-only) ── */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      <BarChart3 className="w-4 h-4 text-muted-foreground" /> ECR Snapshot
+                      <Badge variant="secondary" className="text-[10px]">Read-only</Badge>
+                    </h3>
+                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => navigate(`/ecr?workspaceId=${ws.id}`)}>
+                      <ExternalLink className="w-3 h-3 mr-1" /> Open ECR View
+                    </Button>
+                  </div>
+                  <Card className="border border-border shadow-none">
+                    <CardContent className="p-4">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Customer Grade</p><p className="text-sm font-medium mt-0.5">{customer?.grade || "N/A"}</p></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Payment Status</p><p className="text-sm font-medium mt-0.5">{customer?.paymentStatus || "N/A"}</p></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">DSO</p><p className="text-sm font-medium mt-0.5 data-value">{customer?.dso ?? "N/A"} days</p></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Industry</p><p className="text-sm font-medium mt-0.5">{customer?.industry || "N/A"}</p></div>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mt-3">Read-only snapshot. Open ECR View for full scoring and metrics.</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+            </TabsContent>
+          )}
+
+          {/* ═══ COMMERCIAL TAB (navigationV1) ═══ */}
+          {navigationV1 && (
+            <TabsContent value="commercial">
+              <div className="space-y-6">
+                {/* P&L Calculator Link */}
+                <Card className="border border-border shadow-none hover:shadow-sm transition-shadow">
+                  <CardContent className="p-5">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-start gap-4">
+                        <div className="w-12 h-12 rounded-lg bg-emerald-50 flex items-center justify-center">
+                          <DollarSign className="w-6 h-6 text-emerald-600" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-semibold">P&L Calculator</h3>
+                          <p className="text-xs text-muted-foreground mt-0.5">Full profitability analysis for this workspace. Required before proposal creation.</p>
+                          <div className="flex items-center gap-4 mt-2">
+                            <span className="text-xs"><span className="text-muted-foreground">Est. Revenue:</span> <span className="font-medium data-value">{formatSAR(ws.estimatedValue)}</span></span>
+                            <span className="text-xs"><span className="text-muted-foreground">GP%:</span> <span className={`font-medium data-value ${ws.gpPercent >= 22 ? "text-emerald-600" : ws.gpPercent >= 15 ? "text-amber-600" : "text-red-600"}`}>{formatPercent(ws.gpPercent)}</span></span>
+                          </div>
+                        </div>
+                      </div>
+                      <Button variant="outline" size="sm" className="text-xs" onClick={() => navigate(`/pnl?workspaceId=${ws.id}`)}>
+                        <ExternalLink className="w-3 h-3 mr-1" /> Open P&L
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* ECR View Link */}
+                <Card className="border border-border shadow-none hover:shadow-sm transition-shadow">
+                  <CardContent className="p-5">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-start gap-4">
+                        <div className="w-12 h-12 rounded-lg bg-blue-50 flex items-center justify-center">
+                          <BarChart3 className="w-6 h-6 text-blue-600" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-semibold">ECR — Customer Rating</h3>
+                          <p className="text-xs text-muted-foreground mt-0.5">Enterprise customer rating and risk scoring for {ws.customerName}.</p>
+                          <div className="flex items-center gap-4 mt-2">
+                            <span className="text-xs"><span className="text-muted-foreground">Grade:</span> <span className="font-medium">{customer?.grade || "N/A"}</span></span>
+                            <span className="text-xs"><span className="text-muted-foreground">DSO:</span> <span className="font-medium data-value">{customer?.dso ?? "N/A"} days</span></span>
+                            <span className="text-xs"><span className="text-muted-foreground">Payment:</span> <span className="font-medium">{customer?.paymentStatus || "N/A"}</span></span>
+                          </div>
+                        </div>
+                      </div>
+                      <Button variant="outline" size="sm" className="text-xs" onClick={() => navigate(`/ecr?workspaceId=${ws.id}`)}>
+                        <ExternalLink className="w-3 h-3 mr-1" /> Open ECR
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Pricing Snapshot */}
+                <Card className="border border-border shadow-none">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base font-serif flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4" /> Pricing Snapshot
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {wsQuotes.length > 0 ? (
+                      <div className="space-y-3">
+                        {wsQuotes.map(q => (
+                          <div key={q.id} className="grid grid-cols-2 sm:grid-cols-5 gap-4 p-3 rounded-lg border border-border">
+                            <div><p className="text-[10px] text-muted-foreground uppercase">Quote</p><p className="text-sm font-medium mt-0.5">v{q.version} <Badge variant="outline" className="text-[9px] ml-1">{q.state}</Badge></p></div>
+                            <div><p className="text-[10px] text-muted-foreground uppercase">Storage Rate</p><p className="text-sm font-medium mt-0.5 data-value">SAR {q.storageRate}/pallet/day</p></div>
+                            <div><p className="text-[10px] text-muted-foreground uppercase">Monthly</p><p className="text-sm font-medium mt-0.5 data-value">{formatSAR(q.monthlyRevenue)}</p></div>
+                            <div><p className="text-[10px] text-muted-foreground uppercase">Annual</p><p className="text-sm font-medium mt-0.5 data-value">{formatSAR(q.annualRevenue)}</p></div>
+                            <div><p className="text-[10px] text-muted-foreground uppercase">GP%</p><p className={`text-sm font-medium mt-0.5 data-value ${q.gpPercent >= 22 ? "text-emerald-600" : q.gpPercent >= 15 ? "text-amber-600" : "text-red-600"}`}>{formatPercent(q.gpPercent)}</p></div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">No quotes created yet. Pricing data will appear here once quotes are generated.</p>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Margin Metrics */}
+                <Card className="border border-border shadow-none">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base font-serif flex items-center gap-2">
+                      <Scale className="w-4 h-4" /> Margin Metrics
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      <div><p className="text-[10px] text-muted-foreground uppercase">Workspace GP%</p><p className={`text-lg font-bold mt-0.5 data-value ${ws.gpPercent >= 22 ? "text-emerald-600" : ws.gpPercent >= 15 ? "text-amber-600" : "text-red-600"}`}>{formatPercent(ws.gpPercent)}</p></div>
+                      <div><p className="text-[10px] text-muted-foreground uppercase">Est. Value</p><p className="text-lg font-bold mt-0.5 data-value">{formatSAR(ws.estimatedValue)}</p></div>
+                      <div><p className="text-[10px] text-muted-foreground uppercase">Pallet Volume</p><p className="text-lg font-bold mt-0.5 data-value">{ws.palletVolume.toLocaleString()}</p></div>
+                      <div><p className="text-[10px] text-muted-foreground uppercase">Approval Threshold</p><p className="text-sm font-medium mt-1">{ws.gpPercent < 15 ? "Commercial Director required" : ws.gpPercent < 22 ? "Regional Sales Head" : "Standard"}</p></div>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             </TabsContent>
           )}
@@ -959,6 +1119,56 @@ export default function WorkspaceDetail() {
                               </div>
                             );
                           })}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Renewal Link */}
+                  <Card className="border border-border shadow-none hover:shadow-sm transition-shadow">
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-lg bg-violet-50 flex items-center justify-center">
+                            <RefreshCw className="w-5 h-5 text-violet-600" />
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-semibold">Renewal Engine</h4>
+                            <p className="text-xs text-muted-foreground">View renewal pipeline, policy gates, and revenue exposure for this contract.</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button variant="outline" size="sm" className="text-xs" onClick={() => navigate("/renewals")}>
+                            <ExternalLink className="w-3 h-3 mr-1" /> Renewals
+                          </Button>
+                          <Button variant="outline" size="sm" className="text-xs" onClick={() => navigate("/renewal-gates")}>
+                            Policy Gates
+                          </Button>
+                          <Button variant="outline" size="sm" className="text-xs" onClick={() => navigate("/revenue-exposure")}>
+                            Revenue Exposure
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Handover Link (if stage >= contract_signed) */}
+                  {currentStageIdx >= WORKSPACE_STAGES.findIndex(s => s.value === "contract_signed") && (
+                    <Card className="border border-border shadow-none hover:shadow-sm transition-shadow">
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-lime-50 flex items-center justify-center">
+                              <Truck className="w-5 h-5 text-lime-600" />
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-semibold">Handover</h4>
+                              <p className="text-xs text-muted-foreground">Post-signature handover workflow — legal, finance, ops, training, go-live.</p>
+                            </div>
+                          </div>
+                          <Button variant="outline" size="sm" className="text-xs" onClick={() => navigate("/handover")}>
+                            <ExternalLink className="w-3 h-3 mr-1" /> Open Handover
+                          </Button>
                         </div>
                       </CardContent>
                     </Card>
@@ -1129,7 +1339,79 @@ export default function WorkspaceDetail() {
                 </div>
               </div>
             ))}</div> : <Card className="border border-border shadow-none"><CardContent className="py-12 text-center text-sm text-muted-foreground">No approval records yet</CardContent></Card>}
+
+            {/* Global Approvals Link */}
+            {navigationV1 && (
+              <div className="mt-4 pt-4 border-t border-border">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">Need to review all pending approvals across all workspaces?</p>
+                  <Button variant="outline" size="sm" className="text-xs" onClick={() => navigate("/approvals")}>
+                    <ExternalLink className="w-3 h-3 mr-1" /> Global Approvals
+                  </Button>
+                </div>
+              </div>
+            )}
           </TabsContent>
+
+          {/* ═══ HANDOVER TAB (navigationV1, stage >= contract_signed) ═══ */}
+          {navigationV1 && currentStageIdx >= WORKSPACE_STAGES.findIndex(s => s.value === "contract_signed") && (
+            <TabsContent value="handover">
+              <div className="space-y-6">
+                {/* Handover Status */}
+                <Card className="border border-border shadow-none">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base font-serif flex items-center gap-2">
+                        <Truck className="w-4 h-4" /> Handover Workflow
+                      </CardTitle>
+                      <Button variant="outline" size="sm" className="text-xs" onClick={() => navigate("/handover")}>
+                        <ExternalLink className="w-3 h-3 mr-1" /> Full Handover View
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <p className="text-xs text-muted-foreground">Post-signature handover process for {ws.customerName}. Each step must be completed before go-live.</p>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {[
+                        { step: "Legal Complete", icon: Landmark, status: ws.stage === "go_live" ? "done" : "pending" },
+                        { step: "Finance Setup", icon: DollarSign, status: ws.stage === "go_live" ? "done" : "pending" },
+                        { step: "Ops Briefed", icon: ClipboardList, status: ws.stage === "go_live" ? "done" : "pending" },
+                        { step: "Client Portal", icon: ExternalLink, status: "pending" },
+                        { step: "Training", icon: PackageCheck, status: "pending" },
+                        { step: "Go-Live Scheduled", icon: Clock, status: "pending" },
+                      ].map(s => (
+                        <div key={s.step} className={`p-3 rounded-lg border text-center ${s.status === "done" ? "border-emerald-200 bg-emerald-50" : "border-border"}`}>
+                          <s.icon className={`w-5 h-5 mx-auto mb-1.5 ${s.status === "done" ? "text-emerald-600" : "text-muted-foreground"}`} />
+                          <p className="text-xs font-medium">{s.step}</p>
+                          <Badge variant={s.status === "done" ? "default" : "secondary"} className="text-[9px] mt-1">{s.status === "done" ? "Complete" : "Pending"}</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* CRM Sync Link */}
+                <Card className="border border-border shadow-none hover:shadow-sm transition-shadow">
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                          <Link2 className="w-5 h-5 text-blue-600" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-semibold">CRM Sync</h4>
+                          <p className="text-xs text-muted-foreground">Sync handover status, contract data, and go-live dates to CRM.</p>
+                        </div>
+                      </div>
+                      <Button variant="outline" size="sm" className="text-xs" onClick={() => navigate("/crm-sync")}>
+                        <ExternalLink className="w-3 h-3 mr-1" /> CRM Sync
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+          )}
 
           {/* ═══ SUPPORTING DOCS / DOCUMENTS TAB ═══ */}
           <TabsContent value="documents">

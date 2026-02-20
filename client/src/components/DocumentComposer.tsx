@@ -1003,11 +1003,12 @@ interface DocumentComposerProps {
   onExportPDF?: (doc: ComposerDocument) => void;
   onBack?: () => void;
   backLabel?: string;
+  breadcrumb?: { label: string; href: string }[];
 }
 
 export default function DocumentComposer({
   documentType, workspaceId = "", customerId = "", customerName = "",
-  existingInstanceId, onSave, onExportPDF, onBack, backLabel = "Back",
+  existingInstanceId, onSave, onExportPDF, onBack, backLabel = "Back", breadcrumb,
 }: DocumentComposerProps) {
   const [, navigate] = useLocation();
   const [mode, setMode] = useState<ComposerMode>("draft");
@@ -1414,7 +1415,19 @@ export default function DocumentComposer({
 
         {/* ===== ROW 1: Document Info Header ===== */}
         <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-200 bg-white shrink-0">
-          {onBack && (
+          {breadcrumb && breadcrumb.length > 0 && (
+            <nav className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
+              {breadcrumb.map((crumb, i) => (
+                <span key={i} className="flex items-center gap-1">
+                  {i > 0 && <span className="text-gray-300">/</span>}
+                  <button onClick={() => navigate(crumb.href)} className="hover:text-primary hover:underline transition-colors">{crumb.label}</button>
+                </span>
+              ))}
+              <span className="text-gray-300">/</span>
+              <span className="text-foreground font-medium">Editor</span>
+            </nav>
+          )}
+          {!breadcrumb && onBack && (
             <Button variant="ghost" size="sm" onClick={onBack} className="text-xs h-7 shrink-0">
               <ArrowLeft size={12} className="mr-1" /> {backLabel}
             </Button>
