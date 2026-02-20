@@ -18,7 +18,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   workspaces, customers, quotes, proposals, approvalRecords, signals, auditLog,
   formatSAR, formatPercent, getStageLabel, getStageColor, getApprovalRequirements,
-  getRoleLabel, WORKSPACE_STAGES,
+  getRoleLabel, WORKSPACE_STAGES, TENDER_WORKSPACE_STAGES,
+  getWorkspaceType, getWorkspaceTypeLabel, getWorkspaceTypeBadgeColor,
+  getEffectiveStage, getEffectiveStageLabel, getEffectiveStageColor,
+  getStagesForType, type WorkspaceType, type TenderWorkspaceStage,
 } from "@/lib/store";
 import {
   advanceStage, getNextStage, getStageDisplayName, checkUndoEligibility, revertStage,
@@ -119,6 +122,14 @@ export default function WorkspaceDetail() {
       <Link href="/workspaces"><Button variant="outline" className="mt-4"><ArrowLeft className="w-4 h-4 mr-1.5" />Back</Button></Link>
     </div>
   );
+
+  const wsType = getWorkspaceType(ws);
+  const isTender = wsType === "tender";
+  const isRenewal = wsType === "renewal";
+  const isCommercial = wsType === "commercial";
+  const effectiveStages = getStagesForType(wsType);
+  const effectiveStage = getEffectiveStage(ws);
+  const effectiveStageIdx = effectiveStages.findIndex(s => s.value === effectiveStage);
 
   const customer = customers.find(c => c.id === ws.customerId);
   const wsQuotes = quotes.filter(q => q.workspaceId === ws.id);
@@ -319,8 +330,14 @@ export default function WorkspaceDetail() {
             <div className="flex items-center gap-3">
               <div className={`rag-dot ${ws.ragStatus === "red" ? "rag-dot-red" : ws.ragStatus === "amber" ? "rag-dot-amber" : "rag-dot-green"}`} />
               <h1 className="text-xl font-serif font-bold">{ws.customerName}</h1>
-              <Badge variant="outline" className={`text-xs ${getStageColor(ws.stage)}`}>{getStageLabel(ws.stage)}</Badge>
+              <Badge variant="outline" className={`text-[10px] px-1.5 py-0 border ${getWorkspaceTypeBadgeColor(wsType)}`}>
+                {getWorkspaceTypeLabel(wsType)}
+              </Badge>
+              <Badge variant="outline" className={`text-xs ${getEffectiveStageColor(ws)}`}>{getEffectiveStageLabel(ws)}</Badge>
               {ws.crmDealId && <span className="text-xs text-muted-foreground data-value">CRM: {ws.crmDealId}</span>}
+              {isTender && ws.submissionDeadline && (
+                <span className="text-xs text-muted-foreground">Deadline: <span className="font-medium data-value">{ws.submissionDeadline}</span></span>
+              )}
               {latestOverride && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -502,13 +519,13 @@ export default function WorkspaceDetail() {
           </div>
         )}
 
-        {/* ═══ STAGE PIPELINE ═══ */}
+        {/* ═══ STAGE PIPELINE (type-aware) ═══ */}
         <Card className="border border-border shadow-none mb-6"><CardContent className="py-4 px-6">
           <div className="flex items-center gap-1 overflow-x-auto">
-            {WORKSPACE_STAGES.slice(0, 8).map((s, i) => (
+            {effectiveStages.map((s, i) => (
               <div key={s.value} className="flex items-center">
-                <div className={`px-2.5 py-1 rounded text-[10px] font-medium whitespace-nowrap ${i <= currentStageIdx ? "bg-primary text-primary-foreground" : i === currentStageIdx + 1 ? "bg-muted text-muted-foreground border border-dashed border-primary/30" : "bg-muted text-muted-foreground/50"}`}>{s.label}</div>
-                {i < 7 && <div className={`w-4 h-px mx-0.5 ${i < currentStageIdx ? "bg-primary" : "bg-border"}`} />}
+                <div className={`px-2.5 py-1 rounded text-[10px] font-medium whitespace-nowrap ${i <= effectiveStageIdx ? "bg-primary text-primary-foreground" : i === effectiveStageIdx + 1 ? "bg-muted text-muted-foreground border border-dashed border-primary/30" : "bg-muted text-muted-foreground/50"}`}>{s.label}</div>
+                {i < effectiveStages.length - 1 && <div className={`w-4 h-px mx-0.5 ${i < effectiveStageIdx ? "bg-primary" : "bg-border"}`} />}
               </div>
             ))}
           </div>
@@ -516,14 +533,21 @@ export default function WorkspaceDetail() {
 
         {/* ═══ KPI CARDS ═══ */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
-          {[
+          {(isTender ? [
+            { label: "Est. Value", value: formatSAR(ws.estimatedValue) },
+            { label: "Target GP%", value: formatPercent(ws.gpPercent), color: ws.gpPercent >= 22 ? "rag-green" : ws.gpPercent >= 10 ? "rag-amber" : "rag-red" },
+            { label: "Probability", value: `${ws.probabilityPercent ?? 0}%` },
+            { label: "Deadline", value: ws.submissionDeadline || "—" },
+            { label: "Region", value: ws.region },
+            { label: "Owner", value: ws.owner },
+          ] : [
             { label: "Est. Value", value: formatSAR(ws.estimatedValue) },
             { label: "GP%", value: formatPercent(ws.gpPercent), color: ws.gpPercent >= 22 ? "rag-green" : ws.gpPercent >= 10 ? "rag-amber" : "rag-red" },
             { label: "Pallets", value: ws.palletVolume.toLocaleString() },
             { label: "Days in Stage", value: String(ws.daysInStage), color: ws.daysInStage > 14 ? "rag-red" : ws.daysInStage > 7 ? "rag-amber" : undefined },
             { label: "Region", value: ws.region },
             { label: "Owner", value: ws.owner },
-          ].map(kpi => (
+          ]).map(kpi => (
             <Card key={kpi.label} className="border border-border shadow-none"><CardContent className="p-3">
               <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{kpi.label}</p>
               <p className={`data-value text-lg font-semibold mt-0.5 ${kpi.color || ""}`}>{kpi.value}</p>
@@ -531,8 +555,8 @@ export default function WorkspaceDetail() {
           ))}
         </div>
 
-        {/* ═══ CONTRACT & RENEWAL STRIP ═══ */}
-        {integrationEnabled && activeCycle && (
+        {/* ═══ CONTRACT & RENEWAL STRIP (commercial/renewal only) ═══ */}
+        {!isTender && integrationEnabled && activeCycle && (
           <Card className={`border shadow-none mb-6 ${inRenewalWindow ? "border-orange-300 bg-orange-50/30" : daysToExpiry !== null && daysToExpiry <= 120 ? "border-amber-200 bg-amber-50/20" : "border-border"}`}>
             <CardContent className="py-3 px-5">
               <div className="flex items-center gap-6 flex-wrap">
@@ -627,27 +651,39 @@ export default function WorkspaceDetail() {
           ))}
         </div>}
 
-        {/* ═══ TABS ═══ */}
+        {/* ═══ TABS (type-aware) ═══ */}
         <Tabs defaultValue="overview" className="space-y-4">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            {navigationV1 ? (
-              <TabsTrigger value="documents">Documents</TabsTrigger>
-            ) : (
+            {isTender ? (
+              /* Tender workspace tabs */
               <>
-                <TabsTrigger value="quotes">Quotes ({wsQuotes.length})</TabsTrigger>
-                <TabsTrigger value="proposals">Proposals ({wsProposals.length})</TabsTrigger>
-                <TabsTrigger value="slas">SLAs ({wsSLAs.length})</TabsTrigger>
+                <TabsTrigger value="documents">Documents</TabsTrigger>
+                <TabsTrigger value="team">Team</TabsTrigger>
+                <TabsTrigger value="audit">Audit Trail</TabsTrigger>
+              </>
+            ) : (
+              /* Commercial / Renewal workspace tabs */
+              <>
+                {navigationV1 ? (
+                  <TabsTrigger value="documents">Documents</TabsTrigger>
+                ) : (
+                  <>
+                    <TabsTrigger value="quotes">Quotes ({wsQuotes.length})</TabsTrigger>
+                    <TabsTrigger value="proposals">Proposals ({wsProposals.length})</TabsTrigger>
+                    <TabsTrigger value="slas">SLAs ({wsSLAs.length})</TabsTrigger>
+                  </>
+                )}
+                {navigationV1 && <TabsTrigger value="commercial">Commercial</TabsTrigger>}
+                {navigationV1 && <TabsTrigger value="contracts">Contracts</TabsTrigger>}
+                <TabsTrigger value="approvals">Approvals</TabsTrigger>
+                {navigationV1 && currentStageIdx >= WORKSPACE_STAGES.findIndex(s => s.value === "contract_signed") && (
+                  <TabsTrigger value="handover">Handover</TabsTrigger>
+                )}
+                {!navigationV1 && <TabsTrigger value="documents">{integrationEnabled ? "Supporting Docs" : "Documents"}</TabsTrigger>}
+                <TabsTrigger value="audit">Audit Trail</TabsTrigger>
               </>
             )}
-            {navigationV1 && <TabsTrigger value="commercial">Commercial</TabsTrigger>}
-            {navigationV1 && <TabsTrigger value="contracts">Contracts</TabsTrigger>}
-            <TabsTrigger value="approvals">Approvals</TabsTrigger>
-            {navigationV1 && currentStageIdx >= WORKSPACE_STAGES.findIndex(s => s.value === "contract_signed") && (
-              <TabsTrigger value="handover">Handover</TabsTrigger>
-            )}
-            {!navigationV1 && <TabsTrigger value="documents">{integrationEnabled ? "Supporting Docs" : "Documents"}</TabsTrigger>}
-            <TabsTrigger value="audit">Audit Trail</TabsTrigger>
           </TabsList>
 
           {/* ═══ OVERVIEW TAB ═══ */}
@@ -1760,6 +1796,60 @@ export default function WorkspaceDetail() {
               </div>
             </CardContent></Card>
           </TabsContent>
+          {/* ═══ TENDER TEAM TAB ═══ */}
+          {isTender && (
+            <TabsContent value="team">
+              <Card className="border border-border shadow-none">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base font-serif">Tender Team</CardTitle>
+                    <Button variant="outline" size="sm" className="text-xs h-7" onClick={() => toast.info("Add team member — coming soon")}>
+                      <Plus className="w-3 h-3 mr-1" /> Add Member
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <div className="space-y-3">
+                    {[
+                      { name: ws.owner, role: "Tender Lead", status: "active" },
+                      { name: "Hano", role: "Commercial Analyst", status: "active" },
+                      { name: "Nasser", role: "Technical Reviewer", status: "pending" },
+                    ].map((member, i) => (
+                      <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-border">
+                        <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                          <User className="w-4 h-4 text-muted-foreground" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium">{member.name}</p>
+                          <p className="text-xs text-muted-foreground">{member.role}</p>
+                        </div>
+                        <Badge variant="outline" className={`text-[10px] ${member.status === "active" ? "border-emerald-300 text-emerald-700" : "border-amber-300 text-amber-700"}`}>
+                          {member.status}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Convert to Commercial CTA */}
+                  {ws.tenderStage === "won" && (
+                    <div className="mt-6 p-4 rounded-lg border-2 border-dashed border-emerald-300 bg-emerald-50/50">
+                      <div className="flex items-center gap-3">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-emerald-800">Tender Won — Ready to Convert</p>
+                          <p className="text-xs text-emerald-700 mt-0.5">Create a commercial workspace to begin the deal execution lifecycle.</p>
+                        </div>
+                        <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-xs"
+                          onClick={() => toast.success("Convert to Commercial Workspace — coming soon")}>
+                          Convert to Commercial <ChevronRight className="w-3 h-3 ml-1" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          )}
+
         </Tabs>
       </div>
     </TooltipProvider>

@@ -275,6 +275,10 @@ export default function Tenders() {
   } | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
+  const [wonLostReason, setWonLostReason] = useState("");
+
+  // Won/Lost choice modal (shown when advancing from under_evaluation)
+  const [wonLostChoice, setWonLostChoice] = useState<{ tender: Tender } | null>(null);
 
   // Undo banner state
   const [undoBanner, setUndoBanner] = useState<{ tenderId: string; message: string } | null>(null);
@@ -311,6 +315,12 @@ export default function Tenders() {
 
   // ── Transition handler ──
   function handleAdvance(tender: Tender) {
+    // If under_evaluation, show Won/Lost choice first
+    if (tender.status === "under_evaluation") {
+      setWonLostChoice({ tender });
+      setWonLostReason("");
+      return;
+    }
     const next = getNextTenderStatus(tender.status);
     if (!next) {
       toast.info("This tender is at a terminal status.");
@@ -320,6 +330,19 @@ export default function Tenders() {
     setTransitionModal({ tender, targetStatus: next, warnings });
     setConfirmText("");
     setOverrideReason("");
+  }
+
+  function handleWonLostConfirm(outcome: "won" | "lost") {
+    if (!wonLostChoice) return;
+    if (!wonLostReason.trim()) {
+      toast.error("Please provide a reason for the outcome.");
+      return;
+    }
+    const warnings = preflightTenderValidation(wonLostChoice.tender.id, outcome);
+    setWonLostChoice(null);
+    setTransitionModal({ tender: wonLostChoice.tender, targetStatus: outcome, warnings });
+    setOverrideReason(wonLostReason);
+    setConfirmText("");
   }
 
   function handleConfirmTransition() {
@@ -597,12 +620,30 @@ export default function Tenders() {
                   ))}
                 </div>
 
-                {/* Linked Workspace */}
+                {/* Tender Workspace — Open in Workspace */}
+                {(() => {
+                  const tenderWs = workspaces.find(w => w.linkedTenderId === selectedTender.id);
+                  if (tenderWs) return (
+                    <div className="p-3 rounded-lg border border-primary/30 bg-primary/5 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Gavel className="w-4 h-4 text-primary" />
+                        <span className="text-xs font-medium text-primary">Tender Workspace</span>
+                        <Badge variant="outline" className="text-[9px] border-violet-300 text-violet-700 bg-violet-50">Tender</Badge>
+                      </div>
+                      <Button size="sm" className="text-xs h-7" onClick={() => navigate(`/workspaces/${tenderWs.id}`)}>
+                        Open Workspace <ChevronRight className="w-3 h-3 ml-0.5" />
+                      </Button>
+                    </div>
+                  );
+                  return null;
+                })()}
+
+                {/* Linked Commercial Workspace */}
                 {linkedWorkspace && (
                   <div className="p-3 rounded-lg border border-dashed border-border bg-muted/20 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Link2 className="w-4 h-4 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">Linked Workspace:</span>
+                      <span className="text-xs text-muted-foreground">Linked Commercial Workspace:</span>
                       <span className="text-xs font-medium">{linkedWorkspace.title}</span>
                       <Badge variant="outline" className="text-[9px]">{linkedWorkspace.stage.replace(/_/g, " ")}</Badge>
                     </div>
@@ -927,6 +968,49 @@ export default function Tenders() {
                 onClick={handleConfirmTransition}
               >
                 {transitionModal.warnings.length > 0 ? "Confirm with Override" : "Confirm Advance"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Won/Lost Choice Modal */}
+      {wonLostChoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-background border border-border rounded-xl shadow-xl w-full max-w-md">
+            <div className="p-4 border-b border-border">
+              <h3 className="text-base font-serif font-bold">Tender Outcome</h3>
+              <p className="text-xs text-muted-foreground mt-1">{wonLostChoice.tender.title}</p>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-sm text-muted-foreground">This tender is under evaluation. Select the outcome:</p>
+              <div>
+                <Label className="text-xs">Reason for Outcome (required)</Label>
+                <Textarea
+                  value={wonLostReason}
+                  onChange={e => setWonLostReason(e.target.value)}
+                  placeholder="e.g. Best technical score, competitive pricing / Lost on price, competitor offered lower margin..."
+                  rows={3}
+                  className="mt-1"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t border-border">
+              <Button variant="outline" onClick={() => setWonLostChoice(null)}>Cancel</Button>
+              <Button
+                variant="outline"
+                className="border-red-300 text-red-700 hover:bg-red-50"
+                disabled={!wonLostReason.trim()}
+                onClick={() => handleWonLostConfirm("lost")}
+              >
+                Mark as Lost
+              </Button>
+              <Button
+                className="bg-emerald-600 hover:bg-emerald-700"
+                disabled={!wonLostReason.trim()}
+                onClick={() => handleWonLostConfirm("won")}
+              >
+                Mark as Won
               </Button>
             </div>
           </div>

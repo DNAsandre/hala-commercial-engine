@@ -23,6 +23,8 @@ export type CustomerGrade = "A" | "B" | "C" | "D" | "F" | "TBA";
 export type ServiceType = "WH" | "TP" | "WH & TP" | "VAS" | "F&C";
 export type CustomerStatus = "Active" | "Closed" | "Terminated" | "Inactive";
 export type CRMStage = "prospecting" | "qualified" | "proposal_sent" | "shortlisted" | "contract_negotiation" | "closed_won" | "contract_signed" | "go_live";
+export type WorkspaceType = "commercial" | "tender" | "renewal";
+export type TenderWorkspaceStage = "draft" | "in_preparation" | "submitted" | "under_evaluation" | "won" | "lost" | "withdrawn";
 
 // ============================================================
 // INTERFACES
@@ -86,6 +88,15 @@ export interface Workspace {
   daysInStage: number;
   approvalState: ApprovalState;
   notes: string;
+  // Workspace Unification v1 — additive fields
+  type?: WorkspaceType; // defaults to "commercial" if undefined
+  parentWorkspaceId?: string; // for renewal workspaces linked to original
+  tenderStage?: TenderWorkspaceStage; // only used when type === "tender"
+  linkedTenderId?: string; // links to tender-engine Tender record
+  submissionDeadline?: string; // tender deadline
+  probabilityPercent?: number; // tender win probability
+  wonLostReason?: string; // reason for Won/Lost terminal states
+  convertedToWorkspaceId?: string; // when tender Won → converted to commercial
 }
 
 export interface Quote {
@@ -252,6 +263,15 @@ export const workspaces: Workspace[] = [
   { id: "w6", customerId: "c7", customerName: "Aramco Services", title: "Aramco Dhahran VAS Expansion", stage: "commercial_approved", crmDealId: "ZH-4410", crmStage: "shortlisted", createdAt: "2025-10-15", updatedAt: "2026-02-08", owner: "Ra'ed", region: "East", estimatedValue: 12000000, palletVolume: 5500, gpPercent: 28.3, ragStatus: "green", daysInStage: 2, approvalState: "fully_approved", notes: "Approved. Moving to SLA drafting." },
   { id: "w7", customerId: "c5", customerName: "Nestlé KSA", title: "Nestlé Jeddah Cold Chain", stage: "sla_drafting", crmDealId: "ZH-4450", crmStage: "shortlisted", createdAt: "2025-09-20", updatedAt: "2026-02-11", owner: "Hano", region: "West", estimatedValue: 6200000, palletVolume: 3200, gpPercent: 26.8, ragStatus: "green", daysInStage: 6, approvalState: "fully_approved", notes: "SLA being drafted. Cold chain requirements complex." },
   { id: "w8", customerId: "c10", customerName: "Bayer Middle East", title: "Bayer Pharma Logistics", stage: "contract_sent", crmDealId: "ZH-4380", crmStage: "contract_negotiation", createdAt: "2025-08-10", updatedAt: "2026-02-09", owner: "Hano", region: "West", estimatedValue: 4100000, palletVolume: 2000, gpPercent: 31.2, ragStatus: "green", daysInStage: 7, approvalState: "fully_approved", notes: "Contract sent to client. Awaiting signature." },
+  // ─── TENDER WORKSPACES (type: "tender") ─────────────────────
+  { id: "wt-001", customerId: "c2", customerName: "Ma'aden", title: "Ma'aden Jubail Expansion — Logistics RFP", stage: "qualified", createdAt: "2026-01-15", updatedAt: "2026-02-14", owner: "Ra'ed", region: "East", estimatedValue: 3400000, palletVolume: 2500, gpPercent: 22, ragStatus: "amber", daysInStage: 8, approvalState: "not_required", notes: "Linked to workspace w1. Technical draft in progress.", type: "tender", tenderStage: "in_preparation", linkedTenderId: "tn-001", submissionDeadline: "2026-03-20", probabilityPercent: 60 },
+  { id: "wt-002", customerId: "c1", customerName: "SABIC", title: "SABIC National Warehousing Services Tender", stage: "qualified", createdAt: "2026-02-01", updatedAt: "2026-02-15", owner: "Ra'ed", region: "East", estimatedValue: 15000000, palletVolume: 5000, gpPercent: 25, ragStatus: "green", daysInStage: 14, approvalState: "not_required", notes: "Large strategic tender. Committee formation pending.", type: "tender", tenderStage: "draft", linkedTenderId: "tn-002", submissionDeadline: "2026-04-01", probabilityPercent: 45 },
+  { id: "wt-003", customerId: "c7", customerName: "Aramco Services", title: "Aramco Dhahran VAS Expansion Tender", stage: "qualified", createdAt: "2025-12-20", updatedAt: "2026-02-10", owner: "Ra'ed", region: "East", estimatedValue: 12000000, palletVolume: 5500, gpPercent: 28, ragStatus: "green", daysInStage: 5, approvalState: "not_required", notes: "Submitted on time. Awaiting evaluation committee review.", type: "tender", tenderStage: "submitted", linkedTenderId: "tn-003", submissionDeadline: "2026-03-10", probabilityPercent: 75 },
+  { id: "wt-004", customerId: "c3", customerName: "Almarai", title: "Almarai Riyadh Phase 2 — Cold Chain Tender", stage: "qualified", createdAt: "2026-01-20", updatedAt: "2026-02-16", owner: "Hano", region: "Central", estimatedValue: 8500000, palletVolume: 4000, gpPercent: 30, ragStatus: "green", daysInStage: 5, approvalState: "not_required", notes: "High-value strategic account. Technical analysis complete.", type: "tender", tenderStage: "in_preparation", linkedTenderId: "tn-004", submissionDeadline: "2026-04-15", probabilityPercent: 70 },
+  { id: "wt-005", customerId: "c5", customerName: "Nestlé KSA", title: "Nestlé Jeddah Cold Chain Partnership", stage: "qualified", createdAt: "2025-11-15", updatedAt: "2026-02-12", owner: "Hano", region: "West", estimatedValue: 6200000, palletVolume: 3200, gpPercent: 26, ragStatus: "amber", daysInStage: 12, approvalState: "not_required", notes: "Evaluation ongoing. Shortlisted with 2 competitors.", type: "tender", tenderStage: "under_evaluation", linkedTenderId: "tn-005", submissionDeadline: "2026-05-01", probabilityPercent: 55 },
+  { id: "wt-006", customerId: "c4", customerName: "Sadara Chemical", title: "Sadara Contract Renewal Tender 2025", stage: "qualified", createdAt: "2025-10-15", updatedAt: "2026-02-14", owner: "Albert", region: "East", estimatedValue: 2800000, palletVolume: 1200, gpPercent: 24, ragStatus: "green", daysInStage: 3, approvalState: "not_required", notes: "Renewal tender. Strong relationship. High probability.", type: "tender", tenderStage: "under_evaluation", linkedTenderId: "tn-006", submissionDeadline: "2026-02-28", probabilityPercent: 85 },
+  { id: "wt-007", customerId: "c3", customerName: "Almarai", title: "Almarai Dammam Distribution Center", stage: "qualified", createdAt: "2025-08-01", updatedAt: "2025-12-20", owner: "Hano", region: "East", estimatedValue: 4500000, palletVolume: 2000, gpPercent: 27, ragStatus: "green", daysInStage: 58, approvalState: "not_required", notes: "Won. Contract signed. Handover initiated.", type: "tender", tenderStage: "won", linkedTenderId: "tn-007", submissionDeadline: "2025-12-15", probabilityPercent: 100 },
+  { id: "wt-008", customerId: "c6", customerName: "Unilever Arabia", title: "Unilever Riyadh Expansion RFP", stage: "qualified", createdAt: "2025-07-15", updatedAt: "2025-12-05", owner: "Albert", region: "Central", estimatedValue: 3200000, palletVolume: 900, gpPercent: 20, ragStatus: "red", daysInStage: 73, approvalState: "not_required", notes: "Lost to competitor. Price was 12% higher.", type: "tender", tenderStage: "lost", linkedTenderId: "tn-008", submissionDeadline: "2025-11-30", probabilityPercent: 0, wonLostReason: "Lost to competitor. Price was 12% higher." },
 ];
 
 export const quotes: Quote[] = [
@@ -401,6 +421,66 @@ export const WORKSPACE_STAGES: { value: WorkspaceStage; label: string; color: st
   { value: "handover", label: "Handover", color: "bg-lime-100 text-lime-800" },
   { value: "go_live", label: "Go-Live", color: "bg-green-200 text-green-900" },
 ];
+
+// Tender workspace stages
+export const TENDER_WORKSPACE_STAGES: { value: TenderWorkspaceStage; label: string; color: string }[] = [
+  { value: "draft", label: "Draft", color: "bg-slate-100 text-slate-700" },
+  { value: "in_preparation", label: "In Preparation", color: "bg-blue-100 text-blue-700" },
+  { value: "submitted", label: "Submitted", color: "bg-violet-100 text-violet-700" },
+  { value: "under_evaluation", label: "Under Evaluation", color: "bg-amber-100 text-amber-700" },
+  { value: "won", label: "Won", color: "bg-emerald-100 text-emerald-700" },
+  { value: "lost", label: "Lost", color: "bg-red-100 text-red-700" },
+  { value: "withdrawn", label: "Withdrawn", color: "bg-gray-100 text-gray-500" },
+];
+
+// Renewal workspace stages (reuses commercial stages but starts from negotiation)
+export const RENEWAL_WORKSPACE_STAGES = WORKSPACE_STAGES;
+
+// Dynamic stage engine — returns correct stages for workspace type
+export function getStagesForType(type?: WorkspaceType): { value: string; label: string; color: string }[] {
+  switch (type) {
+    case "tender": return TENDER_WORKSPACE_STAGES;
+    case "renewal": return RENEWAL_WORKSPACE_STAGES;
+    default: return WORKSPACE_STAGES;
+  }
+}
+
+export function getWorkspaceType(ws: Workspace): WorkspaceType {
+  return ws.type ?? "commercial";
+}
+
+export function getEffectiveStage(ws: Workspace): string {
+  if (ws.type === "tender" && ws.tenderStage) return ws.tenderStage;
+  return ws.stage;
+}
+
+export function getEffectiveStageLabel(ws: Workspace): string {
+  const stage = getEffectiveStage(ws);
+  const stages = getStagesForType(getWorkspaceType(ws));
+  return stages.find(s => s.value === stage)?.label ?? stage;
+}
+
+export function getEffectiveStageColor(ws: Workspace): string {
+  const stage = getEffectiveStage(ws);
+  const stages = getStagesForType(getWorkspaceType(ws));
+  return stages.find(s => s.value === stage)?.color ?? "";
+}
+
+export function getWorkspaceTypeLabel(type?: WorkspaceType): string {
+  switch (type) {
+    case "tender": return "Tender";
+    case "renewal": return "Renewal";
+    default: return "Commercial";
+  }
+}
+
+export function getWorkspaceTypeBadgeColor(type?: WorkspaceType): string {
+  switch (type) {
+    case "tender": return "bg-violet-100 text-violet-700 border-violet-200";
+    case "renewal": return "bg-amber-100 text-amber-700 border-amber-200";
+    default: return "bg-blue-100 text-blue-700 border-blue-200";
+  }
+}
 
 export function getStageLabel(stage: WorkspaceStage): string {
   return WORKSPACE_STAGES.find(s => s.value === stage)?.label ?? stage;
