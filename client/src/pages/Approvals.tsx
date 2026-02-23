@@ -5,10 +5,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { approvalRecords, workspaces, getRoleLabel } from "@/lib/store";
+import { getRoleLabel } from "@/lib/store";
+import { useApprovalRecords, useWorkspaces } from "@/hooks/useSupabase";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Approvals() {
+  const { data: approvalRecords, loading: appLoading } = useApprovalRecords();
+  const { data: workspaces, loading: wsLoading } = useWorkspaces();
+  if (appLoading || wsLoading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   const pending = approvalRecords.filter(a => a.decision === "pending");
   const completed = approvalRecords.filter(a => a.decision !== "pending");
   return (

@@ -3,10 +3,13 @@ import { RefreshCw, ArrowDownLeft, ArrowUpRight, CheckCircle, Clock , ArrowLeft 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { crmSyncEvents } from "@/lib/store";
+import { useCRMSyncEvents } from "@/hooks/useSupabase";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function CRMSync() {
+  const { data: crmSyncEvents, loading } = useCRMSyncEvents();
+  if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
       <div className="mb-4">

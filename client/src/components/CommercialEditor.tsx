@@ -42,7 +42,8 @@ import {
   Building2, User, Phone, Mail, MapPin, DollarSign,
   Calendar, Hash, ToggleLeft, ToggleRight, Eye, Columns2
 } from "lucide-react";
-import { customers, type Customer, formatSAR } from "@/lib/store";
+import { type Customer, formatSAR } from "@/lib/store";
+import { useCustomers } from "@/hooks/useSupabase";
 
 // ============================================================
 // TYPES
@@ -457,13 +458,14 @@ export default function CommercialEditor({
   });
 
   // Resolve customer from ID or name
+  const { data: customers } = useCustomers();
   const linkedCustomer = useMemo(() => {
-    if (customerId) return customers.find(c => c.id === customerId) || null;
-    if (customerName) return customers.find(c => c.name === customerName) || null;
-    if (document.customerId) return customers.find(c => c.id === document.customerId) || null;
-    if (document.customerName) return customers.find(c => c.name === document.customerName) || null;
+    if (customerId) return customers.find((c: any) => c.id === customerId) || null;
+    if (customerName) return customers.find((c: any) => c.name === customerName) || null;
+    if (document.customerId) return customers.find((c: any) => c.id === document.customerId) || null;
+    if (document.customerName) return customers.find((c: any) => c.name === document.customerName) || null;
     return null;
-  }, [customerId, customerName, document.customerId, document.customerName]);
+  }, [customerId, customerName, document.customerId, document.customerName, customers]);
 
   const [aiStagingMap, setAiStagingMap] = useState<Record<string, string>>({});
   const [promptText, setPromptText] = useState("");

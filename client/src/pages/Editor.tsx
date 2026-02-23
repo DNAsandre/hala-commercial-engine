@@ -22,7 +22,7 @@ import {
   LayoutTemplate, Lock, ChevronRight, Building2, Users
 } from "lucide-react";
 import { useLocation } from "wouter";
-import { customers } from "@/lib/store";
+import { useCustomers } from "@/hooks/useSupabase";
 import { navigationV1 } from "@/components/DashboardLayout";
 import {
   type DocType, docInstances, DOC_TYPE_CONFIG, DOC_INSTANCE_STATUS_CONFIG,
@@ -42,14 +42,15 @@ function NewDocumentModal({ open, onClose, onCreate }: {
   onClose: () => void;
   onCreate: (type: DocType, customerId: string, customerName: string) => void;
 }) {
+  const { data: customers } = useCustomers();
   const [step, setStep] = useState<1 | 2>(1);
   const [selectedType, setSelectedType] = useState<DocType | null>(null);
   const [customerSearch, setCustomerSearch] = useState("");
 
   const filteredCustomers = useMemo(() => {
-    if (!customerSearch.trim()) return customers.filter(c => c.status === "Active");
+    if (!customerSearch.trim()) return customers.filter((c: any) => c.status === "Active");
     const s = customerSearch.toLowerCase();
-    return customers.filter(c =>
+    return customers.filter((c: any) =>
       c.status === "Active" && (
         c.name.toLowerCase().includes(s) ||
         c.code.toLowerCase().includes(s) ||

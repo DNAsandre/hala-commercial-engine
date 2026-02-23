@@ -1,4 +1,4 @@
-/*
+/**
  * Tender Board — Kanban View of Tenders by Status
  * Swiss Precision Instrument Design
  *
@@ -44,7 +44,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Link, useLocation } from "wouter";
-import { formatSAR, workspaces } from "@/lib/store";
+import { formatSAR } from "@/lib/store";
+import { useWorkspaces } from "@/hooks/useSupabase";
+import { Loader2 } from "lucide-react";
 import {
   tenders,
   type Tender,

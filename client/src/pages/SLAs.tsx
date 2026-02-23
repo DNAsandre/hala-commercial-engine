@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { customers } from "@/lib/store";
+import { useCustomers } from "@/hooks/useSupabase";
 import { resolveOrCreateDocInstance } from "@/lib/document-composer";
 import { toast } from "sonner";
 import DocumentComposer, { type ComposerDocument } from "@/components/DocumentComposer";
@@ -104,6 +104,7 @@ const kpiStatusColors: Record<string, string> = {
 };
 
 export default function SLAs() {
+  const { data: customers } = useCustomers();
   const [editingSLA, setEditingSLA] = useState<{ customerName: string; customerId: string; slaId: string; existingInstanceId?: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const { checkGate, lastEvaluation, showOverrideDialog, executeOverride, cancelOverride } = useGateCheck();

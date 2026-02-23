@@ -5,16 +5,20 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { customers, formatSAR } from "@/lib/store";
+import { formatSAR } from "@/lib/store";
+import { useCustomers } from "@/hooks/useSupabase";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 const gradeColors: Record<string, string> = { A: "bg-emerald-100 text-emerald-800", B: "bg-blue-100 text-blue-800", C: "bg-amber-100 text-amber-800", D: "bg-orange-100 text-orange-800", F: "bg-red-100 text-red-800", TBA: "bg-gray-100 text-gray-600" };
 
 export default function Customers() {
+  const { data: customers, loading } = useCustomers();
   const [search, setSearch] = useState("");
   const [gradeFilter, setGradeFilter] = useState<string>("all");
   const [regionFilter, setRegionFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   const filtered = customers.filter(c => {
     if (search && !c.name.toLowerCase().includes(search.toLowerCase()) && !c.code.toLowerCase().includes(search.toLowerCase())) return false;
     if (gradeFilter !== "all" && c.grade !== gradeFilter) return false;

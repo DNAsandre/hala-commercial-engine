@@ -44,7 +44,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { formatSAR, workspaces, customers } from "@/lib/store";
+import { formatSAR } from "@/lib/store";
+import { useWorkspaces, useCustomers } from "@/hooks/useSupabase";
+import { Loader2 } from "lucide-react";
 import {
   tenders,
   type Tender,
@@ -108,7 +110,7 @@ function StatusFlowBar({ current }: { current: TenderStatus }) {
 
 // ─── CREATE TENDER DIALOG ──────────────────────────────────
 
-function CreateTenderForm({ onClose, onCreated }: { onClose: () => void; onCreated: (t: Tender) => void }) {
+function CreateTenderForm({ onClose, onCreated, customers, workspaces }: { onClose: () => void; onCreated: (t: Tender) => void; customers: any[]; workspaces: any[] }) {
   const [title, setTitle] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [workspaceId, setWorkspaceId] = useState("none");
@@ -258,6 +260,8 @@ function CreateTenderForm({ onClose, onCreated }: { onClose: () => void; onCreat
 // ─── MAIN COMPONENT ────────────────────────────────────────
 
 export default function Tenders() {
+  const { data: workspaces } = useWorkspaces();
+  const { data: customers } = useCustomers();
   const [, navigate] = useLocation();
   const [selectedTenderId, setSelectedTenderId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -850,6 +854,8 @@ export default function Tenders() {
       {/* Create Tender Dialog */}
       {showCreate && (
         <CreateTenderForm
+          customers={customers}
+          workspaces={workspaces}
           onClose={() => setShowCreate(false)}
           onCreated={(t) => {
             setSelectedTenderId(t.id);

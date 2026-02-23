@@ -6,19 +6,24 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  workspaces, formatSAR, formatPercent, WORKSPACE_STAGES,
-  signals, getWorkspaceType, getWorkspaceTypeLabel, getWorkspaceTypeBadgeColor,
+  formatSAR, formatPercent, WORKSPACE_STAGES,
+  getWorkspaceType, getWorkspaceTypeLabel, getWorkspaceTypeBadgeColor,
   getEffectiveStageLabel, getEffectiveStageColor,
   type WorkspaceType,
 } from "@/lib/store";
+import { useWorkspaces, useSignals } from "@/hooks/useSupabase";
+import { Loader2 } from "lucide-react";
 import CreateWorkspaceDialog from "@/components/CreateWorkspaceDialog";
 
 export default function Workspaces() {
+  const { data: workspaces, loading: wsLoading } = useWorkspaces();
+  const { data: signals } = useSignals();
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [ragFilter, setRagFilter] = useState<string>("all");
   const [showCreate, setShowCreate] = useState(false);
 
+  if (wsLoading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   const filtered = workspaces.filter(w => {
     const wsType = getWorkspaceType(w);
     if (typeFilter !== "all" && wsType !== typeFilter) return false;

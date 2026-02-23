@@ -11,7 +11,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { proposals, workspaces, customers, formatSAR } from "@/lib/store";
+import { formatSAR } from "@/lib/store";
+import { useProposals, useWorkspaces, useCustomers } from "@/hooks/useSupabase";
+import { Loader2 } from "lucide-react";
 import { resolveOrCreateDocInstance } from "@/lib/document-composer";
 import { getEcrScoreByCustomerName, getGradeBg, type EcrScore } from "@/lib/ecr";
 import { Star } from "lucide-react";
@@ -38,11 +40,15 @@ const stateIcons: Record<string, typeof CheckCircle> = {
 };
 
 export default function Proposals() {
+  const { data: proposals, loading: propLoading } = useProposals();
+  const { data: workspaces, loading: wsLoading } = useWorkspaces();
+  const { data: customers, loading: custLoading } = useCustomers();
   const [editingProposal, setEditingProposal] = useState<{ customerName: string; customerId: string; proposalId: string; workspaceId: string; existingInstanceId?: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const { checkGate, lastEvaluation, showOverrideDialog, executeOverride, cancelOverride } = useGateCheck();
   const { logAction, logApproval } = useAuditLog();
 
+  if (propLoading || wsLoading || custLoading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   const filteredProposals = proposals.filter(p => {
     const ws = workspaces.find(w => w.id === p.workspaceId);
     const name = ws?.customerName || "";

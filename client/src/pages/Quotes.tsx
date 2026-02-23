@@ -11,7 +11,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { quotes, workspaces, customers, formatSAR, formatPercent } from "@/lib/store";
+import { formatSAR, formatPercent } from "@/lib/store";
+import { useQuotes, useWorkspaces, useCustomers } from "@/hooks/useSupabase";
+import { Loader2 } from "lucide-react";
 import { resolveOrCreateDocInstance } from "@/lib/document-composer";
 import { getEcrScoreByCustomerName, getGradeBg, type EcrScore } from "@/lib/ecr";
 import { Star } from "lucide-react";
@@ -38,11 +40,15 @@ const stateIcons: Record<string, typeof CheckCircle> = {
 };
 
 export default function Quotes() {
+  const { data: quotes, loading: qLoading } = useQuotes();
+  const { data: workspaces, loading: wsLoading } = useWorkspaces();
+  const { data: customers, loading: custLoading } = useCustomers();
   const [editingQuote, setEditingQuote] = useState<{ customerName: string; customerId: string; quoteId: string; workspaceId: string; existingInstanceId?: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const { checkGate, lastEvaluation, showOverrideDialog, executeOverride, cancelOverride } = useGateCheck();
   const { logAction, logApproval } = useAuditLog();
 
+  if (qLoading || wsLoading || custLoading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   const filteredQuotes = quotes.filter(q => {
     const ws = workspaces.find(w => w.id === q.workspaceId);
     const name = ws?.customerName || "";

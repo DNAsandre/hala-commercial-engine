@@ -37,7 +37,7 @@ import {
   DOCUMENT_CATEGORIES,
   DOCUMENT_STATUSES,
 } from "@/lib/document-vault";
-import { auditLog } from "@/lib/store";
+import { useAuditLog } from "@/hooks/useSupabase";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -76,6 +76,7 @@ interface DocumentViewerProps {
 }
 
 export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged }: DocumentViewerProps) {
+  const { data: auditLog } = useAuditLog();
   const [activeVersion, setActiveVersion] = useState<number | null>(null);
   const [showVersions, setShowVersions] = useState(false);
   const [showAudit, setShowAudit] = useState(false);

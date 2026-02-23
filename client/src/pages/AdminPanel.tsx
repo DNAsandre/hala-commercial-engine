@@ -23,7 +23,8 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { users } from "@/lib/store";
+import { useUsers } from "@/hooks/useSupabase";
+import { Loader2 } from "lucide-react";
 import { navigationV1 } from "@/components/DashboardLayout";
 import { toast } from "sonner";
 
@@ -98,13 +99,15 @@ function AdminLinkCard({ item }: { item: { path: string; label: string; desc: st
 }
 
 export default function AdminPanel() {
+  const { data: users, loading } = useUsers();
   const [userSearch, setUserSearch] = useState("");
   const [showAddUser, setShowAddUser] = useState(false);
   const [newUserName, setNewUserName] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserRole, setNewUserRole] = useState("salesman");
 
-  const filteredUsers = users.filter(u =>
+  if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
+  const filteredUsers = users.filter((u: any) =>
     u.name.toLowerCase().includes(userSearch.toLowerCase()) ||
     u.email.toLowerCase().includes(userSearch.toLowerCase()) ||
     u.role.toLowerCase().includes(userSearch.toLowerCase())

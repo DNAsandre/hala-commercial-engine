@@ -3,7 +3,8 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { auditLog } from "@/lib/store";
+import { useAuditLog } from "@/hooks/useSupabase";
+import { Loader2 } from "lucide-react";
 
 const actionColors: Record<string, string> = {
   create: "bg-emerald-100 text-emerald-800",
@@ -26,8 +27,10 @@ const entityIcons: Record<string, React.ElementType> = {
 };
 
 export default function AuditTrail() {
+  const { data: auditLog, loading } = useAuditLog();
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [actionFilter, setActionFilter] = useState<string>("all");
+  if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   const filtered = auditLog
     .filter(e => typeFilter === "all" || e.entityType === typeFilter)
     .filter(e => actionFilter === "all" || e.action === actionFilter);

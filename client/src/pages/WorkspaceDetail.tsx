@@ -16,13 +16,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  workspaces, customers, quotes, proposals, approvalRecords, signals, auditLog,
   formatSAR, formatPercent, getStageLabel, getStageColor, getApprovalRequirements,
   getRoleLabel, WORKSPACE_STAGES, TENDER_WORKSPACE_STAGES,
   getWorkspaceType, getWorkspaceTypeLabel, getWorkspaceTypeBadgeColor,
   getEffectiveStage, getEffectiveStageLabel, getEffectiveStageColor,
   getStagesForType, type WorkspaceType, type TenderWorkspaceStage,
 } from "@/lib/store";
+import {
+  useWorkspace, useCustomer, useQuotesByWorkspace, useProposalsByWorkspace,
+  useApprovalRecords, useSignals, useAuditLog as useSupabaseAuditLog,
+} from "@/hooks/useSupabase";
+import { Loader2 } from "lucide-react";
 import {
   advanceStage, getNextStage, getStageDisplayName, checkUndoEligibility, revertStage,
   getStageHistory, preflightValidation, getWorkspaceOverrides, getLatestOverride,
@@ -120,7 +124,15 @@ export default function WorkspaceDetail() {
   useState(() => { initializeMockFiles(); });
   useState(() => { if (isWorkspaceIntegrationEnabled()) seedWorkspaceIntegrationData(); });
 
-  const ws = workspaces.find(w => w.id === id);
+  const { data: ws, loading: wsLoading } = useWorkspace(id!);
+  const { data: wsQuotes, loading: qLoading } = useQuotesByWorkspace(id!);
+  const { data: wsProposals, loading: pLoading } = useProposalsByWorkspace(id!);
+  const { data: allApprovals, loading: appLoading } = useApprovalRecords();
+  const { data: allSignals, loading: sigLoading } = useSignals();
+  const { data: allAuditLog, loading: auditLoading } = useSupabaseAuditLog();
+
+  const loading = wsLoading || qLoading || pLoading || appLoading || sigLoading || auditLoading;
+  if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   if (!ws) return (
     <div className="p-6">
       <h1 className="text-xl font-serif">Workspace not found</h1>
@@ -136,13 +148,13 @@ export default function WorkspaceDetail() {
   const effectiveStage = getEffectiveStage(ws);
   const effectiveStageIdx = effectiveStages.findIndex(s => s.value === effectiveStage);
 
-  const customer = customers.find(c => c.id === ws.customerId);
-  const wsQuotes = quotes.filter(q => q.workspaceId === ws.id);
-  const wsProposals = proposals.filter(p => p.workspaceId === ws.id);
-  const wsApprovals = approvalRecords.filter(a => a.workspaceId === ws.id);
-  const wsSignals = signals.filter(s => s.workspaceId === ws.id);
+  // We'll use a simple customer lookup from the workspace data for now
+  // The full customer data is fetched via the CustomerDetail page
+  const customer: any = ws.customerId ? { id: ws.customerId, name: ws.customerName, industry: '', grade: 'TBA', dso: 0, paymentStatus: 'Good', contractExpiry: '', contractValue2025: 0, revenue2025: 0, region: ws.region, facility: '', status: 'Active' } : null;
+  const wsApprovals = allApprovals.filter(a => a.workspaceId === ws.id);
+  const wsSignals = allSignals.filter(s => s.workspaceId === ws.id);
   const wsSLAs = workspaceSLAs.filter(s => s.workspaceId === ws.id);
-  const wsAudit = auditLog.filter(a =>
+  const wsAudit = allAuditLog.filter(a =>
     a.entityId === ws.id ||
     wsQuotes.some(q => q.id === a.entityId) ||
     wsProposals.some(p => p.id === a.entityId) ||

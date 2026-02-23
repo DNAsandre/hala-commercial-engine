@@ -1,8 +1,7 @@
-/*
+/**
  * Executive Dashboard — "Precision Instrument" Design
  * The first thing Amin sees every morning.
- * No raw tables. Executive-grade visual presentation.
- * RAG signals, attention-required items, pipeline overview.
+ * Now powered by Supabase — live data from the database.
  */
 
 import { Link } from "wouter";
@@ -21,23 +20,20 @@ import {
   ExternalLink,
   Truck,
   FileText,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  getDashboardStats,
-  workspaces,
-  signals,
-  customers,
   formatSAR,
   formatPercent,
   getStageLabel,
   getStageColor,
-  approvalRecords,
   WORKSPACE_STAGES,
 } from "@/lib/store";
 import { navigationV1 } from "@/components/DashboardLayout";
-import type { Workspace } from "@/lib/store";
+import type { Workspace, Customer } from "@/lib/store";
+import { useWorkspaces, useCustomers, useSignals, useApprovalRecords } from "@/hooks/useSupabase";
 
 function StatCard({ title, value, subtitle, icon: Icon, accent }: {
   title: string; value: string; subtitle: string; icon: React.ElementType; accent?: string;
@@ -60,8 +56,8 @@ function StatCard({ title, value, subtitle, icon: Icon, accent }: {
   );
 }
 
-function AttentionItem({ workspace }: { workspace: Workspace }) {
-  const wsSignals = signals.filter(s => s.workspaceId === workspace.id);
+function AttentionItem({ workspace, allSignals }: { workspace: Workspace; allSignals: { workspaceId: string; severity: string; message: string }[] }) {
+  const wsSignals = allSignals.filter(s => s.workspaceId === workspace.id);
   const worstSeverity = wsSignals.some(s => s.severity === "red") ? "red" : wsSignals.some(s => s.severity === "amber") ? "amber" : "green";
 
   return (
@@ -93,7 +89,42 @@ function AttentionItem({ workspace }: { workspace: Workspace }) {
 }
 
 export default function Dashboard() {
-  const stats = getDashboardStats();
+  const { data: workspaces, loading: wsLoading } = useWorkspaces();
+  const { data: customers, loading: custLoading } = useCustomers();
+  const { data: signals, loading: sigLoading } = useSignals();
+  const { data: approvalRecords, loading: appLoading } = useApprovalRecords();
+
+  const loading = wsLoading || custLoading || sigLoading || appLoading;
+
+  // Compute stats from live data
+  const activeWorkspaces = workspaces.filter(w => w.stage !== "go_live");
+  const totalPipelineValue = activeWorkspaces.reduce((sum, w) => sum + w.estimatedValue, 0);
+  const avgGP = activeWorkspaces.length > 0 ? activeWorkspaces.reduce((sum, w) => sum + w.gpPercent, 0) / activeWorkspaces.length : 0;
+  const redSignals = signals.filter(s => s.severity === "red").length;
+  const pendingApprovals = approvalRecords.filter(a => a.decision === "pending");
+  const activeCustomers = customers.filter(c => c.status === "Active").length;
+  const totalRevenue2025 = customers.reduce((sum, c) => sum + c.revenue2025, 0);
+
+  const expiringContracts = customers.filter(c => {
+    if (!c.contractExpiry) return false;
+    const expiry = new Date(c.contractExpiry);
+    const now = new Date();
+    const diffDays = (expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+    return diffDays > 0 && diffDays <= 90;
+  }).slice(0, 5);
+
+  const stageDistribution = WORKSPACE_STAGES.map(s => ({
+    stage: s.label,
+    count: workspaces.filter(w => w.stage === s.value).length,
+    value: workspaces.filter(w => w.stage === s.value).reduce((sum, w) => sum + w.estimatedValue, 0),
+  })).filter(s => s.count > 0);
+
+  const gradeDistribution = (["A", "B", "C", "D", "F"] as const).map(g => ({
+    grade: g,
+    count: customers.filter(c => c.grade === g).length,
+    revenue: customers.filter(c => c.grade === g).reduce((sum, c) => sum + c.revenue2025, 0),
+  }));
+
   const attentionWorkspaces = workspaces
     .filter(w => w.ragStatus === "red" || w.ragStatus === "amber" || w.daysInStage > 10)
     .sort((a, b) => {
@@ -102,8 +133,13 @@ export default function Dashboard() {
       return b.daysInStage - a.daysInStage;
     });
 
-  const pendingApprovals = approvalRecords.filter(a => a.decision === "pending");
-  const expiringContracts = stats.expiringContracts.slice(0, 5);
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
@@ -119,29 +155,29 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <StatCard
           title="Active Pipeline"
-          value={formatSAR(stats.totalPipelineValue)}
-          subtitle={`${stats.activeWorkspaces} active workspaces`}
+          value={formatSAR(totalPipelineValue)}
+          subtitle={`${activeWorkspaces.length} active workspaces`}
           icon={Briefcase}
         />
         <StatCard
           title="Avg. Gross Profit"
-          value={formatPercent(stats.avgGP)}
+          value={formatPercent(avgGP)}
           subtitle="Across active deals"
           icon={TrendingUp}
-          accent={stats.avgGP >= 22 ? "text-[var(--color-rag-green)]" : stats.avgGP >= 15 ? "text-[var(--color-rag-amber)]" : "text-[var(--color-rag-red)]"}
+          accent={avgGP >= 22 ? "text-[var(--color-rag-green)]" : avgGP >= 15 ? "text-[var(--color-rag-amber)]" : "text-[var(--color-rag-red)]"}
         />
         <StatCard
           title="Active Customers"
-          value={String(stats.activeCustomers)}
-          subtitle={`YTD Revenue: ${formatSAR(stats.totalRevenue2025)}`}
+          value={String(activeCustomers)}
+          subtitle={`YTD Revenue: ${formatSAR(totalRevenue2025)}`}
           icon={Users}
         />
         <StatCard
           title="Pending Approvals"
-          value={String(stats.pendingApprovals)}
-          subtitle={`${stats.redSignals} critical signals`}
+          value={String(pendingApprovals.length)}
+          subtitle={`${redSignals} critical signals`}
           icon={ShieldCheck}
-          accent={stats.pendingApprovals > 0 ? "text-[var(--color-rag-amber)]" : undefined}
+          accent={pendingApprovals.length > 0 ? "text-[var(--color-rag-amber)]" : undefined}
         />
       </div>
 
@@ -165,7 +201,7 @@ export default function Dashboard() {
             <CardContent className="pt-0">
               <div className="space-y-2">
                 {attentionWorkspaces.map(ws => (
-                  <AttentionItem key={ws.id} workspace={ws} />
+                  <AttentionItem key={ws.id} workspace={ws} allSignals={signals} />
                 ))}
                 {attentionWorkspaces.length === 0 && (
                   <p className="text-sm text-muted-foreground py-8 text-center">No items requiring attention</p>
@@ -184,7 +220,7 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent className="pt-0">
               <div className="space-y-2.5">
-                {stats.stageDistribution.map(s => (
+                {stageDistribution.map(s => (
                   <div key={s.stage} className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground w-4 text-right data-value">{s.count}</span>
@@ -204,8 +240,8 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent className="pt-0">
               <div className="space-y-2">
-                {stats.gradeDistribution.map(g => {
-                  const maxRevenue = Math.max(...stats.gradeDistribution.map(d => d.revenue));
+                {gradeDistribution.map(g => {
+                  const maxRevenue = Math.max(...gradeDistribution.map(d => d.revenue));
                   const width = maxRevenue > 0 ? (g.revenue / maxRevenue) * 100 : 0;
                   const gradeColors: Record<string, string> = {
                     A: "bg-[var(--color-rag-green)]",
@@ -274,7 +310,6 @@ export default function Dashboard() {
       {/* ═══ QUICK ACCESS CARDS (navigationV1) ═══ */}
       {navigationV1 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
-          {/* Pending Approvals Card */}
           <Link href="/approvals">
             <Card className="border border-border shadow-none hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group">
               <CardContent className="p-4">
@@ -292,7 +327,6 @@ export default function Dashboard() {
             </Card>
           </Link>
 
-          {/* Renewals Card */}
           <Link href="/renewals">
             <Card className="border border-border shadow-none hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group">
               <CardContent className="p-4">
@@ -310,7 +344,6 @@ export default function Dashboard() {
             </Card>
           </Link>
 
-          {/* Revenue Exposure Card */}
           <Link href="/revenue-exposure">
             <Card className="border border-border shadow-none hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group">
               <CardContent className="p-4">
@@ -328,7 +361,6 @@ export default function Dashboard() {
             </Card>
           </Link>
 
-          {/* Signals Card */}
           <Link href="/signal-engine">
             <Card className="border border-border shadow-none hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group">
               <CardContent className="p-4">

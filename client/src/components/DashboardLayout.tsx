@@ -49,7 +49,8 @@ import {
   TrendingDown,
   Dna,
 } from "lucide-react";
-import { currentUser, getRoleLabel, signals } from "@/lib/store";
+import { getRoleLabel } from "@/lib/store";
+import { useCurrentUser, useSignals } from "@/hooks/useSupabase";
 import { cn } from "@/lib/utils";
 
 // ============================================================
@@ -133,6 +134,8 @@ const simplifiedGroups = ["core", "system"];
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+  const { data: currentUser } = useCurrentUser();
+  const { data: signals } = useSignals();
   const redCount = signals.filter(s => s.severity === "red").length;
 
   const navItems = navigationV1 ? simplifiedNavItems : allNavItems;

@@ -26,7 +26,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { customers, workspaces, formatSAR, formatPercent, calculateECR, getStageLabel, getStageColor } from "@/lib/store";
+import { formatSAR, formatPercent, calculateECR, getStageLabel, getStageColor } from "@/lib/store";
+import { useCustomer, useWorkspacesByCustomer } from "@/hooks/useSupabase";
+import { Loader2 } from "lucide-react";
 import { generateECRScorecardPDF, openPDFPreview } from "@/lib/pdf-compiler";
 import {
   getEcrCustomerIdByName, getLatestScore, getCustomerScores,
@@ -52,10 +54,10 @@ export default function CustomerDetail() {
   const { id } = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const [, forceUpdate] = useState(0);
-  const c = customers.find(x => x.id === id);
+  const { data: c, loading: custLoading } = useCustomer(id!);
+  const { data: custWorkspaces, loading: wsLoading } = useWorkspacesByCustomer(id!);
+  if (custLoading || wsLoading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   if (!c) return <div className="p-6"><h1 className="text-xl font-serif">Customer not found</h1><Link href="/customers"><Button variant="outline" className="mt-4"><ArrowLeft className="w-4 h-4 mr-1.5" />Back</Button></Link></div>;
-
-  const custWorkspaces = workspaces.filter(w => w.customerId === c.id);
   const ecr = calculateECR(c.dso, c.contractValue2025, 22, 0.7, 0.6);
 
   // ECR v1 integration

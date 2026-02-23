@@ -137,3 +137,40 @@
 - [ ] No TypeScript errors
 - [ ] No broken routes
 - [ ] All previous functionality accessible via direct URL
+
+
+---
+
+# Supabase Integration TODO
+
+## Phase 1: Audit Data Models
+- [ ] Read store.ts to catalog all data types and mock data
+- [ ] Read workspace-engine.ts for workspace types
+- [ ] Read workspace-integration.ts for contract/renewal data
+- [ ] Read document-composer.ts for document/template data
+- [ ] Read renewal-engine.ts for renewal data
+- [ ] Read commercial-integrity.ts for ECR/governance data
+- [ ] Design complete database schema
+
+## Phase 2: Create Tables
+- [ ] Create all tables in Supabase
+
+## Phase 3: Seed Data
+- [ ] Migrate all mock data into Supabase
+
+## Phase 4: Supabase Client
+- [ ] Install @supabase/supabase-js
+- [ ] Create supabase client config
+- [ ] Create data access hooks/functions
+
+## Phase 5: Rewire Frontend
+- [ ] Replace store.ts imports with Supabase queries
+- [ ] Update pages to use async data loading
+- [ ] Add loading states and error handling
+
+## Phase 6: Test
+- [ ] Verify all pages load with live data
+- [ ] Zero TypeScript errors
+
+## Phase 7: Deploy
+- [ ] Push to GitHub

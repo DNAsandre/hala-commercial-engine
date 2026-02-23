@@ -26,7 +26,8 @@ import {
   logAdminChange,
   type PolicyGateConfig,
 } from "@/lib/governance";
-import { currentUser, type GateMode } from "@/lib/store";
+import { type GateMode } from "@/lib/store";
+import { useCurrentUser } from "@/hooks/useSupabase";
 
 /* ── Compliance Dashboard ── */
 function ComplianceDashboard() {
@@ -78,6 +79,7 @@ function ComplianceDashboard() {
 
 /* ── Policy Gates ── */
 function PolicyGatesPanel() {
+  const { data: currentUser } = useCurrentUser();
   const [expandedGate, setExpandedGate] = useState<string | null>(null);
 
   const handleModeChange = (gate: PolicyGateConfig, newMode: GateMode) => {
@@ -179,6 +181,7 @@ function PolicyGatesPanel() {
 
 /* ── AI Restrictions ── */
 function AIRestrictionsPanel() {
+  const { data: currentUser } = useCurrentUser();
   const [killSwitch, setKillSwitch] = useState(aiBotConfig.globalKillSwitch);
   const [moduleAccess, setModuleAccess] = useState({ ...aiBotConfig.moduleAccess });
 

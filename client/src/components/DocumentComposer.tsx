@@ -57,7 +57,8 @@ import {
   Percent, Image as ImageLucide, Mail, Star, MapPin,
   CreditCard, Package, Activity, ShieldCheck, ArrowLeft
 } from "lucide-react";
-import { customers, type Customer, formatSAR } from "@/lib/store";
+import { type Customer, formatSAR } from "@/lib/store";
+import { useCustomers } from "@/hooks/useSupabase";
 import {
   type DocType, type DocBlock, type BlockFamily, type BlockEditorMode,
   type DocTemplate, type TemplateVersion, type BrandingProfile,
@@ -1082,11 +1083,12 @@ export default function DocumentComposer({
   }, []);
 
   // Resolve customer
+  const { data: customers } = useCustomers();
   const linkedCustomer = useMemo(() => {
-    if (document.customer_id) return customers.find(c => c.id === document.customer_id) || null;
-    if (document.customer_name) return customers.find(c => c.name === document.customer_name) || null;
+    if (document.customer_id) return customers.find((c: any) => c.id === document.customer_id) || null;
+    if (document.customer_name) return customers.find((c: any) => c.name === document.customer_name) || null;
     return null;
-  }, [document.customer_id, document.customer_name]);
+  }, [document.customer_id, document.customer_name, customers]);
 
   // Active block info
   const activeBlock = useMemo(() => {

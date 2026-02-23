@@ -13,7 +13,8 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { customers, workspaces, users, type Workspace, type Region } from "@/lib/store";
+import { type Workspace, type Region } from "@/lib/store";
+import { useCustomers, useWorkspaces, useUsers } from "@/hooks/useSupabase";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
 
@@ -23,6 +24,9 @@ interface Props {
 }
 
 export default function CreateWorkspaceDialog({ open, onOpenChange }: Props) {
+  const { data: customers } = useCustomers();
+  const { data: workspaces } = useWorkspaces();
+  const { data: users } = useUsers();
   const [customerId, setCustomerId] = useState("");
   const [title, setTitle] = useState("");
   const [region, setRegion] = useState<Region>("East");
@@ -34,10 +38,10 @@ export default function CreateWorkspaceDialog({ open, onOpenChange }: Props) {
   const [isNew, setIsNew] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState("");
 
-  const activeCustomers = customers.filter(c => c.status === "Active");
-  const salesUsers = users.filter(u => ["salesman", "regional_sales_head", "admin"].includes(u.role));
+  const activeCustomers = customers.filter((c: any) => c.status === "Active");
+  const salesUsers = users.filter((u: any) => ["salesman", "regional_sales_head", "admin"].includes(u.role));
 
-  const selectedCustomer = customers.find(c => c.id === customerId);
+  const selectedCustomer = customers.find((c: any) => c.id === customerId);
 
   function handleSubmit() {
     if (!isNew && !customerId) {
