@@ -9,6 +9,7 @@
  * Pattern: engine mutates in-memory → sync layer persists to DB
  */
 
+import { getCurrentUser } from "./auth-state";
 import { supabase } from "./supabase";
 
 // ============================================================
@@ -188,8 +189,8 @@ export async function syncAuditEntry(entry: Record<string, any>): Promise<void> 
     entity_type: entry.entityType,
     entity_id: entry.entityId,
     action: entry.action,
-    user_id: entry.userId || "u1",
-    user_name: entry.userName || "Amin Al-Rashid",
+    user_id: entry.userId || getCurrentUser().id,
+    user_name: entry.userName || getCurrentUser().name,
     timestamp: entry.timestamp || new Date().toISOString(),
     details: entry.details || "",
   };
@@ -367,4 +368,116 @@ export async function syncCRMSyncEvent(event: Record<string, any>): Promise<void
   };
   const { error } = await supabase.from("crm_sync_events").insert(row);
   if (error) console.error("syncCRMSyncEvent error:", error);
+}
+
+
+// ============================================================
+// DOCUMENT INSTANCE SYNC
+// ============================================================
+
+export async function syncDocInstanceCreate(instance: Record<string, any>): Promise<void> {
+  const row = {
+    id: instance.id,
+    doc_type: instance.doc_type,
+    template_version_id: instance.template_version_id || null,
+    status: instance.status || 'draft',
+    linked_entity_type: instance.linked_entity_type || null,
+    linked_entity_id: instance.linked_entity_id || null,
+    customer_id: instance.customer_id || null,
+    customer_name: instance.customer_name || null,
+    workspace_id: instance.workspace_id || null,
+    workspace_name: instance.workspace_name || null,
+    current_version_id: instance.current_version_id || null,
+    title: instance.title || instance.doc_type,
+    branding_profile_id: instance.branding_profile_id || null,
+    is_compiled: instance.is_compiled || false,
+    compiled_at: instance.compiled_at || null,
+    created_by: instance.created_by || getCurrentUser().name,
+    created_at: instance.created_at || new Date().toISOString(),
+    updated_at: instance.updated_at || new Date().toISOString(),
+  };
+  const { error } = await supabase.from("doc_instances").insert(row);
+  if (error) console.error("syncDocInstanceCreate error:", error);
+}
+
+export async function syncDocInstanceUpdate(instanceId: string, updates: Record<string, any>): Promise<void> {
+  const row: Record<string, any> = { updated_at: new Date().toISOString() };
+  const mapping: Record<string, string> = {
+    status: "status",
+    title: "title",
+    current_version_id: "current_version_id",
+    branding_profile_id: "branding_profile_id",
+    is_compiled: "is_compiled",
+    compiled_at: "compiled_at",
+  };
+  for (const [key, val] of Object.entries(updates)) {
+    const dbKey = mapping[key] || key;
+    row[dbKey] = val;
+  }
+  const { error } = await supabase.from("doc_instances").update(row).eq("id", instanceId);
+  if (error) console.error("syncDocInstanceUpdate error:", error);
+}
+
+// ============================================================
+// DOCUMENT INSTANCE VERSION SYNC
+// ============================================================
+
+export async function syncDocInstanceVersionCreate(version: Record<string, any>): Promise<void> {
+  const row = {
+    id: version.id,
+    doc_instance_id: version.doc_instance_id,
+    version_number: version.version_number || 1,
+    blocks: JSON.stringify(version.blocks || []),
+    bindings: JSON.stringify(version.bindings || {}),
+    created_by: version.created_by || getCurrentUser().name,
+    created_at: version.created_at || new Date().toISOString(),
+  };
+  const { error } = await supabase.from("doc_instance_versions").insert(row);
+  if (error) console.error("syncDocInstanceVersionCreate error:", error);
+}
+
+// ============================================================
+// COMPILED DOCUMENT SYNC
+// ============================================================
+
+export async function syncCompiledDocCreate(doc: Record<string, any>): Promise<void> {
+  const row = {
+    id: doc.id,
+    doc_instance_id: doc.doc_instance_id || null,
+    doc_instance_version_id: doc.doc_instance_version_id || null,
+    title: doc.title || "",
+    doc_type: doc.doc_type || "",
+    customer_id: doc.customer_id || null,
+    customer_name: doc.customer_name || null,
+    workspace_id: doc.workspace_id || null,
+    compiled_html: doc.compiled_html || "",
+    compiled_by: doc.compiled_by || getCurrentUser().name,
+    compiled_at: doc.compiled_at || new Date().toISOString(),
+    status: doc.status || "final",
+  };
+  const { error } = await supabase.from("compiled_documents").insert(row);
+  if (error) console.error("syncCompiledDocCreate error:", error);
+}
+
+// ============================================================
+// VAULT ASSET SYNC
+// ============================================================
+
+export async function syncVaultAssetCreate(asset: Record<string, any>): Promise<void> {
+  const row = {
+    id: asset.id,
+    doc_instance_id: asset.doc_instance_id || null,
+    doc_instance_version_id: asset.doc_instance_version_id || null,
+    compiled_document_id: asset.compiled_document_id || null,
+    title: asset.title || "",
+    doc_type: asset.doc_type || "",
+    customer_id: asset.customer_id || null,
+    customer_name: asset.customer_name || null,
+    workspace_id: asset.workspace_id || null,
+    status: asset.status || "final",
+    created_by: asset.created_by || getCurrentUser().name,
+    created_at: asset.created_at || new Date().toISOString(),
+  };
+  const { error } = await supabase.from("vault_assets").insert(row);
+  if (error) console.error("syncVaultAssetCreate error:", error);
 }

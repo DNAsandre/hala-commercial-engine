@@ -1,3 +1,4 @@
+import { getCurrentUser } from "./auth-state";
 /**
  * workspace-integration.ts
  * ────────────────────────────────────────────────────────────
@@ -100,8 +101,8 @@ function logIntegrationAudit(
     entityType,
     entityId,
     action,
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
     timestamp: new Date().toISOString(),
     details,
   };
@@ -185,7 +186,7 @@ export function startRenewal(workspaceId: string): ContractCycle {
     renewalOwnerName: currentCycle?.renewalOwnerName ?? ws.owner,
     linkedSlaVersionId: undefined,
     createdAt: new Date().toISOString(),
-    createdBy: "u1",
+    createdBy: getCurrentUser().id,
   };
 
   contractCycles.push(newCycle);
@@ -269,7 +270,7 @@ export function uploadSupportingDoc(input: {
     linkedCycleId: input.linkedCycleId,
     version: 1,
     status: "active",
-    uploadedBy: "Amin Al-Rashid",
+    uploadedBy: getCurrentUser().name,
     uploadedAt: new Date().toISOString(),
     notes: input.notes,
   };
@@ -405,7 +406,7 @@ export function seedWorkspaceIntegrationData(): void {
 
 // ─── TEAM MEMBERS (for renewal owner dropdown) ──────────────
 export const teamMembers = [
-  { id: "u1", name: "Amin Al-Rashid", role: "Admin" },
+  { id: getCurrentUser().id, name: getCurrentUser().name, role: getCurrentUser().role },
   { id: "u2", name: "Ra'ed Al-Harbi", role: "Regional Sales Head" },
   { id: "u3", name: "Albert Fernandez", role: "Account Manager" },
   { id: "u4", name: "Hano", role: "Account Manager" },

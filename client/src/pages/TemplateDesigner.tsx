@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth-state";
 import { useState, useMemo, useCallback } from "react";
 import { useRoute, useLocation } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
@@ -203,7 +204,7 @@ export default function TemplateDesigner() {
         toc_auto: false,
       },
       published_at: null,
-      created_by: "Amin Al-Rashid",
+      created_by: getCurrentUser().name,
       created_at: new Date().toISOString(),
     };
     template.versions.push(newVersion);

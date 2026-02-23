@@ -6,6 +6,7 @@
  * This layer handles the mapping transparently.
  */
 
+import { getCurrentUser } from "./auth-state";
 import { supabase } from "./supabase";
 import type {
   User, Customer, Workspace, Quote, Proposal, ApprovalRecord,
@@ -350,9 +351,9 @@ export async function fetchUsers(): Promise<User[]> {
 }
 
 export async function fetchCurrentUser(): Promise<User> {
-  const { data, error } = await supabase.from("users").select("*").eq("id", "u1").single();
+  const { data, error } = await supabase.from("users").select("*").eq("id", getCurrentUser().id).single();
   if (error || !data) {
-    return { id: "u1", name: "Amin Al-Rashid", email: "amin@halascs.com", role: "admin", region: "East" };
+    return getCurrentUser() as any;
   }
   return data;
 }

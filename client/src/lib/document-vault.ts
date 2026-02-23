@@ -1,3 +1,4 @@
+import { getCurrentUser } from "./auth-state";
 /*
  * Unified Document Architecture — Production-Grade File Infrastructure
  * Sprint 5: Real file-backed document storage.
@@ -774,7 +775,7 @@ export function uploadDocument(input: UploadDocumentInput): UnifiedDocument {
   const mimeType = input.file.type || extensionToMime(ext);
   const fileType = mimeToExtension(mimeType) || ext.toUpperCase();
   const fileSize = formatFileSize(input.file.size);
-  const uploadedBy = input.uploadedBy ?? "Amin Al-Rashid";
+  const uploadedBy = input.uploadedBy ?? getCurrentUser().name;
 
   // Check if document with same name exists for this customer → version increment
   const existing = documentVault.find(
@@ -1204,8 +1205,8 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
     entityType: "document",
     entityId: doc.id,
     action,
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
     timestamp: new Date().toISOString(),
     details,
   };
@@ -1217,8 +1218,8 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
     entityType: "customer",
     entityId: doc.customerId,
     action,
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
     timestamp: new Date().toISOString(),
     details,
   };
@@ -1231,8 +1232,8 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
       entityType: "workspace",
       entityId: doc.workspaceId,
       action,
-      userId: "u1",
-      userName: "Amin Al-Rashid",
+      userId: getCurrentUser().id,
+      userName: getCurrentUser().name,
       timestamp: new Date().toISOString(),
       details,
     };
@@ -1246,8 +1247,8 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
       entityType: "tender",
       entityId: doc.tenderId,
       action,
-      userId: "u1",
-      userName: "Amin Al-Rashid",
+      userId: getCurrentUser().id,
+      userName: getCurrentUser().name,
       timestamp: new Date().toISOString(),
       details,
     };

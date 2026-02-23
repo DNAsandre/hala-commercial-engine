@@ -22,6 +22,8 @@ import DocumentComposer, { type ComposerDocument } from "@/components/DocumentCo
 import OverrideDialog from "@/components/OverrideDialog";
 import { useGateCheck, useAuditLog } from "@/hooks/useGovernance";
 import { navigationV1 } from "@/components/DashboardLayout";
+import { syncQuoteUpdate, syncApprovalCreate, syncAuditEntry } from "@/lib/supabase-sync";
+import { getCurrentUser } from "@/lib/auth-state";
 
 const stateColors: Record<string, string> = {
   draft: "bg-gray-100 text-gray-700",
@@ -79,6 +81,20 @@ export default function Quotes() {
       contextData: { gpPercent, palletVolume, action: "approve_quote" },
     }, () => {
       logApproval("quote", quoteId, "approved", `Quote ${quoteId} approved — GP% ${gpPercent.toFixed(1)}%`, { gpPercent, palletVolume });
+      // Persist approval to Supabase
+      const user = getCurrentUser();
+      syncQuoteUpdate(quoteId, { state: "approved" });
+      syncApprovalCreate({
+        id: `a-${Date.now()}`,
+        entityType: "quote",
+        entityId: quoteId,
+        workspaceId: "",
+        approverRole: user.role,
+        approverName: user.name,
+        decision: "approved",
+        reason: `GP% ${gpPercent.toFixed(1)}%, ${palletVolume} pallets`,
+        isOverride: false,
+      });
       toast.success("Quote approved", { description: `GP% ${gpPercent.toFixed(1)}% — logged to audit trail` });
     });
   };

@@ -1,3 +1,4 @@
+import { getCurrentUser } from "./auth-state";
 /*
  * Stage Transition Engine
  * Controlled, deterministic workspace stage advancement.
@@ -348,8 +349,8 @@ function logTransitionAudit(
     entityType: "workspace",
     entityId: workspace.id,
     action,
-    userId: "u1", // current user (Amin Al-Rashid — admin)
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
     timestamp: new Date().toISOString(),
     details: success
       ? `Stage advanced from '${getStageDisplayName(fromStage)}' to '${getStageDisplayName(toStage!)}'. ${message}${overrideDetails}`
@@ -460,8 +461,8 @@ export function advanceStage(workspaceId: string, options?: AdvanceStageOptions)
     const now = new Date();
     const overrideRecord: GovernanceOverride = {
       overrideReason: options.overrideReason,
-      userId: "u1",
-      userName: "Amin Al-Rashid",
+      userId: getCurrentUser().id,
+      userName: getCurrentUser().name,
       timestamp: now.toISOString(),
       overriddenRules: failures.map(f => f.ruleName),
       fromStage,
@@ -489,8 +490,8 @@ export function advanceStage(workspaceId: string, options?: AdvanceStageOptions)
       fromStage,
       toStage,
       action: "advanced_with_override",
-      userId: "u1",
-      userName: "Amin Al-Rashid",
+      userId: getCurrentUser().id,
+      userName: getCurrentUser().name,
       timestamp: now.toISOString(),
       reason: successMsg,
       overrideRecord,
@@ -502,8 +503,8 @@ export function advanceStage(workspaceId: string, options?: AdvanceStageOptions)
       fromStage,
       toStage,
       timestamp: now.getTime(),
-      userId: "u1",
-      userName: "Amin Al-Rashid",
+      userId: getCurrentUser().id,
+      userName: getCurrentUser().name,
     });
 
     return {
@@ -536,8 +537,8 @@ export function advanceStage(workspaceId: string, options?: AdvanceStageOptions)
     fromStage,
     toStage,
     action: "advanced",
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
     timestamp: now.toISOString(),
     reason: successMsg,
   });
@@ -548,8 +549,8 @@ export function advanceStage(workspaceId: string, options?: AdvanceStageOptions)
     fromStage,
     toStage,
     timestamp: now.getTime(),
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
   });
 
   return {
@@ -681,8 +682,8 @@ export function advanceToStage(
     const now = new Date();
     const overrideRecord: GovernanceOverride = {
       overrideReason: options.overrideReason,
-      userId: "u1",
-      userName: "Amin Al-Rashid",
+      userId: getCurrentUser().id,
+      userName: getCurrentUser().name,
       timestamp: now.toISOString(),
       overriddenRules: allFailures.map(f => f.ruleName),
       fromStage: originalStage,
@@ -705,8 +706,8 @@ export function advanceToStage(
       fromStage: originalStage,
       toStage: targetStage,
       action: "advanced_with_override",
-      userId: "u1",
-      userName: "Amin Al-Rashid",
+      userId: getCurrentUser().id,
+      userName: getCurrentUser().name,
       timestamp: now.toISOString(),
       reason: successMsg,
       overrideRecord,
@@ -717,8 +718,8 @@ export function advanceToStage(
       fromStage: originalStage,
       toStage: targetStage,
       timestamp: now.getTime(),
-      userId: "u1",
-      userName: "Amin Al-Rashid",
+      userId: getCurrentUser().id,
+      userName: getCurrentUser().name,
     });
 
     return {
@@ -748,8 +749,8 @@ export function advanceToStage(
     fromStage: originalStage,
     toStage: targetStage,
     action: "advanced",
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
     timestamp: now.toISOString(),
     reason: successMsg,
   });
@@ -759,8 +760,8 @@ export function advanceToStage(
     fromStage: originalStage,
     toStage: targetStage,
     timestamp: now.getTime(),
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
   });
 
   return {
@@ -895,8 +896,8 @@ export function revertStage(workspaceId: string): RevertResult {
     entityType: "workspace",
     entityId: workspaceId,
     action: "stage_reverted",
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
     timestamp: now.toISOString(),
     details: msg,
   };
@@ -910,8 +911,8 @@ export function revertStage(workspaceId: string): RevertResult {
     fromStage: revertedFrom,
     toStage: record.fromStage,
     action: "reverted",
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
     timestamp: now.toISOString(),
     reason: msg,
   });

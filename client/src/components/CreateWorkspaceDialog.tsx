@@ -5,6 +5,7 @@
  */
 
 import { useState } from "react";
+import { getCurrentUser } from "@/lib/auth-state";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -92,7 +93,7 @@ export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated }:
     createWs.mutate(newWorkspace).then(result => {
       if (result) {
         // Log audit entry
-        logAuditAction("workspace", newWorkspace.id, "created", "u1", "Amin Al-Rashid", `Workspace "${title.trim()}" created for ${customerName}`);
+        logAuditAction("workspace", newWorkspace.id, "created", getCurrentUser().id, getCurrentUser().name, `Workspace "${title.trim()}" created for ${customerName}`);
         toast.success("Workspace created", {
           description: `${customerName} — ${title.trim()}`,
         });

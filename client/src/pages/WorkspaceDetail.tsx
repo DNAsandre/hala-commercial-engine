@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth-state";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import {
@@ -233,7 +234,7 @@ export default function WorkspaceDetail() {
     if (result.success) {
       // Persist stage change to Supabase
       updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any);
-      logAuditAction("workspace", ws.id, "stage_advanced", "u1", "Amin Al-Rashid",
+      logAuditAction("workspace", ws.id, "stage_advanced", getCurrentUser().id, getCurrentUser().name,
         `${getStageDisplayName(result.fromStage)} → ${getStageDisplayName(result.nextStage!)}${result.governanceOverride ? " (governance override)" : ""}`);
       toast.success(result.governanceOverride ? "Stage advanced with governance override" : result.message, {
         description: `${getStageDisplayName(result.fromStage)} → ${getStageDisplayName(result.nextStage!)}`,
@@ -250,7 +251,7 @@ export default function WorkspaceDetail() {
     if (result.success) {
       // Persist undo to Supabase
       updateWorkspaceDB(ws.id, { stage: ws.stage } as any);
-      logAuditAction("workspace", ws.id, "stage_reverted", "u1", "Amin Al-Rashid", result.message);
+      logAuditAction("workspace", ws.id, "stage_reverted", getCurrentUser().id, getCurrentUser().name, result.message);
       toast.success("Stage reverted", { description: result.message });
       setShowUndoBanner(false); setTransitionResult(null);
       if (undoTimerRef.current) clearInterval(undoTimerRef.current);

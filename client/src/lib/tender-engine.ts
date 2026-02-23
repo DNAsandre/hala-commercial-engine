@@ -1,3 +1,4 @@
+import { getCurrentUser } from "./auth-state";
 /*
  * Tender Engine — Governed Tender Module
  * Mirrors the architecture of stage-transition.ts for Workspaces.
@@ -425,8 +426,8 @@ const tenderRules: TenderTransitionRule[] = [
     validate: (ctx) => {
       // Current user is Amin Al-Rashid (Admin) — always passes
       // In production, check actual user role
-      const currentUserRole = "admin";
-      const currentUserName = "Amin Al-Rashid";
+      const currentUserRole = getCurrentUser().role;
+      const currentUserName = getCurrentUser().name;
       const isOwner = ctx.tender.assignedOwner === currentUserName;
       const isAdmin = currentUserRole === "admin";
       if (!isOwner && !isAdmin) {
@@ -442,8 +443,8 @@ const tenderRules: TenderTransitionRule[] = [
     to: "lost",
     name: "Lost Permission Check",
     validate: (ctx) => {
-      const currentUserRole = "admin";
-      const currentUserName = "Amin Al-Rashid";
+      const currentUserRole = getCurrentUser().role;
+      const currentUserName = getCurrentUser().name;
       const isOwner = ctx.tender.assignedOwner === currentUserName;
       const isAdmin = currentUserRole === "admin";
       if (!isOwner && !isAdmin) {
@@ -562,8 +563,8 @@ function logTenderTransitionAudit(
     entityType: "tender",
     entityId: tender.id,
     action,
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
     timestamp: new Date().toISOString(),
     details: success
       ? `Tender status advanced from '${getTenderStatusDisplayName(fromStatus)}' to '${getTenderStatusDisplayName(toStatus!)}'. ${message}${overrideDetails}`
@@ -684,8 +685,8 @@ export function advanceTenderStatus(
     const now = new Date();
     const overrideRecord: TenderGovernanceOverride = {
       overrideReason: options.overrideReason,
-      userId: "u1",
-      userName: "Amin Al-Rashid",
+      userId: getCurrentUser().id,
+      userName: getCurrentUser().name,
       timestamp: now.toISOString(),
       overriddenRules: failures.map(f => f.ruleName),
       fromStatus,
@@ -710,8 +711,8 @@ export function advanceTenderStatus(
       fromStatus,
       toStatus: targetStatus,
       action: "advanced_with_override",
-      userId: "u1",
-      userName: "Amin Al-Rashid",
+      userId: getCurrentUser().id,
+      userName: getCurrentUser().name,
       timestamp: now.toISOString(),
       reason: successMsg,
       overrideRecord,
@@ -722,8 +723,8 @@ export function advanceTenderStatus(
       fromStatus,
       toStatus: targetStatus,
       timestamp: now.getTime(),
-      userId: "u1",
-      userName: "Amin Al-Rashid",
+      userId: getCurrentUser().id,
+      userName: getCurrentUser().name,
     });
 
     const suggestion = generateWorkspaceSuggestion(tender, targetStatus);
@@ -758,8 +759,8 @@ export function advanceTenderStatus(
     fromStatus,
     toStatus: targetStatus,
     action: "advanced",
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
     timestamp: now.toISOString(),
     reason: successMsg,
   });
@@ -769,8 +770,8 @@ export function advanceTenderStatus(
     fromStatus,
     toStatus: targetStatus,
     timestamp: now.getTime(),
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
   });
 
   const suggestion = generateWorkspaceSuggestion(tender, targetStatus);
@@ -866,8 +867,8 @@ export function revertTenderStatus(tenderId: string, reason?: string): TenderRev
     entityType: "tender",
     entityId: tenderId,
     action: "tender_status_reverted",
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
     timestamp: now.toISOString(),
     details: msg,
   };
@@ -880,8 +881,8 @@ export function revertTenderStatus(tenderId: string, reason?: string): TenderRev
     fromStatus: revertedFrom,
     toStatus: record.fromStatus,
     action: "reverted",
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
     timestamp: now.toISOString(),
     reason: msg,
   });
@@ -976,8 +977,8 @@ export function createTender(data: Omit<Tender, "id" | "createdAt" | "updatedAt"
     entityType: "tender",
     entityId: tender.id,
     action: "tender_created",
-    userId: "u1",
-    userName: "Amin Al-Rashid",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
     timestamp: new Date().toISOString(),
     details: `Tender "${tender.title}" created for ${tender.customerName}. Estimated value: ${formatSAR(tender.estimatedValue)}.`,
   };

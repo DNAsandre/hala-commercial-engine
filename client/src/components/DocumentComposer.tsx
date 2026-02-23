@@ -79,6 +79,14 @@ import {
   buildResolutionContext, resolveTokens, resolveDocumentTokens,
   checkCompileReadiness, getOverridesForInstance, setVariableOverride,
 } from "@/lib/semantic-variables";
+import {
+  syncDocInstanceCreate, syncDocInstanceUpdate,
+  syncDocInstanceVersionCreate, syncCompiledDocCreate,
+  syncQuoteCreate, syncQuoteUpdate,
+  syncProposalCreate, syncProposalUpdate,
+  syncAuditEntry,
+} from "@/lib/supabase-sync";
+import { getCurrentUser } from "@/lib/auth-state";
 
 // ============================================================
 // TYPES
@@ -1330,9 +1338,52 @@ export default function DocumentComposer({
   }, [promptText, document.blocks.length]);
 
   // Save
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
+    // Persist doc instance to Supabase
+    const user = getCurrentUser();
+    try {
+      await syncDocInstanceCreate({
+        id: document.id,
+        doc_type: document.doc_type,
+        template_version_id: document.template_version_id,
+        status: document.status,
+        linked_entity_type: document.doc_type,
+        linked_entity_id: document.workspace_id || document.customer_id,
+        customer_id: document.customer_id,
+        customer_name: document.customer_name,
+        workspace_id: document.workspace_id,
+        workspace_name: document.workspace_name,
+        current_version_id: `${document.id}-v${document.version}`,
+        title: document.title,
+        branding_profile_id: document.branding_profile_id,
+        is_compiled: document.is_compiled,
+        compiled_at: document.compiled_at,
+        created_by: user.name,
+      });
+      // Save version with blocks
+      await syncDocInstanceVersionCreate({
+        id: `${document.id}-v${document.version}`,
+        doc_instance_id: document.id,
+        version_number: document.version,
+        blocks: document.blocks,
+        bindings: document.bindings,
+        created_by: user.name,
+      });
+      // Log audit
+      await syncAuditEntry({
+        id: `audit-save-${Date.now()}`,
+        entityType: document.doc_type,
+        entityId: document.id,
+        action: "document_saved",
+        userId: user.id,
+        userName: user.name,
+        details: `${document.doc_type} "${document.title}" saved — v${document.version}`,
+      });
+    } catch (e) {
+      console.error("Save to Supabase failed:", e);
+    }
     if (onSave) onSave(document);
-    toast.success("Document saved");
+    toast.success("Document saved to database");
   }, [document, onSave]);
 
   // PDF Compile
@@ -1351,21 +1402,70 @@ export default function DocumentComposer({
     setShowPDFPreview(true);
   }, [document, resolutionContext]);
 
-  const handleApproveCompile = useCallback(() => {
+  const handleApproveCompile = useCallback(async () => {
     setShowPDFPreview(false);
-    setDocument(prev => ({ ...prev, is_compiled: true, compiled_at: new Date().toISOString() }));
+    const compiledAt = new Date().toISOString();
+    setDocument(prev => ({ ...prev, is_compiled: true, compiled_at: compiledAt }));
+    // Persist compiled document to Supabase
+    const user = getCurrentUser();
+    try {
+      const compiledDocId = `cd-${document.id}-${Date.now()}`;
+      await syncCompiledDocCreate({
+        id: compiledDocId,
+        doc_instance_id: document.id,
+        doc_instance_version_id: `${document.id}-v${document.version}`,
+        title: document.title,
+        doc_type: document.doc_type,
+        customer_id: document.customer_id,
+        customer_name: document.customer_name,
+        workspace_id: document.workspace_id,
+        compiled_html: compiledPreviewHtml,
+        compiled_by: user.name,
+        compiled_at: compiledAt,
+        status: "final",
+      });
+      await syncDocInstanceUpdate(document.id, { is_compiled: true, compiled_at: compiledAt, status: "compiled" });
+      await syncAuditEntry({
+        id: `audit-compile-${Date.now()}`,
+        entityType: document.doc_type,
+        entityId: document.id,
+        action: "document_compiled",
+        userId: user.id,
+        userName: user.name,
+        details: `${document.doc_type} "${document.title}" compiled to PDF`,
+      });
+    } catch (e) {
+      console.error("Compile sync to Supabase failed:", e);
+    }
     if (onExportPDF) onExportPDF(document);
     toast.success("PDF approved and saved to Documents");
-  }, [document, onExportPDF]);
+  }, [document, onExportPDF, compiledPreviewHtml]);
 
-  const handleCanonLock = useCallback(() => {
+  const handleCanonLock = useCallback(async () => {
+    const now = new Date().toISOString();
     setDocument(prev => ({
-      ...prev, status: "canon", updated_at: new Date().toISOString(),
+      ...prev, status: "canon", updated_at: now,
       blocks: prev.blocks.map(b => ({ ...b, is_locked: true })),
-      is_compiled: true, compiled_at: new Date().toISOString(),
+      is_compiled: true, compiled_at: now,
     }));
     setMode("canon");
     setShowPDFPreview(false);
+    // Persist canon lock to Supabase
+    const user = getCurrentUser();
+    try {
+      await syncDocInstanceUpdate(document.id, { status: "canon", is_compiled: true, compiled_at: now });
+      await syncAuditEntry({
+        id: `audit-canon-${Date.now()}`,
+        entityType: document.doc_type,
+        entityId: document.id,
+        action: "document_canon_locked",
+        userId: user.id,
+        userName: user.name,
+        details: `${document.doc_type} "${document.title}" locked as Canon — immutable`,
+      });
+    } catch (e) {
+      console.error("Canon lock sync failed:", e);
+    }
     if (onExportPDF) onExportPDF(document);
     toast.success("Document locked as Canon — immutable version created, final PDF compiled");
   }, [document, onExportPDF]);

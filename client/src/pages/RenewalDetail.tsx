@@ -4,6 +4,7 @@
 // Tabs: Overview, Delta Comparison, Gate Results, Integrity, Versions, Audit Trail
 import { useState, useMemo } from "react";
 import { useParams, Link } from "wouter";
+import { getCurrentUser } from "@/lib/auth-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -118,8 +119,8 @@ export default function RenewalDetail() {
       rule_set_version_id: gateEval?.ruleSetVersionId || null,
       ecr_rule_version_id: gateEval?.ruleSetVersionId || null,
       previous_result: overrideModal.gate.result,
-      userId: "u1",
-      userName: "Amin Al-Rashid",
+      userId: getCurrentUser().id,
+      userName: getCurrentUser().name,
       userRole: "director",
       reason: overrideReason,
     });
@@ -130,7 +131,7 @@ export default function RenewalDetail() {
     }
 
     // Also update the gate evaluation for display
-    overrideGate(overrideModal.evalId, overrideModal.gate.gateKey, overrideReason, "u1", "Amin Al-Rashid");
+    overrideGate(overrideModal.evalId, overrideModal.gate.gateKey, overrideReason, getCurrentUser().id, getCurrentUser().name);
 
     if (result.requires_second_approval) {
       toast.warning("Override created — pending second approval", {
@@ -151,14 +152,14 @@ export default function RenewalDetail() {
 
   const handleDecisionChange = () => {
     if (!workspace) return;
-    updateRenewalDecision(workspace.id, newDecision, "u1", "Amin Al-Rashid");
+    updateRenewalDecision(workspace.id, newDecision, getCurrentUser().id, getCurrentUser().name);
     setDecisionModal(false);
     forceUpdate();
   };
 
   const handleStatusChange = (status: "under_review" | "approved" | "rejected") => {
     if (!workspace) return;
-    updateRenewalWorkspaceStatus(workspace.id, status, "u1", "Amin Al-Rashid");
+    updateRenewalWorkspaceStatus(workspace.id, status, getCurrentUser().id, getCurrentUser().name);
     forceUpdate();
   };
 
@@ -167,8 +168,8 @@ export default function RenewalDetail() {
       entityType: "renewal",
       entityId: workspace.id,
       workspaceId: workspace.id,
-      userId: "u1",
-      userName: "Amin Al-Rashid",
+      userId: getCurrentUser().id,
+      userName: getCurrentUser().name,
     });
     setIntegrityResult(result);
     forceUpdate();

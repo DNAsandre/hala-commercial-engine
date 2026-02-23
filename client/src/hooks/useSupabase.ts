@@ -3,6 +3,7 @@
  * Provides loading states, error handling, and automatic refetch.
  */
 
+import { getCurrentUser } from "@/lib/auth-state";
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   fetchUsers, fetchCurrentUser, fetchCustomers, fetchCustomerById,
@@ -67,7 +68,7 @@ export function useUsers(): UseQueryResult<User[]> {
 }
 
 export function useCurrentUser(): UseQueryResult<User> {
-  return useQuery(fetchCurrentUser, { id: "u1", name: "Amin Al-Rashid", email: "amin@halascs.com", role: "admin", region: "East" });
+  return useQuery(fetchCurrentUser, getCurrentUser() as any);
 }
 
 export function useCustomers(): UseQueryResult<Customer[]> {

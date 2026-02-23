@@ -1,9 +1,10 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Route, Switch, Redirect } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import DashboardLayout from "./components/DashboardLayout";
 import Dashboard from "./pages/Dashboard";
 import Workspaces from "./pages/Workspaces";
@@ -47,6 +48,7 @@ import BlockBuilder from "./pages/BlockBuilder";
 import VariablesManager from "./pages/VariablesManager";
 import TemplateDesigner from "./pages/TemplateDesigner";
 import OutputStudio from "./pages/OutputStudio";
+import { Loader2 } from "lucide-react";
 
 function AppRouter() {
   return (
@@ -97,21 +99,57 @@ function AppRouter() {
   );
 }
 
+/** Loading spinner shown while checking auth session */
+function AuthLoading() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="flex flex-col items-center gap-3">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+/** Route guard: redirects to /login if not authenticated */
+function ProtectedApp() {
+  const { session, loading } = useAuth();
+
+  if (loading) return <AuthLoading />;
+  if (!session) return <Redirect to="/login" />;
+
+  return (
+    <DashboardLayout>
+      <AppRouter />
+    </DashboardLayout>
+  );
+}
+
+/** Public login route: redirects to / if already authenticated */
+function PublicLogin() {
+  const { session, loading } = useAuth();
+
+  if (loading) return <AuthLoading />;
+  if (session) return <Redirect to="/" />;
+
+  return <Login />;
+}
+
 function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">
-        <TooltipProvider>
-          <Toaster />
-          <Switch>
-            <Route path="/login" component={Login} />
-            <Route>
-              <DashboardLayout>
-                <AppRouter />
-              </DashboardLayout>
-            </Route>
-          </Switch>
-        </TooltipProvider>
+        <AuthProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Switch>
+              <Route path="/login" component={PublicLogin} />
+              <Route>
+                <ProtectedApp />
+              </Route>
+            </Switch>
+          </TooltipProvider>
+        </AuthProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );

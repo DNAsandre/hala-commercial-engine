@@ -48,9 +48,11 @@ import {
   Shield,
   TrendingDown,
   Dna,
+  LogOut,
 } from "lucide-react";
 import { getRoleLabel } from "@/lib/store";
-import { useCurrentUser, useSignals } from "@/hooks/useSupabase";
+import { useSignals } from "@/hooks/useSupabase";
+import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 
 // ============================================================
@@ -134,7 +136,8 @@ const simplifiedGroups = ["core", "system"];
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [collapsed, setCollapsed] = useState(false);
-  const { data: currentUser } = useCurrentUser();
+  const { appUser: currentUser, signOut } = useAuth();
+  const effectiveUser = currentUser || { id: "u1", name: "Loading...", email: "", role: "admin", region: "East" };
   const { data: signals } = useSignals();
   const redCount = signals.filter(s => s.severity === "red").length;
 
@@ -219,13 +222,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="border-t border-sidebar-border p-3">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full bg-sidebar-accent flex items-center justify-center text-xs font-semibold text-sidebar-accent-foreground shrink-0">
-              {currentUser.name.split(" ").map(n => n[0]).join("")}
+              {effectiveUser.name.split(" ").map(n => n[0]).join("")}
             </div>
             {!collapsed && (
-              <div className="min-w-0">
-                <div className="text-xs font-medium text-white truncate">{currentUser.name}</div>
-                <div className="text-[10px] text-sidebar-foreground/50 truncate">{getRoleLabel(currentUser.role)}</div>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-medium text-white truncate">{effectiveUser.name}</div>
+                <div className="text-[10px] text-sidebar-foreground/50 truncate">{getRoleLabel(effectiveUser.role as any)}</div>
               </div>
+            )}
+            {!collapsed && (
+              <button
+                onClick={signOut}
+                className="p-1.5 rounded-md hover:bg-sidebar-accent/50 text-sidebar-foreground/50 hover:text-white transition-colors"
+                title="Sign out"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+              </button>
             )}
           </div>
         </div>

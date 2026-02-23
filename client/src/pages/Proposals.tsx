@@ -22,6 +22,8 @@ import DocumentComposer, { type ComposerDocument } from "@/components/DocumentCo
 import OverrideDialog from "@/components/OverrideDialog";
 import { useGateCheck, useAuditLog } from "@/hooks/useGovernance";
 import { navigationV1 } from "@/components/DashboardLayout";
+import { syncProposalUpdate, syncApprovalCreate, syncAuditEntry } from "@/lib/supabase-sync";
+import { getCurrentUser } from "@/lib/auth-state";
 
 const stateColors: Record<string, string> = {
   draft: "bg-gray-100 text-gray-700",
@@ -79,6 +81,20 @@ export default function Proposals() {
       contextData: { action: "approve_proposal" },
     }, () => {
       logApproval("proposal", proposalId, "approved", `Proposal "${title}" approved`, {});
+      // Persist approval to Supabase
+      const user = getCurrentUser();
+      syncProposalUpdate(proposalId, { state: "commercial_approved" });
+      syncApprovalCreate({
+        id: `a-${Date.now()}`,
+        entityType: "proposal",
+        entityId: proposalId,
+        workspaceId: "",
+        approverRole: user.role,
+        approverName: user.name,
+        decision: "approved",
+        reason: `Proposal "${title}" approved`,
+        isOverride: false,
+      });
       toast.success("Proposal approved", { description: "Logged to governance audit trail" });
     });
   };
@@ -93,6 +109,17 @@ export default function Proposals() {
       contextData: { action: "crm_export" },
     }, () => {
       logAction("proposal", proposalId, "proposal_crm_exported", `Proposal "${title}" exported to CRM`);
+      // Persist CRM export status to Supabase
+      syncProposalUpdate(proposalId, { state: "sent" });
+      syncAuditEntry({
+        id: `audit-crm-${Date.now()}`,
+        entityType: "proposal",
+        entityId: proposalId,
+        action: "proposal_crm_exported",
+        userId: getCurrentUser().id,
+        userName: getCurrentUser().name,
+        details: `Proposal "${title}" exported to CRM`,
+      });
       toast.success("Proposal exported to CRM", { description: "PDF attached to Zoho deal record" });
     });
   };

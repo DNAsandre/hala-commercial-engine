@@ -18,13 +18,20 @@ import {
 } from "@/lib/governance";
 import type { UserRole, WorkspaceStage } from "@/lib/store";
 import { toast } from "sonner";
+import { getCurrentUser } from "@/lib/auth-state";
 
-// Current user context (would come from auth in production)
-export const currentUser = {
-  id: "u1",
-  name: "Amin Al-Rashid",
-  role: "director" as UserRole,
-};
+// Dynamic current user from auth state
+function getAuthUser() {
+  const u = getCurrentUser();
+  return { id: u.id, name: u.name, role: u.role as UserRole };
+}
+// Legacy export for backward compatibility
+export const currentUser = new Proxy({} as { id: string; name: string; role: UserRole }, {
+  get: (_target, prop) => {
+    const u = getAuthUser();
+    return (u as any)[prop];
+  },
+});
 
 // ============================================================
 // useGateCheck — Check a policy gate before an action
@@ -54,8 +61,8 @@ export function useGateCheck() {
 
     const evaluation = evaluateGate(gate, {
       ...context,
-      userId: currentUser.id,
-      userName: currentUser.name,
+      userId: getAuthUser().id,
+      userName: getAuthUser().name,
       contextData: context.contextData || {},
     });
 
@@ -101,7 +108,7 @@ export function useGateCheck() {
     const result = createOverride(
       lastEvaluation,
       gate,
-      currentUser,
+      getAuthUser(),
       reason
     );
 
@@ -145,7 +152,7 @@ export function useAuditLog() {
     details: string,
     metadata: Record<string, unknown> = {}
   ) => {
-    logWriteAction(entityType, entityId, action, currentUser.id, currentUser.name, details, metadata);
+    logWriteAction(entityType, entityId, action, getAuthUser().id, getAuthUser().name, details, metadata);
   }, []);
 
   const logApproval = useCallback((
@@ -155,7 +162,7 @@ export function useAuditLog() {
     details: string,
     metadata: Record<string, unknown> = {}
   ) => {
-    logApprovalDecision(entityType, entityId, decision, currentUser.id, currentUser.name, details, metadata);
+    logApprovalDecision(entityType, entityId, decision, getAuthUser().id, getAuthUser().name, details, metadata);
   }, []);
 
   return { logAction, logApproval, auditLog: governanceAuditLog };
@@ -192,8 +199,8 @@ export function useStageControl() {
       workspaceId,
       fromStage: currentStage,
       toStage: targetStage,
-      requestedBy: currentUser.name,
-      requestedByRole: currentUser.role,
+      requestedBy: getAuthUser().name,
+      requestedByRole: getAuthUser().role,
       reason: `Stage transition requested: ${currentStage} → ${targetStage}`,
     });
     if (!result.allowed) {
