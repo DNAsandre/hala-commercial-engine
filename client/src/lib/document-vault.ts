@@ -21,6 +21,7 @@
  */
 
 import { type AuditEntry, auditLog } from "./store";
+import { syncAuditEntry } from "./supabase-sync";
 
 // ─── DOCUMENT CATEGORIES (Folder Structure) ──────────────────
 
@@ -1209,6 +1210,7 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
     details,
   };
   auditLog.unshift(entry);
+  syncAuditEntry(entry);
 
   const customerEntry: AuditEntry = {
     id: `al-doc-c-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1221,6 +1223,7 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
     details,
   };
   auditLog.unshift(customerEntry);
+  syncAuditEntry(customerEntry);
 
   if (doc.workspaceId) {
     const wsEntry: AuditEntry = {
@@ -1234,6 +1237,7 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
       details,
     };
     auditLog.unshift(wsEntry);
+    syncAuditEntry(wsEntry);
   }
 
   if (doc.tenderId) {
@@ -1248,6 +1252,7 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
       details,
     };
     auditLog.unshift(tnEntry);
+    syncAuditEntry(tnEntry);
   }
 }
 

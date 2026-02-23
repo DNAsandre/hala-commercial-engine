@@ -33,6 +33,8 @@ import {
   getStrictMode, type TransitionResult, type ValidationFailure,
 } from "@/lib/stage-transition";
 import { toast } from "sonner";
+import { updateWorkspace as updateWorkspaceDB, createAuditEntry } from "@/lib/supabase-data";
+import { logAuditAction } from "@/hooks/useMutations";
 import {
   getDocumentsByWorkspace, getFileTypeColor, getCategoryIcon,
   uploadDocument, hasRealFile, initializeMockFiles,
@@ -229,6 +231,10 @@ export default function WorkspaceDetail() {
     setTransitionResult(result);
     setConfirmInput(""); setOverrideReason("");
     if (result.success) {
+      // Persist stage change to Supabase
+      updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any);
+      logAuditAction("workspace", ws.id, "stage_advanced", "u1", "Amin Al-Rashid",
+        `${getStageDisplayName(result.fromStage)} → ${getStageDisplayName(result.nextStage!)}${result.governanceOverride ? " (governance override)" : ""}`);
       toast.success(result.governanceOverride ? "Stage advanced with governance override" : result.message, {
         description: `${getStageDisplayName(result.fromStage)} → ${getStageDisplayName(result.nextStage!)}`,
       });
@@ -242,6 +248,9 @@ export default function WorkspaceDetail() {
   const handleUndo = () => {
     const result = revertStage(ws.id);
     if (result.success) {
+      // Persist undo to Supabase
+      updateWorkspaceDB(ws.id, { stage: ws.stage } as any);
+      logAuditAction("workspace", ws.id, "stage_reverted", "u1", "Amin Al-Rashid", result.message);
       toast.success("Stage reverted", { description: result.message });
       setShowUndoBanner(false); setTransitionResult(null);
       if (undoTimerRef.current) clearInterval(undoTimerRef.current);

@@ -16,7 +16,7 @@ import { Loader2 } from "lucide-react";
 import CreateWorkspaceDialog from "@/components/CreateWorkspaceDialog";
 
 export default function Workspaces() {
-  const { data: workspaces, loading: wsLoading } = useWorkspaces();
+  const { data: workspaces, loading: wsLoading, refetch: refetchWorkspaces } = useWorkspaces();
   const { data: signals } = useSignals();
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [stageFilter, setStageFilter] = useState<string>("all");
@@ -140,7 +140,7 @@ export default function Workspaces() {
         </CardContent>
       </Card>
 
-      <CreateWorkspaceDialog open={showCreate} onOpenChange={setShowCreate} />
+      <CreateWorkspaceDialog open={showCreate} onOpenChange={setShowCreate} onCreated={refetchWorkspaces} />
     </div>
   );
 }

@@ -25,6 +25,7 @@ import {
   auditLog,
   workspaces,
 } from "./store";
+import { syncWorkspaceStage, syncAuditEntry } from "./supabase-sync";
 
 // ─── GOVERNANCE MODE ───────────────────────────────────────
 // When strict_mode = false (default), validation failures are
@@ -355,6 +356,8 @@ function logTransitionAudit(
       : `Stage advance blocked at '${getStageDisplayName(fromStage)}'. ${message}`,
   };
   auditLog.unshift(entry);
+  // Persist audit entry to Supabase
+  syncAuditEntry(entry);
 }
 
 /**
@@ -473,6 +476,8 @@ export function advanceStage(workspaceId: string, options?: AdvanceStageOptions)
     workspace.stage = toStage;
     workspace.daysInStage = 0;
     workspace.updatedAt = now.toISOString().slice(0, 10);
+    // Persist to Supabase
+    syncWorkspaceStage(workspace.id, toStage, 0);
 
     const successMsg = `Stage advanced from ${getStageDisplayName(fromStage)} to ${getStageDisplayName(toStage)} (governance override).`;
     logTransitionAudit(workspace, fromStage, toStage, true, successMsg, overrideRecord);
@@ -517,6 +522,8 @@ export function advanceStage(workspaceId: string, options?: AdvanceStageOptions)
   workspace.stage = toStage;
   workspace.daysInStage = 0;
   workspace.updatedAt = new Date().toISOString().slice(0, 10);
+  // Persist to Supabase
+  syncWorkspaceStage(workspace.id, toStage, 0);
 
   const now = new Date();
   const successMsg = `Stage advanced from ${getStageDisplayName(fromStage)} to ${getStageDisplayName(toStage)}.`;
@@ -876,6 +883,8 @@ export function revertStage(workspaceId: string): RevertResult {
   workspace.stage = record.fromStage;
   workspace.daysInStage = 0;
   workspace.updatedAt = new Date().toISOString().slice(0, 10);
+  // Persist to Supabase
+  syncWorkspaceStage(workspace.id, record.fromStage, 0);
 
   const now = new Date();
   const msg = `Stage reverted from '${getStageDisplayName(revertedFrom)}' to '${getStageDisplayName(record.fromStage)}' (undo).`;
@@ -892,6 +901,7 @@ export function revertStage(workspaceId: string): RevertResult {
     details: msg,
   };
   auditLog.unshift(entry);
+  syncAuditEntry(entry);
 
   // Stage history
   stageHistory.unshift({

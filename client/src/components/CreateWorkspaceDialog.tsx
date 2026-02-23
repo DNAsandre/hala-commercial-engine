@@ -15,18 +15,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { type Workspace, type Region } from "@/lib/store";
 import { useCustomers, useWorkspaces, useUsers } from "@/hooks/useSupabase";
+import { useCreateWorkspace } from "@/hooks/useMutations";
+import { logAuditAction } from "@/hooks/useMutations";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onCreated?: () => void;
 }
 
-export default function CreateWorkspaceDialog({ open, onOpenChange }: Props) {
+export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated }: Props) {
   const { data: customers } = useCustomers();
   const { data: workspaces } = useWorkspaces();
   const { data: users } = useUsers();
+  const createWs = useCreateWorkspace();
   const [customerId, setCustomerId] = useState("");
   const [title, setTitle] = useState("");
   const [region, setRegion] = useState<Region>("East");
@@ -85,24 +89,28 @@ export default function CreateWorkspaceDialog({ open, onOpenChange }: Props) {
       notes: notes.trim(),
     };
 
-    workspaces.unshift(newWorkspace);
-
-    toast.success("Workspace created", {
-      description: `${customerName} — ${title.trim()}`,
+    createWs.mutate(newWorkspace).then(result => {
+      if (result) {
+        // Log audit entry
+        logAuditAction("workspace", newWorkspace.id, "created", "u1", "Amin Al-Rashid", `Workspace "${title.trim()}" created for ${customerName}`);
+        toast.success("Workspace created", {
+          description: `${customerName} — ${title.trim()}`,
+        });
+        // Reset form
+        setCustomerId("");
+        setTitle("");
+        setRegion("East");
+        setOwner("");
+        setEstimatedValue("");
+        setPalletVolume("");
+        setNotes("");
+        setCrmDealId("");
+        setIsNew(false);
+        setNewCustomerName("");
+        onOpenChange(false);
+        onCreated?.();
+      }
     });
-
-    // Reset form
-    setCustomerId("");
-    setTitle("");
-    setRegion("East");
-    setOwner("");
-    setEstimatedValue("");
-    setPalletVolume("");
-    setNotes("");
-    setCrmDealId("");
-    setIsNew(false);
-    setNewCustomerName("");
-    onOpenChange(false);
   }
 
   return (

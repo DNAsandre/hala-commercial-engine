@@ -25,6 +25,7 @@ import {
   formatSAR,
 } from "./store";
 import { getStrictMode } from "./stage-transition";
+import { syncTenderCreate, syncTenderUpdate, syncAuditEntry } from "./supabase-sync";
 
 // ─── TENDER STATUS ─────────────────────────────────────────
 
@@ -569,6 +570,7 @@ function logTenderTransitionAudit(
       : `Tender status advance blocked at '${getTenderStatusDisplayName(fromStatus)}'. ${message}`,
   };
   auditLog.unshift(entry);
+  syncAuditEntry(entry);
 }
 
 /**
@@ -696,6 +698,8 @@ export function advanceTenderStatus(
     tender.status = targetStatus;
     tender.daysInStatus = 0;
     tender.updatedAt = now.toISOString().slice(0, 10);
+    // Persist to Supabase
+    syncTenderUpdate(tenderId, { status: targetStatus, daysInStatus: 0 });
 
     const successMsg = `Tender status advanced from ${getTenderStatusDisplayName(fromStatus)} to ${getTenderStatusDisplayName(targetStatus)} (governance override).`;
     logTenderTransitionAudit(tender, fromStatus, targetStatus, true, successMsg, overrideRecord);
@@ -742,6 +746,8 @@ export function advanceTenderStatus(
   tender.status = targetStatus;
   tender.daysInStatus = 0;
   tender.updatedAt = now.toISOString().slice(0, 10);
+  // Persist to Supabase
+  syncTenderUpdate(tenderId, { status: targetStatus, daysInStatus: 0 });
 
   const successMsg = `Tender status advanced from ${getTenderStatusDisplayName(fromStatus)} to ${getTenderStatusDisplayName(targetStatus)}.`;
   logTenderTransitionAudit(tender, fromStatus, targetStatus, true, successMsg);
@@ -848,6 +854,8 @@ export function revertTenderStatus(tenderId: string, reason?: string): TenderRev
   tender.status = record.fromStatus;
   tender.daysInStatus = 0;
   tender.updatedAt = new Date().toISOString().slice(0, 10);
+  // Persist to Supabase
+  syncTenderUpdate(tenderId, { status: record.fromStatus, daysInStatus: 0 });
 
   const now = new Date();
   const reasonText = reason ? ` Reason: "${reason}"` : "";
@@ -864,6 +872,7 @@ export function revertTenderStatus(tenderId: string, reason?: string): TenderRev
     details: msg,
   };
   auditLog.unshift(entry);
+  syncAuditEntry(entry);
 
   tenderStageHistory.unshift({
     id: `tsh-rv-${Date.now()}`,
@@ -958,6 +967,8 @@ export function createTender(data: Omit<Tender, "id" | "createdAt" | "updatedAt"
     daysInStatus: 0,
   };
   tenders.unshift(tender);
+  // Persist to Supabase
+  syncTenderCreate(tender);
 
   // Audit log
   const entry: AuditEntry = {
@@ -971,6 +982,7 @@ export function createTender(data: Omit<Tender, "id" | "createdAt" | "updatedAt"
     details: `Tender "${tender.title}" created for ${tender.customerName}. Estimated value: ${formatSAR(tender.estimatedValue)}.`,
   };
   auditLog.unshift(entry);
+  syncAuditEntry(entry);
 
   return tender;
 }

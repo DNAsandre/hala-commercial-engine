@@ -12,6 +12,7 @@
  */
 
 import { type AuditEntry, auditLog, workspaces, quotes, proposals } from "./store";
+import { syncAuditEntry } from "./supabase-sync";
 
 // ─── FEATURE FLAG ───────────────────────────────────────────
 export const featureFlags = {
@@ -105,6 +106,7 @@ function logIntegrationAudit(
     details,
   };
   auditLog.push(entry);
+  syncAuditEntry(entry);
 }
 
 // ─── CONTRACT CYCLE HELPERS ─────────────────────────────────
