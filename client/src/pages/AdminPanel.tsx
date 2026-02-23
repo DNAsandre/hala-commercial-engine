@@ -5,14 +5,15 @@
  *   Automation (Bot Governance, Signal Engine, Bot Audit)
  *   ECR (ECR Dashboard, ECR Config)
  */
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Link } from "wouter";
 import {
   Users, Settings, Database, Link2, Bell, Shield, Key, Globe,
   Plus, Edit3, Trash2, Check, RefreshCw, Server, HardDrive,
-  Mail, Building2, UserPlus, Search, ChevronRight,
+  Mail, Building2, UserPlus, Search, ChevronRight, X,
   Layers, Wrench, Star, Bot, Radio, Activity, BarChart3,
-  FileText, Palette, BookOpen, Blocks, Variable,
+  FileText, Palette, BookOpen, Blocks, Variable, Eye, EyeOff,
+  RotateCcw, Lock, UserCheck, UserX,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +28,14 @@ import { useUsers } from "@/hooks/useSupabase";
 import { Loader2 } from "lucide-react";
 import { navigationV1 } from "@/components/DashboardLayout";
 import { toast } from "sonner";
+import {
+  adminCreateUser,
+  adminUpdateUser,
+  adminResetPassword,
+  adminDeactivateUser,
+  adminReactivateUser,
+} from "@/lib/supabase-admin";
+import { useAuth } from "@/contexts/AuthContext";
 
 const systemModules = [
   { name: "CRM Sync Engine", status: "active", lastSync: "2 min ago", icon: RefreshCw, color: "text-emerald-600 bg-emerald-50" },
@@ -42,7 +51,7 @@ const integrations = [
   { name: "Zoho Books", status: "planned", description: "Invoice generation, payment tracking", apiKey: "Not configured", icon: Building2 },
   { name: "WMS (Blue Yonder)", status: "planned", description: "Inventory data, space utilization", apiKey: "Not configured", icon: Database },
   { name: "Email (SMTP)", status: "planned", description: "Notification emails, document sharing", apiKey: "Not configured", icon: Mail },
-  { name: "Supabase", status: "planned", description: "Cloud database migration target", apiKey: "Not configured", icon: Globe },
+  { name: "Supabase", status: "active", description: "Cloud database — connected", apiKey: "Connected", icon: Globe },
 ];
 
 /* ─── Document System links ─── */
@@ -98,31 +107,294 @@ function AdminLinkCard({ item }: { item: { path: string; label: string; desc: st
   );
 }
 
+/* ─── Role configuration ─── */
+const roleOptions = [
+  { value: "admin", label: "Admin (CEO/CFO)" },
+  { value: "commercial_director", label: "Commercial Director" },
+  { value: "operations_director", label: "Operations Director" },
+  { value: "regional_sales_head", label: "Regional Sales Head" },
+  { value: "regional_ops_head", label: "Regional Ops Head" },
+  { value: "salesman", label: "Salesman" },
+  { value: "finance", label: "Finance" },
+  { value: "legal", label: "Legal" },
+];
+
+const departmentOptions = [
+  "Management", "Sales", "Operations", "Finance", "Legal", "IT",
+];
+
+const regionOptions = [
+  { value: "All", label: "All Regions" },
+  { value: "East", label: "Eastern Province" },
+  { value: "Central", label: "Central Province" },
+  { value: "West", label: "Western Province" },
+];
+
+const roleColors: Record<string, string> = {
+  admin: "bg-red-100 text-red-800",
+  commercial_director: "bg-violet-100 text-violet-800",
+  operations_director: "bg-blue-100 text-blue-800",
+  regional_sales_head: "bg-emerald-100 text-emerald-800",
+  regional_ops_head: "bg-teal-100 text-teal-800",
+  salesman: "bg-gray-100 text-gray-700",
+  finance: "bg-amber-100 text-amber-800",
+  legal: "bg-indigo-100 text-indigo-800",
+};
+
+/* ─── Edit User Modal ─── */
+function EditUserModal({ user, onClose, onSaved }: { user: any; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(user.name);
+  const [email, setEmail] = useState(user.email);
+  const [role, setRole] = useState(user.role);
+  const [department, setDepartment] = useState(user.department || "");
+  const [region, setRegion] = useState(user.region || "All");
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!name.trim() || !email.trim()) {
+      toast.error("Name and email are required");
+      return;
+    }
+    setSaving(true);
+    const result = await adminUpdateUser({
+      userId: user.id,
+      authId: user.auth_id,
+      name: name.trim(),
+      email: email.trim(),
+      role,
+      department,
+      region,
+    });
+    setSaving(false);
+    if (result.success) {
+      toast.success("User updated", { description: `${name} — ${role.replace(/_/g, " ")}` });
+      onSaved();
+      onClose();
+    } else {
+      toast.error("Failed to update user", { description: result.error });
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <Card className="w-full max-w-lg shadow-xl" onClick={e => e.stopPropagation()}>
+        <CardHeader className="pb-3 flex flex-row items-center justify-between">
+          <CardTitle className="text-base font-serif">Edit User</CardTitle>
+          <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onClose}><X className="w-4 h-4" /></Button>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Full Name</Label>
+              <Input value={name} onChange={e => setName(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Email</Label>
+              <Input type="email" value={email} onChange={e => setEmail(e.target.value)} />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Role</Label>
+              <Select value={role} onValueChange={setRole}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {roleOptions.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Department</Label>
+              <Select value={department} onValueChange={setDepartment}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {departmentOptions.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Region</Label>
+              <Select value={region} onValueChange={setRegion}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {regionOptions.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <Separator />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+            <Button size="sm" onClick={handleSave} disabled={saving}>
+              {saving ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1" />}
+              Save Changes
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/* ─── Reset Password Modal ─── */
+function ResetPasswordModal({ user, onClose }: { user: any; onClose: () => void }) {
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const handleReset = async () => {
+    if (password.length < 6) {
+      toast.error("Password must be at least 6 characters");
+      return;
+    }
+    setSaving(true);
+    const result = await adminResetPassword(user.auth_id, password);
+    setSaving(false);
+    if (result.success) {
+      toast.success("Password reset", { description: `New password set for ${user.name}` });
+      onClose();
+    } else {
+      toast.error("Failed to reset password", { description: result.error });
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <Card className="w-full max-w-md shadow-xl" onClick={e => e.stopPropagation()}>
+        <CardHeader className="pb-3 flex flex-row items-center justify-between">
+          <CardTitle className="text-base font-serif">Reset Password</CardTitle>
+          <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onClose}><X className="w-4 h-4" /></Button>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
+            <div className="w-8 h-8 rounded-full bg-[var(--color-hala-navy)] text-white flex items-center justify-center text-xs font-bold">
+              {user.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
+            </div>
+            <div>
+              <div className="text-sm font-medium">{user.name}</div>
+              <div className="text-xs text-muted-foreground">{user.email}</div>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold">New Password</Label>
+            <div className="relative">
+              <Input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="Enter new password (min 6 characters)"
+                className="pr-10"
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                onClick={() => setShowPassword(!showPassword)}
+              >
+                {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </Button>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+            <Button size="sm" onClick={handleReset} disabled={saving}>
+              {saving ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Lock className="w-3.5 h-3.5 mr-1" />}
+              Reset Password
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function AdminPanel() {
-  const { data: users, loading } = useUsers();
+  const { data: users, loading, refetch } = useUsers();
+  const { appUser } = useAuth();
   const [userSearch, setUserSearch] = useState("");
   const [showAddUser, setShowAddUser] = useState(false);
+  const [editingUser, setEditingUser] = useState<any>(null);
+  const [resetPasswordUser, setResetPasswordUser] = useState<any>(null);
+
+  // Add user form state
   const [newUserName, setNewUserName] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserRole, setNewUserRole] = useState("salesman");
+  const [newUserDepartment, setNewUserDepartment] = useState("Sales");
+  const [newUserRegion, setNewUserRegion] = useState("East");
+  const [newUserPassword, setNewUserPassword] = useState("Hala2026!");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [addingUser, setAddingUser] = useState(false);
+
+  const isAdmin = appUser?.role === "admin";
+
+  const handleAddUser = useCallback(async () => {
+    if (!newUserName.trim() || !newUserEmail.trim()) {
+      toast.error("Name and email are required");
+      return;
+    }
+    if (newUserPassword.length < 6) {
+      toast.error("Password must be at least 6 characters");
+      return;
+    }
+    setAddingUser(true);
+    const result = await adminCreateUser({
+      email: newUserEmail.trim(),
+      password: newUserPassword,
+      name: newUserName.trim(),
+      role: newUserRole,
+      department: newUserDepartment,
+      region: newUserRegion,
+    });
+    setAddingUser(false);
+    if (result.success) {
+      toast.success("User created", {
+        description: `${newUserName} (${newUserEmail}) — ${newUserRole.replace(/_/g, " ")}`,
+      });
+      setShowAddUser(false);
+      setNewUserName("");
+      setNewUserEmail("");
+      setNewUserRole("salesman");
+      setNewUserDepartment("Sales");
+      setNewUserRegion("East");
+      setNewUserPassword("Hala2026!");
+      refetch();
+    } else {
+      toast.error("Failed to create user", { description: result.error });
+    }
+  }, [newUserName, newUserEmail, newUserPassword, newUserRole, newUserDepartment, newUserRegion, refetch]);
+
+  const handleDeactivate = useCallback(async (user: any) => {
+    if (user.id === appUser?.id) {
+      toast.error("You cannot deactivate your own account");
+      return;
+    }
+    const result = await adminDeactivateUser(user.auth_id, user.id);
+    if (result.success) {
+      toast.success("User deactivated", { description: `${user.name} can no longer sign in` });
+      refetch();
+    } else {
+      toast.error("Failed to deactivate user", { description: result.error });
+    }
+  }, [appUser, refetch]);
+
+  const handleReactivate = useCallback(async (user: any) => {
+    const result = await adminReactivateUser(user.auth_id, user.id);
+    if (result.success) {
+      toast.success("User reactivated", { description: `${user.name} can now sign in again` });
+      refetch();
+    } else {
+      toast.error("Failed to reactivate user", { description: result.error });
+    }
+  }, [refetch]);
 
   if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
+
   const filteredUsers = users.filter((u: any) =>
     u.name.toLowerCase().includes(userSearch.toLowerCase()) ||
     u.email.toLowerCase().includes(userSearch.toLowerCase()) ||
     u.role.toLowerCase().includes(userSearch.toLowerCase())
   );
-
-  const roleColors: Record<string, string> = {
-    admin: "bg-red-100 text-red-800",
-    commercial_director: "bg-violet-100 text-violet-800",
-    operations_director: "bg-blue-100 text-blue-800",
-    regional_sales_head: "bg-emerald-100 text-emerald-800",
-    regional_ops_head: "bg-teal-100 text-teal-800",
-    salesman: "bg-gray-100 text-gray-700",
-    finance: "bg-amber-100 text-amber-800",
-    legal: "bg-indigo-100 text-indigo-800",
-  };
 
   return (
     <div className="max-w-[1400px] mx-auto">
@@ -199,7 +471,7 @@ export default function AdminPanel() {
           </TabsContent>
         )}
 
-        {/* ─── Users Tab ─── */}
+        {/* ─── Users Tab — Full CRUD ─── */}
         <TabsContent value="users" className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="relative w-72">
@@ -211,61 +483,93 @@ export default function AdminPanel() {
                 className="pl-9 h-9"
               />
             </div>
-            <Button size="sm" onClick={() => setShowAddUser(!showAddUser)}>
-              <UserPlus className="w-4 h-4 mr-1.5" /> Add User
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => refetch()}>
+                <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Refresh
+              </Button>
+              {isAdmin && (
+                <Button size="sm" onClick={() => setShowAddUser(!showAddUser)}>
+                  <UserPlus className="w-4 h-4 mr-1.5" /> Add User
+                </Button>
+              )}
+            </div>
           </div>
 
+          {/* ─── Add User Form ─── */}
           {showAddUser && (
             <Card className="border-2 border-primary/20 shadow-none">
               <CardContent className="p-4">
-                <h3 className="text-sm font-semibold mb-3">Add New User</h3>
+                <h3 className="text-sm font-semibold mb-3">Create New Team Member</h3>
                 <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Full Name</Label>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Full Name *</Label>
                     <Input placeholder="e.g., Ahmed Al-Rashidi" value={newUserName} onChange={e => setNewUserName(e.target.value)} />
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Email</Label>
-                    <Input placeholder="e.g., ahmed@halascs.com" value={newUserEmail} onChange={e => setNewUserEmail(e.target.value)} />
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Email *</Label>
+                    <Input type="email" placeholder="e.g., ahmed@company.com" value={newUserEmail} onChange={e => setNewUserEmail(e.target.value)} />
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Role</Label>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Initial Password</Label>
+                    <div className="relative">
+                      <Input
+                        type={showNewPassword ? "text" : "password"}
+                        value={newUserPassword}
+                        onChange={e => setNewUserPassword(e.target.value)}
+                        className="pr-10"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                        onClick={() => setShowNewPassword(!showNewPassword)}
+                      >
+                        {showNewPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3 mt-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Role</Label>
                     <Select value={newUserRole} onValueChange={setNewUserRole}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="admin">Admin (CEO/CFO)</SelectItem>
-                        <SelectItem value="commercial_director">Commercial Director</SelectItem>
-                        <SelectItem value="operations_director">Operations Director</SelectItem>
-                        <SelectItem value="regional_sales_head">Regional Sales Head</SelectItem>
-                        <SelectItem value="regional_ops_head">Regional Ops Head</SelectItem>
-                        <SelectItem value="salesman">Salesman</SelectItem>
-                        <SelectItem value="finance">Finance</SelectItem>
-                        <SelectItem value="legal">Legal</SelectItem>
+                        {roleOptions.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Department</Label>
+                    <Select value={newUserDepartment} onValueChange={setNewUserDepartment}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {departmentOptions.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Region</Label>
+                    <Select value={newUserRegion} onValueChange={setNewUserRegion}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {regionOptions.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
-                <div className="flex justify-end gap-2 mt-3">
+                <div className="flex justify-end gap-2 mt-4">
                   <Button variant="outline" size="sm" onClick={() => setShowAddUser(false)}>Cancel</Button>
-                  <Button size="sm" onClick={() => {
-                    if (!newUserName.trim() || !newUserEmail.trim()) {
-                      toast.error("Name and email are required");
-                      return;
-                    }
-                    toast.success("User added", { description: `${newUserName} — ${newUserRole.replace(/_/g, " ")}` });
-                    setShowAddUser(false);
-                    setNewUserName("");
-                    setNewUserEmail("");
-                    setNewUserRole("salesman");
-                  }}>
-                    <Check className="w-3.5 h-3.5 mr-1" /> Add User
+                  <Button size="sm" onClick={handleAddUser} disabled={addingUser}>
+                    {addingUser ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1" />}
+                    Create User
                   </Button>
                 </div>
               </CardContent>
             </Card>
           )}
 
+          {/* ─── Users Table ─── */}
           <Card className="border border-border shadow-none">
             <CardContent className="p-0">
               <table className="w-full">
@@ -273,50 +577,81 @@ export default function AdminPanel() {
                   <tr className="border-b border-border">
                     <th className="text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-4 py-3">User</th>
                     <th className="text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-4 py-3">Role</th>
+                    <th className="text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-4 py-3">Department</th>
                     <th className="text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-4 py-3">Region</th>
                     <th className="text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-4 py-3">Status</th>
                     <th className="text-right text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-4 py-3">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredUsers.map(user => (
-                    <tr key={user.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-[var(--color-hala-navy)] text-white flex items-center justify-center text-xs font-bold">
-                            {user.name.split(" ").map(n => n[0]).join("").slice(0, 2)}
+                  {filteredUsers.map((user: any) => {
+                    const isInactive = user.status === "inactive";
+                    return (
+                      <tr key={user.id} className={`border-b border-border last:border-0 hover:bg-muted/30 transition-colors ${isInactive ? "opacity-50" : ""}`}>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isInactive ? "bg-gray-300 text-gray-600" : "bg-[var(--color-hala-navy)] text-white"}`}>
+                              {user.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
+                            </div>
+                            <div>
+                              <div className="text-sm font-medium">{user.name}</div>
+                              <div className="text-xs text-muted-foreground">{user.email}</div>
+                            </div>
                           </div>
-                          <div>
-                            <div className="text-sm font-medium">{user.name}</div>
-                            <div className="text-xs text-muted-foreground">{user.email}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant="outline" className={`text-[10px] ${roleColors[user.role] || ""}`}>
-                          {user.role.replace(/_/g, " ")}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-muted-foreground">{user.region || "All"}</td>
-                      <td className="px-4 py-3">
-                        <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700">Active</Badge>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => toast("Edit user coming soon")}>
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500 hover:text-red-600" onClick={() => toast("User deactivation requires admin confirmation")}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge variant="outline" className={`text-[10px] ${roleColors[user.role] || ""}`}>
+                            {user.role.replace(/_/g, " ")}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-muted-foreground">{user.department || "—"}</td>
+                        <td className="px-4 py-3 text-sm text-muted-foreground">{user.region || "All"}</td>
+                        <td className="px-4 py-3">
+                          <Badge variant="outline" className={`text-[10px] ${isInactive ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}>
+                            {isInactive ? "Inactive" : "Active"}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {isAdmin ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Edit user" onClick={() => setEditingUser(user)}>
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Reset password" onClick={() => setResetPasswordUser(user)}>
+                                <Lock className="w-3.5 h-3.5" />
+                              </Button>
+                              {isInactive ? (
+                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-emerald-600 hover:text-emerald-700" title="Reactivate user" onClick={() => handleReactivate(user)}>
+                                  <UserCheck className="w-3.5 h-3.5" />
+                                </Button>
+                              ) : (
+                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500 hover:text-red-600" title="Deactivate user" onClick={() => handleDeactivate(user)}>
+                                  <UserX className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Admin only</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
+              {filteredUsers.length === 0 && (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  No users match your search.
+                </div>
+              )}
             </CardContent>
           </Card>
+
+          {!isAdmin && (
+            <p className="text-xs text-muted-foreground text-center">
+              Only Admin users can create, edit, or deactivate team members.
+            </p>
+          )}
         </TabsContent>
 
         {/* ─── System Modules Tab ─── */}
@@ -398,7 +733,7 @@ export default function AdminPanel() {
               <p className="text-sm text-muted-foreground">Add Custom Integration</p>
               <p className="text-xs text-muted-foreground/60 mt-0.5">Connect any REST API with custom credentials</p>
               <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => toast("Custom integration setup coming soon")}>
-                <Plus className="w-3.5 h-3.5 mr-1" /> Add Integration
+                Configure
               </Button>
             </CardContent>
           </Card>
@@ -517,6 +852,21 @@ export default function AdminPanel() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* ─── Modals ─── */}
+      {editingUser && (
+        <EditUserModal
+          user={editingUser}
+          onClose={() => setEditingUser(null)}
+          onSaved={() => refetch()}
+        />
+      )}
+      {resetPasswordUser && (
+        <ResetPasswordModal
+          user={resetPasswordUser}
+          onClose={() => setResetPasswordUser(null)}
+        />
+      )}
     </div>
   );
 }
