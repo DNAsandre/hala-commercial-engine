@@ -17,11 +17,11 @@ export interface AuthUser {
 }
 
 const DEFAULT_USER: AuthUser = {
-  id: "u1",
-  name: "System",
-  email: "system@halascs.com",
-  role: "admin",
-  region: "East",
+  id: "anonymous",
+  name: "Unauthenticated",
+  email: "",
+  role: "viewer",
+  region: "",
 };
 
 let _currentUser: AuthUser = DEFAULT_USER;
@@ -39,4 +39,14 @@ export function clearGlobalAuthUser(): void {
 /** Called by engine files to get the current authenticated user */
 export function getCurrentUser(): AuthUser {
   return _currentUser;
+}
+
+/** Check if the current user is actually authenticated (not the default fallback) */
+export function isAuthenticated(): boolean {
+  return _currentUser.id !== "anonymous";
+}
+
+/** Check if the current user has admin role */
+export function isAdmin(): boolean {
+  return isAuthenticated() && _currentUser.role === "admin";
 }

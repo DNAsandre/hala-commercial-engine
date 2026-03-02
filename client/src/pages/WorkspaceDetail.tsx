@@ -47,6 +47,7 @@ import { getTemplatesByDocType, type DocTemplate, type DocType } from "@/lib/doc
 import { resolveOrCreateDocInstanceAsync } from "@/hooks/useResolveDocInstance";
 import { useDocInstances, type HydratedDocInstance } from "@/hooks/useDocuments";
 import { navigationV1 } from "@/components/DashboardLayout";
+import { handleSupabaseError } from "@/lib/supabase-error";
 import {
   isWorkspaceIntegrationEnabled, getOrCreateCycle, startRenewal, updateRenewalOwner,
   getDaysToExpiry, isInRenewalWindow, getSupportingDocs, uploadSupportingDoc,
@@ -189,7 +190,7 @@ export default function WorkspaceDetail() {
         const checks = await getContractReadyChecks(ws.id);
         if (!cancelled) setContractReadyChecks(checks);
       } catch (err) {
-        console.error("Contract cycle init error:", err);
+        handleSupabaseError('Contract_cycle_init_error', { message: String(err) });
       }
     })();
     return () => { cancelled = true; };

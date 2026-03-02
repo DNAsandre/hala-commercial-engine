@@ -98,7 +98,7 @@ function logIntegrationAudit(
   details: string,
 ): void {
   const entry: AuditEntry = {
-    id: `al-wi-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: `al-wi-${crypto.randomUUID()}`,
     entityType,
     entityId,
     action,
@@ -260,7 +260,7 @@ export function uploadSupportingDoc(input: {
   notes?: string;
 }): SupportingDoc {
   const doc: SupportingDoc = {
-    id: `sd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: `sd-${crypto.randomUUID()}`,
     workspaceId: input.workspaceId,
     name: input.name,
     fileName: input.fileName,

@@ -83,7 +83,7 @@ export default function EcrMetrics() {
       return;
     }
     const newMetric: EcrMetric = {
-      id: `met-${Date.now()}`,
+      id: `met-${crypto.randomUUID()}`,
       metricKey: formKey,
       displayName: formName,
       description: formDesc,

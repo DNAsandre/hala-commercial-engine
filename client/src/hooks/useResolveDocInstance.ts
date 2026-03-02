@@ -93,8 +93,8 @@ export async function resolveOrCreateDocInstanceAsync(
   });
 
   const now = new Date().toISOString();
-  const instanceId = `di-auto-${Date.now()}`;
-  const versionId = `div-auto-${Date.now()}`;
+  const instanceId = `di-auto-${crypto.randomUUID()}`;
+  const versionId = `div-auto-${crypto.randomUUID()}`;
   const user = getCurrentUser();
   const createdBy = user?.name || "System";
 

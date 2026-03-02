@@ -8,6 +8,7 @@
 
 import { getCurrentUser } from "./auth-state";
 import { supabase } from "./supabase";
+import { handleSupabaseError } from "@/lib/supabase-error";
 import type {
   User, Customer, Workspace, Quote, Proposal, ApprovalRecord,
   Signal, PolicyGate, PnLModel, HandoverTask, CRMSyncEvent, AuditEntry,
@@ -346,7 +347,7 @@ function auditToRow(a: Partial<AuditEntry>): Record<string, any> {
 
 export async function fetchUsers(): Promise<User[]> {
   const { data, error } = await supabase.from("users").select("*");
-  if (error) { console.error("fetchUsers error:", error); return []; }
+  if (error) { handleSupabaseError('fetchUsers', error, { silent: true }); return []; }
   return data || [];
 }
 
@@ -360,7 +361,7 @@ export async function fetchCurrentUser(): Promise<User> {
 
 export async function fetchCustomers(): Promise<Customer[]> {
   const { data, error } = await supabase.from("customers").select("*").order("name");
-  if (error) { console.error("fetchCustomers error:", error); return []; }
+  if (error) { handleSupabaseError('fetchCustomers', error, { silent: true }); return []; }
   return (data || []).map(mapCustomer);
 }
 
@@ -372,7 +373,7 @@ export async function fetchCustomerById(id: string): Promise<Customer | null> {
 
 export async function fetchWorkspaces(): Promise<Workspace[]> {
   const { data, error } = await supabase.from("workspaces").select("*").order("updated_at", { ascending: false });
-  if (error) { console.error("fetchWorkspaces error:", error); return []; }
+  if (error) { handleSupabaseError('fetchWorkspaces', error, { silent: true }); return []; }
   return (data || []).map(mapWorkspace);
 }
 
@@ -384,13 +385,13 @@ export async function fetchWorkspaceById(id: string): Promise<Workspace | null> 
 
 export async function fetchWorkspacesByCustomer(customerId: string): Promise<Workspace[]> {
   const { data, error } = await supabase.from("workspaces").select("*").eq("customer_id", customerId);
-  if (error) { console.error("fetchWorkspacesByCustomer error:", error); return []; }
+  if (error) { handleSupabaseError('fetchWorkspacesByCustomer', error, { silent: true }); return []; }
   return (data || []).map(mapWorkspace);
 }
 
 export async function fetchQuotes(): Promise<Quote[]> {
   const { data, error } = await supabase.from("quotes").select("*").order("created_at", { ascending: false });
-  if (error) { console.error("fetchQuotes error:", error); return []; }
+  if (error) { handleSupabaseError('fetchQuotes', error, { silent: true }); return []; }
   return (data || []).map(mapQuote);
 }
 
@@ -402,7 +403,7 @@ export async function fetchQuotesByWorkspace(workspaceId: string): Promise<Quote
 
 export async function fetchProposals(): Promise<Proposal[]> {
   const { data, error } = await supabase.from("proposals").select("*").order("created_at", { ascending: false });
-  if (error) { console.error("fetchProposals error:", error); return []; }
+  if (error) { handleSupabaseError('fetchProposals', error, { silent: true }); return []; }
   return (data || []).map(mapProposal);
 }
 
@@ -414,19 +415,19 @@ export async function fetchProposalsByWorkspace(workspaceId: string): Promise<Pr
 
 export async function fetchApprovalRecords(): Promise<ApprovalRecord[]> {
   const { data, error } = await supabase.from("approval_records").select("*").order("timestamp", { ascending: false });
-  if (error) { console.error("fetchApprovalRecords error:", error); return []; }
+  if (error) { handleSupabaseError('fetchApprovalRecords', error, { silent: true }); return []; }
   return (data || []).map(mapApprovalRecord);
 }
 
 export async function fetchSignals(): Promise<Signal[]> {
   const { data, error } = await supabase.from("signals").select("*").order("created_at", { ascending: false });
-  if (error) { console.error("fetchSignals error:", error); return []; }
+  if (error) { handleSupabaseError('fetchSignals', error, { silent: true }); return []; }
   return (data || []).map(mapSignal);
 }
 
 export async function fetchPolicyGates(): Promise<PolicyGate[]> {
   const { data, error } = await supabase.from("policy_gates").select("*");
-  if (error) { console.error("fetchPolicyGates error:", error); return []; }
+  if (error) { handleSupabaseError('fetchPolicyGates', error, { silent: true }); return []; }
   return (data || []).map(mapPolicyGate);
 }
 
@@ -471,7 +472,7 @@ export async function createCustomer(customer: Customer): Promise<Customer | nul
   row.created_at = new Date().toISOString();
   row.updated_at = new Date().toISOString();
   const { data, error } = await supabase.from("customers").insert(row).select().single();
-  if (error) { console.error("createCustomer error:", error); return null; }
+  if (error) { handleSupabaseError('createCustomer', error, { silent: true }); return null; }
   return mapCustomer(data);
 }
 
@@ -479,7 +480,7 @@ export async function updateCustomer(id: string, updates: Partial<Customer>): Pr
   const row = customerToRow(updates);
   row.updated_at = new Date().toISOString();
   const { data, error } = await supabase.from("customers").update(row).eq("id", id).select().single();
-  if (error) { console.error("updateCustomer error:", error); return null; }
+  if (error) { handleSupabaseError('updateCustomer', error, { silent: true }); return null; }
   return mapCustomer(data);
 }
 
@@ -487,14 +488,14 @@ export async function createWorkspace(workspace: Workspace): Promise<Workspace |
   const row = workspaceToRow(workspace);
   row.created_at = new Date().toISOString();
   const { data, error } = await supabase.from("workspaces").insert(row).select().single();
-  if (error) { console.error("createWorkspace error:", error); return null; }
+  if (error) { handleSupabaseError('createWorkspace', error, { silent: true }); return null; }
   return mapWorkspace(data);
 }
 
 export async function updateWorkspace(id: string, updates: Partial<Workspace>): Promise<Workspace | null> {
   const row = workspaceToRow(updates);
   const { data, error } = await supabase.from("workspaces").update(row).eq("id", id).select().single();
-  if (error) { console.error("updateWorkspace error:", error); return null; }
+  if (error) { handleSupabaseError('updateWorkspace', error, { silent: true }); return null; }
   return mapWorkspace(data);
 }
 
@@ -502,14 +503,14 @@ export async function createQuote(quote: Quote): Promise<Quote | null> {
   const row = quoteToRow(quote);
   row.created_at = new Date().toISOString();
   const { data, error } = await supabase.from("quotes").insert(row).select().single();
-  if (error) { console.error("createQuote error:", error); return null; }
+  if (error) { handleSupabaseError('createQuote', error, { silent: true }); return null; }
   return mapQuote(data);
 }
 
 export async function updateQuote(id: string, updates: Partial<Quote>): Promise<Quote | null> {
   const row = quoteToRow(updates);
   const { data, error } = await supabase.from("quotes").update(row).eq("id", id).select().single();
-  if (error) { console.error("updateQuote error:", error); return null; }
+  if (error) { handleSupabaseError('updateQuote', error, { silent: true }); return null; }
   return mapQuote(data);
 }
 
@@ -517,14 +518,14 @@ export async function createProposal(proposal: Proposal): Promise<Proposal | nul
   const row = proposalToRow(proposal);
   row.created_at = new Date().toISOString();
   const { data, error } = await supabase.from("proposals").insert(row).select().single();
-  if (error) { console.error("createProposal error:", error); return null; }
+  if (error) { handleSupabaseError('createProposal', error, { silent: true }); return null; }
   return mapProposal(data);
 }
 
 export async function updateProposal(id: string, updates: Partial<Proposal>): Promise<Proposal | null> {
   const row = proposalToRow(updates);
   const { data, error } = await supabase.from("proposals").update(row).eq("id", id).select().single();
-  if (error) { console.error("updateProposal error:", error); return null; }
+  if (error) { handleSupabaseError('updateProposal', error, { silent: true }); return null; }
   return mapProposal(data);
 }
 
@@ -532,20 +533,20 @@ export async function createApprovalRecord(record: ApprovalRecord): Promise<Appr
   const row = approvalToRow(record);
   row.timestamp = new Date().toISOString();
   const { data, error } = await supabase.from("approval_records").insert(row).select().single();
-  if (error) { console.error("createApprovalRecord error:", error); return null; }
+  if (error) { handleSupabaseError('createApprovalRecord', error, { silent: true }); return null; }
   return mapApprovalRecord(data);
 }
 
 export async function updateApprovalRecord(id: string, updates: Partial<ApprovalRecord>): Promise<ApprovalRecord | null> {
   const row = approvalToRow(updates);
   const { data, error } = await supabase.from("approval_records").update(row).eq("id", id).select().single();
-  if (error) { console.error("updateApprovalRecord error:", error); return null; }
+  if (error) { handleSupabaseError('updateApprovalRecord', error, { silent: true }); return null; }
   return mapApprovalRecord(data);
 }
 
 export async function createSignal(signal: Omit<Signal, "id">): Promise<Signal | null> {
   const row: any = {
-    id: `s-${Date.now()}`,
+    id: `s-${crypto.randomUUID()}`,
     workspace_id: signal.workspaceId,
     type: signal.type,
     severity: signal.severity,
@@ -553,7 +554,7 @@ export async function createSignal(signal: Omit<Signal, "id">): Promise<Signal |
     created_at: new Date().toISOString(),
   };
   const { data, error } = await supabase.from("signals").insert(row).select().single();
-  if (error) { console.error("createSignal error:", error); return null; }
+  if (error) { handleSupabaseError('createSignal', error, { silent: true }); return null; }
   return mapSignal(data);
 }
 
@@ -564,7 +565,7 @@ export async function updatePolicyGate(id: string, updates: Partial<PolicyGate>)
   if (updates.name !== undefined) row.name = updates.name;
   if (updates.description !== undefined) row.description = updates.description;
   const { data, error } = await supabase.from("policy_gates").update(row).eq("id", id).select().single();
-  if (error) { console.error("updatePolicyGate error:", error); return null; }
+  if (error) { handleSupabaseError('updatePolicyGate', error, { silent: true }); return null; }
   return mapPolicyGate(data);
 }
 
@@ -597,7 +598,7 @@ export async function createPnLModel(model: PnLModel): Promise<PnLModel | null> 
     created_at: new Date().toISOString(),
   };
   const { data, error } = await supabase.from("pnl_models").insert(row).select().single();
-  if (error) { console.error("createPnLModel error:", error); return null; }
+  if (error) { handleSupabaseError('createPnLModel', error, { silent: true }); return null; }
   return mapPnLModel(data);
 }
 
@@ -605,14 +606,14 @@ export async function createHandoverTask(task: HandoverTask): Promise<HandoverTa
   const row = handoverToRow(task);
   row.created_at = new Date().toISOString();
   const { data, error } = await supabase.from("handover_tasks").insert(row).select().single();
-  if (error) { console.error("createHandoverTask error:", error); return null; }
+  if (error) { handleSupabaseError('createHandoverTask', error, { silent: true }); return null; }
   return mapHandoverTask(data);
 }
 
 export async function updateHandoverTask(id: string, updates: Partial<HandoverTask>): Promise<HandoverTask | null> {
   const row = handoverToRow(updates);
   const { data, error } = await supabase.from("handover_tasks").update(row).eq("id", id).select().single();
-  if (error) { console.error("updateHandoverTask error:", error); return null; }
+  if (error) { handleSupabaseError('updateHandoverTask', error, { silent: true }); return null; }
   return mapHandoverTask(data);
 }
 
@@ -620,7 +621,7 @@ export async function createAuditEntry(entry: AuditEntry): Promise<AuditEntry | 
   const row = auditToRow(entry);
   row.timestamp = new Date().toISOString();
   const { data, error } = await supabase.from("audit_log").insert(row).select().single();
-  if (error) { console.error("createAuditEntry error:", error); return null; }
+  if (error) { handleSupabaseError('createAuditEntry', error, { silent: true }); return null; }
   return mapAuditEntry(data);
 }
 
@@ -635,7 +636,7 @@ export async function createCRMSyncEvent(event: CRMSyncEvent): Promise<CRMSyncEv
     details: event.details,
   };
   const { data, error } = await supabase.from("crm_sync_events").insert(row).select().single();
-  if (error) { console.error("createCRMSyncEvent error:", error); return null; }
+  if (error) { handleSupabaseError('createCRMSyncEvent', error, { silent: true }); return null; }
   return mapCRMSyncEvent(data);
 }
 
@@ -691,7 +692,7 @@ export async function fetchContactsByCustomer(customerId: string): Promise<Custo
     .select("*")
     .eq("customer_id", customerId)
     .order("is_primary", { ascending: false });
-  if (error) { console.error("fetchContactsByCustomer error:", error); return []; }
+  if (error) { handleSupabaseError('fetchContactsByCustomer', error, { silent: true }); return []; }
   return (data || []).map(mapCustomerContact);
 }
 
@@ -714,7 +715,7 @@ export async function createContact(contact: Omit<CustomerContact, "createdAt" |
   row.created_at = new Date().toISOString();
   row.updated_at = new Date().toISOString();
   const { data, error } = await supabase.from("customer_contacts").insert(row).select().single();
-  if (error) { console.error("createContact error:", error); return null; }
+  if (error) { handleSupabaseError('createContact', error, { silent: true }); return null; }
   return mapCustomerContact(data);
 }
 
@@ -723,14 +724,14 @@ export async function updateContact(id: string, updates: Partial<CustomerContact
   const row = contactToRow(updates);
   row.updated_at = new Date().toISOString();
   const { data, error } = await supabase.from("customer_contacts").update(row).eq("id", id).select().single();
-  if (error) { console.error("updateContact error:", error); return null; }
+  if (error) { handleSupabaseError('updateContact', error, { silent: true }); return null; }
   return mapCustomerContact(data);
 }
 
 /** Delete a contact */
 export async function deleteContact(id: string): Promise<boolean> {
   const { error } = await supabase.from("customer_contacts").delete().eq("id", id);
-  if (error) { console.error("deleteContact error:", error); return false; }
+  if (error) { handleSupabaseError('deleteContact', error, { silent: true }); return false; }
   return true;
 }
 
@@ -740,6 +741,6 @@ export async function setPrimaryContact(contactId: string, customerId: string): 
   await supabase.from("customer_contacts").update({ is_primary: false }).eq("customer_id", customerId);
   // Set the target as primary
   const { error } = await supabase.from("customer_contacts").update({ is_primary: true }).eq("id", contactId);
-  if (error) { console.error("setPrimaryContact error:", error); return false; }
+  if (error) { handleSupabaseError('setPrimaryContact', error, { silent: true }); return false; }
   return true;
 }

@@ -130,7 +130,7 @@ export default function VariablesManager() {
     }
     const namespace = formData.key.split(".")[0] || "custom";
     const payload: Partial<VariableDefinition> & { id: string } = {
-      id: editingId || `vd-${Date.now()}`,
+      id: editingId || `vd-${crypto.randomUUID()}`,
       key: formData.key,
       label: formData.label,
       description: formData.description || "",

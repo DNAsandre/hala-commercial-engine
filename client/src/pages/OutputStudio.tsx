@@ -269,7 +269,7 @@ export default function OutputStudio() {
 
         const html = compileComposerPDF(input);
         if (html) {
-          const compiledId = `cd-${Date.now()}`;
+          const compiledId = `cd-${crypto.randomUUID()}`;
           // Sync to Supabase
           syncCompiledDocCreate({
             id: compiledId,

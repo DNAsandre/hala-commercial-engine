@@ -345,7 +345,7 @@ function logTransitionAudit(
     : "";
 
   const entry: AuditEntry = {
-    id: `al-st-${Date.now()}`,
+    id: `al-st-${crypto.randomUUID()}`,
     entityType: "workspace",
     entityId: workspace.id,
     action,
@@ -484,7 +484,7 @@ export function advanceStage(workspaceId: string, options?: AdvanceStageOptions)
 
     // Record in stage history
     stageHistory.unshift({
-      id: `sh-${Date.now()}`,
+      id: `sh-${crypto.randomUUID()}`,
       workspaceId: workspace.id,
       fromStage,
       toStage,
@@ -531,7 +531,7 @@ export function advanceStage(workspaceId: string, options?: AdvanceStageOptions)
 
   // Record in stage history
   stageHistory.unshift({
-    id: `sh-${Date.now()}`,
+    id: `sh-${crypto.randomUUID()}`,
     workspaceId: workspace.id,
     fromStage,
     toStage,
@@ -700,7 +700,7 @@ export function advanceToStage(
     logTransitionAudit(workspace, originalStage, targetStage, true, successMsg, overrideRecord);
 
     stageHistory.unshift({
-      id: `sh-${Date.now()}`,
+      id: `sh-${crypto.randomUUID()}`,
       workspaceId: workspace.id,
       fromStage: originalStage,
       toStage: targetStage,
@@ -743,7 +743,7 @@ export function advanceToStage(
   logTransitionAudit(workspace, originalStage, targetStage, true, successMsg);
 
   stageHistory.unshift({
-    id: `sh-${Date.now()}`,
+    id: `sh-${crypto.randomUUID()}`,
     workspaceId: workspace.id,
     fromStage: originalStage,
     toStage: targetStage,
@@ -891,7 +891,7 @@ export function revertStage(workspaceId: string): RevertResult {
 
   // Audit log
   const entry: AuditEntry = {
-    id: `al-rv-${Date.now()}`,
+    id: `al-rv-${crypto.randomUUID()}`,
     entityType: "workspace",
     entityId: workspaceId,
     action: "stage_reverted",
@@ -905,7 +905,7 @@ export function revertStage(workspaceId: string): RevertResult {
 
   // Stage history
   stageHistory.unshift({
-    id: `sh-rv-${Date.now()}`,
+    id: `sh-rv-${crypto.randomUUID()}`,
     workspaceId,
     fromStage: revertedFrom,
     toStage: record.fromStage,

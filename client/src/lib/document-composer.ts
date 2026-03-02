@@ -891,8 +891,8 @@ export function resolveOrCreateDocInstance(params: {
   });
 
   const now = new Date().toISOString().split('T')[0];
-  const instanceId = `di-auto-${Date.now()}`;
-  const versionId = `div-auto-${Date.now()}`;
+  const instanceId = `di-auto-${crypto.randomUUID()}`;
+  const versionId = `div-auto-${crypto.randomUUID()}`;
 
   const newInstance: DocInstance = {
     id: instanceId,
@@ -990,7 +990,7 @@ export function saveToVault(params: {
   status: VaultAssetStatus;
 }): VaultAsset {
   const asset: VaultAsset = {
-    id: `va-${Date.now()}`,
+    id: `va-${crypto.randomUUID()}`,
     ...params,
     file_url: `/vault/${params.doc_instance_id}-${params.status}.pdf`,
     checksum: `sha256:${Math.random().toString(36).substring(2, 14)}`,

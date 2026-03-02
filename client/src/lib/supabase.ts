@@ -1,7 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = 'https://kositquaqmuousalmoar.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtvc2l0cXVhcW11b3VzYWxtb2FyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4Mzg1NjUsImV4cCI6MjA4NzQxNDU2NX0.ULDr14MImvZz6ssst3m-mtgEtsJ5o2TDe9cz4mOTcEc';
+// New publishable key (replaces legacy anon JWT — see Sprint 4A key rotation)
+const SUPABASE_ANON_KEY = 'sb_publishable_wHi7-wUj8lkF4gmDPJrgfg_CPTD9-rg';
 
 /**
  * Custom lock function that bypasses Navigator.locks to prevent deadlocks

@@ -85,7 +85,7 @@ export default function Proposals() {
       const user = getCurrentUser();
       syncProposalUpdate(proposalId, { state: "commercial_approved" });
       syncApprovalCreate({
-        id: `a-${Date.now()}`,
+        id: `a-${crypto.randomUUID()}`,
         entityType: "proposal",
         entityId: proposalId,
         workspaceId: "",
@@ -112,7 +112,7 @@ export default function Proposals() {
       // Persist CRM export status to Supabase
       syncProposalUpdate(proposalId, { state: "sent" });
       syncAuditEntry({
-        id: `audit-crm-${Date.now()}`,
+        id: `audit-crm-${crypto.randomUUID()}`,
         entityType: "proposal",
         entityId: proposalId,
         action: "proposal_crm_exported",

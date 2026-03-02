@@ -85,7 +85,7 @@ export default function Quotes() {
       const user = getCurrentUser();
       syncQuoteUpdate(quoteId, { state: "approved" });
       syncApprovalCreate({
-        id: `a-${Date.now()}`,
+        id: `a-${crypto.randomUUID()}`,
         entityType: "quote",
         entityId: quoteId,
         workspaceId: "",

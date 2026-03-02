@@ -55,7 +55,7 @@ export default function EcrSnapshots() {
 
   const handleCreateSnapshot = () => {
     const newSnapshot: EcrInputSnapshot = {
-      id: `snap-${Date.now()}`,
+      id: `snap-${crypto.randomUUID()}`,
       customerId: newCustomerId,
       periodStart: newPeriodStart,
       periodEnd: newPeriodEnd,
@@ -86,7 +86,7 @@ export default function EcrSnapshots() {
 
   const handleSaveValues = (snapshotId: string) => {
     const newValues: EcrInputValue[] = activeMetrics.map((m, i) => ({
-      id: `iv-${Date.now()}-${i}`,
+      id: `iv-${crypto.randomUUID()}`,
       snapshotId,
       metricId: m.id,
       value: editValues[m.id] ?? 0,

@@ -5,6 +5,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
+import { handleSupabaseError } from "@/lib/supabase-error";
 
 export interface UseEntityListResult<T> {
   data: T[];
@@ -75,7 +76,7 @@ export function useEntityList<T>(
     } catch (err: any) {
       if (mountedRef.current) {
         setError(err.message || `Failed to fetch ${table}`);
-        console.error(`useEntityList(${table}) error:`, err);
+        handleSupabaseError(`useEntityList(${table})`, { message: String(err) }, { silent: true });
       }
     } finally {
       if (mountedRef.current) setLoading(false);
@@ -123,7 +124,7 @@ export function useEntityById<T>(
     } catch (err: any) {
       if (mountedRef.current) {
         setError(err.message || `Failed to fetch ${table}/${id}`);
-        console.error(`useEntityById(${table}, ${id}) error:`, err);
+        handleSupabaseError(`useEntityById(${table},${id})`, { message: String(err) }, { silent: true });
       }
     } finally {
       if (mountedRef.current) setLoading(false);
@@ -159,7 +160,7 @@ export function useCreateEntity<T>(table: string): UseCreateEntityResult<T> {
       return data as T;
     } catch (err: any) {
       setError(err.message || `Failed to create in ${table}`);
-      console.error(`useCreateEntity(${table}) error:`, err);
+      handleSupabaseError(`useCreateEntity(${table})`, { message: String(err) });
       return null;
     } finally {
       setLoading(false);
@@ -190,7 +191,7 @@ export function useUpdateEntity<T>(table: string): UseUpdateEntityResult<T> {
       return data as T;
     } catch (err: any) {
       setError(err.message || `Failed to update ${table}/${id}`);
-      console.error(`useUpdateEntity(${table}, ${id}) error:`, err);
+      handleSupabaseError(`useUpdateEntity(${table},${id})`, { message: String(err) });
       return null;
     } finally {
       setLoading(false);

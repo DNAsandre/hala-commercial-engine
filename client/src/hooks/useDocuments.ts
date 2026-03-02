@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import type { DocType, DocInstanceStatus } from "@/lib/document-composer";
+import { handleSupabaseError } from "@/lib/supabase-error";
 
 // ============================================================
 // DB ROW TYPES (match Supabase table schemas)
@@ -162,7 +163,7 @@ async function fetchDocInstances(filters?: { doc_type?: string; customer_id?: st
   if (filters?.workspace_id) query = query.eq("workspace_id", filters.workspace_id);
 
   const { data: instances, error } = await query;
-  if (error) { console.error("fetchDocInstances error:", error); return []; }
+  if (error) { handleSupabaseError('fetchDocInstances', error, { silent: true }); return []; }
   if (!instances || instances.length === 0) return [];
 
   // Fetch all versions for these instances in one query
@@ -219,7 +220,7 @@ async function fetchDocInstanceById(id: string): Promise<HydratedDocInstance | n
     .select("*")
     .eq("id", id)
     .maybeSingle();
-  if (error || !instance) { console.error("fetchDocInstanceById error:", error); return null; }
+  if (error || !instance) { handleSupabaseError('fetchDocInstanceById_error:', { message: String(error) }); return null; }
 
   const { data: versions, error: vErr } = await supabase
     .from("doc_instance_versions")
@@ -266,7 +267,7 @@ async function fetchCompiledDocuments(docInstanceId?: string): Promise<DbCompile
   let query = supabase.from("compiled_documents").select("*").order("compiled_at", { ascending: false });
   if (docInstanceId) query = query.eq("doc_instance_id", docInstanceId);
   const { data, error } = await query;
-  if (error) { console.error("fetchCompiledDocuments error:", error); return []; }
+  if (error) { handleSupabaseError('fetchCompiledDocuments', error, { silent: true }); return []; }
   return (data || []) as DbCompiledDocument[];
 }
 
@@ -275,7 +276,7 @@ async function fetchVaultAssets(docInstanceId?: string): Promise<DbVaultAsset[]>
   let query = supabase.from("vault_assets").select("*").order("created_at", { ascending: false });
   if (docInstanceId) query = query.eq("doc_instance_id", docInstanceId);
   const { data, error } = await query;
-  if (error) { console.error("fetchVaultAssets error:", error); return []; }
+  if (error) { handleSupabaseError('fetchVaultAssets', error, { silent: true }); return []; }
   return (data || []) as DbVaultAsset[];
 }
 

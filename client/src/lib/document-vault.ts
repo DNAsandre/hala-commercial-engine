@@ -1201,7 +1201,7 @@ export function suggestCategoryByFileName(fileName: string): DocumentCategory | 
 
 function logDocumentAction(doc: UnifiedDocument, action: string, details: string): void {
   const entry: AuditEntry = {
-    id: `al-doc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: `al-doc-${crypto.randomUUID()}`,
     entityType: "document",
     entityId: doc.id,
     action,
@@ -1213,7 +1213,7 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
   syncAuditEntry(entry);
 
   const customerEntry: AuditEntry = {
-    id: `al-doc-c-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: `al-doc-c-${crypto.randomUUID()}`,
     entityType: "customer",
     entityId: doc.customerId,
     action,
@@ -1226,7 +1226,7 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
 
   if (doc.workspaceId) {
     const wsEntry: AuditEntry = {
-      id: `al-doc-w-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: `al-doc-w-${crypto.randomUUID()}`,
       entityType: "workspace",
       entityId: doc.workspaceId,
       action,
@@ -1240,7 +1240,7 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
 
   if (doc.tenderId) {
     const tnEntry: AuditEntry = {
-      id: `al-doc-t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: `al-doc-t-${crypto.randomUUID()}`,
       entityType: "tender",
       entityId: doc.tenderId,
       action,

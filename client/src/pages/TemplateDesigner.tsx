@@ -185,7 +185,7 @@ export default function TemplateDesigner() {
     if (!template) return;
     // Create new version on the template
     const newVersion: TemplateVersion = {
-      id: `tv-${Date.now()}`,
+      id: `tv-${crypto.randomUUID()}`,
       template_id: template.id,
       version_number: (latestVersion?.version_number || 0) + 1,
       recipe: blocks.map((b, idx) => ({

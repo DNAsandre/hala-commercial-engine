@@ -449,7 +449,7 @@ export default function CommercialEditor({
   const [document, setDocument] = useState<EditorDocument>(() => {
     if (existingDocument) return existingDocument;
     return {
-      id: `doc-${Date.now()}`, type: documentType,
+      id: `doc-${crypto.randomUUID()}`, type: documentType,
       title: documentType === "quote" ? "New Quotation" : documentType === "proposal" ? "New Proposal" : "New Service Level Agreement",
       workspaceId, customerId, customerName, version: 1,
       sections: getTemplate(documentType),
@@ -485,7 +485,7 @@ export default function CommercialEditor({
 
   const addSection = useCallback((template?: BlockTemplate) => {
     const newSection: DocumentSection = {
-      id: `sec-${Date.now()}`, title: template?.name || "New Section",
+      id: `sec-${crypto.randomUUID()}`, title: template?.name || "New Section",
       content: template?.content || "<p>Start writing...</p>",
       isLocked: false, isAIGenerated: false, order: document.sections.length + 1,
       type: template?.sectionType || "custom",
@@ -533,7 +533,7 @@ export default function CommercialEditor({
     toast.info("AI is processing your prompt...");
     setTimeout(() => {
       const newSection: DocumentSection = {
-        id: `ai-${Date.now()}`, title: "AI Generated Section",
+        id: `ai-${crypto.randomUUID()}`, title: "AI Generated Section",
         content: `<h2>Generated Content</h2><p>${promptText}</p><p>Hala Supply Chain Services has extensive experience in this area. Our dedicated team of logistics professionals ensures seamless execution of all operational requirements, backed by industry-leading technology and proven processes.</p><p>We recommend a phased approach to implementation, beginning with a thorough assessment of current operations, followed by solution design, pilot testing, and full-scale deployment.</p>`,
         isLocked: false, isAIGenerated: true, order: document.sections.length + 1, type: "custom",
       };

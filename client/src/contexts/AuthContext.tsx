@@ -9,6 +9,7 @@ import { createContext, useContext, useEffect, useState, useCallback, type React
 import { supabase } from "@/lib/supabase";
 import { setGlobalAuthUser, clearGlobalAuthUser } from "@/lib/auth-state";
 import type { Session, User } from "@supabase/supabase-js";
+import { handleSupabaseError } from "@/lib/supabase-error";
 
 export interface AppUser {
   id: string;
@@ -49,7 +50,7 @@ async function fetchAppUser(authId: string): Promise<AppUser | null> {
     .eq("auth_id", authId)
     .single();
   if (error || !data) {
-    console.error("fetchAppUser error:", error);
+    handleSupabaseError('fetchAppUser_error:', { message: String(error) });
     return null;
   }
   return data as AppUser;

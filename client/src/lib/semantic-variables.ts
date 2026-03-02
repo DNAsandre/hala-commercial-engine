@@ -801,7 +801,7 @@ export function setVariableOverride(
     return existing;
   }
   const newOverride: DocVariableOverride = {
-    id: `dvo-${Date.now()}`,
+    id: `dvo-${crypto.randomUUID()}`,
     doc_instance_id: docInstanceId,
     key,
     value_json: value,
@@ -833,7 +833,7 @@ export function addVariableDefinition(def: Omit<VariableDefinition, "id" | "crea
   const namespace = def.key.split(".")[0] || "custom";
   const newDef: VariableDefinition = {
     ...def,
-    id: `vd-custom-${Date.now()}`,
+    id: `vd-custom-${crypto.randomUUID()}`,
     namespace,
     created_at: new Date().toISOString(),
   };

@@ -60,7 +60,7 @@ export default function EcrRuleSets() {
     }
     const maxVersion = Math.max(...ruleSets.map(rs => rs.versionNumber), 0);
     const newRuleSet: EcrRuleSet = {
-      id: `rs-${Date.now()}`,
+      id: `rs-${crypto.randomUUID()}`,
       versionNumber: maxVersion + 1,
       name: newName,
       description: newDesc,
@@ -69,7 +69,7 @@ export default function EcrRuleSets() {
       createdAt: new Date().toISOString(),
     };
     const newWeights: EcrRuleWeight[] = activeMetrics.map((m, i) => ({
-      id: `rw-new-${Date.now()}-${i}`,
+      id: `rw-new-${crypto.randomUUID()}`,
       ruleSetId: newRuleSet.id,
       metricId: m.id,
       weight: m.defaultWeight,

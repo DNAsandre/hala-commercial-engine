@@ -643,7 +643,7 @@ export default function CustomerDetail() {
                         else toast.error("Failed to update contact");
                       } else {
                         const created = await createContact({
-                          id: `cc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                          id: `cc-${crypto.randomUUID()}`,
                           customerId: c.id,
                           fullName: contactForm.fullName.trim(),
                           jobTitle: contactForm.jobTitle.trim(),

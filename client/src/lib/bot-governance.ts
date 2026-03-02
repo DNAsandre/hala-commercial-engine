@@ -265,7 +265,7 @@ export function executeRuntimeInvocationFlow(
   // Step 8: Execute via provider adapter (mock)
   // Step 9: Log invocation
 
-  const invocationId = `inv-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+  const invocationId = `inv-${crypto.randomUUID()}`;
   const invocation: BotInvocation = {
     id: invocationId,
     botId: bot.id,
@@ -306,7 +306,7 @@ export function executeRuntimeInvocationFlow(
 
 function logInvocationBlock(botId: string, userId: string, userRole: string, reason: string) {
   const entry: BotInvocation = {
-    id: `inv-blocked-${Date.now()}`,
+    id: `inv-blocked-${crypto.randomUUID()}`,
     botId,
     botVersionId: '',
     userId,

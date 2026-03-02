@@ -559,7 +559,7 @@ function logTenderTransitionAudit(
     : "";
 
   const entry: AuditEntry = {
-    id: `al-tn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: `al-tn-${crypto.randomUUID()}`,
     entityType: "tender",
     entityId: tender.id,
     action,
@@ -706,7 +706,7 @@ export function advanceTenderStatus(
     logTenderTransitionAudit(tender, fromStatus, targetStatus, true, successMsg, overrideRecord);
 
     tenderStageHistory.unshift({
-      id: `tsh-${Date.now()}`,
+      id: `tsh-${crypto.randomUUID()}`,
       tenderId,
       fromStatus,
       toStatus: targetStatus,
@@ -754,7 +754,7 @@ export function advanceTenderStatus(
   logTenderTransitionAudit(tender, fromStatus, targetStatus, true, successMsg);
 
   tenderStageHistory.unshift({
-    id: `tsh-${Date.now()}`,
+    id: `tsh-${crypto.randomUUID()}`,
     tenderId,
     fromStatus,
     toStatus: targetStatus,
@@ -863,7 +863,7 @@ export function revertTenderStatus(tenderId: string, reason?: string): TenderRev
   const msg = `Tender status reverted from '${getTenderStatusDisplayName(revertedFrom)}' to '${getTenderStatusDisplayName(record.fromStatus)}' (undo).${reasonText}`;
 
   const entry: AuditEntry = {
-    id: `al-tn-rv-${Date.now()}`,
+    id: `al-tn-rv-${crypto.randomUUID()}`,
     entityType: "tender",
     entityId: tenderId,
     action: "tender_status_reverted",
@@ -876,7 +876,7 @@ export function revertTenderStatus(tenderId: string, reason?: string): TenderRev
   syncAuditEntry(entry);
 
   tenderStageHistory.unshift({
-    id: `tsh-rv-${Date.now()}`,
+    id: `tsh-rv-${crypto.randomUUID()}`,
     tenderId,
     fromStatus: revertedFrom,
     toStatus: record.fromStatus,
@@ -973,7 +973,7 @@ export function createTender(data: Omit<Tender, "id" | "createdAt" | "updatedAt"
 
   // Audit log
   const entry: AuditEntry = {
-    id: `al-tn-cr-${Date.now()}`,
+    id: `al-tn-cr-${crypto.randomUUID()}`,
     entityType: "tender",
     entityId: tender.id,
     action: "tender_created",

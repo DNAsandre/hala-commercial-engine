@@ -60,7 +60,7 @@ export default function EcrConnectors() {
       return;
     }
     const newConnector: EcrConnector = {
-      id: `econ-${Date.now()}`,
+      id: `econ-${crypto.randomUUID()}`,
       name: newName,
       type: newType,
       status: 'disabled',

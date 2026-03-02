@@ -279,7 +279,7 @@ export async function logAuditAction(
   details: string
 ): Promise<void> {
   await createAuditEntry({
-    id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: `audit-${crypto.randomUUID()}`,
     entityType,
     entityId,
     action,

@@ -88,6 +88,7 @@ import {
 } from "@/lib/supabase-sync";
 import { getCurrentUser } from "@/lib/auth-state";
 import { fetchDocInstanceById } from "@/hooks/useDocuments";
+import { handleSupabaseError } from "@/lib/supabase-error";
 
 // ============================================================
 // TYPES
@@ -1047,7 +1048,7 @@ export default function DocumentComposer({
 
   // Wave 1: Load from Supabase, not in-memory arrays
   const [document, setDocument] = useState<ComposerDocument>({
-    id: `doc-${Date.now()}`, doc_type: documentType,
+    id: `doc-${crypto.randomUUID()}`, doc_type: documentType,
     title: `New ${DOC_TYPE_CONFIG[documentType].label}`,
     template_version_id: "", branding_profile_id: "bp-001",
     customer_id: customerId, customer_name: customerName,
@@ -1080,7 +1081,7 @@ export default function DocumentComposer({
           customer_id: instance.customer_id, customer_name: instance.customer_name,
           workspace_id: instance.workspace_id, workspace_name: instance.workspace_name,
           blocks: version.blocks.map((b: any, i: number) => ({
-            id: `blk-${i}-${Date.now()}`, block_key: b.block_key, order: b.order,
+            id: `blk-${i}-${crypto.randomUUID()}`, block_key: b.block_key, order: b.order,
             content: b.content, is_locked: b.is_locked, is_ai_generated: b.is_ai_generated, config: b.config || {},
           })),
           bindings: version.bindings || { pricing_snapshot_id: null, scope_snapshot_id: null, ecr_score_id: null, sla_snapshot_id: null },
@@ -1181,7 +1182,7 @@ export default function DocumentComposer({
     const blocks: ComposerBlock[] = version.recipe.map((recipe, i) => {
       const blockDef = getBlockByKey(recipe.block_key);
       return {
-        id: `blk-${i}-${Date.now()}`,
+        id: `blk-${i}-${crypto.randomUUID()}`,
         block_key: recipe.block_key,
         order: recipe.order,
         content: recipe.default_content_override || blockDef?.default_content || "<p>Block content</p>",
@@ -1220,7 +1221,7 @@ export default function DocumentComposer({
   const confirmAddBlock = useCallback((position: "after_current" | "end") => {
     if (!blockToAdd) return;
     const newBlock: ComposerBlock = {
-      id: `blk-${Date.now()}`, block_key: blockToAdd.block_key,
+      id: `blk-${crypto.randomUUID()}`, block_key: blockToAdd.block_key,
       order: document.blocks.length + 1,
       content: blockToAdd.default_content,
       is_locked: false, is_ai_generated: false, config: {},
@@ -1246,7 +1247,7 @@ export default function DocumentComposer({
   // Quick add section
   const addQuickSection = useCallback((afterBlockId: string | null) => {
     const newBlock: ComposerBlock = {
-      id: `blk-section-${Date.now()}`, block_key: "intro.narrative",
+      id: `blk-section-${crypto.randomUUID()}`, block_key: "intro.narrative",
       order: document.blocks.length + 1,
       content: "<h2>New Section</h2><p>Start writing here...</p>",
       is_locked: false, is_ai_generated: false, config: {},
@@ -1369,7 +1370,7 @@ export default function DocumentComposer({
     toast.info("AI is processing your prompt...");
     setTimeout(() => {
       const newBlock: ComposerBlock = {
-        id: `blk-ai-${Date.now()}`, block_key: "intro.narrative",
+        id: `blk-ai-${crypto.randomUUID()}`, block_key: "intro.narrative",
         order: document.blocks.length + 1,
         content: `<h2>Generated Content</h2><p>${promptText}</p><p>Hala Supply Chain Services has extensive experience in this area. Our dedicated team ensures seamless execution of all operational requirements, backed by industry-leading technology and proven processes.</p>`,
         is_locked: false, is_ai_generated: true, config: {},
@@ -1418,7 +1419,7 @@ export default function DocumentComposer({
       });
       // Log audit
       await syncAuditEntry({
-        id: `audit-save-${Date.now()}`,
+        id: `audit-save-${crypto.randomUUID()}`,
         entityType: document.doc_type,
         entityId: document.id,
         action: "document_saved",
@@ -1427,7 +1428,7 @@ export default function DocumentComposer({
         details: `${document.doc_type} "${document.title}" saved — v${document.version}`,
       });
     } catch (e) {
-      console.error("Save to Supabase failed:", e);
+      handleSupabaseError('Save_to_Supabase_failed', { message: String(e) });
     }
     if (onSave) onSave(document);
     toast.success("Document saved to database");
@@ -1456,7 +1457,7 @@ export default function DocumentComposer({
     // Persist compiled document to Supabase
     const user = getCurrentUser();
     try {
-      const compiledDocId = `cd-${document.id}-${Date.now()}`;
+      const compiledDocId = `cd-${document.id}-${crypto.randomUUID()}`;
       await syncCompiledDocCreate({
         id: compiledDocId,
         doc_instance_id: document.id,
@@ -1473,7 +1474,7 @@ export default function DocumentComposer({
       });
       await syncDocInstanceUpdate(document.id, { is_compiled: true, compiled_at: compiledAt, status: "compiled" });
       await syncAuditEntry({
-        id: `audit-compile-${Date.now()}`,
+        id: `audit-compile-${crypto.randomUUID()}`,
         entityType: document.doc_type,
         entityId: document.id,
         action: "document_compiled",
@@ -1482,7 +1483,7 @@ export default function DocumentComposer({
         details: `${document.doc_type} "${document.title}" compiled to PDF`,
       });
     } catch (e) {
-      console.error("Compile sync to Supabase failed:", e);
+      handleSupabaseError('Compile_sync_to_Supabase_failed', { message: String(e) });
     }
     if (onExportPDF) onExportPDF(document);
     toast.success("PDF approved and saved to Documents");
@@ -1502,7 +1503,7 @@ export default function DocumentComposer({
     try {
       await syncDocInstanceUpdate(document.id, { status: "canon", is_compiled: true, compiled_at: now });
       await syncAuditEntry({
-        id: `audit-canon-${Date.now()}`,
+        id: `audit-canon-${crypto.randomUUID()}`,
         entityType: document.doc_type,
         entityId: document.id,
         action: "document_canon_locked",
@@ -1511,7 +1512,7 @@ export default function DocumentComposer({
         details: `${document.doc_type} "${document.title}" locked as Canon — immutable`,
       });
     } catch (e) {
-      console.error("Canon lock sync failed:", e);
+      handleSupabaseError('Canon_lock_sync_failed', { message: String(e) });
     }
     if (onExportPDF) onExportPDF(document);
     toast.success("Document locked as Canon — immutable version created, final PDF compiled");
@@ -1520,14 +1521,14 @@ export default function DocumentComposer({
   // Bind now action
   const handleBindNow = useCallback((bindingKey: keyof Bindings) => {
     const mockBindings: Record<string, string> = {
-      pricing_snapshot_id: `ps-${document.customer_id}-${Date.now()}`,
-      scope_snapshot_id: `ss-${document.customer_id}-${Date.now()}`,
-      ecr_score_id: `ecr-${document.customer_id}-${Date.now()}`,
-      sla_snapshot_id: `sla-${document.customer_id}-${Date.now()}`,
+      pricing_snapshot_id: `ps-${document.customer_id}-${crypto.randomUUID()}`,
+      scope_snapshot_id: `ss-${document.customer_id}-${crypto.randomUUID()}`,
+      ecr_score_id: `ecr-${document.customer_id}-${crypto.randomUUID()}`,
+      sla_snapshot_id: `sla-${document.customer_id}-${crypto.randomUUID()}`,
     };
     setDocument(prev => ({
       ...prev,
-      bindings: { ...prev.bindings, [bindingKey]: mockBindings[bindingKey] || `bound-${Date.now()}` },
+      bindings: { ...prev.bindings, [bindingKey]: mockBindings[bindingKey] || `bound-${crypto.randomUUID()}` },
       updated_at: new Date().toISOString(),
     }));
     toast.success(`Bound ${bindingKey.replace(/_/g, " ")}`);
