@@ -510,7 +510,8 @@ export function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
-// Dashboard aggregations
+// @deprecated — DEAD CODE: Dashboard.tsx already uses Supabase hooks directly.
+// Kept for reference only. Will be removed in Wave 4 cleanup.
 export function getDashboardStats() {
   const activeWorkspaces = workspaces.filter(w => w.stage !== "go_live");
   const totalPipelineValue = activeWorkspaces.reduce((sum, w) => sum + w.estimatedValue, 0);

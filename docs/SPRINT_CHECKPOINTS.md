@@ -212,3 +212,68 @@ The `audit_log_pkey` duplicate key constraint violation on workspace load is a s
 ### Supabase Project
 
 Project name: `kositquaqmuousalmoar`
+
+---
+
+## checkpoint_sprint3_hygiene_contacts_dashboard
+
+**Date:** 2026-03-02
+**Checkpoint ID:** (see Manus checkpoint below)
+
+### What Was Implemented
+
+Sprint 3 — Hygiene, Contacts UI, and Dashboard verification. Three steps executed: audit_log idempotent seeding fix, Customer Contacts management UI, and Dashboard Supabase verification.
+
+| Step | Description | Result |
+|------|-------------|--------|
+| Step A | Fix audit_log_pkey duplicate key toast — idempotent upsert + DB-generated IDs | PASS |
+| Step B | Customer Contacts UI on CustomerDetail page — full CRUD + primary toggle | PASS |
+| Step C | Dashboard stats verification — already Supabase-native (getDashboardStats is dead code) | PASS |
+
+### Step A — Audit Log Fix
+
+The `audit_log` table was modified to use DB-generated UUIDs as default IDs (`ALTER TABLE audit_log ALTER COLUMN id SET DEFAULT gen_random_uuid()::text`). Ten conflicting seed rows (al1–al10) were deleted. The `syncAuditEntry()` function was changed from `.insert()` to `.upsert()` with `{ onConflict: 'id', ignoreDuplicates: true }`. In-memory `auditLog.unshift()` calls were removed from `stage-transition.ts` (2 calls) and `tender-engine.ts` (3 calls). A duplicate `createAuditEntry()` call was removed from `workspace-integration.ts`.
+
+### Step B — Customer Contacts UI
+
+A full Contacts management tab was added to the CustomerDetail page, positioned between Documents and Opportunities. The tab displays all contacts for the customer with avatar initials, name, job title, email, and phone. Features include Add Contact dialog (with form validation), Edit Contact dialog (pre-fills form), Delete Contact (with confirmation), and Primary Contact toggle (single-primary enforcement via `setPrimaryContact()`). The primary contact is highlighted with an amber border and crown badge. The first contact added is automatically set as primary.
+
+### Step C — Dashboard Stats
+
+Investigation revealed that `getDashboardStats()` in `store.ts` is dead code with zero importers. The Dashboard page (`Dashboard.tsx`) already uses Supabase hooks directly: `useWorkspaces()`, `useCustomers()`, `useSignals()`, and `useApprovalRecords()`. The function was annotated as `@deprecated` in store.ts. No migration was needed.
+
+### Acceptance Tests
+
+| Test | Description | Result |
+|------|-------------|--------|
+| AT1 | Open workspace — no audit_log duplicate toast | PASS |
+| AT2 | Add contact, set primary, hard refresh — persists from Supabase | PASS |
+| AT3 | Dashboard loads with live Supabase data, no console errors | PASS |
+| AT4 | Full document flow: New Quote → Save → Output Studio (6/6 tokens) → Back to Workspace | PASS |
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| client/src/lib/supabase-sync.ts | syncAuditEntry changed from insert to upsert with ignoreDuplicates |
+| client/src/lib/stage-transition.ts | Removed 2 auditLog.unshift() calls |
+| client/src/lib/tender-engine.ts | Removed 3 auditLog.unshift() calls |
+| client/src/lib/workspace-integration.ts | Removed duplicate createAuditEntry() call |
+| client/src/pages/CustomerDetail.tsx | Added Contacts tab with full CRUD UI, fixed hooks ordering |
+| client/src/lib/store.ts | Annotated getDashboardStats as @deprecated dead code |
+
+### SQL Migrations Applied
+
+```sql
+ALTER TABLE audit_log ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+DELETE FROM audit_log WHERE id IN ('al1','al2','al3','al4','al5','al6','al7','al8','al9','al10');
+NOTIFY pgrst, 'reload schema';
+```
+
+### TypeScript
+
+0 errors (`npx tsc --noEmit`).
+
+### Supabase Project
+
+Project name: `kositquaqmuousalmoar`

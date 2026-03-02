@@ -15,6 +15,7 @@ import {
   ArrowLeft, Printer, Star, TrendingUp, TrendingDown, Minus, ExternalLink,
   FolderOpen, FileText, Upload, Search, Filter, Archive, Eye, Clock,
   ChevronRight, ChevronDown, Gavel, Briefcase, Link2, Plus, X,
+  User, Mail, Phone, Edit2, Trash2, Crown,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +28,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { formatSAR, formatPercent, calculateECR, getStageLabel, getStageColor } from "@/lib/store";
-import { useCustomer, useWorkspacesByCustomer } from "@/hooks/useSupabase";
+import { useCustomer, useWorkspacesByCustomer, useCustomerContacts } from "@/hooks/useSupabase";
+import { createContact, updateContact, deleteContact, setPrimaryContact, type CustomerContact } from "@/lib/supabase-data";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Loader2 } from "lucide-react";
 import { generateECRScorecardPDF, openPDFPreview } from "@/lib/pdf-compiler";
 import {
@@ -56,6 +59,49 @@ export default function CustomerDetail() {
   const [, forceUpdate] = useState(0);
   const { data: c, loading: custLoading } = useCustomer(id!);
   const { data: custWorkspaces, loading: wsLoading } = useWorkspacesByCustomer(id!);
+  const { data: contacts, loading: contactsLoading, refetch: refetchContacts } = useCustomerContacts(id!);
+
+  // Contacts UI state — ALL hooks MUST be above early returns
+  const [contactDialogOpen, setContactDialogOpen] = useState(false);
+  const [editingContact, setEditingContact] = useState<CustomerContact | null>(null);
+  const [contactForm, setContactForm] = useState({ fullName: "", jobTitle: "", email: "", phone: "", notes: "" });
+  const [contactSaving, setContactSaving] = useState(false);
+
+  // Documents — vault state (hooks must be above early return)
+  const [vaultSearch, setVaultSearch] = useState("");
+  const [vaultCategory, setVaultCategory] = useState<string>("all");
+  const [vaultStatus, setVaultStatus] = useState<string>("all");
+  const [showArchived, setShowArchived] = useState(false);
+  const [expandedFolder, setExpandedFolder] = useState<string | null>(null);
+  const [viewerDoc, setViewerDoc] = useState<UnifiedDocument | null>(null);
+  const [showUpload, setShowUpload] = useState(false);
+
+  // Initialize mock files
+  useState(() => { initializeMockFiles(); });
+
+  // useMemo hooks — MUST be above early returns
+  const customerId = c?.id || "";
+  const filteredDocs = useMemo(() => {
+    if (!customerId) return [];
+    return searchDocuments({
+      customerId,
+      category: vaultCategory !== "all" ? vaultCategory as DocumentCategory : undefined,
+      status: vaultStatus !== "all" ? vaultStatus as DocumentStatus : undefined,
+      search: vaultSearch || undefined,
+      includeArchived: showArchived,
+    });
+  }, [customerId, vaultSearch, vaultCategory, vaultStatus, showArchived]);
+
+  const docsByCategory = useMemo(() => {
+    const grouped: Record<string, UnifiedDocument[]> = {};
+    for (const cat of DOCUMENT_CATEGORIES) {
+      const docs = filteredDocs.filter(d => d.category === cat);
+      if (docs.length > 0) grouped[cat] = docs;
+    }
+    return grouped;
+  }, [filteredDocs]);
+
+  // ─── Early returns (after ALL hooks) ───
   if (custLoading || wsLoading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   if (!c) return <div className="p-6"><h1 className="text-xl font-serif">Customer not found</h1><Link href="/customers"><Button variant="outline" className="mt-4"><ArrowLeft className="w-4 h-4 mr-1.5" />Back</Button></Link></div>;
   const ecr = calculateECR(c.dso, c.contractValue2025, 22, 0.7, 0.6);
@@ -78,40 +124,8 @@ export default function CustomerDetail() {
   // Tenders for this customer
   const custTenders = getTendersByCustomer(c.id);
 
-  // Documents — vault state
-  const [vaultSearch, setVaultSearch] = useState("");
-  const [vaultCategory, setVaultCategory] = useState<string>("all");
-  const [vaultStatus, setVaultStatus] = useState<string>("all");
-  const [showArchived, setShowArchived] = useState(false);
-  const [expandedFolder, setExpandedFolder] = useState<string | null>(null);
-  const [viewerDoc, setViewerDoc] = useState<UnifiedDocument | null>(null);
-  const [showUpload, setShowUpload] = useState(false);
-
-  // Initialize mock files
-  useState(() => { initializeMockFiles(); });
-
   const vaultStats = getVaultStats(c.id);
   const docCounts = getDocumentCounts(c.id);
-
-  const filteredDocs = useMemo(() => {
-    return searchDocuments({
-      customerId: c.id,
-      category: vaultCategory !== "all" ? vaultCategory as DocumentCategory : undefined,
-      status: vaultStatus !== "all" ? vaultStatus as DocumentStatus : undefined,
-      search: vaultSearch || undefined,
-      includeArchived: showArchived,
-    });
-  }, [c.id, vaultSearch, vaultCategory, vaultStatus, showArchived]);
-
-  // Group docs by category for folder view
-  const docsByCategory = useMemo(() => {
-    const grouped: Record<string, UnifiedDocument[]> = {};
-    for (const cat of DOCUMENT_CATEGORIES) {
-      const docs = filteredDocs.filter(d => d.category === cat);
-      if (docs.length > 0) grouped[cat] = docs;
-    }
-    return grouped;
-  }, [filteredDocs]);
 
   const handleArchive = (doc: UnifiedDocument) => {
     archiveDocument(doc.id);
@@ -175,6 +189,9 @@ export default function CustomerDetail() {
             <TabsTrigger value="tenders">Tenders ({custTenders.length})</TabsTrigger>
             <TabsTrigger value="documents">
               <FolderOpen className="w-3.5 h-3.5 mr-1" />Documents ({vaultStats.totalDocuments})
+            </TabsTrigger>
+            <TabsTrigger value="contacts">
+              <User className="w-3.5 h-3.5 mr-1" />Contacts ({contacts.length})
             </TabsTrigger>
             <TabsTrigger value="opportunities">Opportunities</TabsTrigger>
           </TabsList>
@@ -513,6 +530,139 @@ export default function CustomerDetail() {
 
             {/* Document Viewer Modal */}
             <DocumentViewer document={viewerDoc} open={!!viewerDoc} onClose={() => setViewerDoc(null)} onDocumentChanged={() => forceUpdate(n => n + 1)} />
+          </TabsContent>
+
+          {/* ═══ Contacts Tab ═══ */}
+          <TabsContent value="contacts">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-serif font-semibold">Contacts</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">Manage contacts for this customer. The primary contact is used as the default recipient in documents.</p>
+                </div>
+                <Button size="sm" onClick={() => { setEditingContact(null); setContactForm({ fullName: "", jobTitle: "", email: "", phone: "", notes: "" }); setContactDialogOpen(true); }}>
+                  <Plus className="w-4 h-4 mr-1" />Add Contact
+                </Button>
+              </div>
+
+              {contactsLoading ? (
+                <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+              ) : contacts.length === 0 ? (
+                <Card className="border border-border shadow-none">
+                  <CardContent className="py-12 text-center">
+                    <User className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                    <p className="text-sm text-muted-foreground">No contacts yet</p>
+                    <Button variant="outline" size="sm" className="mt-3" onClick={() => { setEditingContact(null); setContactForm({ fullName: "", jobTitle: "", email: "", phone: "", notes: "" }); setContactDialogOpen(true); }}>
+                      <Plus className="w-4 h-4 mr-1" />Add First Contact
+                    </Button>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="space-y-2">
+                  {contacts.map(ct => (
+                    <Card key={ct.id} className={`border shadow-none transition-colors ${ct.isPrimary ? "border-amber-300 bg-amber-50/50" : "border-border"}`}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-start gap-3">
+                            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold ${ct.isPrimary ? "bg-amber-100 text-amber-800" : "bg-muted text-muted-foreground"}`}>
+                              {ct.fullName.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold">{ct.fullName}</span>
+                                {ct.isPrimary && <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700 bg-amber-50"><Crown className="w-3 h-3 mr-0.5" />Primary</Badge>}
+                              </div>
+                              {ct.jobTitle && <p className="text-xs text-muted-foreground mt-0.5">{ct.jobTitle}</p>}
+                              <div className="flex items-center gap-4 mt-1.5">
+                                {ct.email && <span className="flex items-center gap-1 text-xs text-muted-foreground"><Mail className="w-3 h-3" />{ct.email}</span>}
+                                {ct.phone && <span className="flex items-center gap-1 text-xs text-muted-foreground"><Phone className="w-3 h-3" />{ct.phone}</span>}
+                              </div>
+                              {ct.notes && <p className="text-xs text-muted-foreground mt-1 italic">{ct.notes}</p>}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            {!ct.isPrimary && (
+                              <Tooltip><TooltipTrigger asChild>
+                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={async () => {
+                                  const ok = await setPrimaryContact(ct.id, c.id);
+                                  if (ok) { toast.success(`${ct.fullName} set as primary contact`); refetchContacts(); }
+                                  else toast.error("Failed to set primary contact");
+                                }}><Crown className="w-3.5 h-3.5" /></Button>
+                              </TooltipTrigger><TooltipContent>Set as primary</TooltipContent></Tooltip>
+                            )}
+                            <Tooltip><TooltipTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => {
+                                setEditingContact(ct);
+                                setContactForm({ fullName: ct.fullName, jobTitle: ct.jobTitle, email: ct.email, phone: ct.phone, notes: ct.notes });
+                                setContactDialogOpen(true);
+                              }}><Edit2 className="w-3.5 h-3.5" /></Button>
+                            </TooltipTrigger><TooltipContent>Edit</TooltipContent></Tooltip>
+                            <Tooltip><TooltipTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:text-destructive" onClick={async () => {
+                                const ok = await deleteContact(ct.id);
+                                if (ok) { toast.success(`Contact "${ct.fullName}" deleted`); refetchContacts(); }
+                                else toast.error("Failed to delete contact");
+                              }}><Trash2 className="w-3.5 h-3.5" /></Button>
+                            </TooltipTrigger><TooltipContent>Delete</TooltipContent></Tooltip>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Contact Add/Edit Dialog */}
+            <Dialog open={contactDialogOpen} onOpenChange={setContactDialogOpen}>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle className="font-serif">{editingContact ? "Edit Contact" : "Add Contact"}</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3 py-2">
+                  <div><Label htmlFor="ct-name">Full Name *</Label><Input id="ct-name" value={contactForm.fullName} onChange={e => setContactForm(f => ({ ...f, fullName: e.target.value }))} placeholder="e.g. Faisal Al-Marai" /></div>
+                  <div><Label htmlFor="ct-title">Job Title</Label><Input id="ct-title" value={contactForm.jobTitle} onChange={e => setContactForm(f => ({ ...f, jobTitle: e.target.value }))} placeholder="e.g. Procurement Manager" /></div>
+                  <div><Label htmlFor="ct-email">Email</Label><Input id="ct-email" type="email" value={contactForm.email} onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))} placeholder="e.g. faisal@almarai.com" /></div>
+                  <div><Label htmlFor="ct-phone">Phone</Label><Input id="ct-phone" value={contactForm.phone} onChange={e => setContactForm(f => ({ ...f, phone: e.target.value }))} placeholder="e.g. +966 55 123 4567" /></div>
+                  <div><Label htmlFor="ct-notes">Notes</Label><Textarea id="ct-notes" value={contactForm.notes} onChange={e => setContactForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional notes..." rows={2} /></div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setContactDialogOpen(false)}>Cancel</Button>
+                  <Button disabled={!contactForm.fullName.trim() || contactSaving} onClick={async () => {
+                    setContactSaving(true);
+                    try {
+                      if (editingContact) {
+                        const updated = await updateContact(editingContact.id, {
+                          fullName: contactForm.fullName.trim(),
+                          jobTitle: contactForm.jobTitle.trim(),
+                          email: contactForm.email.trim(),
+                          phone: contactForm.phone.trim(),
+                          notes: contactForm.notes.trim(),
+                        });
+                        if (updated) { toast.success("Contact updated"); refetchContacts(); setContactDialogOpen(false); }
+                        else toast.error("Failed to update contact");
+                      } else {
+                        const created = await createContact({
+                          id: `cc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                          customerId: c.id,
+                          fullName: contactForm.fullName.trim(),
+                          jobTitle: contactForm.jobTitle.trim(),
+                          email: contactForm.email.trim(),
+                          phone: contactForm.phone.trim(),
+                          isPrimary: contacts.length === 0,
+                          notes: contactForm.notes.trim(),
+                        });
+                        if (created) { toast.success(`Contact "${created.fullName}" added${contacts.length === 0 ? " as primary" : ""}`); refetchContacts(); setContactDialogOpen(false); }
+                        else toast.error("Failed to add contact");
+                      }
+                    } finally { setContactSaving(false); }
+                  }}>
+                    {contactSaving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                    {editingContact ? "Save Changes" : "Add Contact"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           {/* ═══ Opportunities Tab ═══ */}

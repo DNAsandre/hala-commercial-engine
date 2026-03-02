@@ -195,7 +195,7 @@ export async function syncAuditEntry(entry: Record<string, any>): Promise<void> 
     timestamp: entry.timestamp || new Date().toISOString(),
     details: entry.details || "",
   };
-  const { error } = await supabase.from("audit_log").insert(row);
+  const { error } = await supabase.from("audit_log").upsert(row, { onConflict: 'id', ignoreDuplicates: true });
   if (error) handleSupabaseError('syncAuditEntry', error, { entityId: entry.id });
 }
 

@@ -13,7 +13,7 @@ import { getCurrentUser } from "./auth-state";
  */
 
 import { type AuditEntry, type Workspace, type Quote, type Proposal } from "./store";
-import { createAuditEntry, fetchWorkspaceById, fetchQuotesByWorkspace, fetchProposalsByWorkspace } from "./supabase-data";
+import { fetchWorkspaceById, fetchQuotesByWorkspace, fetchProposalsByWorkspace } from "./supabase-data";
 import { syncAuditEntry } from "./supabase-sync";
 
 // ─── FEATURE FLAG ───────────────────────────────────────────
@@ -107,9 +107,8 @@ function logIntegrationAudit(
     timestamp: new Date().toISOString(),
     details,
   };
-  // Write to Supabase only (no in-memory push)
+  // Write to Supabase only (no in-memory push, no duplicate write)
   syncAuditEntry(entry);
-  createAuditEntry(entry).catch(() => {});
 }
 
 // ─── CONTRACT CYCLE HELPERS ─────────────────────────────────

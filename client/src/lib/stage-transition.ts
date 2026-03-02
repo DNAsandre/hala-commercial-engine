@@ -356,8 +356,7 @@ function logTransitionAudit(
       ? `Stage advanced from '${getStageDisplayName(fromStage)}' to '${getStageDisplayName(toStage!)}'. ${message}${overrideDetails}`
       : `Stage advance blocked at '${getStageDisplayName(fromStage)}'. ${message}`,
   };
-  auditLog.unshift(entry);
-  // Persist audit entry to Supabase
+  // Persist audit entry to Supabase (no in-memory push)
   syncAuditEntry(entry);
 }
 
@@ -901,7 +900,7 @@ export function revertStage(workspaceId: string): RevertResult {
     timestamp: now.toISOString(),
     details: msg,
   };
-  auditLog.unshift(entry);
+  // Persist audit entry to Supabase (no in-memory push)
   syncAuditEntry(entry);
 
   // Stage history

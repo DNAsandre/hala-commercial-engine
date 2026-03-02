@@ -570,7 +570,7 @@ function logTenderTransitionAudit(
       ? `Tender status advanced from '${getTenderStatusDisplayName(fromStatus)}' to '${getTenderStatusDisplayName(toStatus!)}'. ${message}${overrideDetails}`
       : `Tender status advance blocked at '${getTenderStatusDisplayName(fromStatus)}'. ${message}`,
   };
-  auditLog.unshift(entry);
+  // Persist audit entry to Supabase (no in-memory push)
   syncAuditEntry(entry);
 }
 
@@ -872,7 +872,7 @@ export function revertTenderStatus(tenderId: string, reason?: string): TenderRev
     timestamp: now.toISOString(),
     details: msg,
   };
-  auditLog.unshift(entry);
+  // Persist audit entry to Supabase (no in-memory push)
   syncAuditEntry(entry);
 
   tenderStageHistory.unshift({
@@ -982,7 +982,7 @@ export function createTender(data: Omit<Tender, "id" | "createdAt" | "updatedAt"
     timestamp: new Date().toISOString(),
     details: `Tender "${tender.title}" created for ${tender.customerName}. Estimated value: ${formatSAR(tender.estimatedValue)}.`,
   };
-  auditLog.unshift(entry);
+  // Persist audit entry to Supabase (no in-memory push)
   syncAuditEntry(entry);
 
   return tender;
