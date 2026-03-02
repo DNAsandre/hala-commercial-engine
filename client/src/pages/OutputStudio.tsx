@@ -20,7 +20,9 @@ import {
   type BrandingProfile, type InstanceBlock,
 } from "@/lib/document-composer";
 import { compileComposerPDF, type ComposerPDFInput } from "@/lib/pdf-compiler";
-import { resolveTokens, type TokenResolutionResult } from "@/lib/semantic-variables";
+import { resolveTokens, type TokenResolutionResult, type ResolutionContext } from "@/lib/semantic-variables";
+import { getTokenHealthSummary, buildAsyncResolutionContext, type AsyncResolutionInput } from "@/lib/token-resolver";
+import { customers, workspaces } from "@/lib/store";
 import {
   useDocInstance, useCompiledDocuments, useVaultAssets,
   type HydratedDocInstance, type HydratedDocVersion, type DbCompiledDocument,
@@ -38,33 +40,7 @@ interface TokenHealth {
   status: "healthy" | "warning" | "error";
 }
 
-function analyzeTokenHealth(blocks: any[]): TokenHealth {
-  const tokenRegex = /\{\{([^}]+)\}\}/g;
-  const allTokenKeys: string[] = [];
-  const missingKeys: string[] = [];
-
-  for (const block of blocks) {
-    let match;
-    while ((match = tokenRegex.exec(block.content)) !== null) {
-      const token = match[1].trim();
-      if (!allTokenKeys.includes(token)) allTokenKeys.push(token);
-    }
-  }
-
-  for (const token of allTokenKeys) {
-    const result: TokenResolutionResult = resolveTokens(`{{${token}}}`, { recordOverrides: {}, templateDefaults: {}, globalDefaults: {}, entityBindings: {} }, "proposal");
-    if (result.missingTokens.length > 0) {
-      missingKeys.push(token);
-    }
-  }
-
-  return {
-    total: allTokenKeys.length,
-    resolved: allTokenKeys.length - missingKeys.length,
-    missing: missingKeys,
-    status: missingKeys.length === 0 ? "healthy" : missingKeys.length <= 2 ? "warning" : "error",
-  };
-}
+// analyzeTokenHealth is now async — see useEffect in the component
 
 // ============================================================
 // NAVIGATION CONTEXT HELPERS
@@ -134,11 +110,69 @@ export default function OutputStudio() {
   const effectiveBrandingId = selectedBrandingId || (docInstance ? "bp-001" : "");
   const branding = useMemo<BrandingProfile | undefined>(() => getBrandingProfile(effectiveBrandingId), [effectiveBrandingId]);
 
-  // Token health
-  const tokenHealth = useMemo<TokenHealth>(() => {
-    if (!currentVersion) return { total: 0, resolved: 0, missing: [], status: "healthy" };
-    return analyzeTokenHealth(currentVersion.blocks);
-  }, [currentVersion]);
+  // Token health — async from Supabase-backed resolver
+  const [tokenHealth, setTokenHealth] = useState<TokenHealth>({ total: 0, resolved: 0, missing: [], status: "healthy" });
+  const [resolutionCtx, setResolutionCtx] = useState<ResolutionContext | null>(null);
+
+  // Build async resolution input from doc instance data
+  const asyncInput = useMemo<AsyncResolutionInput | null>(() => {
+    if (!docInstance) return null;
+    const customer = customers.find(c => c.id === docInstance.customer_id || c.name === docInstance.customer_name);
+    const workspace = workspaces.find(w => w.id === docInstance.workspace_id);
+    const entityData: Record<string, unknown> = {};
+    if (customer) {
+      entityData.name = customer.name;
+      entityData.code = customer.code;
+      entityData.city = customer.city;
+      entityData.region = customer.region;
+      entityData.industry = customer.industry;
+      entityData.grade = customer.grade;
+      entityData.facility = customer.facility;
+      entityData.contract_expiry = customer.contractExpiry;
+      entityData.service_type = customer.serviceType;
+    }
+    const pricingSnapshot: Record<string, unknown> = {};
+    if (workspace) {
+      pricingSnapshot.estimated_value = workspace.estimatedValue;
+      pricingSnapshot.pallet_volume = workspace.palletVolume;
+      pricingSnapshot.gp_percent = workspace.gpPercent;
+      pricingSnapshot.total = workspace.estimatedValue;
+    }
+    return {
+      docInstanceId: docInstance.id,
+      docType: docInstance.doc_type,
+      entityData,
+      pricingSnapshot,
+    };
+  }, [docInstance]);
+
+  // Fetch token health + resolution context asynchronously
+  useEffect(() => {
+    if (!currentVersion || !asyncInput) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const blocks = currentVersion.blocks.map((b: any) => ({ content: b.content, block_key: b.block_key }));
+        const [summary, { context }] = await Promise.all([
+          getTokenHealthSummary(blocks, asyncInput),
+          buildAsyncResolutionContext(asyncInput),
+        ]);
+        if (cancelled) return;
+        setResolutionCtx(context);
+        setTokenHealth({
+          total: summary.totalTokens,
+          resolved: summary.resolvedCount,
+          missing: summary.missingTokens.map(t => t.key),
+          status: summary.missingCount === 0 ? "healthy" : summary.missingCount <= 2 ? "warning" : "error",
+        });
+      } catch {
+        if (!cancelled) {
+          setTokenHealth({ total: 0, resolved: 0, missing: [], status: "healthy" });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentVersion, asyncInput]);
 
   // Auto-render preview on load
   useEffect(() => {
@@ -184,7 +218,7 @@ export default function OutputStudio() {
       html += `<div style="margin-bottom: ${spacing}; padding: 1rem; border-left: 3px solid ${borderColor}; background: #fafafa; border-radius: 0 4px 4px 0;">`;
       html += `<div style="font-size: 0.625rem; text-transform: uppercase; color: #999; margin-bottom: 0.5rem; letter-spacing: 0.05em;">${block.key.replace(/_/g, ' ')}</div>`;
 
-      const resolved = resolveTokens(block.content, {
+      const resolved = resolveTokens(block.content, resolutionCtx || {
         recordOverrides: {},
         templateDefaults: {},
         globalDefaults: {},

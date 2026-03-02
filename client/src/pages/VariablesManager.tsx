@@ -5,10 +5,14 @@ import { Link } from "wouter";
  * Variable set management with doc type bindings
  * Override tracking with precedence visualization
  * Design: Swiss Precision — white cards, subtle borders, muted accents
+ * Data: Reads/writes via Supabase hooks (useVariables.ts)
  */
 
-import { useState, useMemo } from "react";
-import { Braces, Plus, Search, Edit2, Copy, ChevronDown, ChevronRight, Tag, Layers, Users, ArrowRight, Shield, Lock , ArrowLeft } from "lucide-react";
+import { useState, useMemo, useCallback } from "react";
+import {
+  Braces, Plus, Search, Edit2, Copy, ChevronDown, ChevronRight,
+  Tag, Layers, Users, ArrowRight, Shield, Lock, ArrowLeft, Trash2, Loader2,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,10 +21,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
-  variableDefinitions,
-  variableSets,
-  variableSetItems,
-  docVariableOverrides,
   type VariableDefinition,
   type VariableDataType,
   type VariableScope,
@@ -29,8 +29,8 @@ import {
   SCOPE_CONFIG,
   SOURCE_CONFIG,
   NAMESPACE_CONFIG,
-  addVariableDefinition,
 } from "@/lib/semantic-variables";
+import { useVariableDefinitions, useVariableSets, useDocVariableOverrides } from "@/hooks/useVariables";
 import { navigationV1 } from "@/components/DashboardLayout";
 
 const namespaceIcons: Record<string, typeof Tag> = {
@@ -41,75 +41,138 @@ const namespaceIcons: Record<string, typeof Tag> = {
   system: Layers,
 };
 
+type FormMode = "create" | "edit";
+
+const emptyForm = {
+  key: "",
+  label: "",
+  description: "",
+  data_type: "text" as VariableDataType,
+  scope: "global" as VariableScope,
+  source: "static" as VariableSource,
+  binding_path: "",
+  default_value: "",
+  allowed_in_doc_types: "" as string,
+};
+
 export default function VariablesManager() {
   const [activeTab, setActiveTab] = useState<"definitions" | "sets" | "overrides">("definitions");
   const [searchTerm, setSearchTerm] = useState("");
   const [namespaceFilter, setNamespaceFilter] = useState<string>("all");
   const [expandedSet, setExpandedSet] = useState<string | null>(null);
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showFormDialog, setShowFormDialog] = useState(false);
+  const [formMode, setFormMode] = useState<FormMode>("create");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formData, setFormData] = useState(emptyForm);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
 
-  // New variable form state
-  const [newVar, setNewVar] = useState({
-    key: "",
-    label: "",
-    description: "",
-    data_type: "text" as VariableDataType,
-    scope: "global" as VariableScope,
-    source: "static" as VariableSource,
-    binding_path: "",
-    default_value: "",
-    allowed_in_doc_types: "" as string,
-    created_by: "admin",
-  });
+  // ─── Supabase hooks ───────────────────────────────────────
+  const { definitions, loading: defsLoading, save: saveDef, remove: removeDef } = useVariableDefinitions();
+  const { sets, loading: setsLoading } = useVariableSets();
+  const { overrides, loading: ovLoading } = useDocVariableOverrides(null);
 
   const namespaces = useMemo(() => {
-    const ns = new Set(variableDefinitions.map(v => v.namespace));
+    const ns = new Set(definitions.map(v => v.namespace));
     return Array.from(ns);
-  }, []);
+  }, [definitions]);
 
   const filteredDefinitions = useMemo(() => {
-    return variableDefinitions.filter(v => {
+    return definitions.filter(v => {
       const matchesSearch = v.key.toLowerCase().includes(searchTerm.toLowerCase()) ||
         v.label.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesNs = namespaceFilter === "all" || v.namespace === namespaceFilter;
       return matchesSearch && matchesNs;
     });
-  }, [searchTerm, namespaceFilter]);
+  }, [definitions, searchTerm, namespaceFilter]);
 
   const filteredSets = useMemo(() => {
-    return variableSets.filter(s =>
+    return sets.filter(s =>
       s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       s.doc_type.toLowerCase().includes(searchTerm.toLowerCase())
     );
-  }, [searchTerm]);
+  }, [sets, searchTerm]);
 
   // Stats
-  const totalVars = variableDefinitions.length;
-  const totalSets = variableSets.length;
-  const totalOverrides = docVariableOverrides.length;
-  const bindingCount = variableDefinitions.filter(v => v.source === "binding").length;
+  const totalVars = definitions.length;
+  const totalSets = sets.length;
+  const totalOverrides = overrides.length;
+  const bindingCount = definitions.filter(v => v.source === "binding").length;
 
-  const handleCreateVariable = () => {
-    if (!newVar.key || !newVar.label) {
+  // ─── Create / Edit handlers ───────────────────────────────
+  const openCreate = useCallback(() => {
+    setFormMode("create");
+    setEditingId(null);
+    setFormData(emptyForm);
+    setShowFormDialog(true);
+  }, []);
+
+  const openEdit = useCallback((v: VariableDefinition) => {
+    setFormMode("edit");
+    setEditingId(v.id);
+    setFormData({
+      key: v.key,
+      label: v.label,
+      description: v.description || "",
+      data_type: v.data_type,
+      scope: v.scope,
+      source: v.source,
+      binding_path: v.binding_path || "",
+      default_value: v.default_value_json != null ? String(v.default_value_json) : "",
+      allowed_in_doc_types: v.allowed_in_doc_types?.join(", ") || "",
+    });
+    setShowFormDialog(true);
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    if (!formData.key || !formData.label) {
       toast.error("Key and label are required");
       return;
     }
-    addVariableDefinition({
-      key: newVar.key,
-      label: newVar.label,
-      description: newVar.description,
-      data_type: newVar.data_type,
-      scope: newVar.scope,
-      source: newVar.source,
-      binding_path: newVar.binding_path || null,
-      default_value_json: newVar.default_value || null,
-      allowed_in_doc_types: newVar.allowed_in_doc_types ? newVar.allowed_in_doc_types.split(",").map(s => s.trim()) : [],
+    const namespace = formData.key.split(".")[0] || "custom";
+    const payload: Partial<VariableDefinition> & { id: string } = {
+      id: editingId || `vd-${Date.now()}`,
+      key: formData.key,
+      label: formData.label,
+      description: formData.description || "",
+      data_type: formData.data_type,
+      scope: formData.scope,
+      source: formData.source,
+      namespace,
+      binding_path: formData.binding_path || null,
+      default_value_json: formData.default_value || null,
+      allowed_in_doc_types: formData.allowed_in_doc_types
+        ? formData.allowed_in_doc_types.split(",").map(s => s.trim())
+        : [],
       created_by: "admin",
-    });
-    toast.success(`Variable "${newVar.label}" created`, { description: `Key: {{${newVar.key}}}` });
-    setShowCreateDialog(false);
-    setNewVar({ key: "", label: "", description: "", data_type: "text", scope: "global", source: "static", binding_path: "", default_value: "", allowed_in_doc_types: "", created_by: "admin" });
-  };
+    };
+    if (formMode === "create") {
+      payload.created_at = new Date().toISOString();
+    }
+    const result = await saveDef(payload);
+    if (result) {
+      toast.success(
+        formMode === "create"
+          ? `Variable "${formData.label}" created`
+          : `Variable "${formData.label}" updated`,
+        { description: `Key: {{${formData.key}}}` }
+      );
+      setShowFormDialog(false);
+      setFormData(emptyForm);
+    } else {
+      toast.error("Failed to save variable");
+    }
+  }, [formData, formMode, editingId, saveDef]);
+
+  const handleDelete = useCallback(async (id: string) => {
+    const def = definitions.find(d => d.id === id);
+    const ok = await removeDef(id);
+    if (ok) {
+      toast.success(`Variable "${def?.label || id}" deleted`);
+    } else {
+      toast.error("Failed to delete variable");
+    }
+    setShowDeleteConfirm(null);
+  }, [definitions, removeDef]);
 
   const tabs = [
     { id: "definitions" as const, label: "Variable Definitions", count: totalVars },
@@ -138,7 +201,7 @@ export default function VariablesManager() {
           <h1 className="text-2xl font-serif font-bold text-[#1B2A4A]">Variables Manager</h1>
           <p className="text-sm text-gray-500 mt-0.5">Manage semantic variables, token definitions, and resolution sets</p>
         </div>
-        <Button onClick={() => setShowCreateDialog(true)} className="bg-[#1B2A4A] hover:bg-[#2A3F6A]">
+        <Button onClick={openCreate} className="bg-[#1B2A4A] hover:bg-[#2A3F6A]">
           <Plus className="w-4 h-4 mr-1.5" /> New Variable
         </Button>
       </div>
@@ -148,25 +211,25 @@ export default function VariablesManager() {
         <Card className="border border-gray-200 bg-blue-50">
           <CardContent className="p-4">
             <p className="text-xs text-gray-500 uppercase tracking-wider">Total Variables</p>
-            <p className="text-2xl font-bold mt-1 text-[#1B2A4A]">{totalVars}</p>
+            <p className="text-2xl font-bold mt-1 text-[#1B2A4A]">{defsLoading ? "..." : totalVars}</p>
           </CardContent>
         </Card>
         <Card className="border border-gray-200 bg-emerald-50">
           <CardContent className="p-4">
             <p className="text-xs text-gray-500 uppercase tracking-wider">Data Bindings</p>
-            <p className="text-2xl font-bold mt-1 text-emerald-700">{bindingCount}</p>
+            <p className="text-2xl font-bold mt-1 text-emerald-700">{defsLoading ? "..." : bindingCount}</p>
           </CardContent>
         </Card>
         <Card className="border border-gray-200 bg-purple-50">
           <CardContent className="p-4">
             <p className="text-xs text-gray-500 uppercase tracking-wider">Variable Sets</p>
-            <p className="text-2xl font-bold mt-1 text-purple-700">{totalSets}</p>
+            <p className="text-2xl font-bold mt-1 text-purple-700">{setsLoading ? "..." : totalSets}</p>
           </CardContent>
         </Card>
         <Card className="border border-gray-200 bg-amber-50">
           <CardContent className="p-4">
             <p className="text-xs text-gray-500 uppercase tracking-wider">Active Overrides</p>
-            <p className="text-2xl font-bold mt-1 text-amber-700">{totalOverrides}</p>
+            <p className="text-2xl font-bold mt-1 text-amber-700">{ovLoading ? "..." : totalOverrides}</p>
           </CardContent>
         </Card>
       </div>
@@ -217,8 +280,16 @@ export default function VariablesManager() {
         )}
       </div>
 
+      {/* Loading state */}
+      {defsLoading && activeTab === "definitions" && (
+        <div className="flex items-center justify-center py-12 text-gray-400">
+          <Loader2 className="w-5 h-5 animate-spin mr-2" />
+          <span className="text-sm">Loading variables...</span>
+        </div>
+      )}
+
       {/* Tab Content: Definitions */}
-      {activeTab === "definitions" && (
+      {activeTab === "definitions" && !defsLoading && (
         <div className="space-y-2">
           {filteredDefinitions.map(v => {
             const dtCfg = DATA_TYPE_CONFIG[v.data_type];
@@ -256,8 +327,16 @@ export default function VariablesManager() {
                       }}>
                         <Copy size={12} />
                       </Button>
-                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => toast("Edit variable coming soon")}>
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => openEdit(v)}>
                         <Edit2 size={12} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                        onClick={() => setShowDeleteConfirm(v.id)}
+                      >
+                        <Trash2 size={12} />
                       </Button>
                     </div>
                   </div>
@@ -275,11 +354,9 @@ export default function VariablesManager() {
       )}
 
       {/* Tab Content: Sets */}
-      {activeTab === "sets" && (
+      {activeTab === "sets" && !setsLoading && (
         <div className="space-y-3">
           {filteredSets.map(set => {
-            const items = variableSetItems.filter(i => i.variable_set_id === set.id);
-            const defs = items.map(i => variableDefinitions.find(d => d.id === i.variable_definition_id)).filter(Boolean) as VariableDefinition[];
             return (
               <Card key={set.id} className="border border-gray-200 shadow-none">
                 <CardContent className="p-0">
@@ -298,30 +375,23 @@ export default function VariablesManager() {
                         <Badge variant="outline" className="text-[10px] bg-purple-50 text-purple-600 ml-1">Template-bound</Badge>
                       )}
                     </div>
-                    <span className="text-xs text-gray-400">{set.created_at}</span>
                   </button>
                   {expandedSet === set.id && (
                     <div className="border-t border-gray-100 p-4 bg-gray-50/50">
                       <div className="grid grid-cols-2 gap-2">
-                        {defs.map(d => {
-                          const item = items.find(i => i.variable_definition_id === d.id);
+                        {set.variable_ids.map(vid => {
+                          const d = definitions.find(def => def.id === vid);
+                          if (!d) return null;
                           return (
                             <div key={d.id} className="flex items-center justify-between bg-white rounded border border-gray-200 px-3 py-2">
                               <div className="flex items-center gap-2">
                                 <code className="text-xs font-mono text-gray-600">{`{{${d.key}}}`}</code>
-                                {item?.required && <Badge variant="outline" className="text-[9px] bg-red-50 text-red-600">Req</Badge>}
                               </div>
-                              <div className="flex items-center gap-1.5">
-                                <Badge variant="outline" className="text-[9px]">{DATA_TYPE_CONFIG[d.data_type].label}</Badge>
-                                {item && <Badge variant="outline" className={`text-[9px] ${item.fallback_mode === 'block_compile' ? 'bg-red-50 text-red-600' : item.fallback_mode === 'warning' ? 'bg-amber-50 text-amber-600' : 'bg-gray-50 text-gray-500'}`}>{item.fallback_mode}</Badge>}
-                              </div>
+                              <Badge variant="outline" className="text-[9px]">{DATA_TYPE_CONFIG[d.data_type].label}</Badge>
                             </div>
                           );
                         })}
                       </div>
-                      {defs.length === 0 && (
-                        <p className="text-xs text-gray-400 text-center py-4">No variable definitions linked to this set</p>
-                      )}
                     </div>
                   )}
                 </CardContent>
@@ -350,8 +420,8 @@ export default function VariablesManager() {
               <div className="space-y-2">
                 {[
                   { level: 1, name: "Record Override", desc: "Per-document instance value set by the author in the composer", scope: "Per-document", color: "border-l-red-500 bg-red-50/30" },
-                  { level: 2, name: "Template Default", desc: "Default value defined in the variable definition for the template", scope: "Per-template", color: "border-l-purple-500 bg-purple-50/30" },
-                  { level: 3, name: "Data Binding", desc: "Auto-resolved from live data source (e.g., customer.name → SABIC)", scope: "Per-binding", color: "border-l-blue-500 bg-blue-50/30" },
+                  { level: 2, name: "Entity Binding", desc: "Auto-resolved from workspace entity data (e.g., customer.name → SABIC)", scope: "Per-workspace", color: "border-l-blue-500 bg-blue-50/30" },
+                  { level: 3, name: "Template Default", desc: "Default value defined in the variable definition for the template", scope: "Per-template", color: "border-l-purple-500 bg-purple-50/30" },
                   { level: 4, name: "Global Default", desc: "Fallback value from the variable definition's default_value_json", scope: "Global", color: "border-l-gray-400 bg-gray-50/30" },
                 ].map(level => (
                   <div key={level.level} className={`flex items-center gap-4 p-3 rounded border-l-4 ${level.color} border border-gray-200`}>
@@ -375,22 +445,32 @@ export default function VariablesManager() {
           <Card className="border border-gray-200">
             <CardContent className="p-5">
               <h3 className="text-sm font-semibold text-[#1B2A4A] mb-4">Active Overrides ({totalOverrides})</h3>
-              <div className="space-y-2">
-                {docVariableOverrides.map(ov => (
-                  <div key={ov.id} className="flex items-center justify-between bg-gray-50 rounded border border-gray-200 px-3 py-2">
-                    <div className="flex items-center gap-3">
-                      <code className="text-xs font-mono text-[#1B2A4A] bg-white px-1.5 py-0.5 rounded border border-gray-200">{`{{${ov.key}}}`}</code>
-                      <ArrowRight size={12} className="text-gray-300" />
-                      <span className="text-xs font-medium text-emerald-700">{String(ov.value_json)}</span>
+              {ovLoading ? (
+                <div className="flex items-center justify-center py-6 text-gray-400">
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  <span className="text-sm">Loading overrides...</span>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {overrides.map(ov => (
+                    <div key={ov.id} className="flex items-center justify-between bg-gray-50 rounded border border-gray-200 px-3 py-2">
+                      <div className="flex items-center gap-3">
+                        <code className="text-xs font-mono text-[#1B2A4A] bg-white px-1.5 py-0.5 rounded border border-gray-200">{`{{${ov.key}}}`}</code>
+                        <ArrowRight size={12} className="text-gray-300" />
+                        <span className="text-xs font-medium text-emerald-700">{String(ov.value_json)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-gray-400">Doc: {ov.doc_instance_id.slice(0, 12)}...</span>
+                        <span className="text-[10px] text-gray-400">by {ov.created_by}</span>
+                        <span className="text-[10px] text-gray-400">{ov.created_at}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-gray-400">Doc: {ov.doc_instance_id.slice(0, 12)}...</span>
-                      <span className="text-[10px] text-gray-400">by {ov.created_by}</span>
-                      <span className="text-[10px] text-gray-400">{ov.created_at}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                  {overrides.length === 0 && (
+                    <p className="text-xs text-gray-400 text-center py-4">No active overrides</p>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -425,20 +505,23 @@ export default function VariablesManager() {
         </div>
       )}
 
-      {/* Create Variable Dialog */}
-      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+      {/* Create / Edit Variable Dialog */}
+      <Dialog open={showFormDialog} onOpenChange={setShowFormDialog}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-[#1B2A4A]">Create Variable Definition</DialogTitle>
+            <DialogTitle className="text-[#1B2A4A]">
+              {formMode === "create" ? "Create Variable Definition" : "Edit Variable Definition"}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 mt-2">
             <div>
               <label className="text-xs font-medium text-gray-600 mb-1 block">Key</label>
               <Input
                 placeholder="customer.name"
-                value={newVar.key}
-                onChange={(e) => setNewVar({ ...newVar, key: e.target.value })}
+                value={formData.key}
+                onChange={(e) => setFormData({ ...formData, key: e.target.value })}
                 className="font-mono text-sm"
+                disabled={formMode === "edit"}
               />
               <p className="text-[10px] text-gray-400 mt-1">Dot-separated key — e.g. customer.name, quote.total, sla.penalty_rate</p>
             </div>
@@ -446,15 +529,15 @@ export default function VariablesManager() {
               <label className="text-xs font-medium text-gray-600 mb-1 block">Label</label>
               <Input
                 placeholder="Customer Name"
-                value={newVar.label}
-                onChange={(e) => setNewVar({ ...newVar, label: e.target.value })}
+                value={formData.label}
+                onChange={(e) => setFormData({ ...formData, label: e.target.value })}
                 className="text-sm"
               />
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="text-xs font-medium text-gray-600 mb-1 block">Data Type</label>
-                <Select value={newVar.data_type} onValueChange={(v) => setNewVar({ ...newVar, data_type: v as VariableDataType })}>
+                <Select value={formData.data_type} onValueChange={(v) => setFormData({ ...formData, data_type: v as VariableDataType })}>
                   <SelectTrigger className="text-sm">
                     <SelectValue />
                   </SelectTrigger>
@@ -467,7 +550,7 @@ export default function VariablesManager() {
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-600 mb-1 block">Scope</label>
-                <Select value={newVar.scope} onValueChange={(v) => setNewVar({ ...newVar, scope: v as VariableScope })}>
+                <Select value={formData.scope} onValueChange={(v) => setFormData({ ...formData, scope: v as VariableScope })}>
                   <SelectTrigger className="text-sm">
                     <SelectValue />
                   </SelectTrigger>
@@ -480,7 +563,7 @@ export default function VariablesManager() {
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-600 mb-1 block">Source</label>
-                <Select value={newVar.source} onValueChange={(v) => setNewVar({ ...newVar, source: v as VariableSource })}>
+                <Select value={formData.source} onValueChange={(v) => setFormData({ ...formData, source: v as VariableSource })}>
                   <SelectTrigger className="text-sm">
                     <SelectValue />
                   </SelectTrigger>
@@ -492,13 +575,13 @@ export default function VariablesManager() {
                 </Select>
               </div>
             </div>
-            {newVar.source === "binding" && (
+            {formData.source === "binding" && (
               <div>
                 <label className="text-xs font-medium text-gray-600 mb-1 block">Binding Path</label>
                 <Input
                   placeholder="customer.name"
-                  value={newVar.binding_path}
-                  onChange={(e) => setNewVar({ ...newVar, binding_path: e.target.value })}
+                  value={formData.binding_path}
+                  onChange={(e) => setFormData({ ...formData, binding_path: e.target.value })}
                   className="font-mono text-sm"
                 />
               </div>
@@ -507,8 +590,8 @@ export default function VariablesManager() {
               <label className="text-xs font-medium text-gray-600 mb-1 block">Default Value</label>
               <Input
                 placeholder="Optional default value"
-                value={newVar.default_value}
-                onChange={(e) => setNewVar({ ...newVar, default_value: e.target.value })}
+                value={formData.default_value}
+                onChange={(e) => setFormData({ ...formData, default_value: e.target.value })}
                 className="text-sm"
               />
             </div>
@@ -516,8 +599,8 @@ export default function VariablesManager() {
               <label className="text-xs font-medium text-gray-600 mb-1 block">Description</label>
               <Input
                 placeholder="Brief description of this variable"
-                value={newVar.description}
-                onChange={(e) => setNewVar({ ...newVar, description: e.target.value })}
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 className="text-sm"
               />
             </div>
@@ -525,15 +608,39 @@ export default function VariablesManager() {
               <label className="text-xs font-medium text-gray-600 mb-1 block">Allowed Doc Types (comma-separated, empty = all)</label>
               <Input
                 placeholder="proposal, quote, sla"
-                value={newVar.allowed_in_doc_types}
-                onChange={(e) => setNewVar({ ...newVar, allowed_in_doc_types: e.target.value })}
+                value={formData.allowed_in_doc_types}
+                onChange={(e) => setFormData({ ...formData, allowed_in_doc_types: e.target.value })}
                 className="text-sm"
               />
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setShowCreateDialog(false)}>Cancel</Button>
-              <Button onClick={handleCreateVariable} className="bg-[#1B2A4A] hover:bg-[#2A3F6A]">Create Variable</Button>
+              <Button variant="outline" onClick={() => setShowFormDialog(false)}>Cancel</Button>
+              <Button onClick={handleSave} className="bg-[#1B2A4A] hover:bg-[#2A3F6A]">
+                {formMode === "create" ? "Create Variable" : "Save Changes"}
+              </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!showDeleteConfirm} onOpenChange={() => setShowDeleteConfirm(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-red-700">Delete Variable</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-gray-600">
+            Are you sure you want to delete this variable definition? This action cannot be undone.
+            Any documents referencing this token will show it as unresolved.
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setShowDeleteConfirm(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => showDeleteConfirm && handleDelete(showDeleteConfirm)}
+            >
+              Delete
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

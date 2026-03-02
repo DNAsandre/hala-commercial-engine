@@ -135,6 +135,24 @@ export default function WorkspaceDetail() {
   const { data: allSignals, loading: sigLoading } = useSignals();
   const { data: allAuditLog, loading: auditLoading } = useSupabaseAuditLog();
 
+  // ── Hotkey protection ── (must be above early returns)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && !showConfirm) {
+        const target = e.target as HTMLElement;
+        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return;
+        if (target.closest("[data-advance-stage-btn]")) { e.preventDefault(); e.stopPropagation(); }
+      }
+    };
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
+  }, [showConfirm]);
+
+  // ── Undo cleanup ── (must be above early returns)
+  useEffect(() => {
+    return () => { if (undoTimerRef.current) clearInterval(undoTimerRef.current); };
+  }, []);
+
   const loading = wsLoading || qLoading || pLoading || appLoading || sigLoading || auditLoading;
   if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   if (!ws) return (
@@ -185,21 +203,8 @@ export default function WorkspaceDetail() {
   // Supporting docs
   const wsSupportDocs = integrationEnabled ? getSupportingDocs(ws.id, showDocArchived) : [];
 
-  // ── Hotkey protection ──
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Enter" && !showConfirm) {
-        const target = e.target as HTMLElement;
-        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return;
-        if (target.closest("[data-advance-stage-btn]")) { e.preventDefault(); e.stopPropagation(); }
-      }
-    };
-    document.addEventListener("keydown", handler, true);
-    return () => document.removeEventListener("keydown", handler, true);
-  }, [showConfirm]);
-
   // ── Undo countdown timer ──
-  const startUndoTimer = useCallback(() => {
+  const startUndoTimer = () => {
     if (undoTimerRef.current) clearInterval(undoTimerRef.current);
     setShowUndoBanner(true);
     const tick = () => {
@@ -213,11 +218,7 @@ export default function WorkspaceDetail() {
     };
     tick();
     undoTimerRef.current = setInterval(tick, 1000);
-  }, [ws.id]);
-
-  useEffect(() => {
-    return () => { if (undoTimerRef.current) clearInterval(undoTimerRef.current); };
-  }, []);
+  };
 
   // ── Stage transition handlers ──
   const handleAdvanceStage = () => {
