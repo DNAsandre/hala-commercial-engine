@@ -1128,11 +1128,47 @@ export default function DocumentComposer({
       contractExpiry: linkedCustomer.contractExpiry,
     } : null;
 
+    // Build short-key entity bindings for template block tokens
+    const entityBindings: Record<string, unknown> = {};
+
+    // {{title}} — document title or doc_type label
+    const typeLabels: Record<string, string> = {
+      quote: 'Standard Quotation',
+      proposal: 'Commercial Proposal',
+      sla: 'Service Level Agreement',
+      msa: 'Master Service Agreement',
+      service_order_transport: 'Transport Service Order',
+      service_order_warehouse: 'Warehouse Service Order',
+      contract: 'Contract',
+    };
+    entityBindings['title'] = document.title || typeLabels[document.doc_type] || 'Document';
+
+    // {{subtitle}} — static default
+    entityBindings['subtitle'] = 'Supply Chain Services';
+
+    // {{customer_name}} — from document or linked customer
+    entityBindings['customer_name'] = document.customer_name || linkedCustomer?.name || '';
+
+    // {{ref_number}} — auto-generate from doc type + instance ID
+    const refPrefix: Record<string, string> = {
+      quote: 'HCS-QT', proposal: 'HCS-PR', sla: 'HCS-SLA', contract: 'HCS-CT',
+    };
+    const prefix = refPrefix[document.doc_type] || 'HCS';
+    const year = new Date().getFullYear();
+    const shortId = document.id.replace(/\D/g, '').slice(-4).padStart(4, '0');
+    entityBindings['ref_number'] = `${prefix}-${year}-${shortId}`;
+
+    // {{date}} — today's date
+    entityBindings['date'] = new Date().toISOString().split('T')[0];
+
+    // {{recipient_name}} — customer contact or customer name
+    entityBindings['recipient_name'] = linkedCustomer?.contactName || document.customer_name || linkedCustomer?.name || '';
+
     return buildResolutionContext(
       document.id,
       document.doc_type,
       customerData as Record<string, unknown> | null,
-      {}
+      entityBindings
     );
   }, [document.id, document.doc_type, linkedCustomer]);
 

@@ -60,7 +60,8 @@ function readNavContext(): NavContext {
 
 function buildEditorUrl(docInstanceId: string, ctx: NavContext): string {
   if (ctx.from === "workspace" && ctx.workspaceId) {
-    return `/workspaces/${ctx.workspaceId}?tab=documents&editInstance=${docInstanceId}`;
+    // Navigate back to workspace Documents tab
+    return `/workspaces/${ctx.workspaceId}?tab=documents`;
   }
   if (ctx.from === "documents") {
     return `/editor?instance=${docInstanceId}&from=documents`;
@@ -143,6 +144,8 @@ export default function OutputStudio() {
       docType: docInstance.doc_type,
       entityData,
       pricingSnapshot,
+      docTitle: docInstance.title || undefined,
+      customerName: docInstance.customer_name || undefined,
     };
   }, [docInstance]);
 
@@ -174,12 +177,12 @@ export default function OutputStudio() {
     return () => { cancelled = true; };
   }, [currentVersion, asyncInput]);
 
-  // Auto-render preview on load
+  // Auto-render preview on load and when resolution context updates
   useEffect(() => {
     if (currentVersion && branding) {
       renderPreview();
     }
-  }, [currentVersion?.id, branding?.id]);
+  }, [currentVersion?.id, branding?.id, resolutionCtx]);
 
   const editorUrl = docInstance ? buildEditorUrl(docInstance.id, navCtx) : "/editor";
   const backLabel = buildBackLabel(navCtx);

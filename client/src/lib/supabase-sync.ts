@@ -11,6 +11,7 @@
 
 import { getCurrentUser } from "./auth-state";
 import { supabase } from "./supabase";
+import { handleSupabaseError } from "./supabase-error";
 
 // ============================================================
 // WORKSPACE SYNC
@@ -25,7 +26,7 @@ export async function syncWorkspaceStage(
     .from("workspaces")
     .update({ stage, days_in_stage: daysInStage, updated_at: new Date().toISOString() })
     .eq("id", workspaceId);
-  if (error) console.error("syncWorkspaceStage error:", error);
+  if (error) handleSupabaseError('syncWorkspaceStage', error, { entityId: workspaceId });
 }
 
 export async function syncWorkspaceUpdate(
@@ -56,7 +57,7 @@ export async function syncWorkspaceUpdate(
     row[dbKey] = val;
   }
   const { error } = await supabase.from("workspaces").update(row).eq("id", workspaceId);
-  if (error) console.error("syncWorkspaceUpdate error:", error);
+  if (error) handleSupabaseError('syncWorkspaceUpdate', error, { entityId: workspaceId });
 }
 
 // ============================================================
@@ -94,7 +95,7 @@ export async function syncCustomerUpdate(
     row[dbKey] = val;
   }
   const { error } = await supabase.from("customers").update(row).eq("id", customerId);
-  if (error) console.error("syncCustomerUpdate error:", error);
+  if (error) handleSupabaseError('syncCustomerUpdate', error, { entityId: customerId });
 }
 
 export async function syncCustomerCreate(customer: Record<string, any>): Promise<void> {
@@ -123,7 +124,7 @@ export async function syncCustomerCreate(customer: Record<string, any>): Promise
     updated_at: new Date().toISOString(),
   };
   const { error } = await supabase.from("customers").insert(row);
-  if (error) console.error("syncCustomerCreate error:", error);
+  if (error) handleSupabaseError('syncCustomerCreate', error, { entityId: customer.id });
 }
 
 // ============================================================
@@ -152,7 +153,7 @@ export async function syncTenderCreate(tender: Record<string, any>): Promise<voi
     updated_at: tender.updatedAt || new Date().toISOString().slice(0, 10),
   };
   const { error } = await supabase.from("tenders").insert(row);
-  if (error) console.error("syncTenderCreate error:", error);
+  if (error) handleSupabaseError('syncTenderCreate', error, { entityId: tender.id });
 }
 
 export async function syncTenderUpdate(
@@ -176,7 +177,7 @@ export async function syncTenderUpdate(
     row[dbKey] = val;
   }
   const { error } = await supabase.from("tenders").update(row).eq("id", tenderId);
-  if (error) console.error("syncTenderUpdate error:", error);
+  if (error) handleSupabaseError('syncTenderUpdate', error, { entityId: tenderId });
 }
 
 // ============================================================
@@ -195,7 +196,7 @@ export async function syncAuditEntry(entry: Record<string, any>): Promise<void> 
     details: entry.details || "",
   };
   const { error } = await supabase.from("audit_log").insert(row);
-  if (error) console.error("syncAuditEntry error:", error);
+  if (error) handleSupabaseError('syncAuditEntry', error, { entityId: entry.id });
 }
 
 // ============================================================
@@ -216,7 +217,7 @@ export async function syncApprovalCreate(record: Record<string, any>): Promise<v
     is_override: record.isOverride || false,
   };
   const { error } = await supabase.from("approval_records").insert(row);
-  if (error) console.error("syncApprovalCreate error:", error);
+  if (error) handleSupabaseError('syncApprovalCreate', error, { entityId: record.id });
 }
 
 // ============================================================
@@ -241,7 +242,7 @@ export async function syncQuoteCreate(quote: Record<string, any>): Promise<void>
     created_at: quote.createdAt || new Date().toISOString(),
   };
   const { error } = await supabase.from("quotes").insert(row);
-  if (error) console.error("syncQuoteCreate error:", error);
+  if (error) handleSupabaseError('syncQuoteCreate', error, { entityId: quote.id });
 }
 
 export async function syncQuoteUpdate(quoteId: string, updates: Record<string, any>): Promise<void> {
@@ -263,7 +264,7 @@ export async function syncQuoteUpdate(quoteId: string, updates: Record<string, a
     row[dbKey] = val;
   }
   const { error } = await supabase.from("quotes").update(row).eq("id", quoteId);
-  if (error) console.error("syncQuoteUpdate error:", error);
+  if (error) handleSupabaseError('syncQuoteUpdate', error, { entityId: quoteId });
 }
 
 // ============================================================
@@ -281,7 +282,7 @@ export async function syncProposalCreate(proposal: Record<string, any>): Promise
     created_at: proposal.createdAt || new Date().toISOString(),
   };
   const { error } = await supabase.from("proposals").insert(row);
-  if (error) console.error("syncProposalCreate error:", error);
+  if (error) handleSupabaseError('syncProposalCreate', error, { entityId: proposal.id });
 }
 
 export async function syncProposalUpdate(proposalId: string, updates: Record<string, any>): Promise<void> {
@@ -290,7 +291,7 @@ export async function syncProposalUpdate(proposalId: string, updates: Record<str
   if (updates.title !== undefined) row.title = updates.title;
   if (updates.sections !== undefined) row.sections = JSON.stringify(updates.sections);
   const { error } = await supabase.from("proposals").update(row).eq("id", proposalId);
-  if (error) console.error("syncProposalUpdate error:", error);
+  if (error) handleSupabaseError('syncProposalUpdate', error, { entityId: proposalId });
 }
 
 // ============================================================
@@ -307,7 +308,7 @@ export async function syncSignalCreate(signal: Record<string, any>): Promise<voi
     created_at: signal.createdAt || new Date().toISOString(),
   };
   const { error } = await supabase.from("signals").insert(row);
-  if (error) console.error("syncSignalCreate error:", error);
+  if (error) handleSupabaseError('syncSignalCreate', error, { entityId: signal.id });
 }
 
 // ============================================================
@@ -326,7 +327,7 @@ export async function syncHandoverTaskCreate(task: Record<string, any>): Promise
     created_at: new Date().toISOString(),
   };
   const { error } = await supabase.from("handover_tasks").insert(row);
-  if (error) console.error("syncHandoverTaskCreate error:", error);
+  if (error) handleSupabaseError('syncHandoverTaskCreate', error, { entityId: task.id });
 }
 
 export async function syncHandoverTaskUpdate(taskId: string, updates: Record<string, any>): Promise<void> {
@@ -335,7 +336,7 @@ export async function syncHandoverTaskUpdate(taskId: string, updates: Record<str
   if (updates.assignedTo !== undefined) row.assigned_to = updates.assignedTo;
   if (updates.dueDate !== undefined) row.due_date = updates.dueDate;
   const { error } = await supabase.from("handover_tasks").update(row).eq("id", taskId);
-  if (error) console.error("syncHandoverTaskUpdate error:", error);
+  if (error) handleSupabaseError('syncHandoverTaskUpdate', error, { entityId: taskId });
 }
 
 // ============================================================
@@ -349,7 +350,7 @@ export async function syncPolicyGateUpdate(gateId: string, updates: Record<strin
   if (updates.name !== undefined) row.name = updates.name;
   if (updates.description !== undefined) row.description = updates.description;
   const { error } = await supabase.from("policy_gates").update(row).eq("id", gateId);
-  if (error) console.error("syncPolicyGateUpdate error:", error);
+  if (error) handleSupabaseError('syncPolicyGateUpdate', error, { entityId: gateId });
 }
 
 // ============================================================
@@ -367,7 +368,7 @@ export async function syncCRMSyncEvent(event: Record<string, any>): Promise<void
     details: event.details || "",
   };
   const { error } = await supabase.from("crm_sync_events").insert(row);
-  if (error) console.error("syncCRMSyncEvent error:", error);
+  if (error) handleSupabaseError('syncCRMSyncEvent', error, { entityId: event.id });
 }
 
 
@@ -397,7 +398,7 @@ export async function syncDocInstanceCreate(instance: Record<string, any>): Prom
     updated_at: instance.updated_at || new Date().toISOString(),
   };
   const { error } = await supabase.from("doc_instances").insert(row);
-  if (error) console.error("syncDocInstanceCreate error:", error);
+  if (error) handleSupabaseError('syncDocInstanceCreate', error, { entityId: instance.id });
 }
 
 export async function syncDocInstanceUpdate(instanceId: string, updates: Record<string, any>): Promise<void> {
@@ -415,7 +416,7 @@ export async function syncDocInstanceUpdate(instanceId: string, updates: Record<
     row[dbKey] = val;
   }
   const { error } = await supabase.from("doc_instances").update(row).eq("id", instanceId);
-  if (error) console.error("syncDocInstanceUpdate error:", error);
+  if (error) handleSupabaseError('syncDocInstanceUpdate', error, { entityId: instanceId });
 }
 
 // ============================================================
@@ -433,7 +434,7 @@ export async function syncDocInstanceVersionCreate(version: Record<string, any>)
     created_at: version.created_at || new Date().toISOString(),
   };
   const { error } = await supabase.from("doc_instance_versions").insert(row);
-  if (error) console.error("syncDocInstanceVersionCreate error:", error);
+  if (error) handleSupabaseError('syncDocInstanceVersionCreate', error, { entityId: version.id });
 }
 
 // ============================================================
@@ -456,7 +457,7 @@ export async function syncCompiledDocCreate(doc: Record<string, any>): Promise<v
     status: doc.status || "final",
   };
   const { error } = await supabase.from("compiled_documents").insert(row);
-  if (error) console.error("syncCompiledDocCreate error:", error);
+  if (error) handleSupabaseError('syncCompiledDocCreate', error, { entityId: doc.id });
 }
 
 // ============================================================
@@ -479,5 +480,5 @@ export async function syncVaultAssetCreate(asset: Record<string, any>): Promise<
     created_at: asset.created_at || new Date().toISOString(),
   };
   const { error } = await supabase.from("vault_assets").insert(row);
-  if (error) console.error("syncVaultAssetCreate error:", error);
+  if (error) handleSupabaseError('syncVaultAssetCreate', error, { entityId: asset.id });
 }

@@ -129,6 +129,12 @@ export default function WorkspaceDetail() {
   useState(() => { initializeMockFiles(); });
   useState(() => { if (isWorkspaceIntegrationEnabled()) seedWorkspaceIntegrationData(); });
 
+  // Read ?tab= URL param for deep-linking (e.g., from Output Studio back navigation)
+  const initialTab = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('tab') || 'overview';
+  }, []);
+
   const { data: ws, loading: wsLoading } = useWorkspace(id!);
   const { data: wsQuotes, loading: qLoading } = useQuotesByWorkspace(id!);
   const { data: wsProposals, loading: pLoading } = useProposalsByWorkspace(id!);
@@ -711,7 +717,7 @@ export default function WorkspaceDetail() {
         </div>}
 
         {/* ═══ TABS (type-aware) ═══ */}
-        <Tabs defaultValue="overview" className="space-y-4">
+        <Tabs defaultValue={initialTab} className="space-y-4">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             {isTender ? (

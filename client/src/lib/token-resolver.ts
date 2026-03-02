@@ -46,6 +46,10 @@ export interface AsyncResolutionInput {
   pricingSnapshot?: Record<string, unknown>;
   /** Current user info */
   user?: { name: string; email: string; role: string };
+  /** Document title (from doc_instances.title) — used for {{title}} token */
+  docTitle?: string;
+  /** Customer name (from doc_instances.customer_name) — used for {{customer_name}} token */
+  customerName?: string;
 }
 
 export interface AsyncResolutionOutput {
@@ -88,6 +92,57 @@ export async function buildAsyncResolutionContext(
     entityBindings['doc.author'] = input.user.name;
     entityBindings['user.name'] = input.user.name;
     entityBindings['user.email'] = input.user.email;
+  }
+
+  // ── Short-key aliases for template block tokens ──────────────
+  // Block templates (cover.hero, confidentiality) use short keys like
+  // {{title}}, {{customer_name}} etc. Map them from available data.
+
+  // {{title}} — document title from doc_instances or doc_type label
+  if (input.docTitle) {
+    entityBindings['title'] = input.docTitle;
+  } else {
+    const typeLabels: Record<string, string> = {
+      quote: 'Standard Quotation',
+      proposal: 'Commercial Proposal',
+      sla: 'Service Level Agreement',
+      contract: 'Contract',
+    };
+    entityBindings['title'] = typeLabels[input.docType] || 'Document';
+  }
+
+  // {{subtitle}} — static default
+  entityBindings['subtitle'] = 'Supply Chain Services';
+
+  // {{customer_name}} — from explicit prop or entity data
+  if (input.customerName) {
+    entityBindings['customer_name'] = input.customerName;
+  } else if (input.entityData?.name) {
+    entityBindings['customer_name'] = input.entityData.name;
+  }
+
+  // {{ref_number}} — auto-generate from doc type + instance ID
+  const refPrefix: Record<string, string> = {
+    quote: 'HCS-QT',
+    proposal: 'HCS-PR',
+    sla: 'HCS-SLA',
+    contract: 'HCS-CT',
+  };
+  const prefix = refPrefix[input.docType] || 'HCS';
+  const year = new Date().getFullYear();
+  const shortId = input.docInstanceId.replace(/\D/g, '').slice(-4).padStart(4, '0');
+  entityBindings['ref_number'] = `${prefix}-${year}-${shortId}`;
+
+  // {{date}} — today's date
+  entityBindings['date'] = new Date().toISOString().split('T')[0];
+
+  // {{recipient_name}} — customer contact or customer name
+  if (input.entityData?.contactName) {
+    entityBindings['recipient_name'] = input.entityData.contactName;
+  } else if (input.customerName) {
+    entityBindings['recipient_name'] = input.customerName;
+  } else if (input.entityData?.name) {
+    entityBindings['recipient_name'] = input.entityData.name;
   }
 
   // Build template defaults from variable definitions with default_value_json
