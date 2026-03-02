@@ -45,6 +45,7 @@ import { DocumentViewer, UploadDialog } from "@/components/DocumentViewer";
 import DocumentComposer, { type ComposerDocument } from "@/components/DocumentComposer";
 import { getTemplatesByDocType, type DocTemplate, type DocType } from "@/lib/document-composer";
 import { resolveOrCreateDocInstanceAsync } from "@/hooks/useResolveDocInstance";
+import { useDocInstances, type HydratedDocInstance } from "@/hooks/useDocuments";
 import { navigationV1 } from "@/components/DashboardLayout";
 import {
   isWorkspaceIntegrationEnabled, getOrCreateCycle, startRenewal, updateRenewalOwner,
@@ -134,6 +135,12 @@ export default function WorkspaceDetail() {
   const { data: allApprovals, loading: appLoading } = useApprovalRecords();
   const { data: allSignals, loading: sigLoading } = useSignals();
   const { data: allAuditLog, loading: auditLoading } = useSupabaseAuditLog();
+  const { data: docInstances, loading: diLoading } = useDocInstances({ workspace_id: id! });
+
+  // Canonical document lists from doc_instances (Wave 2)
+  const docQuotes = useMemo(() => docInstances.filter(d => d.doc_type === "quote"), [docInstances]);
+  const docProposals = useMemo(() => docInstances.filter(d => d.doc_type === "proposal"), [docInstances]);
+  const docSLAs = useMemo(() => docInstances.filter(d => d.doc_type === "sla"), [docInstances]);
 
   // ── Hotkey protection ── (must be above early returns)
   useEffect(() => {
@@ -153,7 +160,7 @@ export default function WorkspaceDetail() {
     return () => { if (undoTimerRef.current) clearInterval(undoTimerRef.current); };
   }, []);
 
-  const loading = wsLoading || qLoading || pLoading || appLoading || sigLoading || auditLoading;
+  const loading = wsLoading || qLoading || pLoading || appLoading || sigLoading || auditLoading || diLoading;
   if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   if (!ws) return (
     <div className="p-6">
@@ -774,46 +781,44 @@ export default function WorkspaceDetail() {
           {/* ═══ UNIFIED DOCUMENTS TAB (navigationV1) ═══ */}
           {navigationV1 && (
             <TabsContent value="documents">
-              {/* ── Document Type Sections ── */}
+              {/* ── Document Type Sections (reads from doc_instances — canonical) ── */}
               <div className="space-y-8">
                 {/* ── Quotes Section ── */}
                 <div>
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-sm font-semibold flex items-center gap-2">
                       <FileText className="w-4 h-4 text-muted-foreground" /> Quotes
-                      <Badge variant="secondary" className="text-[10px]">{wsQuotes.length}</Badge>
+                      <Badge variant="secondary" className="text-[10px]">{docQuotes.length}</Badge>
                     </h3>
                     <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => handleNewDocument("quote")}>
                       <Plus className="w-3 h-3 mr-1" /> New Quote
                     </Button>
                   </div>
-                  {wsQuotes.length > 0 ? <div className="space-y-2">{wsQuotes.map(q => (
-                    <div key={q.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
+                  {docQuotes.length > 0 ? <div className="space-y-2">{docQuotes.map(d => (
+                    <div key={d.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
                       <div className="flex items-center gap-3 min-w-0">
                         <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium">Quote v{q.version}</span>
-                            <Badge variant="outline" className="text-[10px]">{q.state}</Badge>
+                            <span className="text-sm font-medium">{d.title}</span>
+                            <Badge variant="outline" className="text-[10px]">{d.status}</Badge>
+                            {d.versions.length > 0 && <span className="text-xs text-muted-foreground">v{d.versions[d.versions.length - 1].version_number}</span>}
                           </div>
-                          <p className="text-xs text-muted-foreground">{formatSAR(q.annualRevenue)}/yr · GP {formatPercent(q.gpPercent)} · {q.createdAt}</p>
+                          <p className="text-xs text-muted-foreground">{d.created_by} · {new Date(d.created_at).toLocaleDateString()}{d.is_compiled ? " · Compiled" : ""}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openInComposer("quote", q.id)}>
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                          setComposerTarget({ type: "quote", entityId: d.id, instanceId: d.id, customerName: d.customer_name, customerId: d.customer_id, workspaceId: ws.id });
+                        }}>
                           <Edit className="w-3 h-3 mr-1" /> Edit
                         </Button>
-                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={async () => {
-                          try {
-                            const inst = await resolveOrCreateDocInstanceAsync({ doc_type: "quote", linked_entity_type: "quote_version", linked_entity_id: q.id, customer_id: ws.customerId, customer_name: ws.customerName, workspace_id: ws.id });
-                            navigate(`/composer/${inst.id}/view`);
-                          } catch { toast.error("Could not open viewer"); }
-                        }}>
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => navigate(`/composer/${d.id}/view?from=workspace&workspaceId=${ws.id}`)}>
                           <Eye className="w-3 h-3 mr-1" /> View
                         </Button>
                       </div>
                     </div>
-                  ))}</div> : <p className="text-xs text-muted-foreground">No quotes yet. <Button variant="link" className="text-xs p-0" onClick={() => openInComposer("quote", `new-${ws.id}`)}>Create one</Button></p>}
+                  ))}</div> : <p className="text-xs text-muted-foreground">No quotes yet. <Button variant="link" className="text-xs p-0" onClick={() => handleNewDocument("quote")}>Create one</Button></p>}
                 </div>
 
                 <hr className="border-border" />
@@ -823,40 +828,37 @@ export default function WorkspaceDetail() {
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-sm font-semibold flex items-center gap-2">
                       <FileCheck className="w-4 h-4 text-muted-foreground" /> Proposals
-                      <Badge variant="secondary" className="text-[10px]">{wsProposals.length}</Badge>
+                      <Badge variant="secondary" className="text-[10px]">{docProposals.length}</Badge>
                     </h3>
                     <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => handleNewDocument("proposal")}>
                       <Plus className="w-3 h-3 mr-1" /> New Proposal
                     </Button>
                   </div>
-                  {wsProposals.length > 0 ? <div className="space-y-2">{wsProposals.map(p => (
-                    <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
+                  {docProposals.length > 0 ? <div className="space-y-2">{docProposals.map(d => (
+                    <div key={d.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
                       <div className="flex items-center gap-3 min-w-0">
                         <FileCheck className="w-4 h-4 text-muted-foreground shrink-0" />
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium">{p.title}</span>
-                            <Badge variant="outline" className="text-[10px]">{p.state}</Badge>
-                            <span className="text-xs text-muted-foreground">v{p.version}</span>
+                            <span className="text-sm font-medium">{d.title}</span>
+                            <Badge variant="outline" className="text-[10px]">{d.status}</Badge>
+                            {d.versions.length > 0 && <span className="text-xs text-muted-foreground">v{d.versions[d.versions.length - 1].version_number}</span>}
                           </div>
-                          <div className="flex flex-wrap gap-1 mt-1">{p.sections.slice(0, 4).map(s => <Badge key={s} variant="secondary" className="text-[9px]">{s}</Badge>)}{p.sections.length > 4 && <Badge variant="secondary" className="text-[9px]">+{p.sections.length - 4}</Badge>}</div>
+                          <p className="text-xs text-muted-foreground">{d.created_by} · {new Date(d.created_at).toLocaleDateString()}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openInComposer("proposal", p.id)}>
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                          setComposerTarget({ type: "proposal", entityId: d.id, instanceId: d.id, customerName: d.customer_name, customerId: d.customer_id, workspaceId: ws.id });
+                        }}>
                           <Edit className="w-3 h-3 mr-1" /> Edit
                         </Button>
-                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={async () => {
-                          try {
-                            const inst = await resolveOrCreateDocInstanceAsync({ doc_type: "proposal", linked_entity_type: "proposal_version", linked_entity_id: p.id, customer_id: ws.customerId, customer_name: ws.customerName, workspace_id: ws.id });
-                            navigate(`/composer/${inst.id}/view`);
-                          } catch { toast.error("Could not open viewer"); }
-                        }}>
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => navigate(`/composer/${d.id}/view?from=workspace&workspaceId=${ws.id}`)}>
                           <Eye className="w-3 h-3 mr-1" /> View
                         </Button>
                       </div>
                     </div>
-                  ))}</div> : <p className="text-xs text-muted-foreground">No proposals yet. <Button variant="link" className="text-xs p-0" onClick={() => openInComposer("proposal", `new-${ws.id}`)}>Create one</Button></p>}
+                  ))}</div> : <p className="text-xs text-muted-foreground">No proposals yet. <Button variant="link" className="text-xs p-0" onClick={() => handleNewDocument("proposal")}>Create one</Button></p>}
                 </div>
 
                 <hr className="border-border" />
@@ -866,43 +868,37 @@ export default function WorkspaceDetail() {
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-sm font-semibold flex items-center gap-2">
                       <FileSignature className="w-4 h-4 text-muted-foreground" /> SLAs
-                      <Badge variant="secondary" className="text-[10px]">{wsSLAs.length}</Badge>
+                      <Badge variant="secondary" className="text-[10px]">{docSLAs.length}</Badge>
                     </h3>
                     <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => handleNewDocument("sla")}>
                       <Plus className="w-3 h-3 mr-1" /> New SLA
                     </Button>
                   </div>
-                  {wsSLAs.length > 0 ? <div className="space-y-2">{wsSLAs.map(sla => {
-                    const slaStatusColor = sla.status === "active" ? "bg-emerald-100 text-emerald-700" : sla.status === "draft" ? "bg-gray-100 text-gray-700" : sla.status === "expired" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
-                    return (
-                      <div key={sla.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <FileSignature className="w-4 h-4 text-muted-foreground shrink-0" />
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">{sla.title}</span>
-                              <Badge variant="outline" className={`text-[10px] ${slaStatusColor}`}>{sla.status}</Badge>
-                              <span className="text-xs text-muted-foreground">v{sla.version}</span>
-                            </div>
-                            <p className="text-xs text-muted-foreground">Effective: {sla.effectiveDate} · Expires: {sla.expiryDate}</p>
+                  {docSLAs.length > 0 ? <div className="space-y-2">{docSLAs.map(d => (
+                    <div key={d.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <FileSignature className="w-4 h-4 text-muted-foreground shrink-0" />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">{d.title}</span>
+                            <Badge variant="outline" className="text-[10px]">{d.status}</Badge>
+                            {d.versions.length > 0 && <span className="text-xs text-muted-foreground">v{d.versions[d.versions.length - 1].version_number}</span>}
                           </div>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openInComposer("sla", sla.id)}>
-                            <Edit className="w-3 h-3 mr-1" /> Edit
-                          </Button>
-                          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={async () => {
-                            try {
-                              const inst = await resolveOrCreateDocInstanceAsync({ doc_type: "sla", linked_entity_type: "sla_version", linked_entity_id: sla.id, customer_id: sla.customerId, customer_name: sla.customerName, workspace_id: ws.id });
-                              navigate(`/composer/${inst.id}/view`);
-                            } catch { toast.error("Could not open viewer"); }
-                          }}>
-                            <Eye className="w-3 h-3 mr-1" /> View
-                          </Button>
+                          <p className="text-xs text-muted-foreground">{d.created_by} · {new Date(d.created_at).toLocaleDateString()}</p>
                         </div>
                       </div>
-                    );
-                  })}</div> : <p className="text-xs text-muted-foreground">No SLAs yet. <Button variant="link" className="text-xs p-0" onClick={() => openInComposer("sla", `new-${ws.id}`)}>Create one</Button></p>}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                          setComposerTarget({ type: "sla", entityId: d.id, instanceId: d.id, customerName: d.customer_name, customerId: d.customer_id, workspaceId: ws.id });
+                        }}>
+                          <Edit className="w-3 h-3 mr-1" /> Edit
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => navigate(`/composer/${d.id}/view?from=workspace&workspaceId=${ws.id}`)}>
+                          <Eye className="w-3 h-3 mr-1" /> View
+                        </Button>
+                      </div>
+                    </div>
+                  ))}</div> : <p className="text-xs text-muted-foreground">No SLAs yet. <Button variant="link" className="text-xs p-0" onClick={() => handleNewDocument("sla")}>Create one</Button></p>}
                 </div>
 
                 <hr className="border-border" />
