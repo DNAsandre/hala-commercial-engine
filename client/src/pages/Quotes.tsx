@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { formatSAR, formatPercent } from "@/lib/store";
 import { useQuotes, useWorkspaces, useCustomers } from "@/hooks/useSupabase";
 import { Loader2 } from "lucide-react";
-import { resolveOrCreateDocInstance } from "@/lib/document-composer";
+import { resolveOrCreateDocInstanceAsync } from "@/hooks/useResolveDocInstance";
 import { getEcrScoreByCustomerName, getGradeBg, type EcrScore } from "@/lib/ecr";
 import { Star } from "lucide-react";
 import { toast } from "sonner";
@@ -231,10 +231,10 @@ export default function Quotes() {
                       </Button>
                     )}
                     <Button variant="ghost" size="sm" className="h-7 text-xs"
-                      onClick={() => {
+                      onClick={async () => {
                         logAction("quote", q.id, "quote_edit_opened", `Quote ${q.id} opened for editing`);
                         try {
-                          const instance = resolveOrCreateDocInstance({
+                          const instance = await resolveOrCreateDocInstanceAsync({
                             doc_type: "quote",
                             linked_entity_type: "quote_version",
                             linked_entity_id: q.id,

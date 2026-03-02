@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { formatSAR } from "@/lib/store";
 import { useProposals, useWorkspaces, useCustomers } from "@/hooks/useSupabase";
 import { Loader2 } from "lucide-react";
-import { resolveOrCreateDocInstance } from "@/lib/document-composer";
+import { resolveOrCreateDocInstanceAsync } from "@/hooks/useResolveDocInstance";
 import { getEcrScoreByCustomerName, getGradeBg, type EcrScore } from "@/lib/ecr";
 import { Star } from "lucide-react";
 import { toast } from "sonner";
@@ -258,10 +258,10 @@ export default function Proposals() {
                       </Button>
                     )}
                     <Button variant="ghost" size="sm" className="h-7 text-xs"
-                      onClick={() => {
+                      onClick={async () => {
                         logAction("proposal", p.id, "proposal_edit_opened", `Proposal "${p.title}" opened for editing`);
                         try {
-                          const instance = resolveOrCreateDocInstance({
+                          const instance = await resolveOrCreateDocInstanceAsync({
                             doc_type: "proposal",
                             linked_entity_type: "proposal_version",
                             linked_entity_id: p.id,

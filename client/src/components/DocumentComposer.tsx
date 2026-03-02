@@ -64,7 +64,7 @@ import {
   type DocTemplate, type TemplateVersion, type BrandingProfile,
   type DocInstance, type DocInstanceVersion, type InstanceBlock,
   type Bindings, type RecipeBlock,
-  blockLibrary, brandingProfiles, docTemplates, docInstances,
+  blockLibrary, brandingProfiles, docTemplates,
   getBlockByKey, getBlocksByFamily, getPublishedTemplates,
   getLatestTemplateVersion, getPublishedTemplateVersion,
   getBrandingProfile, isBlockEditable, isAIAllowed, canLockToCanon,
@@ -87,6 +87,7 @@ import {
   syncAuditEntry,
 } from "@/lib/supabase-sync";
 import { getCurrentUser } from "@/lib/auth-state";
+import { fetchDocInstanceById } from "@/hooks/useDocuments";
 
 // ============================================================
 // TYPES
@@ -1044,51 +1045,57 @@ export default function DocumentComposer({
   // Block element refs for scroll-to
   const blockRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  // Load existing instance or create empty document
-  const [document, setDocument] = useState<ComposerDocument>(() => {
-    if (existingInstanceId) {
-      const instance = docInstances.find(di => di.id === existingInstanceId);
-      if (instance) {
-        const version = instance.versions.find(v => v.id === instance.current_version_id);
-        if (version) {
-          return {
-            id: instance.id, doc_type: instance.doc_type,
-            title: `${instance.customer_name} — ${DOC_TYPE_CONFIG[instance.doc_type].label}`,
-            template_version_id: instance.template_version_id,
-            branding_profile_id: "bp-001",
-            customer_id: instance.customer_id, customer_name: instance.customer_name,
-            workspace_id: instance.workspace_id, workspace_name: instance.workspace_name,
-            blocks: version.blocks.map((b, i) => ({
-              id: `blk-${i}-${Date.now()}`, block_key: b.block_key, order: b.order,
-              content: b.content, is_locked: b.is_locked, is_ai_generated: b.is_ai_generated, config: b.config,
-            })),
-            bindings: version.bindings,
-            status: instance.status, version: version.version_number,
-            created_at: instance.created_at, updated_at: instance.updated_at,
-            is_compiled: false, compiled_at: null,
-          };
-        }
-      }
-    }
-    return {
-      id: `doc-${Date.now()}`, doc_type: documentType,
-      title: `New ${DOC_TYPE_CONFIG[documentType].label}`,
-      template_version_id: "", branding_profile_id: "bp-001",
-      customer_id: customerId, customer_name: customerName,
-      workspace_id: workspaceId || null, workspace_name: null,
-      blocks: [], bindings: { pricing_snapshot_id: null, scope_snapshot_id: null, ecr_score_id: null, sla_snapshot_id: null },
-      status: "draft", version: 1,
-      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-      is_compiled: false, compiled_at: null,
-    };
+  // Wave 1: Load from Supabase, not in-memory arrays
+  const [document, setDocument] = useState<ComposerDocument>({
+    id: `doc-${Date.now()}`, doc_type: documentType,
+    title: `New ${DOC_TYPE_CONFIG[documentType].label}`,
+    template_version_id: "", branding_profile_id: "bp-001",
+    customer_id: customerId, customer_name: customerName,
+    workspace_id: workspaceId || null, workspace_name: null,
+    blocks: [], bindings: { pricing_snapshot_id: null, scope_snapshot_id: null, ecr_score_id: null, sla_snapshot_id: null },
+    status: "draft", version: 1,
+    created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    is_compiled: false, compiled_at: null,
   });
+  const [isLoadingInstance, setIsLoadingInstance] = useState(!!existingInstanceId);
 
-  // Show template selector if no blocks loaded
+  // Fetch existing instance from Supabase on mount
   useEffect(() => {
-    if (document.blocks.length === 0 && !existingInstanceId) {
+    if (!existingInstanceId) {
       setShowTemplateSelector(true);
+      return;
     }
-  }, []);
+    let cancelled = false;
+    setIsLoadingInstance(true);
+    fetchDocInstanceById(existingInstanceId).then((instance) => {
+      if (cancelled) return;
+      if (!instance) { setIsLoadingInstance(false); return; }
+      const version = instance.versions.find((v: any) => v.id === instance.current_version_id) || instance.versions[instance.versions.length - 1];
+      if (version) {
+        setDocument({
+          id: instance.id, doc_type: instance.doc_type as DocType,
+          title: instance.title || `${instance.customer_name} — ${DOC_TYPE_CONFIG[instance.doc_type as DocType]?.label || instance.doc_type}`,
+          template_version_id: instance.template_version_id || "",
+          branding_profile_id: instance.branding_profile_id || "bp-001",
+          customer_id: instance.customer_id, customer_name: instance.customer_name,
+          workspace_id: instance.workspace_id, workspace_name: instance.workspace_name,
+          blocks: version.blocks.map((b: any, i: number) => ({
+            id: `blk-${i}-${Date.now()}`, block_key: b.block_key, order: b.order,
+            content: b.content, is_locked: b.is_locked, is_ai_generated: b.is_ai_generated, config: b.config || {},
+          })),
+          bindings: version.bindings || { pricing_snapshot_id: null, scope_snapshot_id: null, ecr_score_id: null, sla_snapshot_id: null },
+          status: instance.status as "draft" | "canon", version: version.version_number,
+          created_at: instance.created_at, updated_at: instance.updated_at,
+          is_compiled: instance.is_compiled || false, compiled_at: instance.compiled_at,
+        });
+        if (instance.status === "canon") setMode("canon");
+      } else {
+        setShowTemplateSelector(true);
+      }
+      setIsLoadingInstance(false);
+    }).catch(() => { if (!cancelled) setIsLoadingInstance(false); });
+    return () => { cancelled = true; };
+  }, [existingInstanceId]);
 
   // Resolve customer
   const { data: customers } = useCustomers();

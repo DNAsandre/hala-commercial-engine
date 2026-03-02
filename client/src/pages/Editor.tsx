@@ -2,7 +2,7 @@
  * Document Composer Shell — Template-driven authoring environment
  * Accessible from /editor, /editor?type=quote, /editor?type=proposal, /editor?type=sla
  * Wraps the DocumentComposer component with document library listing
- * v1.1: New Document modal with Doc Type → Customer → Template → Create flow
+ * v1.2: Wave 1 persistence hardening — reads from Supabase, not in-memory arrays
  * Design: White cards, subtle borders, enterprise SaaS aesthetic
  */
 
@@ -19,13 +19,14 @@ import { toast } from "sonner";
 import {
   FileCheck, BookOpen, FileSignature, Plus, ArrowLeft,
   FileText, Clock, Search, Scale, Truck, Warehouse,
-  LayoutTemplate, Lock, ChevronRight, Building2, Users
+  LayoutTemplate, Lock, ChevronRight, Building2, Users, Loader2
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useCustomers } from "@/hooks/useSupabase";
+import { useDocInstances } from "@/hooks/useDocuments";
 import { navigationV1 } from "@/components/DashboardLayout";
 import {
-  type DocType, docInstances, DOC_TYPE_CONFIG, DOC_INSTANCE_STATUS_CONFIG,
+  type DocType, DOC_TYPE_CONFIG, DOC_INSTANCE_STATUS_CONFIG,
   getPublishedTemplates,
 } from "@/lib/document-composer";
 
@@ -57,7 +58,7 @@ function NewDocumentModal({ open, onClose, onCreate }: {
         c.industry.toLowerCase().includes(s)
       )
     );
-  }, [customerSearch]);
+  }, [customerSearch, customers]);
 
   const publishedTemplates = useMemo(() => getPublishedTemplates(), []);
 
@@ -216,9 +217,11 @@ export default function Editor() {
   const [search, setSearch] = useState("");
   const [showNewDocModal, setShowNewDocModal] = useState(false);
 
-  // All hooks MUST be called before any conditional return
+  // Wave 1: Read doc instances from Supabase instead of in-memory array
+  const { data: dbDocInstances, loading: docsLoading, refetch: refetchDocs } = useDocInstances();
+
   const filteredInstances = useMemo(() => {
-    return docInstances.filter(di => {
+    return dbDocInstances.filter(di => {
       if (filterType !== "all" && di.doc_type !== filterType) return false;
       if (search) {
         const s = search.toLowerCase();
@@ -226,7 +229,7 @@ export default function Editor() {
       }
       return true;
     });
-  }, [filterType, search]);
+  }, [filterType, search, dbDocInstances]);
 
   const publishedTemplates = useMemo(() => getPublishedTemplates(), []);
 
@@ -241,7 +244,7 @@ export default function Editor() {
     return (
       <div className="h-[calc(100vh-3.5rem)] flex flex-col">
         <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 bg-white">
-          <Button variant="ghost" size="sm" onClick={() => { setActiveDoc(null); navigate("/editor"); }} className="text-xs">
+          <Button variant="ghost" size="sm" onClick={() => { setActiveDoc(null); navigate("/editor"); refetchDocs(); }} className="text-xs">
             <ArrowLeft size={14} className="mr-1" /> Back to Documents
           </Button>
         </div>
@@ -347,66 +350,78 @@ export default function Editor() {
             </Select>
           </div>
         </div>
-        <div className="space-y-2">
-          {filteredInstances.map((di) => {
-            const config = DOC_TYPE_CONFIG[di.doc_type];
-            const Icon = ICON_MAP[config.icon] || FileText;
-            const statusCfg = DOC_INSTANCE_STATUS_CONFIG[di.status];
-            const currentVersion = di.versions.find(v => v.id === di.current_version_id);
-            const colorMap: Record<string, string> = {
-              quote: "text-emerald-700",
-              proposal: "text-blue-700",
-              sla: "text-purple-700",
-              msa: "text-indigo-700",
-              service_order_transport: "text-orange-700",
-              service_order_warehouse: "text-teal-700",
-            };
-            const iconColor = colorMap[di.doc_type] || "text-gray-700";
-            return (
-              <Card key={di.id} className="cursor-pointer hover:shadow-sm transition-all border border-gray-200"
-                onClick={() => setActiveDoc({ type: di.doc_type, instanceId: di.id, customerName: di.customer_name, customerId: di.customer_id })}>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-4">
-                    <div className={`p-2 rounded ${iconColor} bg-gray-50`}>
-                      <Icon size={18} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-medium text-[#1B2A4A] truncate">
-                          {di.customer_name} — {config.label}
-                        </h3>
-                        <Badge className={`text-[10px] h-4 ${statusCfg.bg} ${statusCfg.color} border-0`}>{statusCfg.label}</Badge>
-                        {di.status === "canon" && <Lock size={10} className="text-[#1B2A4A]/40" />}
+
+        {/* Loading state */}
+        {docsLoading && (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 size={24} className="animate-spin text-[#1B2A4A]/40 mr-2" />
+            <span className="text-sm text-gray-400">Loading documents from database...</span>
+          </div>
+        )}
+
+        {!docsLoading && (
+          <div className="space-y-2">
+            {filteredInstances.map((di) => {
+              const config = DOC_TYPE_CONFIG[di.doc_type] || { label: di.doc_type, icon: "FileText" };
+              const Icon = ICON_MAP[config.icon] || FileText;
+              const statusCfg = DOC_INSTANCE_STATUS_CONFIG[di.status] || { label: di.status, color: "text-gray-700", bg: "bg-gray-100" };
+              const currentVersion = di.versions.find(v => v.id === di.current_version_id) || di.versions[di.versions.length - 1];
+              const colorMap: Record<string, string> = {
+                quote: "text-emerald-700",
+                proposal: "text-blue-700",
+                sla: "text-purple-700",
+                msa: "text-indigo-700",
+                service_order_transport: "text-orange-700",
+                service_order_warehouse: "text-teal-700",
+              };
+              const iconColor = colorMap[di.doc_type] || "text-gray-700";
+              return (
+                <Card key={di.id} className="cursor-pointer hover:shadow-sm transition-all border border-gray-200"
+                  onClick={() => setActiveDoc({ type: di.doc_type, instanceId: di.id, customerName: di.customer_name, customerId: di.customer_id })}>
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-4">
+                      <div className={`p-2 rounded ${iconColor} bg-gray-50`}>
+                        <Icon size={18} />
                       </div>
-                      <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
-                        <span>{di.customer_name}</span>
-                        <span className="text-gray-300">·</span>
-                        <span className="flex items-center gap-1"><Clock size={10} /> {di.updated_at}</span>
-                        <span className="text-gray-300">·</span>
-                        <span>v{currentVersion?.version_number || 1}</span>
-                        <span className="text-gray-300">·</span>
-                        <span>{currentVersion?.blocks.length || 0} blocks</span>
-                        {di.workspace_name && (
-                          <>
-                            <span className="text-gray-300">·</span>
-                            <span>{di.workspace_name}</span>
-                          </>
-                        )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-medium text-[#1B2A4A] truncate">
+                            {di.customer_name} — {config.label}
+                          </h3>
+                          <Badge className={`text-[10px] h-4 ${statusCfg.bg} ${statusCfg.color} border-0`}>{statusCfg.label}</Badge>
+                          {di.status === "canon" && <Lock size={10} className="text-[#1B2A4A]/40" />}
+                        </div>
+                        <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                          <span>{di.customer_name}</span>
+                          <span className="text-gray-300">·</span>
+                          <span className="flex items-center gap-1"><Clock size={10} /> {di.updated_at?.split("T")[0] || di.updated_at}</span>
+                          <span className="text-gray-300">·</span>
+                          <span>v{currentVersion?.version_number || 1}</span>
+                          <span className="text-gray-300">·</span>
+                          <span>{currentVersion?.blocks?.length || 0} blocks</span>
+                          {di.workspace_name && (
+                            <>
+                              <span className="text-gray-300">·</span>
+                              <span>{di.workspace_name}</span>
+                            </>
+                          )}
+                        </div>
                       </div>
+                      <Badge variant="outline" className={`text-xs ${iconColor}`}>{config.label}</Badge>
                     </div>
-                    <Badge variant="outline" className={`text-xs ${iconColor}`}>{config.label}</Badge>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-          {filteredInstances.length === 0 && (
-            <div className="text-center py-8 text-gray-400">
-              <FileText size={32} className="mx-auto mb-2 opacity-40" />
-              <p className="text-sm">No document instances found</p>
-            </div>
-          )}
-        </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+            {filteredInstances.length === 0 && (
+              <div className="text-center py-8 text-gray-400">
+                <FileText size={32} className="mx-auto mb-2 opacity-40" />
+                <p className="text-sm">No document instances found</p>
+                <p className="text-xs mt-1">Create a new document or save one from a workspace</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* New Document Modal */}

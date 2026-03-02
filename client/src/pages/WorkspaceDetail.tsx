@@ -43,7 +43,8 @@ import {
 } from "@/lib/document-vault";
 import { DocumentViewer, UploadDialog } from "@/components/DocumentViewer";
 import DocumentComposer, { type ComposerDocument } from "@/components/DocumentComposer";
-import { resolveOrCreateDocInstance, getTemplatesByDocType, type DocTemplate, type DocType } from "@/lib/document-composer";
+import { getTemplatesByDocType, type DocTemplate, type DocType } from "@/lib/document-composer";
+import { resolveOrCreateDocInstanceAsync } from "@/hooks/useResolveDocInstance";
 import { navigationV1 } from "@/components/DashboardLayout";
 import {
   isWorkspaceIntegrationEnabled, getOrCreateCycle, startRenewal, updateRenewalOwner,
@@ -292,10 +293,10 @@ export default function WorkspaceDetail() {
   };
 
   // ── Open in Composer ──
-  const openInComposer = (type: "quote" | "proposal" | "sla", entityId: string) => {
+  const openInComposer = async (type: "quote" | "proposal" | "sla", entityId: string) => {
     try {
       const linkedType = type === "quote" ? "quote_version" as const : type === "proposal" ? "proposal_version" as const : "sla_version" as const;
-      const instance = resolveOrCreateDocInstance({
+      const instance = await resolveOrCreateDocInstanceAsync({
         doc_type: type,
         linked_entity_type: linkedType,
         linked_entity_id: entityId,
@@ -801,9 +802,9 @@ export default function WorkspaceDetail() {
                         <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openInComposer("quote", q.id)}>
                           <Edit className="w-3 h-3 mr-1" /> Edit
                         </Button>
-                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={async () => {
                           try {
-                            const inst = resolveOrCreateDocInstance({ doc_type: "quote", linked_entity_type: "quote_version", linked_entity_id: q.id, customer_id: ws.customerId, customer_name: ws.customerName, workspace_id: ws.id });
+                            const inst = await resolveOrCreateDocInstanceAsync({ doc_type: "quote", linked_entity_type: "quote_version", linked_entity_id: q.id, customer_id: ws.customerId, customer_name: ws.customerName, workspace_id: ws.id });
                             navigate(`/composer/${inst.id}/view`);
                           } catch { toast.error("Could not open viewer"); }
                         }}>
@@ -844,9 +845,9 @@ export default function WorkspaceDetail() {
                         <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openInComposer("proposal", p.id)}>
                           <Edit className="w-3 h-3 mr-1" /> Edit
                         </Button>
-                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={async () => {
                           try {
-                            const inst = resolveOrCreateDocInstance({ doc_type: "proposal", linked_entity_type: "proposal_version", linked_entity_id: p.id, customer_id: ws.customerId, customer_name: ws.customerName, workspace_id: ws.id });
+                            const inst = await resolveOrCreateDocInstanceAsync({ doc_type: "proposal", linked_entity_type: "proposal_version", linked_entity_id: p.id, customer_id: ws.customerId, customer_name: ws.customerName, workspace_id: ws.id });
                             navigate(`/composer/${inst.id}/view`);
                           } catch { toast.error("Could not open viewer"); }
                         }}>
@@ -889,9 +890,9 @@ export default function WorkspaceDetail() {
                           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openInComposer("sla", sla.id)}>
                             <Edit className="w-3 h-3 mr-1" /> Edit
                           </Button>
-                          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={async () => {
                             try {
-                              const inst = resolveOrCreateDocInstance({ doc_type: "sla", linked_entity_type: "sla_version", linked_entity_id: sla.id, customer_id: sla.customerId, customer_name: sla.customerName, workspace_id: ws.id });
+                              const inst = await resolveOrCreateDocInstanceAsync({ doc_type: "sla", linked_entity_type: "sla_version", linked_entity_id: sla.id, customer_id: sla.customerId, customer_name: sla.customerName, workspace_id: ws.id });
                               navigate(`/composer/${inst.id}/view`);
                             } catch { toast.error("Could not open viewer"); }
                           }}>
@@ -1292,9 +1293,9 @@ export default function WorkspaceDetail() {
                     <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openInComposer("quote", q.id)}>
                       <Edit className="w-3 h-3 mr-1" /> Open in Composer
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={async () => {
                       try {
-                        const inst = resolveOrCreateDocInstance({ doc_type: "quote", linked_entity_type: "quote_version", linked_entity_id: q.id, customer_id: ws.customerId, customer_name: ws.customerName, workspace_id: ws.id });
+                        const inst = await resolveOrCreateDocInstanceAsync({ doc_type: "quote", linked_entity_type: "quote_version", linked_entity_id: q.id, customer_id: ws.customerId, customer_name: ws.customerName, workspace_id: ws.id });
                         navigate(`/composer/${inst.id}/view`);
                       } catch { toast.error("Could not open viewer"); }
                     }}>
@@ -1338,9 +1339,9 @@ export default function WorkspaceDetail() {
                     <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openInComposer("proposal", p.id)}>
                       <Edit className="w-3 h-3 mr-1" /> Open in Composer
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={async () => {
                       try {
-                        const inst = resolveOrCreateDocInstance({ doc_type: "proposal", linked_entity_type: "proposal_version", linked_entity_id: p.id, customer_id: ws.customerId, customer_name: ws.customerName, workspace_id: ws.id });
+                        const inst = await resolveOrCreateDocInstanceAsync({ doc_type: "proposal", linked_entity_type: "proposal_version", linked_entity_id: p.id, customer_id: ws.customerId, customer_name: ws.customerName, workspace_id: ws.id });
                         navigate(`/composer/${inst.id}/view`);
                       } catch { toast.error("Could not open viewer"); }
                     }}>
@@ -1377,9 +1378,9 @@ export default function WorkspaceDetail() {
                       <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openInComposer("sla", sla.id)}>
                         <Edit className="w-3 h-3 mr-1" /> Open in Composer
                       </Button>
-                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={async () => {
                         try {
-                          const inst = resolveOrCreateDocInstance({ doc_type: "sla", linked_entity_type: "sla_version", linked_entity_id: sla.id, customer_id: sla.customerId, customer_name: sla.customerName, workspace_id: ws.id });
+                          const inst = await resolveOrCreateDocInstanceAsync({ doc_type: "sla", linked_entity_type: "sla_version", linked_entity_id: sla.id, customer_id: sla.customerId, customer_name: sla.customerName, workspace_id: ws.id });
                           navigate(`/composer/${inst.id}/view`);
                         } catch { toast.error("Could not open viewer"); }
                       }}>

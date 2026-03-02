@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCustomers } from "@/hooks/useSupabase";
-import { resolveOrCreateDocInstance } from "@/lib/document-composer";
+import { resolveOrCreateDocInstanceAsync } from "@/hooks/useResolveDocInstance";
 import { toast } from "sonner";
 import DocumentComposer, { type ComposerDocument } from "@/components/DocumentComposer";
 import OverrideDialog from "@/components/OverrideDialog";
@@ -273,10 +273,10 @@ export default function SLAs() {
                       </Button>
                     )}
                     <Button variant="ghost" size="sm" className="h-7 text-xs"
-                      onClick={() => {
+                      onClick={async () => {
                         logAction("sla", sla.id, "sla_edit_opened", `SLA "${sla.title}" opened for editing`);
                         try {
-                          const instance = resolveOrCreateDocInstance({
+                          const instance = await resolveOrCreateDocInstanceAsync({
                             doc_type: "sla",
                             linked_entity_type: "sla_version",
                             linked_entity_id: sla.id,
