@@ -277,3 +277,35 @@ NOTIFY pgrst, 'reload schema';
 ### Supabase Project
 
 Project name: `kositquaqmuousalmoar`
+
+---
+
+## checkpoint_sprint4a1_security_lockdown
+
+**Date:** 2026-03-02
+**Checkpoint ID:** (see Manus checkpoint below)
+
+### What Was Done
+
+Sprint 4A-1: Critical security lockdown — removed the Supabase service_role key from all client-side code.
+
+### Changes Applied
+
+1. **Deleted `supabase-admin.ts`** — contained the hardcoded service_role key that was shipped to every browser.
+2. **Created `admin-api.ts`** — client-side proxy that calls the Supabase Edge Function with the user's JWT.
+3. **Deployed Edge Function `admin-user-management`** — handles 5 admin operations (create-user, update-user, reset-password, deactivate-user, reactivate-user) server-side with the service_role key in env vars only.
+4. **Added `AdminRoute` guard** in App.tsx — `/admin` and `/admin-panel` routes now check `appUser.role === 'admin'` before rendering; non-admin users get redirected with a toast.
+
+### Verification
+
+| Test | Result |
+|------|--------|
+| Bundle inspection: service_role key absent | PASS |
+| Admin user can access /admin-panel | PASS |
+| Non-admin route guard logic verified (code review) | PASS |
+| TypeScript compilation (0 errors) | PASS |
+
+### Supabase Project
+
+- Project: `kositquaqmuousalmoar`
+- Edge Function: `admin-user-management` (deployed, JWT verification disabled at gateway — handled in function code)

@@ -34,7 +34,7 @@ import {
   adminResetPassword,
   adminDeactivateUser,
   adminReactivateUser,
-} from "@/lib/supabase-admin";
+} from "@/lib/admin-api";
 import { useAuth } from "@/contexts/AuthContext";
 
 const systemModules = [

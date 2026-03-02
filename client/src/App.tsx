@@ -1,4 +1,6 @@
+import React from "react";
 import { Toaster } from "@/components/ui/sonner";
+import { toast } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch, Redirect } from "wouter";
@@ -69,8 +71,8 @@ function AppRouter() {
       <Route path="/tender-board" component={TenderBoard} />
       <Route path="/handover" component={Handover} />
       <Route path="/editor" component={Editor} />
-      <Route path="/admin" component={AdminGovernance} />
-      <Route path="/admin-panel" component={AdminPanel} />
+      <Route path="/admin">{() => <AdminRoute component={AdminGovernance} />}</Route>
+      <Route path="/admin-panel">{() => <AdminRoute component={AdminPanel} />}</Route>
       <Route path="/audit" component={AuditTrail} />
       <Route path="/bot-registry" component={BotRegistry} />
       <Route path="/bot-builder" component={BotBuilder} />
@@ -97,6 +99,22 @@ function AppRouter() {
       <Route component={NotFound} />
     </Switch>
   );
+}
+
+/** Role-based route guard: redirects non-admin users with a toast */
+function AdminRoute({ component: Component }: { component: React.ComponentType }) {
+  const { appUser } = useAuth();
+  
+  // If user is not admin, redirect to dashboard
+  if (!appUser || appUser.role !== 'admin') {
+    // Show toast on next tick to avoid render-phase side effects
+    setTimeout(() => {
+      toast.error('Access denied \u2014 admin role required');
+    }, 0);
+    return <Redirect to="/" />;
+  }
+  
+  return <Component />;
 }
 
 /** Loading spinner shown while checking auth session */
