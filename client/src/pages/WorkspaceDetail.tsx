@@ -125,9 +125,19 @@ export default function WorkspaceDetail() {
   const [supportUploadCategory, setSupportUploadCategory] = useState<SupportDocCategory>("Other");
   const [supportUploadRequired, setSupportUploadRequired] = useState(false);
 
-  // Initialize
-  useState(() => { initializeMockFiles(); });
-  useState(() => { if (isWorkspaceIntegrationEnabled()) seedWorkspaceIntegrationData(); });
+  // Async contract cycle + ready checks state (migrated from sync to Supabase)
+  const [activeCycle, setActiveCycle] = useState<ContractCycle | undefined>(undefined);
+  const [contractReadyChecks, setContractReadyChecks] = useState<any[]>([]);
+
+  // Initialize (one-time side effects)
+  const initRef = useRef(false);
+  useEffect(() => {
+    if (!initRef.current) {
+      initRef.current = true;
+      initializeMockFiles();
+      if (isWorkspaceIntegrationEnabled()) seedWorkspaceIntegrationData();
+    }
+  }, []);
 
   // Read ?tab= URL param for deep-linking (e.g., from Output Studio back navigation)
   const initialTab = useMemo(() => {
@@ -165,6 +175,25 @@ export default function WorkspaceDetail() {
   useEffect(() => {
     return () => { if (undoTimerRef.current) clearInterval(undoTimerRef.current); };
   }, []);
+
+  // Contract cycle (v1 integration) — async from Supabase
+  // MUST be above early returns to maintain consistent hook count
+  const integrationEnabled = isWorkspaceIntegrationEnabled();
+  useEffect(() => {
+    if (!integrationEnabled || !ws) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const cycle = await getOrCreateCycle(ws.id, ws);
+        if (!cancelled) setActiveCycle(cycle);
+        const checks = await getContractReadyChecks(ws.id);
+        if (!cancelled) setContractReadyChecks(checks);
+      } catch (err) {
+        console.error("Contract cycle init error:", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [integrationEnabled, ws?.id]);
 
   const loading = wsLoading || qLoading || pLoading || appLoading || sigLoading || auditLoading || diLoading;
   if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
@@ -206,12 +235,8 @@ export default function WorkspaceDetail() {
   const hasWarnings = preflightFailures.length > 0;
   const isStrictMode = getStrictMode();
 
-  // Contract cycle (v1 integration)
-  const integrationEnabled = isWorkspaceIntegrationEnabled();
-  const activeCycle = integrationEnabled ? getOrCreateCycle(ws.id) : undefined;
   const daysToExpiry = activeCycle ? getDaysToExpiry(activeCycle.endDate) : null;
   const inRenewalWindow = activeCycle ? isInRenewalWindow(activeCycle) : false;
-  const contractReadyChecks = integrationEnabled ? getContractReadyChecks(ws.id) : [];
 
   // Supporting docs
   const wsSupportDocs = integrationEnabled ? getSupportingDocs(ws.id, showDocArchived) : [];
@@ -685,10 +710,11 @@ export default function WorkspaceDetail() {
 
                 {inRenewalWindow && activeCycle.status !== "renewal_in_progress" && (
                   <Button size="sm" className="bg-orange-600 hover:bg-orange-700 text-xs h-7 ml-auto"
-                    onClick={() => {
-                      startRenewal(ws.id);
+                    onClick={async () => {
+                      const newCycle = await startRenewal(ws.id, ws);
+                      setActiveCycle(newCycle);
                       forceUpdate(n => n + 1);
-                      toast.success("Renewal started — Cycle #" + (activeCycle.cycleNumber + 1) + " created");
+                      toast.success("Renewal started — Cycle #" + newCycle.cycleNumber + " created");
                     }}>
                     <RefreshCw className="w-3.5 h-3.5 mr-1" /> Start Renewal
                   </Button>

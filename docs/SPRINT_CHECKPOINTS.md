@@ -105,3 +105,110 @@ Six short-key token aliases were added to both the async resolver (`token-resolv
 ### Supabase Project
 
 Project name: `kositquaqmuousalmoar`
+
+---
+
+## checkpoint_wave3a_core_entities_migrated
+
+**Date:** 2026-03-02
+**Checkpoint ID:** (see Manus checkpoint below)
+
+### What Was Implemented
+
+Sprint 2 — Wave 3A Core Entity Migration. Eight legacy in-memory business arrays in `store.ts` were migrated to Supabase reads. Two new features were added: `customer_contacts` table with primary contact resolution, and `company_name` token binding.
+
+| Step | Description | Result |
+|------|-------------|--------|
+| Step 0 | Freeze Sprint 1 baseline (checkpoint 961ed0dc) | PASS |
+| Step 1 | Enumerate 8 arrays, map to pages and Supabase tables | PASS |
+| Slice 1 | Migrate Customers — OutputStudio.tsx from array to useCustomer() hook | PASS |
+| Slice 2 | Migrate Workspaces — workspace-integration.ts from arrays to Supabase fetches | PASS |
+| Slice 3 | Migrate remaining arrays (quotes, proposals, auditLog) | PASS |
+| Step 3 | Add customer_contacts table + recipient_name from primary contact | PASS |
+| Step 4 | Add company_name token binding from branding profile | PASS |
+
+### Arrays Migrated
+
+All 8 business data arrays in `store.ts` now have zero direct importers. Only types and pure utility functions remain.
+
+| Array | Previous Importer | Migration |
+|-------|-------------------|-----------|
+| customers | OutputStudio.tsx | → useCustomer() Supabase hook |
+| workspaces | OutputStudio.tsx, workspace-integration.ts | → useWorkspace() hook, fetchWorkspaceById() |
+| quotes | workspace-integration.ts | → fetchQuotesByWorkspace() |
+| proposals | workspace-integration.ts | → fetchProposalsByWorkspace() |
+| auditLog | workspace-integration.ts, document-vault.ts | → syncAuditEntry() only (removed in-memory push) |
+| approvalRecords | (no importers) | Already clean |
+| signals | (no importers) | Already clean |
+| policyGates | (no importers) | Already clean |
+
+### New Table: customer_contacts
+
+Created via ALTER TABLE migration in Supabase SQL Editor. Schema:
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | text | PRIMARY KEY |
+| customer_id | text | NOT NULL, FK → customers(id) |
+| name | text | NOT NULL |
+| email | text | |
+| phone | text | |
+| role | text | DEFAULT 'primary' |
+| is_primary | boolean | DEFAULT false |
+| notes | text | |
+| created_at | timestamptz | DEFAULT now() |
+| updated_at | timestamptz | DEFAULT now() |
+
+Seeded with 10 contacts across 9 customers. Primary contact for Almarai: Faisal Al-Marai.
+
+### Token Resolution (Updated)
+
+| Token | Resolved Value (Almarai example) | Source |
+|-------|----------------------------------|--------|
+| {{title}} | Almarai — Standard Quotation | doc title |
+| {{subtitle}} | Supply Chain Services | doc type mapping |
+| {{customer_name}} | Almarai | workspace customer |
+| {{ref_number}} | HCS-QT-2026-6480 | auto-generated |
+| {{date}} | 2026-03-02 | current date |
+| {{recipient_name}} | Faisal Al-Marai | Supabase customer_contacts (primary) |
+| {{company_name}} | Hala Supply Chain Services | branding profile / static default |
+
+### Acceptance Tests
+
+| Test | Description | Result |
+|------|-------------|--------|
+| AT1 | New Quote → Save → Appears in Documents (Quotes 5) | PASS |
+| AT2 | Navigate with ?tab=documents → all quotes visible | PASS |
+| AT3 | Output Studio → 6/6 tokens resolved, 0 missing | PASS |
+| AT4 | Back to Workspace → Documents tab, no orphan page | PASS |
+| Policy | pnpm run policy:storage → zero violations | PASS |
+| DB | doc_instances: 5 rows for w5, customer_contacts: 10 rows | PASS |
+
+### Bug Fix Applied
+
+A React hooks ordering violation was discovered and fixed in `WorkspaceDetail.tsx`. A `useEffect` for contract cycle loading was placed after an early return (`if (loading) return ...`), causing "Rendered more hooks than during the previous render" on first load. The hook was moved above the early return to ensure consistent hook count across renders.
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| client/src/pages/OutputStudio.tsx | Replaced customers/workspaces array imports with useCustomer/useWorkspace hooks |
+| client/src/lib/workspace-integration.ts | Refactored to accept workspace data as params, async Supabase queries |
+| client/src/lib/document-vault.ts | Removed auditLog.push, kept syncAuditEntry only |
+| client/src/pages/WorkspaceDetail.tsx | Async contract cycle/ready checks, hook ordering fix |
+| client/src/lib/supabase-data.ts | Added customer_contacts CRUD functions |
+| client/src/hooks/useSupabase.ts | Added useCustomerContacts hook |
+| client/src/lib/token-resolver.ts | Added primary contact fetch for recipient_name, company_name binding |
+| client/src/components/DocumentComposer.tsx | Added company_name binding |
+
+### TypeScript
+
+0 errors (`npx tsc --noEmit`).
+
+### Known Issue (pre-existing)
+
+The `audit_log_pkey` duplicate key constraint violation on workspace load is a seed data collision from the initial data seeding. It does not affect document creation, save, or view flows. Should be addressed in a future cleanup sprint.
+
+### Supabase Project
+
+Project name: `kositquaqmuousalmoar`

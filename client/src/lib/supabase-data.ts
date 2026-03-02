@@ -638,3 +638,108 @@ export async function createCRMSyncEvent(event: CRMSyncEvent): Promise<CRMSyncEv
   if (error) { console.error("createCRMSyncEvent error:", error); return null; }
   return mapCRMSyncEvent(data);
 }
+
+// ============================================================
+// CUSTOMER CONTACTS
+// ============================================================
+
+export interface CustomerContact {
+  id: string;
+  customerId: string;
+  fullName: string;
+  jobTitle: string;
+  email: string;
+  phone: string;
+  isPrimary: boolean;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function mapCustomerContact(row: any): CustomerContact {
+  return {
+    id: row.id,
+    customerId: row.customer_id,
+    fullName: row.full_name,
+    jobTitle: row.job_title || "",
+    email: row.email || "",
+    phone: row.phone || "",
+    isPrimary: row.is_primary ?? false,
+    notes: row.notes || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function contactToRow(c: Partial<CustomerContact>): Record<string, any> {
+  const row: Record<string, any> = {};
+  if (c.id !== undefined) row.id = c.id;
+  if (c.customerId !== undefined) row.customer_id = c.customerId;
+  if (c.fullName !== undefined) row.full_name = c.fullName;
+  if (c.jobTitle !== undefined) row.job_title = c.jobTitle;
+  if (c.email !== undefined) row.email = c.email;
+  if (c.phone !== undefined) row.phone = c.phone;
+  if (c.isPrimary !== undefined) row.is_primary = c.isPrimary;
+  if (c.notes !== undefined) row.notes = c.notes;
+  return row;
+}
+
+/** Fetch all contacts for a customer */
+export async function fetchContactsByCustomer(customerId: string): Promise<CustomerContact[]> {
+  const { data, error } = await supabase
+    .from("customer_contacts")
+    .select("*")
+    .eq("customer_id", customerId)
+    .order("is_primary", { ascending: false });
+  if (error) { console.error("fetchContactsByCustomer error:", error); return []; }
+  return (data || []).map(mapCustomerContact);
+}
+
+/** Fetch the primary contact for a customer */
+export async function fetchPrimaryContact(customerId: string): Promise<CustomerContact | null> {
+  const { data, error } = await supabase
+    .from("customer_contacts")
+    .select("*")
+    .eq("customer_id", customerId)
+    .eq("is_primary", true)
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return mapCustomerContact(data);
+}
+
+/** Create a new contact */
+export async function createContact(contact: Omit<CustomerContact, "createdAt" | "updatedAt">): Promise<CustomerContact | null> {
+  const row = contactToRow(contact);
+  row.created_at = new Date().toISOString();
+  row.updated_at = new Date().toISOString();
+  const { data, error } = await supabase.from("customer_contacts").insert(row).select().single();
+  if (error) { console.error("createContact error:", error); return null; }
+  return mapCustomerContact(data);
+}
+
+/** Update a contact */
+export async function updateContact(id: string, updates: Partial<CustomerContact>): Promise<CustomerContact | null> {
+  const row = contactToRow(updates);
+  row.updated_at = new Date().toISOString();
+  const { data, error } = await supabase.from("customer_contacts").update(row).eq("id", id).select().single();
+  if (error) { console.error("updateContact error:", error); return null; }
+  return mapCustomerContact(data);
+}
+
+/** Delete a contact */
+export async function deleteContact(id: string): Promise<boolean> {
+  const { error } = await supabase.from("customer_contacts").delete().eq("id", id);
+  if (error) { console.error("deleteContact error:", error); return false; }
+  return true;
+}
+
+/** Set a contact as primary (and unset all others for the same customer) */
+export async function setPrimaryContact(contactId: string, customerId: string): Promise<boolean> {
+  // Unset all primary flags for this customer
+  await supabase.from("customer_contacts").update({ is_primary: false }).eq("customer_id", customerId);
+  // Set the target as primary
+  const { error } = await supabase.from("customer_contacts").update({ is_primary: true }).eq("id", contactId);
+  if (error) { console.error("setPrimaryContact error:", error); return false; }
+  return true;
+}

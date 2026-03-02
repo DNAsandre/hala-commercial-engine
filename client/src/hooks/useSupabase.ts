@@ -12,6 +12,7 @@ import {
   fetchApprovalRecords, fetchSignals, fetchPolicyGates,
   fetchPnLModels, fetchPnLByWorkspace, fetchHandoverTasks,
   fetchCRMSyncEvents, fetchAuditLog,
+  fetchContactsByCustomer, type CustomerContact,
 } from "@/lib/supabase-data";
 import type {
   User, Customer, Workspace, Quote, Proposal, ApprovalRecord,
@@ -137,4 +138,8 @@ export function useCRMSyncEvents(): UseQueryResult<CRMSyncEvent[]> {
 
 export function useAuditLog(): UseQueryResult<AuditEntry[]> {
   return useQuery(fetchAuditLog, []);
+}
+
+export function useCustomerContacts(customerId: string): UseQueryResult<CustomerContact[]> {
+  return useQuery(() => fetchContactsByCustomer(customerId), [], [customerId]);
 }

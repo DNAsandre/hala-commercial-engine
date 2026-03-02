@@ -1146,6 +1146,10 @@ export default function DocumentComposer({
     // {{subtitle}} — static default
     entityBindings['subtitle'] = 'Supply Chain Services';
 
+    // {{company_name}} — the issuing company (Hala brand)
+    entityBindings['company_name'] = 'Hala Supply Chain Services';
+    entityBindings['company.name'] = 'Hala Supply Chain Services';
+
     // {{customer_name}} — from document or linked customer
     entityBindings['customer_name'] = document.customer_name || linkedCustomer?.name || '';
 

@@ -12,7 +12,8 @@ import { getCurrentUser } from "./auth-state";
  * ────────────────────────────────────────────────────────────
  */
 
-import { type AuditEntry, auditLog, workspaces, quotes, proposals } from "./store";
+import { type AuditEntry, type Workspace, type Quote, type Proposal } from "./store";
+import { createAuditEntry, fetchWorkspaceById, fetchQuotesByWorkspace, fetchProposalsByWorkspace } from "./supabase-data";
 import { syncAuditEntry } from "./supabase-sync";
 
 // ─── FEATURE FLAG ───────────────────────────────────────────
@@ -106,8 +107,9 @@ function logIntegrationAudit(
     timestamp: new Date().toISOString(),
     details,
   };
-  auditLog.push(entry);
+  // Write to Supabase only (no in-memory push)
   syncAuditEntry(entry);
+  createAuditEntry(entry).catch(() => {});
 }
 
 // ─── CONTRACT CYCLE HELPERS ─────────────────────────────────
@@ -131,15 +133,15 @@ export function getActiveCycle(workspaceId: string): ContractCycle | undefined {
  * If workspace has SLA data, link it and set endDate if available.
  * Returns the active cycle.
  */
-export function getOrCreateCycle(workspaceId: string): ContractCycle {
+export async function getOrCreateCycle(workspaceId: string, wsData?: Workspace | null): Promise<ContractCycle> {
   const existing = getActiveCycle(workspaceId);
   if (existing) return existing;
 
-  const ws = workspaces.find(w => w.id === workspaceId);
+  const ws = wsData ?? await fetchWorkspaceById(workspaceId);
   if (!ws) throw new Error(`Workspace ${workspaceId} not found`);
 
   // Try to find SLA expiry from customer data (mock)
-  const slaExpiry = getSlaExpiryForWorkspace(workspaceId);
+  const slaExpiry = getSlaExpiryForWorkspace(workspaceId, ws);
 
   const cycle: ContractCycle = {
     id: `cc-${workspaceId}-1`,
@@ -162,8 +164,8 @@ export function getOrCreateCycle(workspaceId: string): ContractCycle {
 }
 
 /** Start a renewal — creates a new cycle with status renewal_in_progress */
-export function startRenewal(workspaceId: string): ContractCycle {
-  const ws = workspaces.find(w => w.id === workspaceId);
+export async function startRenewal(workspaceId: string, wsData?: Workspace | null): Promise<ContractCycle> {
+  const ws = wsData ?? await fetchWorkspaceById(workspaceId);
   if (!ws) throw new Error(`Workspace ${workspaceId} not found`);
 
   const currentCycle = getActiveCycle(workspaceId);
@@ -220,9 +222,7 @@ export function isInRenewalWindow(cycle: ContractCycle): boolean {
 }
 
 /** Get SLA expiry for a workspace (mock — uses hardcoded data) */
-function getSlaExpiryForWorkspace(workspaceId: string): string | null {
-  // Map workspace IDs to known SLA expiry dates (from SLAs mock data)
-  const ws = workspaces.find(w => w.id === workspaceId);
+function getSlaExpiryForWorkspace(_workspaceId: string, ws?: Workspace | null): string | null {
   if (!ws) return null;
   const expiryMap: Record<string, string> = {
     "SABIC": "2026-05-31",
@@ -328,11 +328,11 @@ export interface ContractReadyCheck {
  * Returns a list of checks required for "Contract Ready" stage.
  * Used by the stage gating system.
  */
-export function getContractReadyChecks(workspaceId: string): ContractReadyCheck[] {
+export async function getContractReadyChecks(workspaceId: string): Promise<ContractReadyCheck[]> {
   const checks: ContractReadyCheck[] = [];
 
-  // 1. At least one proposal version exists
-  const wsProposals = proposals.filter(p => p.workspaceId === workspaceId);
+  // 1. At least one proposal version exists (from Supabase)
+  const wsProposals = await fetchProposalsByWorkspace(workspaceId);
   checks.push({
     label: "At least one proposal version exists",
     passed: wsProposals.length > 0,
@@ -340,8 +340,9 @@ export function getContractReadyChecks(workspaceId: string): ContractReadyCheck[
     ctaAction: "create_proposal",
   });
 
-  // 2. At least one approved quote exists
-  const approvedQuote = quotes.find(q => q.workspaceId === workspaceId && q.state === "approved");
+  // 2. At least one approved quote exists (from Supabase)
+  const wsQuotes = await fetchQuotesByWorkspace(workspaceId);
+  const approvedQuote = wsQuotes.find(q => q.state === "approved");
   checks.push({
     label: "Approved quote exists",
     passed: !!approvedQuote,

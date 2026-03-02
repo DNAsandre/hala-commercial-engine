@@ -32,6 +32,7 @@ import {
   fetchVariableSetByDocType,
   fetchVariableSetItems,
 } from './supabase-variables';
+import { fetchPrimaryContact } from './supabase-data';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -114,6 +115,13 @@ export async function buildAsyncResolutionContext(
   // {{subtitle}} — static default
   entityBindings['subtitle'] = 'Supply Chain Services';
 
+  // {{company_name}} — the issuing company (Hala brand)
+  entityBindings['company_name'] = 'Hala Supply Chain Services';
+  entityBindings['company.name'] = 'Hala Supply Chain Services';
+  entityBindings['company.legal_name'] = 'Hala Supply Chain Services Co.';
+  entityBindings['company.cr_number'] = '1010XXXXXX';
+  entityBindings['company.vat_number'] = '300XXXXXXXXX003';
+
   // {{customer_name}} — from explicit prop or entity data
   if (input.customerName) {
     entityBindings['customer_name'] = input.customerName;
@@ -136,8 +144,26 @@ export async function buildAsyncResolutionContext(
   // {{date}} — today's date
   entityBindings['date'] = new Date().toISOString().split('T')[0];
 
-  // {{recipient_name}} — customer contact or customer name
-  if (input.entityData?.contactName) {
+  // {{recipient_name}} — primary contact from Supabase, or fallback to customer name
+  const customerId = input.entityData?.id as string | undefined;
+  if (customerId) {
+    try {
+      const primaryContact = await fetchPrimaryContact(customerId);
+      if (primaryContact) {
+        entityBindings['recipient_name'] = primaryContact.fullName;
+        entityBindings['contacts.recipient'] = primaryContact.fullName;
+        entityBindings['contacts.recipient_title'] = primaryContact.jobTitle;
+        entityBindings['contacts.recipient_email'] = primaryContact.email;
+      } else if (input.entityData?.contactName) {
+        entityBindings['recipient_name'] = input.entityData.contactName;
+      } else if (input.customerName) {
+        entityBindings['recipient_name'] = input.customerName;
+      }
+    } catch {
+      // Fallback on error
+      entityBindings['recipient_name'] = input.customerName || input.entityData?.name || '';
+    }
+  } else if (input.entityData?.contactName) {
     entityBindings['recipient_name'] = input.entityData.contactName;
   } else if (input.customerName) {
     entityBindings['recipient_name'] = input.customerName;

@@ -22,7 +22,7 @@ import {
 import { compileComposerPDF, type ComposerPDFInput } from "@/lib/pdf-compiler";
 import { resolveTokens, type TokenResolutionResult, type ResolutionContext } from "@/lib/semantic-variables";
 import { getTokenHealthSummary, buildAsyncResolutionContext, type AsyncResolutionInput } from "@/lib/token-resolver";
-import { customers, workspaces } from "@/lib/store";
+import { useCustomer, useWorkspace } from "@/hooks/useSupabase";
 import {
   useDocInstance, useCompiledDocuments, useVaultAssets,
   type HydratedDocInstance, type HydratedDocVersion, type DbCompiledDocument,
@@ -115,29 +115,32 @@ export default function OutputStudio() {
   const [tokenHealth, setTokenHealth] = useState<TokenHealth>({ total: 0, resolved: 0, missing: [], status: "healthy" });
   const [resolutionCtx, setResolutionCtx] = useState<ResolutionContext | null>(null);
 
-  // Build async resolution input from doc instance data
+  // Fetch customer and workspace from Supabase (no in-memory arrays)
+  const { data: sbCustomer } = useCustomer(docInstance?.customer_id || "");
+  const { data: sbWorkspace } = useWorkspace(docInstance?.workspace_id || "");
+
+  // Build async resolution input from doc instance data + Supabase entities
   const asyncInput = useMemo<AsyncResolutionInput | null>(() => {
     if (!docInstance) return null;
-    const customer = customers.find(c => c.id === docInstance.customer_id || c.name === docInstance.customer_name);
-    const workspace = workspaces.find(w => w.id === docInstance.workspace_id);
     const entityData: Record<string, unknown> = {};
-    if (customer) {
-      entityData.name = customer.name;
-      entityData.code = customer.code;
-      entityData.city = customer.city;
-      entityData.region = customer.region;
-      entityData.industry = customer.industry;
-      entityData.grade = customer.grade;
-      entityData.facility = customer.facility;
-      entityData.contract_expiry = customer.contractExpiry;
-      entityData.service_type = customer.serviceType;
+    if (sbCustomer) {
+      entityData.name = sbCustomer.name;
+      entityData.code = sbCustomer.code;
+      entityData.city = sbCustomer.city;
+      entityData.region = sbCustomer.region;
+      entityData.industry = sbCustomer.industry;
+      entityData.grade = sbCustomer.grade;
+      entityData.facility = sbCustomer.facility;
+      entityData.contract_expiry = sbCustomer.contractExpiry;
+      entityData.service_type = sbCustomer.serviceType;
+      entityData.contactName = sbCustomer.contactName;
     }
     const pricingSnapshot: Record<string, unknown> = {};
-    if (workspace) {
-      pricingSnapshot.estimated_value = workspace.estimatedValue;
-      pricingSnapshot.pallet_volume = workspace.palletVolume;
-      pricingSnapshot.gp_percent = workspace.gpPercent;
-      pricingSnapshot.total = workspace.estimatedValue;
+    if (sbWorkspace) {
+      pricingSnapshot.estimated_value = sbWorkspace.estimatedValue;
+      pricingSnapshot.pallet_volume = sbWorkspace.palletVolume;
+      pricingSnapshot.gp_percent = sbWorkspace.gpPercent;
+      pricingSnapshot.total = sbWorkspace.estimatedValue;
     }
     return {
       docInstanceId: docInstance.id,
@@ -147,7 +150,7 @@ export default function OutputStudio() {
       docTitle: docInstance.title || undefined,
       customerName: docInstance.customer_name || undefined,
     };
-  }, [docInstance]);
+  }, [docInstance, sbCustomer, sbWorkspace]);
 
   // Fetch token health + resolution context asynchronously
   useEffect(() => {

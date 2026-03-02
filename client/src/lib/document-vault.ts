@@ -21,7 +21,7 @@ import { getCurrentUser } from "./auth-state";
  *   - Documents without valid file_path are rendered as non-clickable
  */
 
-import { type AuditEntry, auditLog } from "./store";
+import { type AuditEntry } from "./store";
 import { syncAuditEntry } from "./supabase-sync";
 
 // ─── DOCUMENT CATEGORIES (Folder Structure) ──────────────────
@@ -1210,7 +1210,6 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
     timestamp: new Date().toISOString(),
     details,
   };
-  auditLog.unshift(entry);
   syncAuditEntry(entry);
 
   const customerEntry: AuditEntry = {
@@ -1223,7 +1222,6 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
     timestamp: new Date().toISOString(),
     details,
   };
-  auditLog.unshift(customerEntry);
   syncAuditEntry(customerEntry);
 
   if (doc.workspaceId) {
@@ -1237,7 +1235,6 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
       timestamp: new Date().toISOString(),
       details,
     };
-    auditLog.unshift(wsEntry);
     syncAuditEntry(wsEntry);
   }
 
@@ -1252,7 +1249,6 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
       timestamp: new Date().toISOString(),
       details,
     };
-    auditLog.unshift(tnEntry);
     syncAuditEntry(tnEntry);
   }
 }
