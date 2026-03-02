@@ -12,6 +12,7 @@
 import { getCurrentUser } from "./auth-state";
 import { supabase } from "./supabase";
 import { handleSupabaseError } from "./supabase-error";
+import { optimisticSyncUpdate } from "./optimistic-lock";
 
 // ============================================================
 // WORKSPACE SYNC
@@ -56,8 +57,7 @@ export async function syncWorkspaceUpdate(
     const dbKey = mapping[key] || key;
     row[dbKey] = val;
   }
-  const { error } = await supabase.from("workspaces").update(row).eq("id", workspaceId);
-  if (error) handleSupabaseError('syncWorkspaceUpdate', error, { entityId: workspaceId });
+  await optimisticSyncUpdate("workspaces", workspaceId, row, 'syncWorkspaceUpdate');
 }
 
 // ============================================================
@@ -94,8 +94,7 @@ export async function syncCustomerUpdate(
     const dbKey = mapping[key] || key;
     row[dbKey] = val;
   }
-  const { error } = await supabase.from("customers").update(row).eq("id", customerId);
-  if (error) handleSupabaseError('syncCustomerUpdate', error, { entityId: customerId });
+  await optimisticSyncUpdate("customers", customerId, row, 'syncCustomerUpdate');
 }
 
 export async function syncCustomerCreate(customer: Record<string, any>): Promise<void> {
@@ -176,8 +175,7 @@ export async function syncTenderUpdate(
     const dbKey = mapping[key] || key;
     row[dbKey] = val;
   }
-  const { error } = await supabase.from("tenders").update(row).eq("id", tenderId);
-  if (error) handleSupabaseError('syncTenderUpdate', error, { entityId: tenderId });
+  await optimisticSyncUpdate("tenders", tenderId, row, 'syncTenderUpdate');
 }
 
 // ============================================================
@@ -263,8 +261,7 @@ export async function syncQuoteUpdate(quoteId: string, updates: Record<string, a
     const dbKey = mapping[key] || key;
     row[dbKey] = val;
   }
-  const { error } = await supabase.from("quotes").update(row).eq("id", quoteId);
-  if (error) handleSupabaseError('syncQuoteUpdate', error, { entityId: quoteId });
+  await optimisticSyncUpdate("quotes", quoteId, row, 'syncQuoteUpdate');
 }
 
 // ============================================================
@@ -290,8 +287,7 @@ export async function syncProposalUpdate(proposalId: string, updates: Record<str
   if (updates.state !== undefined) row.state = updates.state;
   if (updates.title !== undefined) row.title = updates.title;
   if (updates.sections !== undefined) row.sections = JSON.stringify(updates.sections);
-  const { error } = await supabase.from("proposals").update(row).eq("id", proposalId);
-  if (error) handleSupabaseError('syncProposalUpdate', error, { entityId: proposalId });
+  await optimisticSyncUpdate("proposals", proposalId, row, 'syncProposalUpdate');
 }
 
 // ============================================================
@@ -335,8 +331,7 @@ export async function syncHandoverTaskUpdate(taskId: string, updates: Record<str
   if (updates.status !== undefined) row.status = updates.status;
   if (updates.assignedTo !== undefined) row.assigned_to = updates.assignedTo;
   if (updates.dueDate !== undefined) row.due_date = updates.dueDate;
-  const { error } = await supabase.from("handover_tasks").update(row).eq("id", taskId);
-  if (error) handleSupabaseError('syncHandoverTaskUpdate', error, { entityId: taskId });
+  await optimisticSyncUpdate("handover_tasks", taskId, row, 'syncHandoverTaskUpdate');
 }
 
 // ============================================================
@@ -349,8 +344,7 @@ export async function syncPolicyGateUpdate(gateId: string, updates: Record<strin
   if (updates.overridable !== undefined) row.overridable = updates.overridable;
   if (updates.name !== undefined) row.name = updates.name;
   if (updates.description !== undefined) row.description = updates.description;
-  const { error } = await supabase.from("policy_gates").update(row).eq("id", gateId);
-  if (error) handleSupabaseError('syncPolicyGateUpdate', error, { entityId: gateId });
+  await optimisticSyncUpdate("policy_gates", gateId, row, 'syncPolicyGateUpdate');
 }
 
 // ============================================================
@@ -415,8 +409,7 @@ export async function syncDocInstanceUpdate(instanceId: string, updates: Record<
     const dbKey = mapping[key] || key;
     row[dbKey] = val;
   }
-  const { error } = await supabase.from("doc_instances").update(row).eq("id", instanceId);
-  if (error) handleSupabaseError('syncDocInstanceUpdate', error, { entityId: instanceId });
+  await optimisticSyncUpdate("doc_instances", instanceId, row, 'syncDocInstanceUpdate');
 }
 
 // ============================================================

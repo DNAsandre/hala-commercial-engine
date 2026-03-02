@@ -9,6 +9,7 @@
 import { getCurrentUser } from "./auth-state";
 import { supabase } from "./supabase";
 import { handleSupabaseError } from "@/lib/supabase-error";
+import { optimisticUpdate } from "@/lib/optimistic-lock";
 import type {
   User, Customer, Workspace, Quote, Proposal, ApprovalRecord,
   Signal, PolicyGate, PnLModel, HandoverTask, CRMSyncEvent, AuditEntry,
@@ -476,11 +477,10 @@ export async function createCustomer(customer: Customer): Promise<Customer | nul
   return mapCustomer(data);
 }
 
-export async function updateCustomer(id: string, updates: Partial<Customer>): Promise<Customer | null> {
+export async function updateCustomer(id: string, updates: Partial<Customer>, expectedUpdatedAt?: string): Promise<Customer | null> {
   const row = customerToRow(updates);
-  row.updated_at = new Date().toISOString();
-  const { data, error } = await supabase.from("customers").update(row).eq("id", id).select().single();
-  if (error) { handleSupabaseError('updateCustomer', error, { silent: true }); return null; }
+  const data = await optimisticUpdate("customers", id, row, expectedUpdatedAt);
+  if (!data) return null;
   return mapCustomer(data);
 }
 
@@ -492,10 +492,10 @@ export async function createWorkspace(workspace: Workspace): Promise<Workspace |
   return mapWorkspace(data);
 }
 
-export async function updateWorkspace(id: string, updates: Partial<Workspace>): Promise<Workspace | null> {
+export async function updateWorkspace(id: string, updates: Partial<Workspace>, expectedUpdatedAt?: string): Promise<Workspace | null> {
   const row = workspaceToRow(updates);
-  const { data, error } = await supabase.from("workspaces").update(row).eq("id", id).select().single();
-  if (error) { handleSupabaseError('updateWorkspace', error, { silent: true }); return null; }
+  const data = await optimisticUpdate("workspaces", id, row, expectedUpdatedAt);
+  if (!data) return null;
   return mapWorkspace(data);
 }
 
@@ -507,10 +507,10 @@ export async function createQuote(quote: Quote): Promise<Quote | null> {
   return mapQuote(data);
 }
 
-export async function updateQuote(id: string, updates: Partial<Quote>): Promise<Quote | null> {
+export async function updateQuote(id: string, updates: Partial<Quote>, expectedUpdatedAt?: string): Promise<Quote | null> {
   const row = quoteToRow(updates);
-  const { data, error } = await supabase.from("quotes").update(row).eq("id", id).select().single();
-  if (error) { handleSupabaseError('updateQuote', error, { silent: true }); return null; }
+  const data = await optimisticUpdate("quotes", id, row, expectedUpdatedAt);
+  if (!data) return null;
   return mapQuote(data);
 }
 
@@ -522,10 +522,10 @@ export async function createProposal(proposal: Proposal): Promise<Proposal | nul
   return mapProposal(data);
 }
 
-export async function updateProposal(id: string, updates: Partial<Proposal>): Promise<Proposal | null> {
+export async function updateProposal(id: string, updates: Partial<Proposal>, expectedUpdatedAt?: string): Promise<Proposal | null> {
   const row = proposalToRow(updates);
-  const { data, error } = await supabase.from("proposals").update(row).eq("id", id).select().single();
-  if (error) { handleSupabaseError('updateProposal', error, { silent: true }); return null; }
+  const data = await optimisticUpdate("proposals", id, row, expectedUpdatedAt);
+  if (!data) return null;
   return mapProposal(data);
 }
 
@@ -537,10 +537,10 @@ export async function createApprovalRecord(record: ApprovalRecord): Promise<Appr
   return mapApprovalRecord(data);
 }
 
-export async function updateApprovalRecord(id: string, updates: Partial<ApprovalRecord>): Promise<ApprovalRecord | null> {
+export async function updateApprovalRecord(id: string, updates: Partial<ApprovalRecord>, expectedUpdatedAt?: string): Promise<ApprovalRecord | null> {
   const row = approvalToRow(updates);
-  const { data, error } = await supabase.from("approval_records").update(row).eq("id", id).select().single();
-  if (error) { handleSupabaseError('updateApprovalRecord', error, { silent: true }); return null; }
+  const data = await optimisticUpdate("approval_records", id, row, expectedUpdatedAt);
+  if (!data) return null;
   return mapApprovalRecord(data);
 }
 
@@ -558,14 +558,14 @@ export async function createSignal(signal: Omit<Signal, "id">): Promise<Signal |
   return mapSignal(data);
 }
 
-export async function updatePolicyGate(id: string, updates: Partial<PolicyGate>): Promise<PolicyGate | null> {
+export async function updatePolicyGate(id: string, updates: Partial<PolicyGate>, expectedUpdatedAt?: string): Promise<PolicyGate | null> {
   const row: Record<string, any> = {};
   if (updates.mode !== undefined) row.mode = updates.mode;
   if (updates.overridable !== undefined) row.overridable = updates.overridable;
   if (updates.name !== undefined) row.name = updates.name;
   if (updates.description !== undefined) row.description = updates.description;
-  const { data, error } = await supabase.from("policy_gates").update(row).eq("id", id).select().single();
-  if (error) { handleSupabaseError('updatePolicyGate', error, { silent: true }); return null; }
+  const data = await optimisticUpdate("policy_gates", id, row, expectedUpdatedAt);
+  if (!data) return null;
   return mapPolicyGate(data);
 }
 
@@ -610,10 +610,10 @@ export async function createHandoverTask(task: HandoverTask): Promise<HandoverTa
   return mapHandoverTask(data);
 }
 
-export async function updateHandoverTask(id: string, updates: Partial<HandoverTask>): Promise<HandoverTask | null> {
+export async function updateHandoverTask(id: string, updates: Partial<HandoverTask>, expectedUpdatedAt?: string): Promise<HandoverTask | null> {
   const row = handoverToRow(updates);
-  const { data, error } = await supabase.from("handover_tasks").update(row).eq("id", id).select().single();
-  if (error) { handleSupabaseError('updateHandoverTask', error, { silent: true }); return null; }
+  const data = await optimisticUpdate("handover_tasks", id, row, expectedUpdatedAt);
+  if (!data) return null;
   return mapHandoverTask(data);
 }
 
@@ -720,11 +720,10 @@ export async function createContact(contact: Omit<CustomerContact, "createdAt" |
 }
 
 /** Update a contact */
-export async function updateContact(id: string, updates: Partial<CustomerContact>): Promise<CustomerContact | null> {
+export async function updateContact(id: string, updates: Partial<CustomerContact>, expectedUpdatedAt?: string): Promise<CustomerContact | null> {
   const row = contactToRow(updates);
-  row.updated_at = new Date().toISOString();
-  const { data, error } = await supabase.from("customer_contacts").update(row).eq("id", id).select().single();
-  if (error) { handleSupabaseError('updateContact', error, { silent: true }); return null; }
+  const data = await optimisticUpdate("customer_contacts", id, row, expectedUpdatedAt);
+  if (!data) return null;
   return mapCustomerContact(data);
 }
 

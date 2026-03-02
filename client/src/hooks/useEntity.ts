@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { handleSupabaseError } from "@/lib/supabase-error";
+import { optimisticUpdate } from "@/lib/optimistic-lock";
 
 export interface UseEntityListResult<T> {
   data: T[];
@@ -28,7 +29,7 @@ export interface UseCreateEntityResult<T> {
 }
 
 export interface UseUpdateEntityResult<T> {
-  update: (id: string, updates: Partial<T>) => Promise<T | null>;
+  update: (id: string, updates: Partial<T>, expectedUpdatedAt?: string) => Promise<T | null>;
   loading: boolean;
   error: string | null;
 }
@@ -177,18 +178,16 @@ export function useUpdateEntity<T>(table: string): UseUpdateEntityResult<T> {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const update = useCallback(async (id: string, updates: Partial<T>): Promise<T | null> => {
+  const update = useCallback(async (id: string, updates: Partial<T>, expectedUpdatedAt?: string): Promise<T | null> => {
     setLoading(true);
     setError(null);
     try {
-      const { data, error: err } = await supabase
-        .from(table)
-        .update(updates as any)
-        .eq("id", id)
-        .select()
-        .single();
-      if (err) throw err;
-      return data as T;
+      const result = await optimisticUpdate<T>(table, id, updates as Record<string, any>, expectedUpdatedAt);
+      if (!result) {
+        setError(`Failed to update ${table}/${id} — possible conflict`);
+        return null;
+      }
+      return result;
     } catch (err: any) {
       setError(err.message || `Failed to update ${table}/${id}`);
       handleSupabaseError(`useUpdateEntity(${table},${id})`, { message: String(err) });

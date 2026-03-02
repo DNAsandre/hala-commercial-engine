@@ -1,6 +1,5 @@
 import React from "react";
 import { Toaster } from "@/components/ui/sonner";
-import { toast } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch, Redirect } from "wouter";
@@ -8,6 +7,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import DashboardLayout from "./components/DashboardLayout";
+import RequireRole from "./components/RequireRole";
 import Dashboard from "./pages/Dashboard";
 import Workspaces from "./pages/Workspaces";
 import WorkspaceDetail from "./pages/WorkspaceDetail";
@@ -52,9 +52,17 @@ import TemplateDesigner from "./pages/TemplateDesigner";
 import OutputStudio from "./pages/OutputStudio";
 import { Loader2 } from "lucide-react";
 
+/**
+ * Admin-only routes: require "admin" role.
+ * These pages manage system configuration, governance rules, bot behavior,
+ * and audit trails — they should not be accessible to sales/viewer users.
+ */
+const ADMIN_ROLES = ["admin"];
+
 function AppRouter() {
   return (
     <Switch>
+      {/* ── Public (any authenticated user) ─────────────────── */}
       <Route path="/" component={Dashboard} />
       <Route path="/workspaces" component={Workspaces} />
       <Route path="/workspaces/:id" component={WorkspaceDetail} />
@@ -71,50 +79,38 @@ function AppRouter() {
       <Route path="/tender-board" component={TenderBoard} />
       <Route path="/handover" component={Handover} />
       <Route path="/editor" component={Editor} />
-      <Route path="/admin">{() => <AdminRoute component={AdminGovernance} />}</Route>
-      <Route path="/admin-panel">{() => <AdminRoute component={AdminPanel} />}</Route>
-      <Route path="/audit" component={AuditTrail} />
-      <Route path="/bot-registry" component={BotRegistry} />
-      <Route path="/bot-builder" component={BotBuilder} />
-      <Route path="/signal-engine" component={SignalEngine} />
-      <Route path="/bot-audit" component={BotAudit} />
-      <Route path="/ecr" component={EcrDashboard} />
-      <Route path="/ecr-metrics" component={EcrMetrics} />
-      <Route path="/ecr-rule-sets" component={EcrRuleSets} />
-      <Route path="/ecr-snapshots" component={EcrSnapshots} />
-      <Route path="/ecr-scoring" component={EcrScoring} />
-      <Route path="/ecr-connectors" component={EcrConnectors} />
       <Route path="/renewals" component={Renewals} />
       <Route path="/renewals/:id" component={RenewalDetail} />
-      <Route path="/renewal-gates" component={RenewalGates} />
-      <Route path="/revenue-exposure" component={RevenueExposure} />
-      <Route path="/ecr-upgrades" component={EcrUpgrades} />
-      <Route path="/template-manager" component={TemplateManager} />
-      <Route path="/branding-profiles" component={BrandingProfiles} />
-      <Route path="/block-library" component={BlockLibrary} />
-      <Route path="/block-builder" component={BlockBuilder} />
-      <Route path="/variables" component={VariablesManager} />
-      <Route path="/templates/:templateId/designer" component={TemplateDesigner} />
+      <Route path="/ecr" component={EcrDashboard} />
+      <Route path="/ecr-scoring" component={EcrScoring} />
       <Route path="/composer/:docInstanceId/view" component={OutputStudio} />
+
+      {/* ── Admin-only routes ───────────────────────────────── */}
+      <Route path="/admin">{() => <RequireRole roles={ADMIN_ROLES} component={AdminGovernance} />}</Route>
+      <Route path="/admin-panel">{() => <RequireRole roles={ADMIN_ROLES} component={AdminPanel} />}</Route>
+      <Route path="/audit">{() => <RequireRole roles={ADMIN_ROLES} component={AuditTrail} />}</Route>
+      <Route path="/bot-registry">{() => <RequireRole roles={ADMIN_ROLES} component={BotRegistry} />}</Route>
+      <Route path="/bot-builder">{() => <RequireRole roles={ADMIN_ROLES} component={BotBuilder} />}</Route>
+      <Route path="/signal-engine">{() => <RequireRole roles={ADMIN_ROLES} component={SignalEngine} />}</Route>
+      <Route path="/bot-audit">{() => <RequireRole roles={ADMIN_ROLES} component={BotAudit} />}</Route>
+      <Route path="/ecr-metrics">{() => <RequireRole roles={ADMIN_ROLES} component={EcrMetrics} />}</Route>
+      <Route path="/ecr-rule-sets">{() => <RequireRole roles={ADMIN_ROLES} component={EcrRuleSets} />}</Route>
+      <Route path="/ecr-snapshots">{() => <RequireRole roles={ADMIN_ROLES} component={EcrSnapshots} />}</Route>
+      <Route path="/ecr-connectors">{() => <RequireRole roles={ADMIN_ROLES} component={EcrConnectors} />}</Route>
+      <Route path="/renewal-gates">{() => <RequireRole roles={ADMIN_ROLES} component={RenewalGates} />}</Route>
+      <Route path="/revenue-exposure">{() => <RequireRole roles={ADMIN_ROLES} component={RevenueExposure} />}</Route>
+      <Route path="/ecr-upgrades">{() => <RequireRole roles={ADMIN_ROLES} component={EcrUpgrades} />}</Route>
+      <Route path="/template-manager">{() => <RequireRole roles={ADMIN_ROLES} component={TemplateManager} />}</Route>
+      <Route path="/branding-profiles">{() => <RequireRole roles={ADMIN_ROLES} component={BrandingProfiles} />}</Route>
+      <Route path="/block-library">{() => <RequireRole roles={ADMIN_ROLES} component={BlockLibrary} />}</Route>
+      <Route path="/block-builder">{() => <RequireRole roles={ADMIN_ROLES} component={BlockBuilder} />}</Route>
+      <Route path="/variables">{() => <RequireRole roles={ADMIN_ROLES} component={VariablesManager} />}</Route>
+      <Route path="/templates/:templateId/designer">{() => <RequireRole roles={ADMIN_ROLES} component={TemplateDesigner} />}</Route>
+
+      {/* ── 404 ─────────────────────────────────────────────── */}
       <Route component={NotFound} />
     </Switch>
   );
-}
-
-/** Role-based route guard: redirects non-admin users with a toast */
-function AdminRoute({ component: Component }: { component: React.ComponentType }) {
-  const { appUser } = useAuth();
-  
-  // If user is not admin, redirect to dashboard
-  if (!appUser || appUser.role !== 'admin') {
-    // Show toast on next tick to avoid render-phase side effects
-    setTimeout(() => {
-      toast.error('Access denied \u2014 admin role required');
-    }, 0);
-    return <Redirect to="/" />;
-  }
-  
-  return <Component />;
 }
 
 /** Loading spinner shown while checking auth session */
