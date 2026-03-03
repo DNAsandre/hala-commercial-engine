@@ -55,7 +55,7 @@ import {
   XCircle, RefreshCw, ChevronRight, Hash, DollarSign,
   Calendar, Phone, Users, BarChart3, Type, ToggleLeft,
   Percent, Image as ImageLucide, Mail, Star, MapPin,
-  CreditCard, Package, Activity, ShieldCheck, ArrowLeft
+  CreditCard, Package, Activity, ShieldCheck, ArrowLeft, Clock, CloudOff
 } from "lucide-react";
 import { type Customer, formatSAR } from "@/lib/store";
 import { useCustomers } from "@/hooks/useSupabase";
@@ -89,6 +89,8 @@ import {
 import { getCurrentUser } from "@/lib/auth-state";
 import { fetchDocInstanceById } from "@/hooks/useDocuments";
 import { handleSupabaseError } from "@/lib/supabase-error";
+import UnsavedChangesModal from "@/components/UnsavedChangesModal";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 
 // ============================================================
 // TYPES
@@ -1043,6 +1045,31 @@ export default function DocumentComposer({
   // KEY FIX: activeEditor is STATE, not a ref — changes trigger re-renders
   const [activeEditor, setActiveEditor] = useState<Editor | null>(null);
 
+  // ===== P0 HOTFIX: Dirty-state, auto-save, navigation guard =====
+  const [isDirty, setIsDirty] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [saveError, setSaveError] = useState(false);
+  const [showUnsavedModal, setShowUnsavedModal] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null);
+  const isLoadedRef = useRef(false); // tracks whether initial load is complete
+  const autoSaveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // beforeunload + popstate guard
+  useUnsavedChangesGuard(isDirty);
+
+  // Listen for browser back attempts (from the guard hook)
+  useEffect(() => {
+    const handler = () => {
+      if (isDirty) {
+        setPendingNavigation(() => () => { if (onBack) onBack(); });
+        setShowUnsavedModal(true);
+      }
+    };
+    window.addEventListener("composer-back-attempt", handler);
+    return () => window.removeEventListener("composer-back-attempt", handler);
+  }, [isDirty, onBack]);
+
   // Block element refs for scroll-to
   const blockRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -1094,9 +1121,29 @@ export default function DocumentComposer({
         setShowTemplateSelector(true);
       }
       setIsLoadingInstance(false);
+      // Mark initial load complete so subsequent setDocument calls trigger dirty
+      setTimeout(() => { isLoadedRef.current = true; }, 100);
     }).catch(() => { if (!cancelled) setIsLoadingInstance(false); });
     return () => { cancelled = true; };
   }, [existingInstanceId]);
+
+  // Mark loaded for new documents (no existingInstanceId)
+  useEffect(() => {
+    if (!existingInstanceId) {
+      // New doc: mark loaded after template selection sets initial state
+      const timer = setTimeout(() => { isLoadedRef.current = true; }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [existingInstanceId]);
+
+  // Dirty-tracking wrapper: any setDocument call after initial load sets isDirty
+  const setDocumentDirty = useCallback((updater: React.SetStateAction<ComposerDocument>) => {
+    setDocument(updater);
+    if (isLoadedRef.current) {
+      setIsDirty(true);
+      setSaveError(false);
+    }
+  }, []);
 
   // Resolve customer
   const { data: customers } = useCustomers();
@@ -1192,7 +1239,7 @@ export default function DocumentComposer({
       };
     });
 
-    setDocument(prev => ({
+    setDocumentDirty(prev => ({
       ...prev,
       title: `${prev.customer_name || "New"} — ${template.name}`,
       template_version_id: version.id,
@@ -1227,7 +1274,7 @@ export default function DocumentComposer({
       is_locked: false, is_ai_generated: false, config: {},
     };
 
-    setDocument(prev => {
+    setDocumentDirty(prev => {
       const targetId = insertAfterBlockId || activeBlockId;
       if (position === "after_current" && targetId) {
         const idx = prev.blocks.findIndex(b => b.id === targetId);
@@ -1252,7 +1299,7 @@ export default function DocumentComposer({
       content: "<h2>New Section</h2><p>Start writing here...</p>",
       is_locked: false, is_ai_generated: false, config: {},
     };
-    setDocument(prev => {
+    setDocumentDirty(prev => {
       if (afterBlockId) {
         const idx = prev.blocks.findIndex(b => b.id === afterBlockId);
         if (idx >= 0) {
@@ -1272,14 +1319,14 @@ export default function DocumentComposer({
   }, []);
 
   const updateBlockContent = useCallback((blockId: string, content: string) => {
-    setDocument(prev => ({
+    setDocumentDirty(prev => ({
       ...prev, updated_at: new Date().toISOString(),
       blocks: prev.blocks.map(b => b.id === blockId ? { ...b, content } : b),
     }));
   }, []);
 
   const lockBlock = useCallback((blockId: string) => {
-    setDocument(prev => ({
+    setDocumentDirty(prev => ({
       ...prev, updated_at: new Date().toISOString(),
       blocks: prev.blocks.map(b => b.id === blockId ? { ...b, is_locked: true } : b),
     }));
@@ -1287,7 +1334,7 @@ export default function DocumentComposer({
   }, []);
 
   const removeBlock = useCallback((blockId: string) => {
-    setDocument(prev => ({
+    setDocumentDirty(prev => ({
       ...prev, updated_at: new Date().toISOString(),
       blocks: prev.blocks.filter(b => b.id !== blockId),
     }));
@@ -1299,7 +1346,7 @@ export default function DocumentComposer({
   }, [activeBlockId]);
 
   const moveBlock = useCallback((blockId: string, direction: "up" | "down") => {
-    setDocument(prev => {
+    setDocumentDirty(prev => {
       const idx = prev.blocks.findIndex(b => b.id === blockId);
       if (idx < 0) return prev;
       const newIdx = direction === "up" ? idx - 1 : idx + 1;
@@ -1351,7 +1398,7 @@ export default function DocumentComposer({
     const staged = aiStagingMap[blockId];
     if (!staged) return;
     updateBlockContent(blockId, staged);
-    setDocument(prev => ({
+    setDocumentDirty(prev => ({
       ...prev,
       blocks: prev.blocks.map(b => b.id === blockId ? { ...b, is_ai_generated: true } : b),
     }));
@@ -1375,7 +1422,7 @@ export default function DocumentComposer({
         content: `<h2>Generated Content</h2><p>${promptText}</p><p>Hala Supply Chain Services has extensive experience in this area. Our dedicated team ensures seamless execution of all operational requirements, backed by industry-leading technology and proven processes.</p>`,
         is_locked: false, is_ai_generated: true, config: {},
       };
-      setDocument(prev => ({
+      setDocumentDirty(prev => ({
         ...prev, updated_at: new Date().toISOString(),
         blocks: [...prev.blocks, newBlock],
       }));
@@ -1385,9 +1432,11 @@ export default function DocumentComposer({
     }, 1500);
   }, [promptText, document.blocks.length]);
 
-  // Save
-  const handleSave = useCallback(async () => {
-    // Persist doc instance to Supabase
+  // Save — returns true on success, false on failure
+  const handleSave = useCallback(async (options?: { silent?: boolean }): Promise<boolean> => {
+    if (isSaving) return false;
+    setIsSaving(true);
+    setSaveError(false);
     const user = getCurrentUser();
     try {
       await syncDocInstanceCreate({
@@ -1408,7 +1457,6 @@ export default function DocumentComposer({
         compiled_at: document.compiled_at,
         created_by: user.name,
       });
-      // Save version with blocks
       await syncDocInstanceVersionCreate({
         id: `${document.id}-v${document.version}`,
         doc_instance_id: document.id,
@@ -1417,7 +1465,6 @@ export default function DocumentComposer({
         bindings: document.bindings,
         created_by: user.name,
       });
-      // Log audit
       await syncAuditEntry({
         id: `audit-save-${crypto.randomUUID()}`,
         entityType: document.doc_type,
@@ -1427,12 +1474,40 @@ export default function DocumentComposer({
         userName: user.name,
         details: `${document.doc_type} "${document.title}" saved — v${document.version}`,
       });
+      // Success: reset dirty state
+      setIsDirty(false);
+      setLastSavedAt(new Date());
+      setIsSaving(false);
+      if (onSave) onSave(document);
+      if (!options?.silent) toast.success("Document saved");
+      return true;
     } catch (e) {
+      setIsSaving(false);
+      setSaveError(true);
       handleSupabaseError('Save_to_Supabase_failed', { message: String(e) });
+      toast.error("Save failed — your changes are still in memory. Please try again.");
+      return false;
     }
-    if (onSave) onSave(document);
-    toast.success("Document saved to database");
-  }, [document, onSave]);
+  }, [document, onSave, isSaving]);
+
+  // Auto-save every 15 seconds when dirty
+  useEffect(() => {
+    if (autoSaveTimerRef.current) {
+      clearInterval(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    if (isDirty && mode !== "canon") {
+      autoSaveTimerRef.current = setInterval(() => {
+        handleSave({ silent: true });
+      }, 15000);
+    }
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearInterval(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+  }, [isDirty, mode, handleSave]);
 
   // PDF Compile
   const handleCompilePDF = useCallback(() => {
@@ -1453,7 +1528,7 @@ export default function DocumentComposer({
   const handleApproveCompile = useCallback(async () => {
     setShowPDFPreview(false);
     const compiledAt = new Date().toISOString();
-    setDocument(prev => ({ ...prev, is_compiled: true, compiled_at: compiledAt }));
+    setDocumentDirty(prev => ({ ...prev, is_compiled: true, compiled_at: compiledAt }));
     // Persist compiled document to Supabase
     const user = getCurrentUser();
     try {
@@ -1491,7 +1566,7 @@ export default function DocumentComposer({
 
   const handleCanonLock = useCallback(async () => {
     const now = new Date().toISOString();
-    setDocument(prev => ({
+    setDocumentDirty(prev => ({
       ...prev, status: "canon", updated_at: now,
       blocks: prev.blocks.map(b => ({ ...b, is_locked: true })),
       is_compiled: true, compiled_at: now,
@@ -1526,7 +1601,7 @@ export default function DocumentComposer({
       ecr_score_id: `ecr-${document.customer_id}-${crypto.randomUUID()}`,
       sla_snapshot_id: `sla-${document.customer_id}-${crypto.randomUUID()}`,
     };
-    setDocument(prev => ({
+    setDocumentDirty(prev => ({
       ...prev,
       bindings: { ...prev.bindings, [bindingKey]: mockBindings[bindingKey] || `bound-${crypto.randomUUID()}` },
       updated_at: new Date().toISOString(),
@@ -1570,7 +1645,14 @@ export default function DocumentComposer({
               {breadcrumb.map((crumb, i) => (
                 <span key={i} className="flex items-center gap-1">
                   {i > 0 && <span className="text-gray-300">/</span>}
-                  <button onClick={() => navigate(crumb.href)} className="hover:text-primary hover:underline transition-colors">{crumb.label}</button>
+                  <button onClick={() => {
+                    if (isDirty) {
+                      setPendingNavigation(() => () => navigate(crumb.href));
+                      setShowUnsavedModal(true);
+                    } else {
+                      navigate(crumb.href);
+                    }
+                  }} className="hover:text-primary hover:underline transition-colors">{crumb.label}</button>
                 </span>
               ))}
               <span className="text-gray-300">/</span>
@@ -1578,7 +1660,14 @@ export default function DocumentComposer({
             </nav>
           )}
           {!breadcrumb && onBack && (
-            <Button variant="ghost" size="sm" onClick={onBack} className="text-xs h-7 shrink-0">
+            <Button variant="ghost" size="sm" onClick={() => {
+              if (isDirty) {
+                setPendingNavigation(() => onBack);
+                setShowUnsavedModal(true);
+              } else {
+                onBack();
+              }
+            }} className="text-xs h-7 shrink-0">
               <ArrowLeft size={12} className="mr-1" /> {backLabel}
             </Button>
           )}
@@ -1588,7 +1677,7 @@ export default function DocumentComposer({
             {docTypeConfig.label}
           </Badge>
           <div className="flex-1 min-w-0">
-            <Input value={document.title} onChange={(e) => setDocument(prev => ({ ...prev, title: e.target.value }))}
+            <Input value={document.title} onChange={(e) => setDocumentDirty(prev => ({ ...prev, title: e.target.value }))}
               className="h-7 text-sm font-semibold border-none bg-transparent p-0 focus-visible:ring-0 w-full" disabled={mode === "canon"} />
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -1611,6 +1700,18 @@ export default function DocumentComposer({
                 <CheckCircle2 size={9} className="mr-0.5" /> Compiled
               </Badge>
             )}
+            {/* P0 HOTFIX: Save status indicator */}
+            <span className="text-[10px] flex items-center gap-1 ml-2">
+              {isSaving ? (
+                <><RefreshCw size={9} className="animate-spin text-blue-500" /> <span className="text-blue-500">Saving…</span></>
+              ) : saveError ? (
+                <><CloudOff size={9} className="text-red-500" /> <span className="text-red-500 font-medium">Save failed</span></>
+              ) : isDirty ? (
+                <><span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" /> <span className="text-amber-600">Unsaved changes</span></>
+              ) : lastSavedAt ? (
+                <><CheckCircle2 size={9} className="text-emerald-500" /> <span className="text-emerald-600">Saved {lastSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></>
+              ) : null}
+            </span>
           </div>
         </div>
 
@@ -1643,19 +1744,28 @@ export default function DocumentComposer({
               <Layers size={12} className="mr-1" /> Blocks
             </Button>
             <Separator orientation="vertical" className="h-5" />
-            <Button variant="outline" size="sm" onClick={handleSave} disabled={mode === "canon"} className="text-xs h-7">
-              <Save size={12} className="mr-1" /> Save
+            <Button variant="outline" size="sm" onClick={() => handleSave()} disabled={mode === "canon" || isSaving} className="text-xs h-7">
+              <Save size={12} className="mr-1" /> {isSaving ? "Saving…" : "Save"}
             </Button>
             <Button variant="outline" size="sm" onClick={handleCompilePDF} className="text-xs h-7">
               <Download size={12} className="mr-1" /> Compile
             </Button>
-            <Button variant="outline" size="sm" onClick={() => {
+            <Button variant="outline" size="sm" onClick={async () => {
+              // Save-first guard: save before opening Output Studio
+              if (isDirty) {
+                const saved = await handleSave({ silent: true });
+                if (!saved) {
+                  toast.error("Please save your document before opening Output Studio");
+                  return;
+                }
+                toast.success("Document saved before opening Output Studio");
+              }
               const params = new URLSearchParams();
               if (workspaceId) { params.set("from", "workspace"); params.set("workspaceId", workspaceId); }
               else { params.set("from", "documents"); }
               const qs = params.toString();
               navigate(`/composer/${document.id}/view${qs ? `?${qs}` : ''}`);
-            }} className="text-xs h-7">
+            }} disabled={isSaving} className="text-xs h-7">
               <Eye size={12} className="mr-1" /> Output Studio
             </Button>
             {mode !== "canon" && (
@@ -1965,6 +2075,34 @@ export default function DocumentComposer({
         missingTokens={previewMissingTokens}
         onRecompile={() => { setShowPDFPreview(false); toast.info("Fix the missing tokens and recompile"); }}
         onApprove={handleApproveCompile}
+      />
+
+      {/* P0 HOTFIX: Unsaved Changes Modal */}
+      <UnsavedChangesModal
+        open={showUnsavedModal}
+        saving={isSaving}
+        onSaveAndLeave={async () => {
+          const saved = await handleSave();
+          if (saved && pendingNavigation) {
+            setShowUnsavedModal(false);
+            pendingNavigation();
+            setPendingNavigation(null);
+          } else if (!saved) {
+            // Save failed — keep modal open, user can try again or leave without saving
+          }
+        }}
+        onLeaveWithoutSaving={() => {
+          setShowUnsavedModal(false);
+          setIsDirty(false); // prevent beforeunload from firing
+          if (pendingNavigation) {
+            pendingNavigation();
+            setPendingNavigation(null);
+          }
+        }}
+        onCancel={() => {
+          setShowUnsavedModal(false);
+          setPendingNavigation(null);
+        }}
       />
     </div>
   );
