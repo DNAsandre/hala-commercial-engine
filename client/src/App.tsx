@@ -51,6 +51,7 @@ import BlockBuilder from "./pages/BlockBuilder";
 import VariablesManager from "./pages/VariablesManager";
 import TemplateDesigner from "./pages/TemplateDesigner";
 import OutputStudio from "./pages/OutputStudio";
+import GlobalEscalations from "./pages/GlobalEscalations";
 import { Loader2 } from "lucide-react";
 
 /**
@@ -85,6 +86,7 @@ function AppRouter() {
       <Route path="/ecr" component={EcrDashboard} />
       <Route path="/ecr-scoring" component={EcrScoring} />
       <Route path="/composer/:docInstanceId/view" component={OutputStudio} />
+      <Route path="/escalations" component={GlobalEscalations} />
 
       {/* ── Admin-only routes ───────────────────────────────── */}
       <Route path="/admin">{() => <RequireRole roles={ADMIN_ROLES} component={AdminGovernance} />}</Route>

@@ -151,6 +151,20 @@ export async function fetchEscalationsByWorkspace(workspaceId: string): Promise<
   return (data || []).map(mapEventRow);
 }
 
+/** Fetch ALL escalation events (for global dashboard) */
+export async function fetchAllEscalations(): Promise<EscalationEvent[]> {
+  const { data, error } = await supabase
+    .from("escalation_events")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("[EscalationEngine] fetchAllEscalations error:", error);
+    return [];
+  }
+  return (data || []).map(mapEventRow);
+}
+
 /** Fetch all open escalation events (for badge count) */
 export async function fetchOpenEscalationCount(): Promise<number> {
   const { count, error } = await supabase

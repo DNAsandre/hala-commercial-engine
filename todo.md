@@ -96,6 +96,45 @@ Rollback point: `9d838d89` (Sprint 6 SLA Integrity Guard checkpoint)
 
 ---
 
+# Sprint 8 — Escalation Dashboard (Global Risk Console)
+
+Rollback point: `23ba3a6c` (Sprint 7 Escalation Engine checkpoint)
+
+## A) Route + Sidebar
+- [x] Add /escalations route
+- [x] Add sidebar item with badge count of open red escalations
+- [x] Visible to Admin, Finance, Commercial Director; Sales sees only assigned
+
+## B) Escalations Page UI
+- [x] Header: Total Open, Red Count, Amber Count
+- [x] Table: Severity, Entity Type, Workspace Name, Trigger Key, Assigned To, Status, Created At, Days Open
+- [x] Filters: Severity, Status, Assigned To, Entity Type
+- [x] Default: Status=open, Severity=red first
+
+## C) Drill-down
+- [x] Click row navigates to workspace Escalations tab or opens detail drawer
+
+## D) Escalation Aging Indicator
+- [x] Red > 3 days open → CRITICAL badge
+- [x] Red > 7 days → flashing indicator
+
+## E) Permissions
+- [x] Admin: full visibility
+- [x] Sales: only assigned_to = self
+- [x] Finance: full visibility
+- [x] No delete allowed
+- [x] Only Admin can resolve
+
+## F) Acceptance Tests
+- [x] Open escalations visible globally
+- [x] Filters work
+- [x] Badge count updates dynamically
+- [x] Non-admin cannot resolve
+- [x] Aging indicator works
+- [x] 0 TypeScript errors
+
+---
+
 # Governance Compliance Audit — TODO
 
 ## 1. Policy Gate Enforcement Structure

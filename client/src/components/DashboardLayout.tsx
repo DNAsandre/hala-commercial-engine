@@ -53,6 +53,7 @@ import {
   TrendingDown,
   Dna,
   LogOut,
+  AlertTriangle,
 } from "lucide-react";
 import { getRoleLabel } from "@/lib/store";
 import { useSignals } from "@/hooks/useSupabase";
@@ -117,6 +118,7 @@ const simplifiedNavItems = [
   { path: "/customers", label: "Customers", icon: Users, group: "core" },
   { path: "/workspaces", label: "Workspaces", icon: Briefcase, group: "core" },
   { path: "/tenders", label: "Tenders", icon: Gavel, group: "core" },
+  { path: "/escalations", label: "Escalations", icon: AlertTriangle, group: "core" },
   { path: "/admin", label: "Governance", icon: Settings, group: "system", adminOnly: true },
   { path: "/admin-panel", label: "Admin", icon: Wrench, group: "system", adminOnly: true },
   { path: "/audit", label: "Audit Trail", icon: ClipboardList, group: "system" },
@@ -230,7 +232,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       )}
                     >
                       <Icon className="w-4 h-4 shrink-0" />
-                      {!collapsed && <span>{item.label}</span>}
+                      {!collapsed && (
+                        <span className="flex-1 flex items-center justify-between">
+                          <span>{item.label}</span>
+                          {item.path === "/escalations" && openEscalationCount > 0 && (
+                            <span className="ml-auto w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">
+                              {openEscalationCount}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                      {collapsed && item.path === "/escalations" && openEscalationCount > 0 && (
+                        <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-destructive text-destructive-foreground text-[8px] font-bold flex items-center justify-center">
+                          {openEscalationCount}
+                        </span>
+                      )}
                     </a>
                   );
                 })}
