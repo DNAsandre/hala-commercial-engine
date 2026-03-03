@@ -56,17 +56,20 @@ export async function resolveOrCreateDocInstanceAsync(
 
   if (byLinked) return byLinked as ResolvedDocInstance;
 
-  // 2. Fallback: search by customer + doc_type
-  const { data: byCustomer } = await supabase
-    .from("doc_instances")
-    .select("id, doc_type, status, customer_id, customer_name, workspace_id")
-    .eq("doc_type", params.doc_type)
-    .eq("customer_id", params.customer_id)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // 2. Fallback: search by workspace + customer + doc_type
+  if (params.workspace_id) {
+    const { data: byWorkspace } = await supabase
+      .from("doc_instances")
+      .select("id, doc_type, status, customer_id, customer_name, workspace_id")
+      .eq("doc_type", params.doc_type)
+      .eq("workspace_id", params.workspace_id)
+      .eq("customer_id", params.customer_id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-  if (byCustomer) return byCustomer as ResolvedDocInstance;
+    if (byWorkspace) return byWorkspace as ResolvedDocInstance;
+  }
 
   // 3. Create new instance
   const publishedTemplates = getPublishedTemplates().filter(t => t.doc_type === params.doc_type);

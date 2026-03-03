@@ -394,12 +394,12 @@ async function findDocInstanceByCustomer(
 // ============================================================
 
 /** All doc instances (optionally filtered) */
-export function useDocInstances(filters?: { doc_type?: string; customer_id?: string; workspace_id?: string }): UseQueryResult<HydratedDocInstance[]> {
+export function useDocInstances(filters?: { doc_type?: string; customer_id?: string; workspace_id?: string }, refetchKey?: number): UseQueryResult<HydratedDocInstance[]> {
   const filterKey = JSON.stringify(filters || {});
   return useDocQuery(
     () => fetchDocInstances(filters),
     [],
-    [filterKey]
+    [filterKey, refetchKey ?? 0]
   );
 }
 

@@ -119,6 +119,9 @@ export default function WorkspaceDetail() {
   const [templatePickerDocType, setTemplatePickerDocType] = useState<DocType>("quote");
   const [templatePickerTemplates, setTemplatePickerTemplates] = useState<DocTemplate[]>([]);
 
+  // Doc instances refetch trigger
+  const [docRefetchKey, setDocRefetchKey] = useState(0);
+
   // Supporting docs state
   const [supportDocFilter, setSupportDocFilter] = useState<string>("all");
   const [showSupportUpload, setShowSupportUpload] = useState(false);
@@ -152,7 +155,7 @@ export default function WorkspaceDetail() {
   const { data: allApprovals, loading: appLoading } = useApprovalRecords();
   const { data: allSignals, loading: sigLoading } = useSignals();
   const { data: allAuditLog, loading: auditLoading } = useSupabaseAuditLog();
-  const { data: docInstances, loading: diLoading } = useDocInstances({ workspace_id: id! });
+  const { data: docInstances, loading: diLoading } = useDocInstances({ workspace_id: id! }, docRefetchKey);
 
   // Canonical document lists from doc_instances (Wave 2)
   const docQuotes = useMemo(() => docInstances.filter(d => d.doc_type === "quote"), [docInstances]);
@@ -394,7 +397,7 @@ export default function WorkspaceDetail() {
           customerName={composerTarget.customerName}
           workspaceId={composerTarget.workspaceId}
           existingInstanceId={composerTarget.instanceId}
-          onBack={() => setComposerTarget(null)}
+          onBack={() => { setDocRefetchKey(k => k + 1); setComposerTarget(null); }}
           backLabel={backLabel}
           breadcrumb={[
             { label: "Workspaces", href: "/workspaces" },

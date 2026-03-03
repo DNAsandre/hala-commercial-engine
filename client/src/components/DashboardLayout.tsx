@@ -83,21 +83,21 @@ const allNavItems = [
   { path: "/tender-board", label: "Tender Board", icon: Kanban, group: "output" },
   { path: "/handover", label: "Handover", icon: ArrowRightLeft, group: "output" },
   { path: "/crm-sync", label: "CRM Sync", icon: RefreshCw, group: "system" },
-  { path: "/admin", label: "Governance", icon: Settings, group: "system" },
-  { path: "/admin-panel", label: "Admin Panel", icon: Wrench, group: "system" },
+  { path: "/admin", label: "Governance", icon: Settings, group: "system", adminOnly: true },
+  { path: "/admin-panel", label: "Admin Panel", icon: Wrench, group: "system", adminOnly: true },
   { path: "/audit", label: "Audit Trail", icon: ClipboardList, group: "system" },
-  { path: "/bot-registry", label: "Bot Governance", icon: Bot, group: "bots" },
-  { path: "/signal-engine", label: "Signal Engine", icon: Radio, group: "bots" },
-  { path: "/bot-audit", label: "Bot Audit", icon: Activity, group: "bots" },
+  { path: "/bot-registry", label: "Bot Governance", icon: Bot, group: "bots", adminOnly: true },
+  { path: "/signal-engine", label: "Signal Engine", icon: Radio, group: "bots", adminOnly: true },
+  { path: "/bot-audit", label: "Bot Audit", icon: Activity, group: "bots", adminOnly: true },
   { path: "/ecr", label: "ECR Dashboard", icon: Star, group: "ecr" },
-  { path: "/ecr-metrics", label: "Metrics", icon: Database, group: "ecr" },
-  { path: "/ecr-rule-sets", label: "Rule Sets", icon: Layers, group: "ecr" },
-  { path: "/ecr-snapshots", label: "Snapshots", icon: Camera, group: "ecr" },
+  { path: "/ecr-metrics", label: "Metrics", icon: Database, group: "ecr", adminOnly: true },
+  { path: "/ecr-rule-sets", label: "Rule Sets", icon: Layers, group: "ecr", adminOnly: true },
+  { path: "/ecr-snapshots", label: "Snapshots", icon: Camera, group: "ecr", adminOnly: true },
   { path: "/ecr-scoring", label: "Scoring", icon: BarChart3, group: "ecr" },
-  { path: "/ecr-connectors", label: "Connectors", icon: Plug, group: "ecr" },
-  { path: "/ecr-upgrades", label: "ECR Upgrades", icon: Dna, group: "ecr" },
+  { path: "/ecr-connectors", label: "Connectors", icon: Plug, group: "ecr", adminOnly: true },
+  { path: "/ecr-upgrades", label: "ECR Upgrades", icon: Dna, group: "ecr", adminOnly: true },
   { path: "/renewals", label: "Renewals", icon: RotateCcw, group: "renewals" },
-  { path: "/renewal-gates", label: "Policy Gates", icon: Shield, group: "renewals" },
+  { path: "/renewal-gates", label: "Policy Gates", icon: Shield, group: "renewals", adminOnly: true },
   { path: "/revenue-exposure", label: "Revenue Exposure", icon: TrendingDown, group: "renewals" },
 ];
 
@@ -109,8 +109,8 @@ const simplifiedNavItems = [
   { path: "/customers", label: "Customers", icon: Users, group: "core" },
   { path: "/workspaces", label: "Workspaces", icon: Briefcase, group: "core" },
   { path: "/tenders", label: "Tenders", icon: Gavel, group: "core" },
-  { path: "/admin", label: "Governance", icon: Settings, group: "system" },
-  { path: "/admin-panel", label: "Admin", icon: Wrench, group: "system" },
+  { path: "/admin", label: "Governance", icon: Settings, group: "system", adminOnly: true },
+  { path: "/admin-panel", label: "Admin", icon: Wrench, group: "system", adminOnly: true },
   { path: "/audit", label: "Audit Trail", icon: ClipboardList, group: "system" },
 ];
 
@@ -141,7 +141,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { data: signals } = useSignals();
   const redCount = signals.filter(s => s.severity === "red").length;
 
-  const navItems = navigationV1 ? simplifiedNavItems : allNavItems;
+  const isAdmin = effectiveUser.role === "admin";
+  const navItems = (navigationV1 ? simplifiedNavItems : allNavItems).filter(item => !('adminOnly' in item && item.adminOnly) || isAdmin);
   const groupLabels = navigationV1 ? simplifiedGroupLabels : allGroupLabels;
   const groups = navigationV1 ? simplifiedGroups : allGroups;
 
