@@ -55,6 +55,7 @@ import GlobalEscalations from "./pages/GlobalEscalations";
 import AIProviders from "./pages/AIProviders";
 import EditorBotBuilder from "./pages/EditorBotBuilder";
 import KnowledgebaseManager from "./pages/KnowledgebaseManager";
+import CRMSyncConsole from "./pages/CRMSyncConsole";
 import { Loader2 } from "lucide-react";
 
 /**
@@ -115,6 +116,7 @@ function AppRouter() {
       <Route path="/ai-providers">{() => <RequireRole roles={ADMIN_ROLES} component={AIProviders} />}</Route>
       <Route path="/editor-bot-builder">{() => <RequireRole roles={ADMIN_ROLES} component={EditorBotBuilder} />}</Route>
       <Route path="/knowledgebase">{() => <RequireRole roles={ADMIN_ROLES} component={KnowledgebaseManager} />}</Route>
+      <Route path="/crm-sync-console">{() => <RequireRole roles={ADMIN_ROLES} component={CRMSyncConsole} />}</Route>
 
       {/* ── 404 ─────────────────────────────────────────────── */}
       <Route component={NotFound} />

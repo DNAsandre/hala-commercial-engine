@@ -323,6 +323,61 @@ Rollback point: `6b82904c` (Sprint 10 Bug Fixes checkpoint)
 
 ---
 
+# Sprint 12 — CRM Production Integration + Sync Engine Hardening (Zoho + GHL)
+
+Rollback point: `21d516dc` (Sprint 11 checkpoint)
+
+## A) CRM Sync Engine (crm-sync-engine.ts)
+- [x] CRMConnection interface (id, provider: zoho|ghl|salesforce|hubspot|custom, base_url, enabled, auth_method, last_sync_at, health_status)
+- [x] CRMFieldMapping interface (local_table, local_field, crm_field, transform)
+- [x] HardenedCRMSyncEvent interface (entity_type, entity_id, direction, status, payload, response, error, retry_count, max_retries, next_retry_at, processed_at)
+- [x] Seed Zoho connection (active, connected) + GHL connection (enabled, configuring, migration mode)
+- [x] Default field mappings for both providers (10 Zoho + 7 GHL)
+- [x] Exponential backoff retry scheduler (1m → 5m → 15m → 1h → 6h)
+- [x] Conflict resolution engine (timestamp comparison, last-write-wins with audit)
+
+## B) Outbound Sync
+- [x] triggerOutboundSync() — creates pending sync event, routes to Edge Function
+- [x] Trigger on: workspace stage change, quote status change, proposal approved, SLA ready, customer CRUD
+- [x] On success → status=success, processed_at set
+- [x] On failure → retry_count++, next_retry_at computed
+- [x] If retry_count > max_retries → status=failed + create escalation event (severity=amber, crm_sync_failed)
+- [x] processRetryQueue() — processes all retrying events
+
+## C) Inbound Sync
+- [x] processInboundWebhook() — validates signature, maps fields, upserts entity
+- [x] Field mapping via crm_mappings table
+- [x] Conflict detection (compare updated_at timestamps, local_wins resolution)
+- [x] Write crm_sync_events row (direction=inbound)
+
+## D) CRM Sync Console UI
+- [x] Connection cards (Zoho + GHL) with status, last sync, toggle, Test/Resync/Disable buttons
+- [x] Sync event table with 4 filters (connection, direction, status, entity_type) — 10 seed events
+- [x] Manual retry button per failed/retrying event
+- [x] Bulk resync button
+- [x] Sync health stats (6 cards: total, pending, success, failed, retrying, avg latency)
+- [x] Field mapping viewer (grouped by provider, direction badges, active toggles)
+- [x] Conflict resolution log (entity, timestamps, resolution, detail)
+
+## E) Integration & Safeguards
+- [x] Wire into Admin Panel as CRM Sync tab (10th tab, embedded stats + connection cards)
+- [x] Add /crm-sync-console route (admin-only) + sidebar link
+- [x] Escalation integration: failed sync > max_retries → escalation event (crm_sync_failed)
+- [x] Audit logging: crm_push_success, crm_push_failed, crm_conflict_resolved
+- [x] Never block UI on CRM failure (async processing)
+- [x] No direct client → CRM calls (Edge Functions only)
+
+## F) Acceptance
+- [x] Workspace stage change → crm_sync_event created (triggerOutboundSync)
+- [x] Force failure → retry_count increments (processOutboundEvent)
+- [x] After max retries → escalation created (createEscalation with crm_sync_failed)
+- [x] Inbound webhook updates workspace correctly (processInboundWebhook)
+- [x] Zoho + GHL connections visible and toggleable — BROWSER VERIFIED
+- [x] No API keys in client bundle (keys in Supabase secrets only)
+- [x] 0 TypeScript errors
+
+---
+
 # Governance Compliance Audit — TODO
 
 ## 1. Policy Gate Enforcement Structure

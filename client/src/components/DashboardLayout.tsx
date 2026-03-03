@@ -54,6 +54,7 @@ import {
   Dna,
   LogOut,
   AlertTriangle,
+  ArrowUpDown,
 } from "lucide-react";
 import { getRoleLabel } from "@/lib/store";
 import { useSignals } from "@/hooks/useSupabase";
@@ -92,6 +93,7 @@ const allNavItems = [
   { path: "/tender-board", label: "Tender Board", icon: Kanban, group: "output" },
   { path: "/handover", label: "Handover", icon: ArrowRightLeft, group: "output" },
   { path: "/crm-sync", label: "CRM Sync", icon: RefreshCw, group: "system" },
+  { path: "/crm-sync-console", label: "CRM Console", icon: ArrowUpDown, group: "system", adminOnly: true },
   { path: "/admin", label: "Governance", icon: Settings, group: "system", adminOnly: true },
   { path: "/admin-panel", label: "Admin Panel", icon: Wrench, group: "system", adminOnly: true },
   { path: "/audit", label: "Audit Trail", icon: ClipboardList, group: "system" },

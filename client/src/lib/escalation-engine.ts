@@ -20,7 +20,7 @@ import { DELTA_THRESHOLDS } from "./sla-integrity";
 
 export type EscalationSeverity = "red" | "amber";
 export type EscalationStatus = "open" | "acknowledged" | "resolved";
-export type TriggerType = "margin_breach" | "delta_breach" | "stage_override" | "score_red" | "renewal_risk";
+export type TriggerType = "margin_breach" | "delta_breach" | "stage_override" | "score_red" | "renewal_risk" | "crm_sync_failed";
 export type TaskStatus = "open" | "in_progress" | "done";
 
 export interface EscalationRule {
@@ -835,6 +835,7 @@ export function getTriggerTypeLabel(type: TriggerType): string {
     stage_override: "Stage Override",
     score_red: "Customer Score Red",
     renewal_risk: "Renewal Risk",
+    crm_sync_failed: "CRM Sync Failed",
   };
   return labels[type] || type;
 }
