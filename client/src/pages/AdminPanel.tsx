@@ -5,7 +5,7 @@
  *   Automation (Bot Governance, Signal Engine, Bot Audit)
  *   ECR (ECR Dashboard, ECR Config)
  */
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Link } from "wouter";
 import {
   Users, Settings, Database, Link2, Bell, Shield, Key, Globe,
@@ -13,7 +13,7 @@ import {
   Mail, Building2, UserPlus, Search, ChevronRight, X,
   Layers, Wrench, Star, Bot, Radio, Activity, BarChart3,
   FileText, Palette, BookOpen, Blocks, Variable, Eye, EyeOff,
-  RotateCcw, Lock, UserCheck, UserX,
+  RotateCcw, Lock, UserCheck, UserX, Brain, Zap,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +36,110 @@ import {
   adminReactivateUser,
 } from "@/lib/admin-api";
 import { useAuth } from "@/contexts/AuthContext";
+import {
+  fetchAIProviders,
+  updateAIProvider,
+  testProviderConnection,
+  type AIProvider,
+  type AIProviderName,
+} from "@/lib/ai-client";
+
+/* ─── AI Providers Embed (inline in Admin tab) ─── */
+function AIProvidersEmbed() {
+  const [providers, setProviders] = useState<AIProvider[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [testingId, setTestingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchAIProviders(true).then((p) => { setProviders(p); setLoading(false); });
+  }, []);
+
+  const handleToggle = async (id: string, enabled: boolean) => {
+    setProviders((ps) => ps.map((p) => (p.id === id ? { ...p, enabled } : p)));
+    const result = await updateAIProvider(id, { enabled });
+    if (!result) {
+      fetchAIProviders(true).then(setProviders);
+      toast.error("Failed to update provider");
+      return;
+    }
+    toast.success(`Provider ${enabled ? "enabled" : "disabled"}`);
+  };
+
+  const handleModelChange = async (id: string, model: string) => {
+    setProviders((ps) => ps.map((p) => (p.id === id ? { ...p, modelDefault: model } : p)));
+    const result = await updateAIProvider(id, { modelDefault: model });
+    if (!result) {
+      fetchAIProviders(true).then(setProviders);
+      toast.error("Failed to update model");
+    }
+  };
+
+  const handleTest = async (name: AIProviderName, id: string) => {
+    setTestingId(id);
+    try {
+      const result = await testProviderConnection(name);
+      if (result.success) {
+        toast.success(`Connection OK (${result.latencyMs}ms)`);
+      } else {
+        toast.error(result.error || "Connection failed");
+      }
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  if (loading) return <div className="flex justify-center py-8"><RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {providers.map((p) => {
+        const colors = p.name === "openai"
+          ? { gradient: "from-emerald-500 to-teal-600", icon: "\uD83E\uDD16", border: p.enabled ? "border-emerald-300" : "border-border" }
+          : { gradient: "from-blue-500 to-indigo-600", icon: "\u2726", border: p.enabled ? "border-blue-300" : "border-border" };
+        return (
+          <Card key={p.id} className={`border ${colors.border} transition-all ${!p.enabled ? "opacity-70" : ""}`}>
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${colors.gradient} flex items-center justify-center text-white text-lg`}>
+                    {colors.icon}
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold">{p.displayName}</div>
+                    <div className="text-[10px] text-muted-foreground font-mono">{p.modelDefault}</div>
+                  </div>
+                </div>
+                <Switch checked={p.enabled} onCheckedChange={(v) => handleToggle(p.id, v)} />
+              </div>
+              <div className="flex items-center gap-2">
+                <Select value={p.modelDefault} onValueChange={(v) => handleModelChange(p.id, v)}>
+                  <SelectTrigger className="h-8 text-xs flex-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {p.models.map((m) => <SelectItem key={m} value={m}><span className="font-mono text-xs">{m}</span></SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs gap-1"
+                  disabled={!p.enabled || testingId === p.id}
+                  onClick={() => handleTest(p.name, p.id)}
+                >
+                  {testingId === p.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                  Test
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
 
 const systemModules = [
   { name: "CRM Sync Engine", status: "active", lastSync: "2 min ago", icon: RefreshCw, color: "text-emerald-600 bg-emerald-50" },
@@ -418,6 +522,7 @@ export default function AdminPanel() {
           <TabsTrigger value="system"><Server className="w-3.5 h-3.5 mr-1.5" />System Modules</TabsTrigger>
           <TabsTrigger value="integrations"><Link2 className="w-3.5 h-3.5 mr-1.5" />Integrations</TabsTrigger>
           <TabsTrigger value="settings"><Settings className="w-3.5 h-3.5 mr-1.5" />Settings</TabsTrigger>
+          <TabsTrigger value="ai-providers"><Brain className="w-3.5 h-3.5 mr-1.5" />AI Providers</TabsTrigger>
         </TabsList>
 
         {/* ─── Document System Tab (navigationV1 only) ─── */}
@@ -850,6 +955,24 @@ export default function AdminPanel() {
             <Button variant="outline">Reset to Defaults</Button>
             <Button onClick={() => toast.success("Settings saved")}>Save Settings</Button>
           </div>
+        </TabsContent>
+
+        {/* ─── AI Providers Tab ─── */}
+        <TabsContent value="ai-providers" className="space-y-4">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h2 className="text-base font-semibold">AI Provider Configuration</h2>
+              <p className="text-xs text-muted-foreground">Manage AI model providers, or open the full management page</p>
+            </div>
+            <Link href="/ai-providers">
+              <Button variant="outline" size="sm" className="gap-1.5">
+                <Brain className="w-3.5 h-3.5" />
+                Open Full Page
+                <ChevronRight className="w-3 h-3" />
+              </Button>
+            </Link>
+          </div>
+          <AIProvidersEmbed />
         </TabsContent>
       </Tabs>
 

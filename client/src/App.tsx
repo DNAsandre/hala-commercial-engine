@@ -52,6 +52,7 @@ import VariablesManager from "./pages/VariablesManager";
 import TemplateDesigner from "./pages/TemplateDesigner";
 import OutputStudio from "./pages/OutputStudio";
 import GlobalEscalations from "./pages/GlobalEscalations";
+import AIProviders from "./pages/AIProviders";
 import { Loader2 } from "lucide-react";
 
 /**
@@ -109,6 +110,7 @@ function AppRouter() {
       <Route path="/block-builder">{() => <RequireRole roles={ADMIN_ROLES} component={BlockBuilder} />}</Route>
       <Route path="/variables">{() => <RequireRole roles={ADMIN_ROLES} component={VariablesManager} />}</Route>
       <Route path="/templates/:templateId/designer">{() => <RequireRole roles={ADMIN_ROLES} component={TemplateDesigner} />}</Route>
+      <Route path="/ai-providers">{() => <RequireRole roles={ADMIN_ROLES} component={AIProviders} />}</Route>
 
       {/* ── 404 ─────────────────────────────────────────────── */}
       <Route component={NotFound} />

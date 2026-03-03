@@ -154,6 +154,47 @@ Rollback point: `f361b666` (Sprint 8 Escalation Dashboard checkpoint)
 
 ---
 
+# Sprint 9 — AI Provider Integration (OpenAI + Google AI)
+
+Rollback point: `4eabdc53` (Sprint 8b SLA Tracking checkpoint)
+
+## A) Database
+- [x] Create ai_providers table (id, name, model_default, enabled, created_at) — 009_ai_providers.sql
+- [x] Create ai_usage_logs table (id, user_id, provider, model, tokens_input, tokens_output, workspace_id, created_at)
+- [x] Seed default providers (OpenAI, Google AI) — run-ai-providers-migration.mjs
+- [x] Run migration script
+
+## B) Edge Function Wrappers
+- [x] Build openai-generate wrapper (calls Supabase Edge Function, standardized response)
+- [x] Build google-generate wrapper (calls Supabase Edge Function, standardized response)
+- [x] Unified response format: { content, tokens_input, tokens_output }
+
+## C) Unified Client (ai-client.ts)
+- [x] generateAI({ provider, model, systemPrompt, userPrompt, temperature })
+- [x] Provider routing to correct edge function
+- [x] Rate limit protection (client-side throttle — 10 req burst, 2/s refill)
+- [x] Write ai_usage_logs entry on each call
+- [x] Audit logging via syncAuditEntry
+- [x] Disabled provider check (throws if provider.enabled === false)
+
+## D) Admin Panel UI
+- [x] Add AI Providers tab to AdminPanel (embedded + full page /ai-providers)
+- [x] Toggle OpenAI on/off
+- [x] Toggle Google AI on/off
+- [x] Set default model per provider
+- [x] Test connection button with live feedback
+- [x] Usage stats display (4 stat cards + usage log table)
+
+## E) Acceptance Tests
+- [x] OpenAI generate works (via Edge Function routing)
+- [x] Google AI generate works (via Edge Function routing)
+- [x] No API keys visible in client bundle (keys in Supabase secrets only)
+- [x] Usage log rows created (ai_usage_logs table)
+- [x] Disabled provider cannot be used (guard in generateAI)
+- [x] 0 TypeScript errors
+
+---
+
 # Governance Compliance Audit — TODO
 
 ## 1. Policy Gate Enforcement Structure
