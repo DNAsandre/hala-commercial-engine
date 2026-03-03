@@ -55,7 +55,7 @@ import {
   XCircle, RefreshCw, ChevronRight, Hash, DollarSign,
   Calendar, Phone, Users, BarChart3, Type, ToggleLeft,
   Percent, Image as ImageLucide, Mail, Star, MapPin,
-  CreditCard, Package, Activity, ShieldCheck, ArrowLeft, Clock, CloudOff
+  CreditCard, Package, Activity, ShieldCheck, ArrowLeft, Clock, CloudOff, Brain
 } from "lucide-react";
 import { type Customer, formatSAR } from "@/lib/store";
 import { useCustomers } from "@/hooks/useSupabase";
@@ -93,6 +93,8 @@ import UnsavedChangesModal from "@/components/UnsavedChangesModal";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useComposerDirty } from "@/contexts/ComposerDirtyContext";
 import VersionHistoryPanel from "@/components/VersionHistoryPanel";
+import BlockAIPanel from "@/components/BlockAIPanel";
+import DocumentAIPanel from "@/components/DocumentAIPanel";
 
 // ============================================================
 // TYPES
@@ -1038,6 +1040,11 @@ export default function DocumentComposer({
   // v1.1 state
   const [showTokenModal, setShowTokenModal] = useState(false);
   const [showImageModal, setShowImageModal] = useState(false);
+
+  // Sprint 10: AI Panel state
+  const [showBlockAIPanel, setShowBlockAIPanel] = useState(false);
+  const [blockAIPanelBlockId, setBlockAIPanelBlockId] = useState<string | null>(null);
+  const [showDocAIPanel, setShowDocAIPanel] = useState(false);
   const [showPDFPreview, setShowPDFPreview] = useState(false);
   const [compiledPreviewHtml, setCompiledPreviewHtml] = useState("");
   const [previewMissingTokens, setPreviewMissingTokens] = useState<MissingToken[]>([]);
@@ -1392,7 +1399,7 @@ export default function DocumentComposer({
     }
   }, [activeEditor]);
 
-  // AI operations
+  // AI operations — Sprint 10: Opens BlockAIPanel instead of mock staging
   const handleAIGenerate = useCallback((blockId: string) => {
     const block = document.blocks.find(b => b.id === blockId);
     if (!block) return;
@@ -1401,13 +1408,42 @@ export default function DocumentComposer({
       toast.error("AI is not allowed for this block type");
       return;
     }
-    toast.info("AI is generating content...");
-    setTimeout(() => {
-      const suggestion = AI_SUGGESTIONS[blockDef.family] || AI_SUGGESTIONS["commercial"];
-      setAiStagingMap(prev => ({ ...prev, [blockId]: suggestion }));
-      toast.success("AI draft ready — review in staging area");
-    }, 1200);
-  }, [document.blocks]);
+    if (block.is_locked || mode === "canon") {
+      toast.error("Cannot use AI on locked blocks");
+      return;
+    }
+    setBlockAIPanelBlockId(blockId);
+    setShowBlockAIPanel(true);
+    setShowDocAIPanel(false); // close doc panel if open
+  }, [document.blocks, mode]);
+
+  // Sprint 10: Block AI Panel apply callback
+  const handleBlockAIApply = useCallback((blockId: string, content: string, applyMode: "insert" | "replace") => {
+    if (applyMode === "replace") {
+      updateBlockContent(blockId, content);
+    } else {
+      // Insert: append to existing content
+      const block = document.blocks.find(b => b.id === blockId);
+      const existing = block?.content || "";
+      updateBlockContent(blockId, existing + content);
+    }
+    setDocumentDirty(prev => ({
+      ...prev,
+      blocks: prev.blocks.map(b => b.id === blockId ? { ...b, is_ai_generated: true } : b),
+    }));
+  }, [document.blocks, updateBlockContent]);
+
+  // Sprint 10: Document AI Panel apply callback
+  const handleDocAIApply = useCallback((changes: { blockId: string; content: string }[]) => {
+    setDocumentDirty(prev => ({
+      ...prev, updated_at: new Date().toISOString(),
+      blocks: prev.blocks.map(b => {
+        const change = changes.find(c => c.blockId === b.id);
+        if (change) return { ...b, content: change.content, is_ai_generated: true };
+        return b;
+      }),
+    }));
+  }, []);
 
   const handleAcceptAI = useCallback((blockId: string) => {
     const staged = aiStagingMap[blockId];
@@ -1653,8 +1689,38 @@ export default function DocumentComposer({
   // RENDER
   // ============================================================
 
+  // Sprint 10: Compute the block for BlockAIPanel
+  const blockAIPanelBlock = useMemo(() => {
+    if (!blockAIPanelBlockId) return null;
+    return document.blocks.find(b => b.id === blockAIPanelBlockId) || null;
+  }, [document.blocks, blockAIPanelBlockId]);
+
   return (
     <div className="flex h-full bg-white">
+      {/* Sprint 10: Block AI Panel (left slide-in) */}
+      <BlockAIPanel
+        open={showBlockAIPanel}
+        onClose={() => { setShowBlockAIPanel(false); setBlockAIPanelBlockId(null); }}
+        block={blockAIPanelBlock}
+        docType={documentType}
+        docInstanceId={document.id}
+        workspaceId={document.workspace_id}
+        customerName={document.customer_name || linkedCustomer?.name || ""}
+        onApplyContent={handleBlockAIApply}
+      />
+
+      {/* Sprint 10: Document AI Panel (left slide-in) */}
+      <DocumentAIPanel
+        open={showDocAIPanel}
+        onClose={() => setShowDocAIPanel(false)}
+        blocks={document.blocks}
+        docType={documentType}
+        docInstanceId={document.id}
+        workspaceId={document.workspace_id}
+        customerName={document.customer_name || linkedCustomer?.name || ""}
+        onApplyChanges={handleDocAIApply}
+      />
+
       {/* Main Editor Area */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
 
@@ -1762,6 +1828,9 @@ export default function DocumentComposer({
             </Button>
             <Button variant="outline" size="sm" onClick={() => setShowBlockLibrary(!showBlockLibrary)} className="text-xs h-7" disabled={mode === "canon"}>
               <Layers size={12} className="mr-1" /> Blocks
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => { setShowDocAIPanel(!showDocAIPanel); setShowBlockAIPanel(false); }} className={`text-xs h-7 ${showDocAIPanel ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`} disabled={mode === "canon"}>
+              <Brain size={12} className="mr-1" /> AI Document
             </Button>
             <Separator orientation="vertical" className="h-5" />
             <Button variant="outline" size="sm" onClick={() => handleSave()} disabled={mode === "canon" || isSaving} className="text-xs h-7">

@@ -211,6 +211,60 @@ Rollback point: `f576e375` (Sprint 9 AI Provider Integration checkpoint)
 
 ---
 
+# Sprint 10 — Editor AI Pop-up + Bot Selector + Transcript Document Bots
+
+Rollback point: `d82abfa9` (Sprint 9b Cost Estimation checkpoint)
+
+## A) Data Model & Persistence
+- [x] Create ai-runs.ts with AIRun interface and CRUD functions (createAIRun, applyAIRun, discardAIRun, getAIRunsForDocument)
+- [x] Extend bot registry with bot_type (block/document), allowed_doc_types, allowed_block_types — EditorBot interface
+- [x] Add mock document bots: Transcript Filler, Legal Reviewer, Spellcheck, Full Rewriter (8 bots total: 4 block + 4 document)
+
+## B) Block AI Panel
+- [x] Build BlockAIPanel component (left slide-in, non-modal, w-80)
+- [x] Bot selector dropdown (filtered by bot_type=block, allowed_doc_types)
+- [x] Provider/model shown read-only from bot config (Badge display)
+- [x] Prompt editor textarea with template support
+- [x] Insert/Replace toggle (segmented control)
+- [x] Context preview (current block text, doc metadata, collapsible)
+- [x] Generate Draft button → calls generateBlockContent → stores ai_run with status=draft
+- [x] Draft preview with "AI Draft" badge (dashed amber border)
+- [x] Apply to Block button → commits to block, marks is_ai_generated, ai_run status=applied
+- [x] Discard Draft button → ai_run status=discarded
+- [x] Audio record button (v1: toast placeholder, paste transcript text)
+- [x] Upload transcript (.txt/.md) support with FileReader
+
+## C) Document AI Panel
+- [x] Build DocumentAIPanel component (left slide-in, non-modal, w-96)
+- [x] Bot selector filtered to bot_type=document
+- [x] Mandatory transcript input (upload or paste, word count badge)
+- [x] Run mode dropdown (Fill missing, Rewrite all, Legal review, Spellcheck)
+- [x] Multi-block preview with before/after for each block (expandable)
+- [x] Per-block Apply checkbox
+- [x] Apply Selected Changes button (count badge)
+- [x] Single ai_run row with output json + status
+
+## D) Integration & Safeguards
+- [x] Wire BlockAIPanel into DocumentComposer (sparkle click opens panel)
+- [x] Wire DocumentAIPanel into toolbar (AI Document button with active state)
+- [x] AI never auto-commits — staged draft state only (Apply button required)
+- [x] AI cannot write to pricing/ECR/gates/approvals (block permissions check)
+- [x] Locked blocks cannot be AI-edited (guard in handleAIGenerate + locked blocks excluded in doc panel)
+- [x] "AI Draft" badge on draft preview, is_ai_generated flag set on apply
+- [x] Audit logging: ai_draft_created, ai_draft_applied, ai_draft_discarded (via syncAuditEntry)
+- [x] Phase 0: graceful error state if Edge Functions not deployed (CloudOff banner)
+
+## E) Acceptance
+- [x] Block sparkle opens panel, generate draft, Apply inserts into block
+- [x] Replace vs Insert toggle works
+- [x] Document bot: paste transcript, generate multi-block suggestions, apply selected
+- [x] Non-admin cannot apply to locked blocks (guard + locked blocks excluded)
+- [x] ai_usage_logs populated (via createAIRun audit trail)
+- [x] audit_log contains AI actions (ai_draft_created/applied/discarded)
+- [x] 0 TypeScript errors
+
+---
+
 # Governance Compliance Audit — TODO
 
 ## 1. Policy Gate Enforcement Structure
