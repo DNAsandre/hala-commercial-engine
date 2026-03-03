@@ -1,20 +1,19 @@
 /**
- * AIProviders — Admin AI Provider Management
- * Sprint 9: Toggle providers, set default models, test connections, view usage.
+ * AIProviders — Admin AI Provider Management + Cost Analytics
+ * Sprint 9 + 9b: Toggle providers, set default models, test connections,
+ * view usage, and estimate costs per provider/model.
  *
  * Design: Swiss Precision Instrument
  * Deep navy accents, warm white background, IBM Plex Sans
- * Consistent with AdminPanel tab styling
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Brain,
   Zap,
   RefreshCw,
   CheckCircle2,
   XCircle,
-  Clock,
   BarChart3,
   Shield,
   Activity,
@@ -23,8 +22,10 @@ import {
   ChevronUp,
   AlertTriangle,
   Server,
-  Eye,
-  EyeOff,
+  DollarSign,
+  TrendingUp,
+  Layers,
+  PieChart,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -46,13 +47,20 @@ import {
   testProviderConnection,
   fetchAIUsageLogs,
   fetchAIUsageStats,
+  computeLogCost,
+  formatCost,
+  getModelPricing,
+  MODEL_PRICING,
   type AIProvider,
   type AIUsageLog,
   type AIProviderName,
+  type AIUsageStatsWithCost,
+  type ProviderCostBreakdown,
+  type ModelCostBreakdown,
 } from "@/lib/ai-client";
 
 // ============================================================
-// PROVIDER ICONS & BRANDING
+// PROVIDER BRANDING
 // ============================================================
 
 const providerBranding: Record<string, {
@@ -61,6 +69,7 @@ const providerBranding: Record<string, {
   accent: string;
   bgLight: string;
   borderActive: string;
+  barColor: string;
 }> = {
   openai: {
     icon: "🤖",
@@ -68,6 +77,7 @@ const providerBranding: Record<string, {
     accent: "text-emerald-700",
     bgLight: "bg-emerald-50",
     borderActive: "border-emerald-300",
+    barColor: "bg-emerald-500",
   },
   google: {
     icon: "✦",
@@ -75,6 +85,7 @@ const providerBranding: Record<string, {
     accent: "text-blue-700",
     bgLight: "bg-blue-50",
     borderActive: "border-blue-300",
+    barColor: "bg-blue-500",
   },
 };
 
@@ -86,12 +97,10 @@ function ProviderCard({
   provider,
   onToggle,
   onModelChange,
-  onTest,
 }: {
   provider: AIProvider;
   onToggle: (id: string, enabled: boolean) => void;
   onModelChange: (id: string, model: string) => void;
-  onTest: (name: AIProviderName) => void;
 }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{
@@ -125,9 +134,7 @@ function ProviderCard({
 
   return (
     <Card className={`border transition-all duration-200 ${
-      provider.enabled
-        ? `${brand.borderActive} shadow-sm`
-        : "border-border opacity-75"
+      provider.enabled ? `${brand.borderActive} shadow-sm` : "border-border opacity-75"
     }`}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
@@ -161,7 +168,6 @@ function ProviderCard({
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {/* Model Selector */}
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
             Default Model
@@ -183,7 +189,6 @@ function ProviderCard({
           </Select>
         </div>
 
-        {/* Config Info */}
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           <span className="flex items-center gap-1">
             <Shield className="w-3 h-3" />
@@ -197,7 +202,6 @@ function ProviderCard({
 
         <Separator />
 
-        {/* Test Connection */}
         <div className="flex items-center justify-between">
           <Button
             variant="outline"
@@ -243,7 +247,6 @@ function ProviderCard({
           )}
         </div>
 
-        {/* Test Output */}
         {showTestOutput && testResult?.content && (
           <div className="bg-muted rounded-md p-3 text-xs text-foreground font-mono leading-relaxed">
             {testResult.content}
@@ -255,7 +258,7 @@ function ProviderCard({
 }
 
 // ============================================================
-// USAGE LOG TABLE
+// USAGE LOG TABLE (with cost column)
 // ============================================================
 
 function UsageLogTable({ logs }: { logs: AIUsageLog[] }) {
@@ -279,56 +282,235 @@ function UsageLogTable({ logs }: { logs: AIUsageLog[] }) {
             <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">User</th>
             <th className="text-right px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tokens In</th>
             <th className="text-right px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tokens Out</th>
+            <th className="text-right px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Est. Cost</th>
             <th className="text-right px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Latency</th>
             <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Status</th>
             <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Time</th>
           </tr>
         </thead>
         <tbody>
-          {logs.map((log) => (
-            <tr key={log.id} className="border-b border-border hover:bg-muted/30 transition-colors">
-              <td className="px-3 py-2.5">
-                <Badge variant="outline" className="text-[10px] font-mono">
-                  {log.provider}
-                </Badge>
-              </td>
-              <td className="px-3 py-2.5">
-                <span className="text-xs font-mono text-muted-foreground">{log.model}</span>
-              </td>
-              <td className="px-3 py-2.5">
-                <span className="text-xs">{log.userName || log.userId}</span>
-              </td>
-              <td className="px-3 py-2.5 text-right">
-                <span className="text-xs font-mono">{log.tokensInput.toLocaleString()}</span>
-              </td>
-              <td className="px-3 py-2.5 text-right">
-                <span className="text-xs font-mono">{log.tokensOutput.toLocaleString()}</span>
-              </td>
-              <td className="px-3 py-2.5 text-right">
-                <span className="text-xs font-mono text-muted-foreground">
-                  {log.latencyMs ? `${log.latencyMs}ms` : "—"}
-                </span>
-              </td>
-              <td className="px-3 py-2.5">
-                {log.status === "success" ? (
-                  <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]" variant="outline">
-                    Success
+          {logs.map((log) => {
+            const cost = computeLogCost(log);
+            return (
+              <tr key={log.id} className="border-b border-border hover:bg-muted/30 transition-colors">
+                <td className="px-3 py-2.5">
+                  <Badge variant="outline" className="text-[10px] font-mono">
+                    {log.provider}
                   </Badge>
-                ) : (
-                  <Badge className="bg-red-50 text-red-700 border-red-200 text-[10px]" variant="outline">
-                    Error
-                  </Badge>
-                )}
-              </td>
-              <td className="px-3 py-2.5">
-                <span className="text-xs text-muted-foreground">
-                  {new Date(log.createdAt).toLocaleString()}
-                </span>
-              </td>
-            </tr>
-          ))}
+                </td>
+                <td className="px-3 py-2.5">
+                  <span className="text-xs font-mono text-muted-foreground">{log.model}</span>
+                </td>
+                <td className="px-3 py-2.5">
+                  <span className="text-xs">{log.userName || log.userId}</span>
+                </td>
+                <td className="px-3 py-2.5 text-right">
+                  <span className="text-xs font-mono">{log.tokensInput.toLocaleString()}</span>
+                </td>
+                <td className="px-3 py-2.5 text-right">
+                  <span className="text-xs font-mono">{log.tokensOutput.toLocaleString()}</span>
+                </td>
+                <td className="px-3 py-2.5 text-right">
+                  <span className="text-xs font-mono font-semibold text-amber-700">
+                    {formatCost(cost)}
+                  </span>
+                </td>
+                <td className="px-3 py-2.5 text-right">
+                  <span className="text-xs font-mono text-muted-foreground">
+                    {log.latencyMs ? `${log.latencyMs}ms` : "—"}
+                  </span>
+                </td>
+                <td className="px-3 py-2.5">
+                  {log.status === "success" ? (
+                    <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]" variant="outline">
+                      Success
+                    </Badge>
+                  ) : (
+                    <Badge className="bg-red-50 text-red-700 border-red-200 text-[10px]" variant="outline">
+                      Error
+                    </Badge>
+                  )}
+                </td>
+                <td className="px-3 py-2.5">
+                  <span className="text-xs text-muted-foreground">
+                    {new Date(log.createdAt).toLocaleString()}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ============================================================
+// COST ANALYTICS VIEW
+// ============================================================
+
+function CostAnalytics({ stats }: { stats: AIUsageStatsWithCost }) {
+  const providerEntries = useMemo(
+    () => Object.values(stats.byProvider).sort((a, b) => b.cost - a.cost),
+    [stats.byProvider]
+  );
+
+  const maxProviderCost = useMemo(
+    () => Math.max(...providerEntries.map((p) => p.cost), 0.001),
+    [providerEntries]
+  );
+
+  if (stats.totalCalls === 0) {
+    return (
+      <div className="text-center py-12 text-muted-foreground">
+        <DollarSign className="w-8 h-8 mx-auto mb-2 opacity-40" />
+        <p className="text-sm font-medium">No cost data yet</p>
+        <p className="text-xs mt-1">Cost analytics will populate after AI calls are made</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Provider Cost Breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {providerEntries.map((p) => {
+          const brand = providerBranding[p.provider] || providerBranding.openai;
+          const costPercent = stats.totalCost > 0 ? (p.cost / stats.totalCost) * 100 : 0;
+
+          return (
+            <Card key={p.provider} className={`border ${brand.borderActive}`}>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${brand.gradient} flex items-center justify-center text-white text-lg shadow-sm`}>
+                      {brand.icon === "🤖" ? "🤖" : "✦"}
+                    </div>
+                    <div>
+                      <CardTitle className="text-sm font-semibold capitalize">{p.provider === "openai" ? "OpenAI" : "Google AI"}</CardTitle>
+                      <p className="text-[10px] text-muted-foreground">
+                        {p.calls.toLocaleString()} calls · {costPercent.toFixed(1)}% of total
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-lg font-bold text-foreground">{formatCost(p.cost)}</div>
+                    <div className="text-[10px] text-muted-foreground">estimated</div>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {/* Cost bar */}
+                <div className="space-y-1">
+                  <div className="h-2 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className={`h-full ${brand.barColor} rounded-full transition-all duration-500`}
+                      style={{ width: `${Math.max((p.cost / maxProviderCost) * 100, 2)}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Token summary */}
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="bg-muted/50 rounded-md p-2">
+                    <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Input Tokens</div>
+                    <div className="font-mono font-semibold mt-0.5">{p.tokensIn.toLocaleString()}</div>
+                  </div>
+                  <div className="bg-muted/50 rounded-md p-2">
+                    <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Output Tokens</div>
+                    <div className="font-mono font-semibold mt-0.5">{p.tokensOut.toLocaleString()}</div>
+                  </div>
+                </div>
+
+                {/* Per-model breakdown */}
+                {p.models.length > 0 && (
+                  <>
+                    <Separator />
+                    <div className="space-y-2">
+                      <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                        Model Breakdown
+                      </div>
+                      {p.models.map((m) => {
+                        const modelPercent = p.cost > 0 ? (m.cost / p.cost) * 100 : 0;
+                        const pricing = getModelPricing(m.model);
+                        return (
+                          <div key={m.model} className="flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="font-mono text-[11px] truncate">{m.model}</span>
+                              <Badge variant="outline" className="text-[9px] shrink-0">
+                                {m.calls} calls
+                              </Badge>
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0">
+                              <span className="text-[10px] text-muted-foreground">
+                                ${pricing.inputPer1M}/{pricing.outputPer1M} per 1M
+                              </span>
+                              <span className="font-mono font-semibold text-amber-700 min-w-[60px] text-right">
+                                {formatCost(m.cost)}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground w-[40px] text-right">
+                                {modelPercent.toFixed(0)}%
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Pricing Reference Table */}
+      <Card className="border-border">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Layers className="w-4 h-4 text-muted-foreground" />
+            Token Pricing Reference
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/50">
+                  <th className="text-left px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Model</th>
+                  <th className="text-right px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Input / 1M Tokens</th>
+                  <th className="text-right px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Output / 1M Tokens</th>
+                  <th className="text-right px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Avg Cost / 1K Call</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(MODEL_PRICING).map(([model, pricing]) => {
+                  // Estimate average cost per 1K calls assuming ~500 in / ~500 out tokens per call
+                  const avgCostPer1K = ((500 / 1_000_000) * pricing.inputPer1M + (500 / 1_000_000) * pricing.outputPer1M) * 1000;
+                  return (
+                    <tr key={model} className="border-b border-border hover:bg-muted/30 transition-colors">
+                      <td className="px-4 py-2.5">
+                        <span className="font-mono text-xs font-medium">{model}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <span className="font-mono text-xs">${pricing.inputPer1M.toFixed(3)}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <span className="font-mono text-xs">${pricing.outputPer1M.toFixed(3)}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <span className="font-mono text-xs text-amber-700 font-semibold">
+                          ${avgCostPer1K.toFixed(2)}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -340,14 +522,11 @@ function UsageLogTable({ logs }: { logs: AIUsageLog[] }) {
 export default function AIProviders() {
   const [providers, setProviders] = useState<AIProvider[]>([]);
   const [usageLogs, setUsageLogs] = useState<AIUsageLog[]>([]);
-  const [usageStats, setUsageStats] = useState<{
-    totalCalls: number;
-    totalTokensIn: number;
-    totalTokensOut: number;
-    byProvider: Record<string, { calls: number; tokensIn: number; tokensOut: number }>;
-  }>({ totalCalls: 0, totalTokensIn: 0, totalTokensOut: 0, byProvider: {} });
+  const [usageStats, setUsageStats] = useState<AIUsageStatsWithCost>({
+    totalCalls: 0, totalTokensIn: 0, totalTokensOut: 0, totalCost: 0, byProvider: {}, byModel: [],
+  });
   const [loading, setLoading] = useState(true);
-  const [activeView, setActiveView] = useState<"providers" | "usage">("providers");
+  const [activeView, setActiveView] = useState<"providers" | "usage" | "costs">("providers");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -374,41 +553,34 @@ export default function AIProviders() {
   const handleToggle = async (id: string, enabled: boolean) => {
     const prev = providers.find((p) => p.id === id);
     if (!prev) return;
-
-    // Optimistic update
     setProviders((ps) => ps.map((p) => (p.id === id ? { ...p, enabled } : p)));
-
     const result = await updateAIProvider(id, { enabled });
     if (!result) {
-      // Revert
       setProviders((ps) => ps.map((p) => (p.id === id ? { ...p, enabled: prev.enabled } : p)));
       toast.error("Failed to update provider");
       return;
     }
-
     toast.success(`${prev.displayName} ${enabled ? "enabled" : "disabled"}`);
   };
 
   const handleModelChange = async (id: string, model: string) => {
     const prev = providers.find((p) => p.id === id);
     if (!prev) return;
-
-    // Optimistic update
     setProviders((ps) => ps.map((p) => (p.id === id ? { ...p, modelDefault: model } : p)));
-
     const result = await updateAIProvider(id, { modelDefault: model });
     if (!result) {
       setProviders((ps) => ps.map((p) => (p.id === id ? { ...p, modelDefault: prev.modelDefault } : p)));
       toast.error("Failed to update default model");
       return;
     }
-
     toast.success(`Default model set to ${model}`);
   };
 
-  const handleTest = async (name: AIProviderName) => {
-    // Test is handled inside ProviderCard
-  };
+  // Compute total log cost for display
+  const totalLogCost = useMemo(
+    () => usageLogs.reduce((sum, log) => sum + computeLogCost(log), 0),
+    [usageLogs]
+  );
 
   return (
     <div className="space-y-6">
@@ -420,7 +592,7 @@ export default function AIProviders() {
             AI Providers
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Configure AI model providers, test connections, and monitor usage
+            Configure AI model providers, test connections, monitor usage and costs
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={loadData} disabled={loading}>
@@ -429,52 +601,78 @@ export default function AIProviders() {
         </Button>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* Stats Cards — 6 cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <Card className="border-border">
-          <CardContent className="p-4">
+          <CardContent className="p-3">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-              Active Providers
+              Providers
             </div>
-            <div className="text-2xl font-bold text-foreground">
+            <div className="text-xl font-bold text-foreground">
               {providers.filter((p) => p.enabled).length}
+              <span className="text-sm font-normal text-muted-foreground">/{providers.length}</span>
             </div>
-            <div className="text-xs text-muted-foreground mt-0.5">
-              of {providers.length} configured
-            </div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">active</div>
           </CardContent>
         </Card>
         <Card className="border-border">
-          <CardContent className="p-4">
+          <CardContent className="p-3">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-              Total API Calls
+              API Calls
             </div>
-            <div className="text-2xl font-bold text-foreground">
+            <div className="text-xl font-bold text-foreground">
               {usageStats.totalCalls.toLocaleString()}
             </div>
-            <div className="text-xs text-muted-foreground mt-0.5">all time</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">all time</div>
           </CardContent>
         </Card>
         <Card className="border-border">
-          <CardContent className="p-4">
+          <CardContent className="p-3">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
               Tokens In
             </div>
-            <div className="text-2xl font-bold text-foreground">
+            <div className="text-xl font-bold text-foreground">
               {usageStats.totalTokensIn.toLocaleString()}
             </div>
-            <div className="text-xs text-muted-foreground mt-0.5">input tokens</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">input</div>
           </CardContent>
         </Card>
         <Card className="border-border">
-          <CardContent className="p-4">
+          <CardContent className="p-3">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
               Tokens Out
             </div>
-            <div className="text-2xl font-bold text-foreground">
+            <div className="text-xl font-bold text-foreground">
               {usageStats.totalTokensOut.toLocaleString()}
             </div>
-            <div className="text-xs text-muted-foreground mt-0.5">output tokens</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">output</div>
+          </CardContent>
+        </Card>
+        <Card className="border-amber-200 bg-amber-50/30">
+          <CardContent className="p-3">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-700 mb-1 flex items-center gap-1">
+              <DollarSign className="w-3 h-3" />
+              Est. Cost
+            </div>
+            <div className="text-xl font-bold text-amber-800">
+              {formatCost(usageStats.totalCost)}
+            </div>
+            <div className="text-[10px] text-amber-600 mt-0.5">total estimated</div>
+          </CardContent>
+        </Card>
+        <Card className="border-border">
+          <CardContent className="p-3">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1">
+              <TrendingUp className="w-3 h-3" />
+              Avg / Call
+            </div>
+            <div className="text-xl font-bold text-foreground">
+              {usageStats.totalCalls > 0
+                ? formatCost(usageStats.totalCost / usageStats.totalCalls)
+                : "$0.00"
+              }
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">per request</div>
           </CardContent>
         </Card>
       </div>
@@ -489,14 +687,14 @@ export default function AIProviders() {
               <p className="text-xs text-emerald-700 mt-1 leading-relaxed">
                 All AI API calls are routed through Supabase Edge Functions. API keys (OPENAI_API_KEY,
                 GOOGLE_AI_API_KEY) are stored as Supabase secrets and never exposed to the client bundle.
-                Every call is rate-limited and logged to the ai_usage_logs table for audit compliance.
+                Every call is rate-limited, logged, and cost-estimated for audit compliance.
               </p>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* View Toggle */}
+      {/* View Toggle — 3 views */}
       <div className="flex items-center gap-2">
         <Button
           variant={activeView === "providers" ? "default" : "outline"}
@@ -506,6 +704,15 @@ export default function AIProviders() {
         >
           <Brain className="w-3.5 h-3.5" />
           Providers
+        </Button>
+        <Button
+          variant={activeView === "costs" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setActiveView("costs")}
+          className="gap-1.5"
+        >
+          <PieChart className="w-3.5 h-3.5" />
+          Cost Analytics
         </Button>
         <Button
           variant={activeView === "usage" ? "default" : "outline"}
@@ -540,11 +747,15 @@ export default function AIProviders() {
                 provider={provider}
                 onToggle={handleToggle}
                 onModelChange={handleModelChange}
-                onTest={handleTest}
               />
             ))
           )}
         </div>
+      )}
+
+      {/* Cost Analytics */}
+      {activeView === "costs" && (
+        <CostAnalytics stats={usageStats} />
       )}
 
       {/* Usage Logs */}
@@ -553,9 +764,14 @@ export default function AIProviders() {
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-semibold">Recent AI Usage</CardTitle>
-              <Badge variant="outline" className="text-xs">
-                {usageLogs.length} entries
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
+                  {formatCost(totalLogCost)} est.
+                </Badge>
+                <Badge variant="outline" className="text-xs">
+                  {usageLogs.length} entries
+                </Badge>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="p-0">

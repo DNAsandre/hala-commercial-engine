@@ -75,6 +75,75 @@ export interface AIGenerateResponse {
 }
 
 // ============================================================
+// TOKEN PRICING (USD per 1M tokens — as of Q1 2026)
+// ============================================================
+
+export interface ModelPricing {
+  inputPer1M: number;   // USD per 1M input tokens
+  outputPer1M: number;  // USD per 1M output tokens
+}
+
+/**
+ * Per-model pricing table. Prices are in USD per 1 million tokens.
+ * Source: Official provider pricing pages (OpenAI, Google AI).
+ * Updated: March 2026.
+ */
+export const MODEL_PRICING: Record<string, ModelPricing> = {
+  // OpenAI models
+  "gpt-4o":           { inputPer1M: 2.50,  outputPer1M: 10.00 },
+  "gpt-4o-mini":      { inputPer1M: 0.15,  outputPer1M: 0.60  },
+  "gpt-4-turbo":      { inputPer1M: 10.00, outputPer1M: 30.00 },
+  "gpt-3.5-turbo":    { inputPer1M: 0.50,  outputPer1M: 1.50  },
+  // Google AI (Gemini) models
+  "gemini-1.5-pro":   { inputPer1M: 1.25,  outputPer1M: 5.00  },
+  "gemini-1.5-flash": { inputPer1M: 0.075, outputPer1M: 0.30  },
+  "gemini-2.0-flash": { inputPer1M: 0.10,  outputPer1M: 0.40  },
+};
+
+/** Fallback pricing when model is unknown */
+const DEFAULT_PRICING: ModelPricing = { inputPer1M: 1.00, outputPer1M: 3.00 };
+
+/**
+ * Get pricing for a specific model.
+ * Falls back to DEFAULT_PRICING if the model is not in the table.
+ */
+export function getModelPricing(model: string): ModelPricing {
+  return MODEL_PRICING[model] || DEFAULT_PRICING;
+}
+
+/**
+ * Estimate cost in USD for a given token count and model.
+ */
+export function estimateCost(
+  model: string,
+  tokensInput: number,
+  tokensOutput: number
+): number {
+  const pricing = getModelPricing(model);
+  const inputCost = (tokensInput / 1_000_000) * pricing.inputPer1M;
+  const outputCost = (tokensOutput / 1_000_000) * pricing.outputPer1M;
+  return inputCost + outputCost;
+}
+
+/**
+ * Compute cost for a single usage log entry.
+ */
+export function computeLogCost(log: AIUsageLog): number {
+  return estimateCost(log.model, log.tokensInput, log.tokensOutput);
+}
+
+/**
+ * Format a USD cost value for display.
+ * Shows 4 decimal places for sub-cent amounts, 2 for larger values.
+ */
+export function formatCost(usd: number): string {
+  if (usd === 0) return "$0.00";
+  if (usd < 0.01) return `$${usd.toFixed(6)}`;
+  if (usd < 1) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
+// ============================================================
 // RATE LIMITER (Client-side throttle)
 // ============================================================
 
@@ -281,40 +350,97 @@ export async function fetchAIUsageLogs(options?: {
   return (data || []).map(mapUsageRow);
 }
 
-/** Get aggregate usage stats */
-export async function fetchAIUsageStats(): Promise<{
+/** Per-model cost breakdown entry */
+export interface ModelCostBreakdown {
+  model: string;
+  provider: string;
+  calls: number;
+  tokensIn: number;
+  tokensOut: number;
+  cost: number;
+}
+
+/** Provider cost breakdown entry */
+export interface ProviderCostBreakdown {
+  provider: string;
+  calls: number;
+  tokensIn: number;
+  tokensOut: number;
+  cost: number;
+  models: ModelCostBreakdown[];
+}
+
+/** Full usage stats with cost estimation */
+export interface AIUsageStatsWithCost {
   totalCalls: number;
   totalTokensIn: number;
   totalTokensOut: number;
-  byProvider: Record<string, { calls: number; tokensIn: number; tokensOut: number }>;
-}> {
+  totalCost: number;
+  byProvider: Record<string, ProviderCostBreakdown>;
+  byModel: ModelCostBreakdown[];
+}
+
+/** Get aggregate usage stats with cost estimation */
+export async function fetchAIUsageStats(): Promise<AIUsageStatsWithCost> {
   const { data, error } = await supabase
     .from("ai_usage_logs")
-    .select("provider, tokens_input, tokens_output");
+    .select("provider, model, tokens_input, tokens_output");
 
   if (error || !data) {
-    return { totalCalls: 0, totalTokensIn: 0, totalTokensOut: 0, byProvider: {} };
+    return { totalCalls: 0, totalTokensIn: 0, totalTokensOut: 0, totalCost: 0, byProvider: {}, byModel: [] };
   }
 
-  const byProvider: Record<string, { calls: number; tokensIn: number; tokensOut: number }> = {};
+  const byProvider: Record<string, ProviderCostBreakdown> = {};
+  const byModelMap: Record<string, ModelCostBreakdown> = {};
   let totalCalls = 0;
   let totalTokensIn = 0;
   let totalTokensOut = 0;
+  let totalCost = 0;
 
   for (const row of data) {
-    totalCalls++;
-    totalTokensIn += row.tokens_input || 0;
-    totalTokensOut += row.tokens_output || 0;
+    const tIn = row.tokens_input || 0;
+    const tOut = row.tokens_output || 0;
+    const model = row.model || "unknown";
+    const rowCost = estimateCost(model, tIn, tOut);
 
+    totalCalls++;
+    totalTokensIn += tIn;
+    totalTokensOut += tOut;
+    totalCost += rowCost;
+
+    // Provider aggregation
     if (!byProvider[row.provider]) {
-      byProvider[row.provider] = { calls: 0, tokensIn: 0, tokensOut: 0 };
+      byProvider[row.provider] = { provider: row.provider, calls: 0, tokensIn: 0, tokensOut: 0, cost: 0, models: [] };
     }
     byProvider[row.provider].calls++;
-    byProvider[row.provider].tokensIn += row.tokens_input || 0;
-    byProvider[row.provider].tokensOut += row.tokens_output || 0;
+    byProvider[row.provider].tokensIn += tIn;
+    byProvider[row.provider].tokensOut += tOut;
+    byProvider[row.provider].cost += rowCost;
+
+    // Model aggregation
+    const modelKey = `${row.provider}:${model}`;
+    if (!byModelMap[modelKey]) {
+      byModelMap[modelKey] = { model, provider: row.provider, calls: 0, tokensIn: 0, tokensOut: 0, cost: 0 };
+    }
+    byModelMap[modelKey].calls++;
+    byModelMap[modelKey].tokensIn += tIn;
+    byModelMap[modelKey].tokensOut += tOut;
+    byModelMap[modelKey].cost += rowCost;
   }
 
-  return { totalCalls, totalTokensIn, totalTokensOut, byProvider };
+  // Attach model breakdowns to providers
+  const byModel = Object.values(byModelMap).sort((a, b) => b.cost - a.cost);
+  for (const m of byModel) {
+    if (byProvider[m.provider]) {
+      byProvider[m.provider].models.push(m);
+    }
+  }
+  // Sort provider models by cost
+  for (const p of Object.values(byProvider)) {
+    p.models.sort((a, b) => b.cost - a.cost);
+  }
+
+  return { totalCalls, totalTokensIn, totalTokensOut, totalCost, byProvider, byModel };
 }
 
 // ============================================================

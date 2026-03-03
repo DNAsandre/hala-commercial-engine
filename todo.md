@@ -195,6 +195,22 @@ Rollback point: `4eabdc53` (Sprint 8b SLA Tracking checkpoint)
 
 ---
 
+# Sprint 9b — AI Usage Cost Estimation
+
+Rollback point: `f576e375` (Sprint 9 AI Provider Integration checkpoint)
+
+## Tasks
+- [x] Define per-model token pricing table (USD per 1M tokens, input/output split) — MODEL_PRICING in ai-client.ts
+- [x] Add estimateCost(), computeLogCost(), formatCost(), getModelPricing() to ai-client.ts
+- [x] Update fetchAIUsageStats() to return AIUsageStatsWithCost with cost aggregation by provider and model
+- [x] Add Est. Cost column to usage log table (amber-colored, per-row cost)
+- [x] Add Estimated Cost + Avg/Call stat cards (6-card header row)
+- [x] Add CostAnalytics component with per-provider cards, cost bars, model breakdown, pricing reference table
+- [x] Add "Cost Analytics" view toggle alongside Providers and Usage Logs
+- [x] 0 TypeScript errors
+
+---
+
 # Governance Compliance Audit — TODO
 
 ## 1. Policy Gate Enforcement Structure
