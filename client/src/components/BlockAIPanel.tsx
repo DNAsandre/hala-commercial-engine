@@ -166,7 +166,6 @@ export default function BlockAIPanel({
     onApplyContent(block.id, draftContent, insertMode);
     setDraftContent(null);
     setCurrentRunId(null);
-    toast.success(`AI content ${insertMode === "replace" ? "replaced" : "inserted into"} block`);
   }, [block, draftContent, currentRunId, insertMode, onApplyContent]);
 
   const handleDiscard = useCallback(() => {

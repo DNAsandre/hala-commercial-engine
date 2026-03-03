@@ -705,6 +705,18 @@ function BlockEditor({
     }
   }, [canEdit, editor]);
 
+  // FIX: Sync TipTap editor when block.content changes externally (AI apply, doc AI apply)
+  // TipTap is uncontrolled — we must call setContent() to update the visual editor
+  const prevContentRef = useRef(block.content);
+  useEffect(() => {
+    if (!editor) return;
+    // Only update if content changed externally (not from user typing)
+    if (block.content !== prevContentRef.current && block.content !== editor.getHTML()) {
+      editor.commands.setContent(block.content, { emitUpdate: false });
+    }
+    prevContentRef.current = block.content;
+  }, [block.content, editor]);
+
   return (
     <div
       ref={blockRef}
@@ -1418,20 +1430,18 @@ export default function DocumentComposer({
   }, [document.blocks, mode]);
 
   // Sprint 10: Block AI Panel apply callback
+  // FIX: Single setDocumentDirty call to avoid race between content update and is_ai_generated flag
   const handleBlockAIApply = useCallback((blockId: string, content: string, applyMode: "insert" | "replace") => {
-    if (applyMode === "replace") {
-      updateBlockContent(blockId, content);
-    } else {
-      // Insert: append to existing content
-      const block = document.blocks.find(b => b.id === blockId);
-      const existing = block?.content || "";
-      updateBlockContent(blockId, existing + content);
-    }
     setDocumentDirty(prev => ({
-      ...prev,
-      blocks: prev.blocks.map(b => b.id === blockId ? { ...b, is_ai_generated: true } : b),
+      ...prev, updated_at: new Date().toISOString(),
+      blocks: prev.blocks.map(b => {
+        if (b.id !== blockId) return b;
+        const newContent = applyMode === "replace" ? content : (b.content || "") + content;
+        return { ...b, content: newContent, is_ai_generated: true };
+      }),
     }));
-  }, [document.blocks, updateBlockContent]);
+    toast.success(`AI content ${applyMode === "replace" ? "replaced" : "inserted into"} block`);
+  }, []);
 
   // Sprint 10: Document AI Panel apply callback
   const handleDocAIApply = useCallback((changes: { blockId: string; content: string }[]) => {
@@ -1448,14 +1458,14 @@ export default function DocumentComposer({
   const handleAcceptAI = useCallback((blockId: string) => {
     const staged = aiStagingMap[blockId];
     if (!staged) return;
-    updateBlockContent(blockId, staged);
+    // FIX: Single setDocumentDirty call to avoid race condition
     setDocumentDirty(prev => ({
-      ...prev,
-      blocks: prev.blocks.map(b => b.id === blockId ? { ...b, is_ai_generated: true } : b),
+      ...prev, updated_at: new Date().toISOString(),
+      blocks: prev.blocks.map(b => b.id === blockId ? { ...b, content: staged, is_ai_generated: true } : b),
     }));
     setAiStagingMap(prev => { const next = { ...prev }; delete next[blockId]; return next; });
     toast.success("AI content accepted");
-  }, [aiStagingMap, updateBlockContent]);
+  }, [aiStagingMap]);
 
   const handleRejectAI = useCallback((blockId: string) => {
     setAiStagingMap(prev => { const next = { ...prev }; delete next[blockId]; return next; });

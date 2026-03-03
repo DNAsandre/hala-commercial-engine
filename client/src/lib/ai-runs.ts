@@ -212,11 +212,11 @@ export function createAIRun(params: Omit<AIRun, "id" | "created_at" | "applied_a
   syncAuditEntry({
     id: crypto.randomUUID(),
     timestamp: run.created_at,
-    user_id: user?.id || "system",
-    user_name: user?.name || "System",
+    userId: user?.id || "system",
+    userName: user?.name || "System",
     action: "ai_draft_created",
-    entity_type: "ai_run",
-    entity_id: run.id,
+    entityType: "ai_run",
+    entityId: run.id,
     details: `AI draft created by ${run.bot_name} (${run.bot_type}) for ${run.target_scope === "block" ? `block ${run.target_block_ids[0]}` : `document ${run.doc_instance_id}`}`,
     metadata: {
       bot_id: run.bot_id,
@@ -244,11 +244,11 @@ export function applyAIRun(runId: string): AIRun | null {
   syncAuditEntry({
     id: crypto.randomUUID(),
     timestamp: run.applied_at,
-    user_id: user?.id || "system",
-    user_name: user?.name || "System",
+    userId: user?.id || "system",
+    userName: user?.name || "System",
     action: "ai_draft_applied",
-    entity_type: "ai_run",
-    entity_id: run.id,
+    entityType: "ai_run",
+    entityId: run.id,
     details: `AI draft applied: ${run.bot_name} output committed to ${run.target_scope === "block" ? `block ${run.target_block_ids[0]}` : `${run.target_block_ids.length} blocks in document ${run.doc_instance_id}`}`,
     metadata: {
       bot_id: run.bot_id,
@@ -272,11 +272,11 @@ export function discardAIRun(runId: string): AIRun | null {
   syncAuditEntry({
     id: crypto.randomUUID(),
     timestamp: new Date().toISOString(),
-    user_id: user?.id || "system",
-    user_name: user?.name || "System",
+    userId: user?.id || "system",
+    userName: user?.name || "System",
     action: "ai_draft_discarded",
-    entity_type: "ai_run",
-    entity_id: run.id,
+    entityType: "ai_run",
+    entityId: run.id,
     details: `AI draft discarded: ${run.bot_name} output rejected for ${run.target_scope === "block" ? `block ${run.target_block_ids[0]}` : `document ${run.doc_instance_id}`}`,
     metadata: {
       bot_id: run.bot_id,
@@ -337,11 +337,11 @@ export const DOCUMENT_RUN_MODES: { value: DocumentRunMode; label: string; descri
 // ============================================================
 
 const BLOCK_MOCK_RESPONSES: Record<string, string> = {
-  "commercial": "<p>Hala Supply Chain Services, a leading third-party logistics provider in the Kingdom of Saudi Arabia, is pleased to present this comprehensive warehousing and logistics solution. With over two decades of operational excellence across the Eastern, Central, and Western regions, we bring unmatched expertise in temperature-controlled storage, multi-modal distribution, and value-added services tailored to your specific industry requirements.</p><p>Our solution leverages state-of-the-art warehouse management systems, real-time tracking capabilities, and a dedicated team of logistics professionals to ensure seamless execution of your supply chain operations.</p>",
-  "legal": "<p>This Agreement shall be governed by and construed in accordance with the laws of the Kingdom of Saudi Arabia. Any dispute arising out of or in connection with this Agreement, including any question regarding its existence, validity, or termination, shall be referred to and finally resolved by arbitration under the Rules of the Saudi Center for Commercial Arbitration (SCCA).</p><p>The arbitration shall be conducted in Riyadh, Kingdom of Saudi Arabia, in the Arabic language, unless otherwise agreed by the parties. The arbitral tribunal shall consist of a sole arbitrator appointed in accordance with the SCCA Rules.</p>",
-  "annexure": "<p>The following annexure details the operational parameters, service configurations, and performance benchmarks that form an integral part of this agreement. All metrics specified herein shall be measured on a monthly basis unless otherwise stated.</p>",
-  "asset": "<p>Our state-of-the-art facilities across the Kingdom provide the infrastructure backbone for reliable, scalable logistics operations. With over 500,000 sqm of warehousing space across 12 facilities, we offer ambient, temperature-controlled, and hazardous materials storage capabilities.</p>",
-  "default": "<p>Hala Supply Chain Services delivers comprehensive logistics solutions designed to optimize your supply chain performance. Our team of experienced professionals works closely with each client to develop customized solutions that address specific operational challenges while maintaining the highest standards of service quality and regulatory compliance.</p>",
+  "commercial": "<p><strong>[AI GENERATED — Commercial Section]</strong></p><p>We are delighted to propose a tailored cold-chain logistics partnership designed to meet your organization's exacting standards. Our integrated warehousing and distribution network spans 12 strategically located facilities across the Kingdom, offering ambient, chilled (+2°C to +8°C), and frozen (−18°C to −25°C) storage zones with 24/7 temperature monitoring and automated alert systems.</p><p>This proposal outlines a comprehensive scope of services including inbound receiving, quality inspection, WMS-integrated inventory management, order fulfillment, and last-mile delivery — all backed by dedicated account management and real-time visibility dashboards.</p>",
+  "legal": "<p><strong>[AI GENERATED — Legal Clause]</strong></p><p>This Agreement shall be governed by and construed in accordance with the laws of the Kingdom of Saudi Arabia. Any dispute arising out of or in connection with this Agreement shall be referred to arbitration under the Rules of the Saudi Center for Commercial Arbitration (SCCA), conducted in Riyadh in the Arabic language. The arbitral tribunal shall consist of a sole arbitrator.</p><p>Neither party shall be liable for any failure to perform due to circumstances beyond reasonable control (Force Majeure), including but not limited to natural disasters, government actions, or pandemic events.</p>",
+  "annexure": "<p><strong>[AI GENERATED — Annexure]</strong></p><p>The following annexure details the operational parameters, service configurations, and performance benchmarks that form an integral part of this agreement. All metrics specified herein shall be measured on a monthly basis unless otherwise stated.</p>",
+  "asset": "<p><strong>[AI GENERATED — Asset Section]</strong></p><p>Our state-of-the-art facilities across the Kingdom provide the infrastructure backbone for reliable, scalable logistics operations. With over 500,000 sqm of warehousing space across 12 facilities, we offer ambient, temperature-controlled, and hazardous materials storage capabilities.</p>",
+  "default": "<p><strong>[AI GENERATED — Default Section]</strong></p><p>Hala Supply Chain Services delivers comprehensive logistics solutions designed to optimize your supply chain performance. Our team of experienced professionals works closely with each client to develop customized solutions that address specific operational challenges while maintaining the highest standards of service quality and regulatory compliance.</p>",
 };
 
 export function generateBlockContent(

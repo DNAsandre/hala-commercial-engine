@@ -263,6 +263,14 @@ Rollback point: `d82abfa9` (Sprint 9b Cost Estimation checkpoint)
 - [x] audit_log contains AI actions (ai_draft_created/applied/discarded)
 - [x] 0 TypeScript errors
 
+## F) Bug Fixes (Post-Testing)
+- [x] FIX: handleBlockAIApply double state update — merged content + is_ai_generated into single setDocumentDirty
+- [x] FIX: TipTap editor doesn't sync when content changes via state — added useEffect with prevContentRef to call editor.commands.setContent()
+- [x] FIX: handleDocAIApply same TipTap sync issue — editors now sync via the same useEffect
+- [x] FIX: handleAcceptAI (old staging) same double-update bug — merged into single setDocumentDirty
+- [x] FIX: syncAuditEntry entity_type null — changed snake_case to camelCase (entityType/entityId/userId/userName)
+- [x] Verify all flows in browser after fixes — ALL 6 TESTS PASS
+
 ---
 
 # Governance Compliance Audit — TODO
