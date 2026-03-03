@@ -7,6 +7,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import DashboardLayout from "./components/DashboardLayout";
+import { ComposerDirtyProvider } from "./contexts/ComposerDirtyContext";
 import RequireRole from "./components/RequireRole";
 import Dashboard from "./pages/Dashboard";
 import Workspaces from "./pages/Workspaces";
@@ -133,9 +134,11 @@ function ProtectedApp() {
   if (!session) return <Redirect to="/login" />;
 
   return (
-    <DashboardLayout>
-      <AppRouter />
-    </DashboardLayout>
+    <ComposerDirtyProvider>
+      <DashboardLayout>
+        <AppRouter />
+      </DashboardLayout>
+    </ComposerDirtyProvider>
   );
 }
 

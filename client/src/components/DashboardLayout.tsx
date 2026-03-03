@@ -9,10 +9,14 @@
  *     CORE: Dashboard, Customers, Workspaces, Tenders
  *     SYSTEM: Governance, Admin, Audit Trail
  *   All other routes remain accessible via direct URL.
+ *
+ * Sidebar Navigation Guard:
+ *   When the DocumentComposer has unsaved changes (isDirty),
+ *   sidebar links show the UnsavedChangesModal before navigating.
  */
 
-import { Link, useLocation } from "wouter";
-import { useState } from "react";
+import { useLocation } from "wouter";
+import { useState, useCallback } from "react";
 import {
   LayoutDashboard,
   Briefcase,
@@ -53,6 +57,8 @@ import {
 import { getRoleLabel } from "@/lib/store";
 import { useSignals } from "@/hooks/useSupabase";
 import { useAuth } from "@/contexts/AuthContext";
+import { useComposerDirty } from "@/contexts/ComposerDirtyContext";
+import UnsavedChangesModal from "@/components/UnsavedChangesModal";
 import { cn } from "@/lib/utils";
 
 // ============================================================
@@ -134,17 +140,25 @@ const allGroups = ["core", "deals", "authoring", "output", "system", "bots", "ec
 const simplifiedGroups = ["core", "system"];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const { appUser: currentUser, signOut } = useAuth();
   const effectiveUser = currentUser || { id: "u1", name: "Loading...", email: "", role: "admin", region: "East" };
   const { data: signals } = useSignals();
   const redCount = signals.filter(s => s.severity === "red").length;
 
+  // Sidebar navigation guard via ComposerDirtyContext
+  const { guardedNavigate, showModal, closeModal, discardAndNavigate, saveAndNavigate, isSaving } = useComposerDirty();
+
   const isAdmin = effectiveUser.role === "admin";
   const navItems = (navigationV1 ? simplifiedNavItems : allNavItems).filter(item => !('adminOnly' in item && item.adminOnly) || isAdmin);
   const groupLabels = navigationV1 ? simplifiedGroupLabels : allGroupLabels;
   const groups = navigationV1 ? simplifiedGroups : allGroups;
+
+  const handleNavClick = useCallback((e: React.MouseEvent, path: string) => {
+    e.preventDefault();
+    guardedNavigate(() => navigate(path));
+  }, [guardedNavigate, navigate]);
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -191,19 +205,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   const isActive = location === item.path || (item.path !== "/" && location.startsWith(item.path));
                   const Icon = item.icon;
                   return (
-                    <Link key={item.path} href={item.path}>
-                      <div
-                        className={cn(
-                          "flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm transition-colors mb-0.5",
-                          isActive
-                            ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                            : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-                        )}
-                      >
-                        <Icon className="w-4 h-4 shrink-0" />
-                        {!collapsed && <span>{item.label}</span>}
-                      </div>
-                    </Link>
+                    <a
+                      key={item.path}
+                      href={item.path}
+                      onClick={(e) => handleNavClick(e, item.path)}
+                      className={cn(
+                        "flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm transition-colors mb-0.5 cursor-pointer",
+                        isActive
+                          ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                          : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                      )}
+                    >
+                      <Icon className="w-4 h-4 shrink-0" />
+                      {!collapsed && <span>{item.label}</span>}
+                    </a>
                   );
                 })}
               </div>
@@ -279,6 +294,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {children}
         </main>
       </div>
+
+      {/* Sidebar Navigation Guard Modal */}
+      <UnsavedChangesModal
+        open={showModal}
+        saving={isSaving}
+        onSaveAndLeave={saveAndNavigate}
+        onLeaveWithoutSaving={discardAndNavigate}
+        onCancel={closeModal}
+      />
     </div>
   );
 }

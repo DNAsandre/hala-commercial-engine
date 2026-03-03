@@ -91,6 +91,8 @@ import { fetchDocInstanceById } from "@/hooks/useDocuments";
 import { handleSupabaseError } from "@/lib/supabase-error";
 import UnsavedChangesModal from "@/components/UnsavedChangesModal";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useComposerDirty } from "@/contexts/ComposerDirtyContext";
+import VersionHistoryPanel from "@/components/VersionHistoryPanel";
 
 // ============================================================
 // TYPES
@@ -1058,6 +1060,19 @@ export default function DocumentComposer({
   // beforeunload + popstate guard
   useUnsavedChangesGuard(isDirty);
 
+  // Bridge dirty state to global context (for sidebar navigation guard)
+  const composerDirty = useComposerDirty();
+  useEffect(() => {
+    composerDirty.setDirty(isDirty);
+  }, [isDirty]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Cleanup: unregister dirty state when composer unmounts
+  useEffect(() => {
+    return () => {
+      composerDirty.setDirty(false);
+      composerDirty.registerSaveHandler(null);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Listen for browser back attempts (from the guard hook)
   useEffect(() => {
     const handler = () => {
@@ -1490,7 +1505,12 @@ export default function DocumentComposer({
     }
   }, [document, onSave, isSaving]);
 
-  // Auto-save every 15 seconds when dirty
+  // Register save handler with global context (for sidebar navigation guard)
+  useEffect(() => {
+    composerDirty.registerSaveHandler(() => handleSave({ silent: true }));
+  }, [handleSave]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-save every 5 seconds when dirty (reduced from 15s for reliability)
   useEffect(() => {
     if (autoSaveTimerRef.current) {
       clearInterval(autoSaveTimerRef.current);
@@ -1499,7 +1519,7 @@ export default function DocumentComposer({
     if (isDirty && mode !== "canon") {
       autoSaveTimerRef.current = setInterval(() => {
         handleSave({ silent: true });
-      }, 15000);
+      }, 5000);
     }
     return () => {
       if (autoSaveTimerRef.current) {
@@ -2011,6 +2031,29 @@ export default function DocumentComposer({
               </div>
             </ScrollArea>
           </div>
+
+          {/* Version History */}
+          <VersionHistoryPanel
+            docInstanceId={document.id}
+            currentVersion={document.version}
+            onRestore={(version: any) => {
+              setDocumentDirty(prev => ({
+                ...prev,
+                blocks: version.blocks.map((b: any, i: number) => ({
+                  id: b.id || `blk-restored-${i}`,
+                  block_key: b.block_key,
+                  order: b.order ?? i + 1,
+                  content: b.content || "",
+                  is_locked: b.is_locked ?? false,
+                  is_ai_generated: b.is_ai_generated ?? false,
+                  config: b.config || {},
+                })),
+                bindings: version.bindings || prev.bindings,
+                updated_at: new Date().toISOString(),
+              }));
+              toast.success(`Restored version ${version.version_number}`);
+            }}
+          />
 
           {/* Data Bindings */}
           <div className="p-3">

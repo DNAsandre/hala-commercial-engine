@@ -1,3 +1,14 @@
+# Sprint 5 — UX Reliability Improvements
+
+Rollback point: `e65d6c6b` (P0 Navigation Guard checkpoint)
+
+## Tasks
+- [x] 1. Sidebar navigation guards — wrap sidebar links with isDirty guard
+- [x] 2. Reduce autosave interval from 15s → 5s, keep "Save Now" on-demand
+- [x] 3. Version history UI panel — view/restore previous doc versions
+
+---
+
 # Governance Compliance Audit — TODO
 
 ## 1. Policy Gate Enforcement Structure
