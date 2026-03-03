@@ -23,7 +23,7 @@ import {
   Upload, FileText, ChevronDown, ChevronRight,
   Loader2, AlertTriangle, Zap, Brain,
   Shield, RefreshCw, CheckCircle, Eye,
-  CloudOff, PenTool, Scale, Mic,
+  CloudOff, PenTool, Scale, Mic, BookOpen,
 } from "lucide-react";
 import {
   type EditorBot, type DocumentBlockSuggestion, type DocumentRunMode,
@@ -475,6 +475,23 @@ export default function DocumentAIPanel({
                           </div>
                           <div className="text-[10px] text-violet-900/80 max-h-[80px] overflow-auto prose prose-xs"
                             dangerouslySetInnerHTML={{ __html: suggestion.suggested_text }} />
+                          {/* Per-block citations */}
+                          {suggestion.citations && suggestion.citations.length > 0 && (
+                            <div className="mt-1.5 pt-1.5 border-t border-violet-200">
+                              <div className="flex items-center gap-1 mb-1">
+                                <BookOpen size={8} className="text-indigo-500" />
+                                <span className="text-[8px] font-semibold text-indigo-600 uppercase">Sources</span>
+                              </div>
+                              <div className="space-y-0.5">
+                                {suggestion.citations.map((c, ci) => (
+                                  <div key={ci} className="text-[9px] text-indigo-600/80 truncate">
+                                    <span className="font-mono text-[8px] bg-indigo-100 rounded px-0.5 mr-1">{ci + 1}</span>
+                                    {c.source} #{c.chunkIndex}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}

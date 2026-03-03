@@ -27,6 +27,7 @@ import { Separator } from "@/components/ui/separator";
 import { useUsers } from "@/hooks/useSupabase";
 import { Loader2 } from "lucide-react";
 import { navigationV1 } from "@/components/DashboardLayout";
+import { fetchCollections, type KBCollection } from "@/lib/knowledgebase";
 import { toast } from "sonner";
 import {
   adminCreateUser,
@@ -45,6 +46,56 @@ import {
 } from "@/lib/ai-client";
 
 /* ─── AI Providers Embed (inline in Admin tab) ─── */
+function KnowledgebaseEmbed() {
+  const [collections, setKBCollections] = useState<KBCollection[]>([]);
+  const [kbLoading, setKBLoading] = useState(true);
+
+  useEffect(() => {
+    fetchCollections().then((c) => { setKBCollections(c); setKBLoading(false); });
+  }, []);
+
+  if (kbLoading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-3">
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-2xl font-bold text-[#1B2A4A]">{collections.length}</div>
+            <div className="text-xs text-muted-foreground">Collections</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-2xl font-bold text-blue-600">{collections.reduce((s, c) => s + (c.doc_count || 0), 0)}</div>
+            <div className="text-xs text-muted-foreground">Documents</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-2xl font-bold text-emerald-600">{collections.reduce((s, c) => s + (c.chunk_count || 0), 0)}</div>
+            <div className="text-xs text-muted-foreground">Total Chunks</div>
+          </CardContent>
+        </Card>
+      </div>
+      <div className="space-y-2">
+        {collections.map(col => (
+          <Card key={col.id}>
+            <CardContent className="p-3 flex items-center justify-between">
+              <div className="min-w-0">
+                <div className="text-sm font-medium truncate">{col.name}</div>
+                <div className="text-[10px] text-muted-foreground">{col.doc_count || 0} docs · {col.chunk_count || 0} chunks · {col.visibility}</div>
+              </div>
+              <Badge variant={col.visibility === "admin-only" ? "destructive" : "secondary"} className="text-[10px]">{col.visibility}</Badge>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">Use the full page to create collections, upload documents, and manage chunks for AI bot context retrieval.</p>
+    </div>
+  );
+}
+
 function AIProvidersEmbed() {
   const [providers, setProviders] = useState<AIProvider[]>([]);
   const [loading, setLoading] = useState(true);
@@ -523,6 +574,8 @@ export default function AdminPanel() {
           <TabsTrigger value="integrations"><Link2 className="w-3.5 h-3.5 mr-1.5" />Integrations</TabsTrigger>
           <TabsTrigger value="settings"><Settings className="w-3.5 h-3.5 mr-1.5" />Settings</TabsTrigger>
           <TabsTrigger value="ai-providers"><Brain className="w-3.5 h-3.5 mr-1.5" />AI Providers</TabsTrigger>
+          <TabsTrigger value="editor-bots"><Zap className="w-3.5 h-3.5 mr-1.5" />Editor Bots</TabsTrigger>
+          <TabsTrigger value="knowledgebase"><Database className="w-3.5 h-3.5 mr-1.5" />Knowledgebase</TabsTrigger>
         </TabsList>
 
         {/* ─── Document System Tab (navigationV1 only) ─── */}
@@ -973,6 +1026,61 @@ export default function AdminPanel() {
             </Link>
           </div>
           <AIProvidersEmbed />
+        </TabsContent>
+
+        {/* ─── Editor Bots Tab ─── */}
+        <TabsContent value="editor-bots" className="space-y-4">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h2 className="text-base font-semibold">Editor AI Bots</h2>
+              <p className="text-xs text-muted-foreground">Manage bots used in the Document Composer for block and document-level AI generation</p>
+            </div>
+            <Link href="/editor-bot-builder">
+              <Button variant="outline" size="sm" className="gap-1.5">
+                <Zap className="w-3.5 h-3.5" />
+                Open Full Page
+                <ChevronRight className="w-3 h-3" />
+              </Button>
+            </Link>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <Card>
+              <CardContent className="p-4">
+                <div className="text-2xl font-bold text-[#1B2A4A]">8</div>
+                <div className="text-xs text-muted-foreground">Total Editor Bots</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="text-2xl font-bold text-blue-600">4</div>
+                <div className="text-xs text-muted-foreground">Block Bots</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="text-2xl font-bold text-purple-600">4</div>
+                <div className="text-xs text-muted-foreground">Document Bots</div>
+              </CardContent>
+            </Card>
+          </div>
+          <p className="text-xs text-muted-foreground">Use the full page to create, edit, test, and manage editor bots with system prompts, provider configuration, and document type permissions.</p>
+        </TabsContent>
+
+        <TabsContent value="knowledgebase" className="space-y-4">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h2 className="text-base font-semibold">Knowledgebase</h2>
+              <p className="text-xs text-muted-foreground">Manage document collections used by AI bots for context retrieval and citations</p>
+            </div>
+            <Link href="/knowledgebase">
+              <Button variant="outline" size="sm" className="gap-1.5">
+                <Database className="w-3.5 h-3.5" />
+                Open Full Page
+                <ChevronRight className="w-3 h-3" />
+              </Button>
+            </Link>
+          </div>
+          <KnowledgebaseEmbed />
         </TabsContent>
       </Tabs>
 

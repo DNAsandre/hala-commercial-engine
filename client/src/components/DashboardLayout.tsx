@@ -217,7 +217,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   </div>
                 )}
                 {groupItems.map(item => {
-                  const isActive = location === item.path || (item.path !== "/" && location.startsWith(item.path));
+                  const isActive = location === item.path || (item.path !== "/" && item.path !== "/admin" && location.startsWith(item.path));
                   const Icon = item.icon;
                   return (
                     <a

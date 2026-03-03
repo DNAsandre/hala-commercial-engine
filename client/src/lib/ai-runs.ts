@@ -11,6 +11,13 @@
 
 import { syncAuditEntry } from "@/lib/supabase-sync";
 import { getCurrentUser } from "@/lib/auth-state";
+import { generateAI, type AIProviderName } from "@/lib/ai-client";
+import {
+  retrieveContext,
+  formatRetrievedContext,
+  createBotRun,
+  type RetrievedChunk,
+} from "@/lib/knowledgebase";
 
 // ============================================================
 // TYPES
@@ -64,6 +71,15 @@ export interface DocumentBlockSuggestion {
   original_text: string;
   suggested_text: string;
   selected: boolean;
+  citations?: { source: string; chunkIndex: number; snippet: string }[];
+}
+
+export interface BlockGenerateResult {
+  content: string;
+  tokens_input: number;
+  tokens_output: number;
+  retrieved_chunks: RetrievedChunk[];
+  citations: { source: string; chunkIndex: number; snippet: string }[];
 }
 
 // ============================================================
@@ -344,41 +360,197 @@ const BLOCK_MOCK_RESPONSES: Record<string, string> = {
   "default": "<p><strong>[AI GENERATED — Default Section]</strong></p><p>Hala Supply Chain Services delivers comprehensive logistics solutions designed to optimize your supply chain performance. Our team of experienced professionals works closely with each client to develop customized solutions that address specific operational challenges while maintaining the highest standards of service quality and regulatory compliance.</p>",
 };
 
-export function generateBlockContent(
-  _botId: string,
+export async function generateBlockContent(
+  botId: string,
   blockFamily: string,
-  _prompt: string,
-  _blockContent: string,
-  _transcript: string | null,
-): Promise<{ content: string; tokens_input: number; tokens_output: number }> {
+  prompt: string,
+  blockContent: string,
+  transcript: string | null,
+  docInstanceId?: string,
+  workspaceId?: string,
+): Promise<BlockGenerateResult> {
+  const bot = getEditorBotById(botId);
+
+  // 1. Retrieve KB context
+  let retrievedChunks: RetrievedChunk[] = [];
+  let kbContext = "";
+  try {
+    retrievedChunks = await retrieveContext(botId, prompt + " " + blockContent.replace(/<[^>]*>/g, "").substring(0, 200), 5);
+    if (retrievedChunks.length > 0) {
+      kbContext = formatRetrievedContext(retrievedChunks);
+    }
+  } catch (err) {
+    console.warn("[ai-runs] KB retrieval failed:", (err as Error).message);
+  }
+
+  // 2. Try real AI via Edge Functions
+  if (bot) {
+    try {
+      const userPrompt = [
+        prompt,
+        blockContent ? `\n\nExisting block content:\n${blockContent.replace(/<[^>]*>/g, "")}` : "",
+        transcript ? `\n\nTranscript reference:\n${transcript.substring(0, 3000)}` : "",
+        kbContext ? `\n\nKnowledgebase context:\n${kbContext}` : "",
+        retrievedChunks.length > 0 ? `\n\nIMPORTANT: Cite sources using [Source: DocumentTitle #ChunkIndex] format when using KB context.` : "",
+      ].join("");
+
+      const result = await generateAI({
+        provider: bot.provider as AIProviderName,
+        model: bot.model,
+        systemPrompt: bot.system_prompt,
+        userPrompt,
+        temperature: 0.7,
+        action: "block_generate",
+      });
+
+      // 3. Create bot_run trace
+      createBotRun({
+        bot_id: botId,
+        bot_name: bot.name,
+        doc_instance_id: docInstanceId || null,
+        workspace_id: workspaceId || null,
+        scope: "block",
+        target_block_ids: null,
+        prompt,
+        provider: bot.provider,
+        model: bot.model,
+        kb_collections: Array.from(new Set(retrievedChunks.map(c => c.collection_name))),
+        retrieved_chunks: retrievedChunks,
+        output: { text: result.content },
+        status: "draft",
+      });
+
+      const citations = extractCitationsFromChunks(retrievedChunks);
+
+      return {
+        content: result.content,
+        tokens_input: result.tokensInput,
+        tokens_output: result.tokensOutput,
+        retrieved_chunks: retrievedChunks,
+        citations,
+      };
+    } catch (err) {
+      console.warn("[ai-runs] Edge Function unavailable, falling back to mock:", (err as Error).message);
+    }
+  }
+
+  // 4. Fallback: mock response with KB citations appended
   return new Promise((resolve) => {
     setTimeout(() => {
-      const content = BLOCK_MOCK_RESPONSES[blockFamily] || BLOCK_MOCK_RESPONSES["default"];
+      let content = BLOCK_MOCK_RESPONSES[blockFamily] || BLOCK_MOCK_RESPONSES["default"];
+      const citations = extractCitationsFromChunks(retrievedChunks);
+
+      if (retrievedChunks.length > 0) {
+        const refs = retrievedChunks.slice(0, 3).map(c => `[Source: ${c.document_title} #${c.chunk_index}]`).join(" ");
+        content += `<p class="text-xs text-muted-foreground mt-2"><em>${refs}</em></p>`;
+      }
+
+      // Create bot_run trace for mock too
+      if (bot) {
+        createBotRun({
+          bot_id: botId,
+          bot_name: bot.name,
+          doc_instance_id: docInstanceId || null,
+          workspace_id: workspaceId || null,
+          scope: "block",
+          target_block_ids: null,
+          prompt,
+          provider: bot.provider,
+          model: bot.model,
+          kb_collections: Array.from(new Set(retrievedChunks.map(c => c.collection_name))),
+          retrieved_chunks: retrievedChunks,
+          output: { text: content },
+          status: "draft",
+        });
+      }
+
       resolve({
         content,
         tokens_input: Math.floor(Math.random() * 500) + 200,
         tokens_output: Math.floor(Math.random() * 800) + 300,
+        retrieved_chunks: retrievedChunks,
+        citations,
       });
     }, 1500 + Math.random() * 1000);
   });
 }
 
-export function generateDocumentContent(
-  _botId: string,
+function extractCitationsFromChunks(chunks: RetrievedChunk[]): { source: string; chunkIndex: number; snippet: string }[] {
+  return chunks.slice(0, 5).map(c => ({
+    source: c.document_title,
+    chunkIndex: c.chunk_index,
+    snippet: c.content.substring(0, 120),
+  }));
+}
+
+export async function generateDocumentContent(
+  botId: string,
   blocks: { id: string; key: string; name: string; content: string }[],
-  _prompt: string,
-  _transcript: string | null,
+  prompt: string,
+  transcript: string | null,
   runMode: DocumentRunMode,
 ): Promise<{ suggestions: DocumentBlockSuggestion[]; tokens_input: number; tokens_output: number }> {
+  // Try real AI via Edge Functions first
+  const bot = getEditorBotById(botId);
+  if (bot) {
+    try {
+      const blockSummary = blocks.map(b => `[${b.key}] ${b.name}: ${b.content.replace(/<[^>]*>/g, "").substring(0, 200)}`).join("\n");
+      const userPrompt = [
+        `Run mode: ${runMode}`,
+        prompt ? `\nUser instructions: ${prompt}` : "",
+        `\n\nDocument blocks:\n${blockSummary}`,
+        transcript ? `\n\nTranscript:\n${transcript.substring(0, 5000)}` : "",
+        `\n\nReturn a JSON array of objects: [{"block_id": "...", "block_key": "...", "block_name": "...", "suggested_text": "<html content>"}]`,
+      ].join("");
+
+      const result = await generateAI({
+        provider: bot.provider as AIProviderName,
+        model: bot.model,
+        systemPrompt: bot.system_prompt,
+        userPrompt,
+        temperature: 0.5,
+        action: `document_${runMode}`,
+      });
+
+      // Parse AI response as JSON array
+      try {
+        const parsed = JSON.parse(result.content);
+        if (Array.isArray(parsed)) {
+          const suggestions: DocumentBlockSuggestion[] = parsed.map((s: any) => {
+            const matchBlock = blocks.find(b => b.id === s.block_id || b.key === s.block_key);
+            return {
+              block_id: s.block_id || matchBlock?.id || "",
+              block_key: s.block_key || matchBlock?.key || "",
+              block_name: s.block_name || matchBlock?.name || "",
+              original_text: matchBlock?.content || "",
+              suggested_text: s.suggested_text || "",
+              selected: true,
+            };
+          }).filter((s: DocumentBlockSuggestion) => s.block_id && s.suggested_text);
+
+          return {
+            suggestions,
+            tokens_input: result.tokensInput,
+            tokens_output: result.tokensOutput,
+          };
+        }
+      } catch {
+        console.warn("[ai-runs] Could not parse AI document response as JSON, falling back to mock");
+      }
+    } catch (err) {
+      console.warn("[ai-runs] Edge Function unavailable, falling back to mock:", (err as Error).message);
+    }
+  }
+
+  // Fallback: mock response
   return new Promise((resolve) => {
     setTimeout(() => {
-      // Simulate AI returning suggestions for a subset of blocks
       const suggestions: DocumentBlockSuggestion[] = blocks
         .filter((_, i) => {
           if (runMode === "rewrite_all") return true;
-          if (runMode === "spellcheck") return i % 2 === 0; // every other block
+          if (runMode === "spellcheck") return i % 2 === 0;
           if (runMode === "legal_review") return blocks[i].key.includes("legal") || i === 0;
-          return !blocks[i].content || blocks[i].content.length < 50 || i < 3; // fill_missing
+          return !blocks[i].content || blocks[i].content.length < 50 || i < 3;
         })
         .map(block => ({
           block_id: block.id,

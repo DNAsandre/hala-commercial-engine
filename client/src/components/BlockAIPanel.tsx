@@ -22,7 +22,7 @@ import {
   Mic, Upload, FileText, ChevronDown, ChevronRight,
   Loader2, AlertTriangle, Wand2, PenTool, Shield,
   Scale, CheckCircle, RefreshCw, Eye, Copy,
-  Zap, Brain, CloudOff,
+  Zap, Brain, CloudOff, BookOpen,
 } from "lucide-react";
 import {
   type EditorBot, type AIRun,
@@ -83,6 +83,8 @@ export default function BlockAIPanel({
   const [draftContent, setDraftContent] = useState<string | null>(null);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   const [edgeFunctionError, setEdgeFunctionError] = useState(false);
+  const [draftCitations, setDraftCitations] = useState<{ source: string; chunkIndex: number; snippet: string }[]>([]);
+  const [draftChunkCount, setDraftChunkCount] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -102,6 +104,8 @@ export default function BlockAIPanel({
     setCurrentRunId(null);
     setIsGenerating(false);
     setEdgeFunctionError(false);
+    setDraftCitations([]);
+    setDraftChunkCount(0);
   }, [block?.id]);
 
   const selectedBot = useMemo(() =>
@@ -150,7 +154,9 @@ export default function BlockAIPanel({
 
       setDraftContent(result.content);
       setCurrentRunId(run.id);
-      toast.success("AI draft ready — review before applying");
+      setDraftCitations(result.citations || []);
+      setDraftChunkCount(result.retrieved_chunks?.length || 0);
+      toast.success(`AI draft ready — ${result.retrieved_chunks?.length || 0} KB chunks used`);
     } catch (err) {
       setEdgeFunctionError(true);
       toast.error("AI generation failed — check provider configuration");
@@ -430,6 +436,27 @@ export default function BlockAIPanel({
                   className="h-7 text-[10px] border-red-300 text-red-600 hover:bg-red-50">
                   <XCircle size={11} className="mr-1" /> Discard
                 </Button>
+              </div>
+            </div>
+          )}
+
+          {/* KB Citations */}
+          {draftCitations.length > 0 && draftContent && (
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-1.5 border-b border-indigo-200 bg-indigo-100/50">
+                <BookOpen size={11} className="text-indigo-600" />
+                <span className="text-[10px] font-semibold text-indigo-700">KB Sources ({draftChunkCount} chunks retrieved)</span>
+              </div>
+              <div className="p-2 space-y-1.5 max-h-[120px] overflow-auto">
+                {draftCitations.map((c, i) => (
+                  <div key={i} className="flex items-start gap-1.5 text-[10px]">
+                    <span className="shrink-0 w-4 h-4 rounded bg-indigo-200 text-indigo-700 flex items-center justify-center font-mono text-[8px]">{i + 1}</span>
+                    <div className="min-w-0">
+                      <span className="font-medium text-indigo-800">{c.source} #{c.chunkIndex}</span>
+                      <p className="text-indigo-600/70 truncate">{c.snippet}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}

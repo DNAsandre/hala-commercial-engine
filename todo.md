@@ -273,6 +273,56 @@ Rollback point: `d82abfa9` (Sprint 9b Cost Estimation checkpoint)
 
 ---
 
+# Sprint 11 — Bot Builder Integration + Knowledgebase Upload + Execution Wiring
+
+Rollback point: `6b82904c` (Sprint 10 Bug Fixes checkpoint)
+
+## Pre-Sprint Fixes
+- [x] Fix Governance/Admin sidebar active state collision (/admin vs /admin-panel)
+- [x] Build AI Run History sidebar in DocumentComposer right sidebar
+- [x] Build EditorBotBuilder admin page with full CRUD for editor bots
+- [x] Wire Edge Function integration (try real AI → fallback to mock)
+
+## A) Knowledgebase Engine
+- [x] Create knowledgebase.ts data model (collections, documents, chunks, embeddings, bot-KB links, bot runs)
+- [x] Paragraph-aware chunking engine (1000-char target, 150-char overlap)
+- [x] Keyword-based retrieval with relevance scoring
+- [x] Citation extraction and formatting (extractCitations, formatRetrievedContext)
+- [x] Seed data: 4 collections, 8 documents, pre-chunked
+- [x] Supabase-first persistence with in-memory fallback
+
+## B) Admin Knowledgebase Manager UI
+- [x] Full page at /knowledgebase (collections grid, create form, doc upload/paste, chunk viewer)
+- [x] Embedded tab in Admin Panel
+- [x] Route registered with admin-only access
+
+## C) Enhanced Bot Builder
+- [x] KBAttachmentManager component: attach/detach KB collections with priority ordering
+- [x] TestBotPanel with real KB retrieval: searches linked collections, shows chunks + relevance scores
+- [x] Doc type context selector in test panel
+- [x] Bot_run trace creation with retrieved chunks
+
+## D) Execution Pipeline
+- [x] generateBlockContent: KB retrieval → context injection → generateAI → bot_run trace → citations
+- [x] BlockGenerateResult type with retrieved_chunks and citations
+- [x] Bot_run records created for both real AI and mock fallback
+- [x] Array.from(new Set()) for collection names (ES target fix)
+
+## E) Citation Display
+- [x] BlockAIPanel: KB Sources section (chunk count, source names, indices, snippet previews)
+- [x] DocumentAIPanel: Per-block citations below each AI suggestion
+- [x] BookOpen icon for citation sections
+
+## F) Acceptance
+- [x] 0 TypeScript errors
+- [x] Browser test: Block AI with KB citations — sparkle opens panel, generate draft, apply replaces block content
+- [x] Browser test: Document AI with per-block citations — transcript paste, generate suggestions, selective apply (2 of 3)
+- [x] Browser test: Editor Bot Builder KB attachment + test panel — 8 bots (4 block + 4 doc), stats display
+- [x] Browser test: Knowledgebase Manager collections + upload — 4 collections, 11 docs, 64 chunks
+- [x] Browser test: AI Run History sidebar — shows 2 runs after block + doc AI operations
+
+---
+
 # Governance Compliance Audit — TODO
 
 ## 1. Policy Gate Enforcement Structure

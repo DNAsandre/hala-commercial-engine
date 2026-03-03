@@ -95,6 +95,7 @@ import { useComposerDirty } from "@/contexts/ComposerDirtyContext";
 import VersionHistoryPanel from "@/components/VersionHistoryPanel";
 import BlockAIPanel from "@/components/BlockAIPanel";
 import DocumentAIPanel from "@/components/DocumentAIPanel";
+import AIRunHistory from "@/components/AIRunHistory";
 
 // ============================================================
 // TYPES
@@ -2131,6 +2132,20 @@ export default function DocumentComposer({
                 updated_at: new Date().toISOString(),
               }));
               toast.success(`Restored version ${version.version_number}`);
+            }}
+          />
+
+          {/* AI Run History */}
+          <AIRunHistory
+            docInstanceId={document.id}
+            onReapply={(run) => {
+              if (run.target_scope === "block" && run.target_block_ids[0]) {
+                setBlockAIPanelBlockId(run.target_block_ids[0]);
+                setShowBlockAIPanel(true);
+              } else {
+                setShowDocAIPanel(true);
+              }
+              toast.info(`Viewing AI run from ${run.bot_name}`);
             }}
           />
 
