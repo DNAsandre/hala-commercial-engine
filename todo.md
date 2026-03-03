@@ -9,6 +9,46 @@ Rollback point: `e65d6c6b` (P0 Navigation Guard checkpoint)
 
 ---
 
+# Sprint 6 — SLA Integrity Guard (Commercial Risk Control)
+
+Rollback point: `4b41b004` (Sprint 5 UX Reliability checkpoint)
+
+## A) Stage threshold for lock
+- [x] Identify workspace stages used for SLA lifecycle
+- [x] Create isPricingLocked(workspace) function
+
+## B) Pricing lock enforcement
+- [x] UI: Disable selling-rate fields when locked
+- [x] Mutation: Block updates unless override provided
+- [x] Override flow: Admin-only, reason modal (min 10 chars), audit_log entry
+
+## C) Cost edit prevention by role
+- [x] Identify all cost fields in P&L / pricing models
+- [x] UI: Disable/hide cost controls for Sales
+- [x] Mutation: Block cost updates by Sales with toast
+
+## D) SLA Verification Checklist
+- [x] Create sla_verification_checklists table (SQL migration)
+- [x] Build checklist component for SLA/Contract screens
+- [x] Gate: Block stage advance to SLA Sent/Contract Ready until complete
+- [x] Admin override with reason + audit
+
+## E) SLA vs P&L delta warning + gate
+- [x] Compute delta between SLA terms and approved P&L snapshot
+- [x] Show warning banner when delta exceeds thresholds
+- [x] Block stage move unless Admin override with reason + audit
+
+## F) Acceptance Tests
+- [x] Pricing inputs read-only at SLA Drafting
+- [x] Sales pricing edit blocked (UI + mutation)
+- [x] Admin override pricing lock with reason + audit
+- [x] Sales cost edit blocked
+- [x] Checklist completion gates stage move
+- [x] Delta warning triggers correctly
+- [x] 0 TypeScript errors, no RLS regression
+
+---
+
 # Governance Compliance Audit — TODO
 
 ## 1. Policy Gate Enforcement Structure

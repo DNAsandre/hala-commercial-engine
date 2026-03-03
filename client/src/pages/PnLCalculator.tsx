@@ -1,12 +1,16 @@
 import { Link } from "wouter";
 import { useState } from "react";
-import { Calculator, Download , ArrowLeft } from "lucide-react";
+import { Calculator, Download, ArrowLeft, Lock, ShieldAlert } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { formatSAR, formatPercent } from "@/lib/store";
 import { toast } from "sonner";
+import { getCurrentUser } from "@/lib/auth-state";
+import { canEditCosts, COST_BLOCKED_ROLES } from "@/lib/sla-integrity";
+import type { UserRole } from "@/lib/store";
 
 export default function PnLCalculator() {
   const [storageRate, setStorageRate] = useState(40);
@@ -22,6 +26,10 @@ export default function PnLCalculator() {
   const [insuranceCost, setInsuranceCost] = useState(5000);
   const [otherCost, setOtherCost] = useState(8000);
 
+  const user = getCurrentUser();
+  const userRole = user.role as UserRole;
+  const costEditable = canEditCosts(userRole);
+
   const storageRev = storageRate * pallets * 30;
   const inboundRev = inboundRate * inboundVol;
   const outboundRev = outboundRate * outboundVol;
@@ -33,6 +41,16 @@ export default function PnLCalculator() {
   const annualOpex = totalMonthlyOpex * 12;
   const grossProfit = annualRev - annualOpex;
   const gpPercent = annualRev > 0 ? (grossProfit / annualRev) * 100 : 0;
+
+  const handleCostChange = (setter: (v: number) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!costEditable) {
+      toast.error("Cost editing restricted", {
+        description: "Sales roles cannot modify cost fields. Contact Ops, Finance, or Admin.",
+      });
+      return;
+    }
+    setter(Number(e.target.value));
+  };
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
@@ -56,14 +74,52 @@ export default function PnLCalculator() {
               ))}
             </div>
           </CardContent></Card>
-          <Card className="border border-border shadow-none"><CardHeader className="pb-3"><CardTitle className="text-base font-serif">Cost Model</CardTitle></CardHeader><CardContent className="pt-0">
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              {[{ l: "Facility Cost/mo", v: facilityCost, s: setFacilityCost }, { l: "Staff Cost/mo", v: staffCost, s: setStaffCost }, { l: "MHE Cost/mo", v: mheCost, s: setMheCost }, { l: "Insurance/mo", v: insuranceCost, s: setInsuranceCost }, { l: "Other Operational/mo", v: otherCost, s: setOtherCost }].map(f => (
-                <div key={f.l}><Label className="text-xs">{f.l}</Label><Input type="number" value={f.v} onChange={e => f.s(Number(e.target.value))} className="mt-1 h-8 text-sm data-value" /></div>
-              ))}
-              <div><Label className="text-xs">G&A (10% of OPEX)</Label><div className="mt-1 h-8 flex items-center text-sm data-value text-muted-foreground">{formatSAR(gaCost)}/mo</div></div>
-            </div>
-          </CardContent></Card>
+
+          {/* Cost Model — role-gated */}
+          <Card className={`border shadow-none ${!costEditable ? "border-amber-300 bg-amber-50/20" : "border-border"}`}>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base font-serif flex items-center gap-2">
+                  Cost Model
+                  {!costEditable && (
+                    <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 bg-amber-50 ml-1">
+                      <Lock className="w-3 h-3 mr-1" />READ-ONLY
+                    </Badge>
+                  )}
+                </CardTitle>
+              </div>
+              {!costEditable && (
+                <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">
+                  <ShieldAlert className="w-3 h-3" />
+                  Cost fields are restricted for Sales roles. Contact Ops, Finance, or Admin to modify.
+                </p>
+              )}
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                {[
+                  { l: "Facility Cost/mo", v: facilityCost, s: setFacilityCost },
+                  { l: "Staff Cost/mo", v: staffCost, s: setStaffCost },
+                  { l: "MHE Cost/mo", v: mheCost, s: setMheCost },
+                  { l: "Insurance/mo", v: insuranceCost, s: setInsuranceCost },
+                  { l: "Other Operational/mo", v: otherCost, s: setOtherCost },
+                ].map(f => (
+                  <div key={f.l}>
+                    <Label className="text-xs">{f.l}</Label>
+                    <Input
+                      type="number"
+                      value={f.v}
+                      onChange={handleCostChange(f.s)}
+                      readOnly={!costEditable}
+                      tabIndex={!costEditable ? -1 : undefined}
+                      className={`mt-1 h-8 text-sm data-value ${!costEditable ? "opacity-60 cursor-not-allowed bg-muted/50" : ""}`}
+                    />
+                  </div>
+                ))}
+                <div><Label className="text-xs">G&A (10% of OPEX)</Label><div className="mt-1 h-8 flex items-center text-sm data-value text-muted-foreground">{formatSAR(gaCost)}/mo</div></div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
         <div className="space-y-6">
           <Card className="border border-border shadow-none bg-muted/30"><CardHeader className="pb-3"><CardTitle className="text-base font-serif flex items-center gap-2"><Calculator className="w-4 h-4" />P&L Summary</CardTitle></CardHeader><CardContent className="pt-0 space-y-3">

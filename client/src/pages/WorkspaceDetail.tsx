@@ -7,7 +7,7 @@ import {
   FolderOpen, Upload, Eye, Edit, Download, FileSignature, RefreshCw, CalendarClock,
   User, BarChart3, Plus, ToggleLeft, ToggleRight, Link2, Archive, RotateCcw,
   FileUp, Filter, Search, Trash2, DollarSign, TrendingUp, ExternalLink, Truck,
-  ClipboardList, PackageCheck, Landmark, Scale
+  ClipboardList, PackageCheck, Landmark, Scale, Lock
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +48,11 @@ import { resolveOrCreateDocInstanceAsync } from "@/hooks/useResolveDocInstance";
 import { useDocInstances, type HydratedDocInstance } from "@/hooks/useDocuments";
 import { navigationV1 } from "@/components/DashboardLayout";
 import { handleSupabaseError } from "@/lib/supabase-error";
+import { isPricingLocked, getPricingLockReason, canOverridePricingLock, logOverrideAudit, canEditCosts, type DeltaReport } from "@/lib/sla-integrity";
+import { PricingLockOverrideModal } from "@/components/PricingLockOverrideModal";
+import { SlaVerificationChecklistComponent } from "@/components/SlaVerificationChecklist";
+import { SlaVsPnlDeltaBanner } from "@/components/SlaVsPnlDeltaBanner";
+import { usePnLByWorkspace } from "@/hooks/useSupabase";
 import {
   isWorkspaceIntegrationEnabled, getOrCreateCycle, startRenewal, updateRenewalOwner,
   getDaysToExpiry, isInRenewalWindow, getSupportingDocs, uploadSupportingDoc,
@@ -122,6 +127,12 @@ export default function WorkspaceDetail() {
   // Doc instances refetch trigger
   const [docRefetchKey, setDocRefetchKey] = useState(0);
 
+  // SLA Integrity Guard state
+  const [pricingOverrideOpen, setPricingOverrideOpen] = useState(false);
+  const [pricingOverrideField, setPricingOverrideField] = useState("");
+  const [slaChecklistComplete, setSlaChecklistComplete] = useState(false);
+  const [deltaReport, setDeltaReport] = useState<DeltaReport | null>(null);
+
   // Supporting docs state
   const [supportDocFilter, setSupportDocFilter] = useState<string>("all");
   const [showSupportUpload, setShowSupportUpload] = useState(false);
@@ -156,6 +167,7 @@ export default function WorkspaceDetail() {
   const { data: allSignals, loading: sigLoading } = useSignals();
   const { data: allAuditLog, loading: auditLoading } = useSupabaseAuditLog();
   const { data: docInstances, loading: diLoading } = useDocInstances({ workspace_id: id! }, docRefetchKey);
+  const { data: wsPnL, loading: pnlLoading } = usePnLByWorkspace(id!);
 
   // Canonical document lists from doc_instances (Wave 2)
   const docQuotes = useMemo(() => docInstances.filter(d => d.doc_type === "quote"), [docInstances]);
@@ -199,7 +211,7 @@ export default function WorkspaceDetail() {
     return () => { cancelled = true; };
   }, [integrationEnabled, ws?.id]);
 
-  const loading = wsLoading || qLoading || pLoading || appLoading || sigLoading || auditLoading || diLoading;
+  const loading = wsLoading || qLoading || pLoading || appLoading || sigLoading || auditLoading || diLoading || pnlLoading;
   if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   if (!ws) return (
     <div className="p-6">
@@ -239,6 +251,14 @@ export default function WorkspaceDetail() {
   const hasWarnings = preflightFailures.length > 0;
   const isStrictMode = getStrictMode();
 
+  // SLA Integrity Guard computed values
+  const pricingLocked = isPricingLocked(ws);
+  const pricingLockReason = getPricingLockReason(ws);
+  const currentUserRole = getCurrentUser().role as import("@/lib/store").UserRole;
+  const isAdminUser = currentUserRole === "admin";
+  const canEditCostFields = canEditCosts(currentUserRole);
+  const latestQuote = wsQuotes.length > 0 ? wsQuotes[0] : null;
+
   const daysToExpiry = activeCycle ? getDaysToExpiry(activeCycle.endDate) : null;
   const inRenewalWindow = activeCycle ? isInRenewalWindow(activeCycle) : false;
 
@@ -269,6 +289,47 @@ export default function WorkspaceDetail() {
   };
 
   const executeTransition = () => {
+    // SLA Integrity Guard — checklist gate (sla_drafting → contract_ready)
+    if (ws.stage === "sla_drafting" && !slaChecklistComplete && !isAdminUser) {
+      toast.error("SLA Verification Checklist incomplete", {
+        description: "All required checklist items must be verified before advancing to Contract Ready.",
+      });
+      setShowConfirm(false);
+      return;
+    }
+    if (ws.stage === "sla_drafting" && !slaChecklistComplete && isAdminUser) {
+      // Admin can override — log it
+      logOverrideAudit({
+        action: "checklist_override",
+        entityType: "workspace",
+        entityId: ws.id,
+        workspaceId: ws.id,
+        reason: overrideReason.trim() || "Admin override — checklist incomplete",
+        workspaceStage: ws.stage,
+      });
+      toast.warning("Checklist override", { description: "Admin override recorded. Advancing despite incomplete checklist." });
+    }
+
+    // SLA Integrity Guard — delta gate (sla_drafting → contract_ready)
+    if (ws.stage === "sla_drafting" && deltaReport?.hasBlockingDelta && !isAdminUser) {
+      toast.error("SLA vs P&L delta exceeds threshold", {
+        description: deltaReport.summary,
+      });
+      setShowConfirm(false);
+      return;
+    }
+    if (ws.stage === "sla_drafting" && deltaReport?.hasBlockingDelta && isAdminUser) {
+      logOverrideAudit({
+        action: "delta_gate_override",
+        entityType: "workspace",
+        entityId: ws.id,
+        workspaceId: ws.id,
+        reason: overrideReason.trim() || "Admin override — delta exceeds threshold",
+        workspaceStage: ws.stage,
+      });
+      toast.warning("Delta gate override", { description: "Admin override recorded. Advancing despite P&L delta." });
+    }
+
     setShowConfirm(false);
     const opts = hasWarnings && !isStrictMode && overrideReason.trim()
       ? { overrideReason: overrideReason.trim() } : undefined;
@@ -1134,11 +1195,24 @@ export default function WorkspaceDetail() {
                 </Card>
 
                 {/* Pricing Snapshot */}
-                <Card className="border border-border shadow-none">
+                <Card className={`border shadow-none ${pricingLocked ? "border-amber-300 bg-amber-50/20" : "border-border"}`}>
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-base font-serif flex items-center gap-2">
-                      <TrendingUp className="w-4 h-4" /> Pricing Snapshot
-                    </CardTitle>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base font-serif flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4" /> Pricing Snapshot
+                        {pricingLocked && <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 bg-amber-50 ml-2"><ShieldAlert className="w-3 h-3 mr-1" />LOCKED</Badge>}
+                      </CardTitle>
+                      {pricingLocked && isAdminUser && (
+                        <Button variant="outline" size="sm" className="text-xs border-amber-300 text-amber-700 hover:bg-amber-50" onClick={() => { setPricingOverrideField("pricing_snapshot"); setPricingOverrideOpen(true); }}>
+                          <ShieldAlert className="w-3 h-3 mr-1" /> Admin Override
+                        </Button>
+                      )}
+                    </div>
+                    {pricingLocked && (
+                      <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">
+                        <Info className="w-3 h-3" /> {pricingLockReason}
+                      </p>
+                    )}
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {wsQuotes.length > 0 ? (
@@ -1219,6 +1293,20 @@ export default function WorkspaceDetail() {
                       )}
                     </CardContent>
                   </Card>
+
+                  {/* SLA vs P&L Delta Banner */}
+                  <SlaVsPnlDeltaBanner
+                    workspace={ws}
+                    quote={latestQuote}
+                    pnl={wsPnL}
+                    onDeltaComputed={setDeltaReport}
+                  />
+
+                  {/* SLA Verification Checklist */}
+                  <SlaVerificationChecklistComponent
+                    workspace={ws}
+                    onCompletionChange={setSlaChecklistComplete}
+                  />
 
                   {/* SLA Summary in Contracts */}
                   {wsSLAs.length > 0 && (
@@ -1974,6 +2062,28 @@ export default function WorkspaceDetail() {
           </div>
         </div>
       )}
+      {/* SLA Integrity Guard — Pricing Lock Override Modal */}
+      <PricingLockOverrideModal
+        open={pricingOverrideOpen}
+        onClose={() => setPricingOverrideOpen(false)}
+        onConfirm={async (reason) => {
+          await logOverrideAudit({
+            action: "pricing_lock_override",
+            entityType: "workspace",
+            entityId: ws.id,
+            workspaceId: ws.id,
+            field: pricingOverrideField,
+            reason,
+            workspaceStage: ws.stage,
+          });
+          toast.success("Pricing lock override recorded", {
+            description: "Override logged to audit trail. You may now edit pricing fields.",
+          });
+          setPricingOverrideOpen(false);
+        }}
+        fieldLabel={pricingOverrideField === "pricing_snapshot" ? "All Pricing Fields" : pricingOverrideField}
+        workspaceStage={getStageDisplayName(ws.stage)}
+      />
     </TooltipProvider>
   );
 }

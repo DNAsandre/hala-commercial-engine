@@ -267,6 +267,22 @@ const rules: TransitionRule[] = [
     },
   },
 
+  // ── SLA Drafting → Contract Ready: SLA Verification Checklist gate ──
+  {
+    from: "sla_drafting",
+    to: "contract_ready",
+    name: "SLA Verification Checklist",
+    validate: () => {
+      // NOTE: This is a synchronous preflight check.
+      // The actual checklist completion state is tracked in Supabase and
+      // validated in the UI layer (WorkspaceDetail) before allowing stage advance.
+      // This rule serves as a documentation marker and will be enforced
+      // by the UI's stage advance handler checking slaChecklistComplete state.
+      // Returning null here because the async check happens in the UI.
+      return null;
+    },
+  },
+
   // ── Universal: block if workspace is at the final controlled stage ──
   {
     from: "contract_ready",
