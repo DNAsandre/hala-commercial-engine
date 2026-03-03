@@ -7,7 +7,8 @@
  */
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
-import { setGlobalAuthUser, clearGlobalAuthUser } from "@/lib/auth-state";
+import { setGlobalAuthUser, clearGlobalAuthUser } from "../lib/auth-state";
+import { seedEscalationEvents } from "../lib/escalation-engine";
 import type { Session, User } from "@supabase/supabase-js";
 import { handleSupabaseError } from "@/lib/supabase-error";
 
@@ -74,7 +75,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const profile = await fetchAppUser(s.user.id);
         if (mounted) {
           setAppUser(profile);
-          if (profile) setGlobalAuthUser(profile);
+          if (profile) {
+            setGlobalAuthUser(profile);
+            seedEscalationEvents().catch(() => {});
+          }
         }
       }
       if (mounted) setLoading(false);

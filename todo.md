@@ -49,6 +49,53 @@ Rollback point: `4b41b004` (Sprint 5 UX Reliability checkpoint)
 
 ---
 
+# Sprint 7 — Escalation Engine (Red Signal Automation)
+
+Rollback point: `9d838d89` (Sprint 6 SLA Integrity Guard checkpoint)
+
+## A) Tables & Seed
+- [x] Create escalation_rules table (SQL migration)
+- [x] Create escalation_events table (SQL migration)
+- [x] Create escalation_tasks table (SQL migration)
+- [x] Seed 5 default escalation rules
+
+## B) Trigger Logic (escalation-engine.ts)
+- [x] Margin below authority threshold trigger
+- [x] SLA vs P&L delta breach trigger
+- [x] Stage forced override trigger
+- [x] Customer score = red trigger
+- [x] Renewal risk = red trigger
+- [x] On trigger: insert escalation_event + assign Admin + audit_log
+
+## C) Wire Triggers
+- [x] Hook margin trigger into workspace/P&L evaluation
+- [x] Hook delta trigger into SLA integrity checks
+- [x] Hook override trigger into stage transition override flow
+- [x] Hook customer score trigger into customer/workspace evaluation
+- [x] Hook renewal risk trigger into renewal engine
+
+## D) Workspace Escalations Tab
+- [x] Add Escalations tab to WorkspaceDetail
+- [x] List events: severity badge, trigger reason, created_at, assigned_to, status
+- [x] Resolve button (Admin only) with reason + audit
+- [x] Status flow: open → acknowledged → resolved
+
+## E) Notification Layer
+- [x] Toast on escalation creation
+- [x] Red badge in sidebar for open escalations
+
+## F) Acceptance Tests
+- [x] Trigger margin breach → escalation row created
+- [x] Trigger SLA delta breach → escalation row created
+- [x] Red customer score → escalation created
+- [x] Escalation visible in Workspace tab
+- [x] Admin resolves escalation → status updates + audit entry
+- [x] Non-admin cannot resolve escalation
+- [x] 0 TypeScript errors
+- [x] No RLS regression
+
+---
+
 # Governance Compliance Audit — TODO
 
 ## 1. Policy Gate Enforcement Structure

@@ -49,9 +49,11 @@ import { useDocInstances, type HydratedDocInstance } from "@/hooks/useDocuments"
 import { navigationV1 } from "@/components/DashboardLayout";
 import { handleSupabaseError } from "@/lib/supabase-error";
 import { isPricingLocked, getPricingLockReason, canOverridePricingLock, logOverrideAudit, canEditCosts, type DeltaReport } from "@/lib/sla-integrity";
+import { evaluateWorkspaceEscalations, checkStageOverride, fetchEscalationsByWorkspace, type EscalationEvent } from "@/lib/escalation-engine";
 import { PricingLockOverrideModal } from "@/components/PricingLockOverrideModal";
 import { SlaVerificationChecklistComponent } from "@/components/SlaVerificationChecklist";
 import { SlaVsPnlDeltaBanner } from "@/components/SlaVsPnlDeltaBanner";
+import { WorkspaceEscalationsTab } from "@/components/WorkspaceEscalationsTab";
 import { usePnLByWorkspace } from "@/hooks/useSupabase";
 import {
   isWorkspaceIntegrationEnabled, getOrCreateCycle, startRenewal, updateRenewalOwner,
@@ -133,6 +135,9 @@ export default function WorkspaceDetail() {
   const [slaChecklistComplete, setSlaChecklistComplete] = useState(false);
   const [deltaReport, setDeltaReport] = useState<DeltaReport | null>(null);
 
+  // Escalation Engine state
+  const [workspaceEscalations, setWorkspaceEscalations] = useState<EscalationEvent[]>([]);
+
   // Supporting docs state
   const [supportDocFilter, setSupportDocFilter] = useState<string>("all");
   const [showSupportUpload, setShowSupportUpload] = useState(false);
@@ -210,6 +215,27 @@ export default function WorkspaceDetail() {
     })();
     return () => { cancelled = true; };
   }, [integrationEnabled, ws?.id]);
+
+  // Escalation Engine — fetch workspace escalations on load
+  useEffect(() => {
+    if (!ws) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const events = await fetchEscalationsByWorkspace(ws.id);
+        if (!cancelled) setWorkspaceEscalations(events);
+        // Also run trigger evaluation (creates new escalations if conditions met)
+        const customer: any = ws.customerId ? { id: ws.customerId, name: ws.customerName, grade: 'TBA' } : null;
+        await evaluateWorkspaceEscalations(ws, wsQuotes[0] || null, wsPnL || null, customer);
+        // Re-fetch after evaluation
+        const updated = await fetchEscalationsByWorkspace(ws.id);
+        if (!cancelled) setWorkspaceEscalations(updated);
+      } catch (err) {
+        console.error('[EscalationEngine] workspace evaluation error:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ws?.id]);
 
   const loading = wsLoading || qLoading || pLoading || appLoading || sigLoading || auditLoading || diLoading || pnlLoading;
   if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
@@ -816,6 +842,14 @@ export default function WorkspaceDetail() {
               <>
                 <TabsTrigger value="documents">Documents</TabsTrigger>
                 <TabsTrigger value="team">Team</TabsTrigger>
+                <TabsTrigger value="escalations" className="relative">
+                  Escalations
+                  {workspaceEscalations.filter(e => e.status === "open").length > 0 && (
+                    <span className="ml-1.5 inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold">
+                      {workspaceEscalations.filter(e => e.status === "open").length}
+                    </span>
+                  )}
+                </TabsTrigger>
                 <TabsTrigger value="audit">Audit Trail</TabsTrigger>
               </>
             ) : (
@@ -833,6 +867,14 @@ export default function WorkspaceDetail() {
                 {navigationV1 && <TabsTrigger value="commercial">Commercial</TabsTrigger>}
                 {navigationV1 && <TabsTrigger value="contracts">Contracts</TabsTrigger>}
                 <TabsTrigger value="approvals">Approvals</TabsTrigger>
+                <TabsTrigger value="escalations" className="relative">
+                  Escalations
+                  {workspaceEscalations.filter(e => e.status === "open").length > 0 && (
+                    <span className="ml-1.5 inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold">
+                      {workspaceEscalations.filter(e => e.status === "open").length}
+                    </span>
+                  )}
+                </TabsTrigger>
                 {navigationV1 && currentStageIdx >= WORKSPACE_STAGES.findIndex(s => s.value === "contract_signed") && (
                   <TabsTrigger value="handover">Handover</TabsTrigger>
                 )}
@@ -1862,6 +1904,15 @@ export default function WorkspaceDetail() {
             )}
           </TabsContent>
 
+          {/* ═══ ESCALATIONS TAB ═══ */}
+          <TabsContent value="escalations">
+            <WorkspaceEscalationsTab
+              workspaceId={ws.id}
+              escalations={workspaceEscalations}
+              onRefresh={setWorkspaceEscalations}
+            />
+          </TabsContent>
+
           {/* ═══ AUDIT TAB ═══ */}
           <TabsContent value="audit">
             {wsOverrides.length > 0 && (
@@ -2076,10 +2127,14 @@ export default function WorkspaceDetail() {
             reason,
             workspaceStage: ws.stage,
           });
+          // Trigger escalation event for the override
+          await checkStageOverride(ws, "Pricing Lock Bypass", reason);
           toast.success("Pricing lock override recorded", {
-            description: "Override logged to audit trail. You may now edit pricing fields.",
+            description: "Override logged to audit trail. Escalation created.",
           });
           setPricingOverrideOpen(false);
+          // Refresh escalation list
+          fetchEscalationsByWorkspace(ws.id).then(setWorkspaceEscalations);
         }}
         fieldLabel={pricingOverrideField === "pricing_snapshot" ? "All Pricing Fields" : pricingOverrideField}
         workspaceStage={getStageDisplayName(ws.stage)}

@@ -56,6 +56,8 @@ import {
 } from "lucide-react";
 import { getRoleLabel } from "@/lib/store";
 import { useSignals } from "@/hooks/useSupabase";
+import { useEffect, useRef } from "react";
+import { fetchOpenEscalationCount } from "@/lib/escalation-engine";
 import { useAuth } from "@/contexts/AuthContext";
 import { useComposerDirty } from "@/contexts/ComposerDirtyContext";
 import UnsavedChangesModal from "@/components/UnsavedChangesModal";
@@ -146,6 +148,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const effectiveUser = currentUser || { id: "u1", name: "Loading...", email: "", role: "admin", region: "East" };
   const { data: signals } = useSignals();
   const redCount = signals.filter(s => s.severity === "red").length;
+
+  // Escalation open count for notification badge
+  const [openEscalationCount, setOpenEscalationCount] = useState(0);
+  const escalationPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    const load = () => fetchOpenEscalationCount().then(setOpenEscalationCount).catch(() => {});
+    load();
+    escalationPollRef.current = setInterval(load, 30_000); // refresh every 30s
+    return () => { if (escalationPollRef.current) clearInterval(escalationPollRef.current); };
+  }, []);
+  const totalBadge = redCount + openEscalationCount;
 
   // Sidebar navigation guard via ComposerDirtyContext
   const { guardedNavigate, showModal, closeModal, discardAndNavigate, saveAndNavigate, isSaving } = useComposerDirty();
@@ -280,9 +293,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
             <button className="relative p-1.5 rounded-md hover:bg-muted transition-colors">
               <Bell className="w-4.5 h-4.5 text-muted-foreground" />
-              {redCount > 0 && (
+              {totalBadge > 0 && (
                 <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">
-                  {redCount}
+                  {totalBadge}
                 </span>
               )}
             </button>
