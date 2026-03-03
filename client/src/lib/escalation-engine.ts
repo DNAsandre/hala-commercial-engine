@@ -92,6 +92,110 @@ export const RULE_IDS = {
 const GP_CRITICAL = 10;  // Below 10% = CEO/CFO required
 const GP_WARNING = 22;   // Below 22% = Director required
 
+/**
+ * SLA Resolution Targets (hours)
+ * RED severity: 24 hours to resolve
+ * AMBER severity: 72 hours to resolve
+ */
+export const SLA_TARGET_HOURS: Record<EscalationSeverity, number> = {
+  red: 24,
+  amber: 72,
+};
+
+/**
+ * SLA urgency thresholds (fraction of time remaining)
+ * GREEN: > 50% time remaining
+ * AMBER: 20–50% time remaining
+ * RED:   < 20% time remaining
+ * BREACHED: past deadline
+ */
+export type SlaUrgency = "green" | "amber" | "red" | "breached";
+
+export interface SlaStatus {
+  /** Target hours for this severity */
+  targetHours: number;
+  /** Absolute deadline ISO string */
+  deadlineAt: string;
+  /** Milliseconds remaining (negative = breached) */
+  remainingMs: number;
+  /** Human-readable countdown string */
+  countdownLabel: string;
+  /** Urgency band */
+  urgency: SlaUrgency;
+  /** Fraction of time elapsed (0–1+, >1 = breached) */
+  elapsed: number;
+  /** Whether the SLA is breached */
+  breached: boolean;
+}
+
+/**
+ * Compute SLA status for an escalation event.
+ * SLA deadline = created_at + SLA_TARGET_HOURS[severity].
+ * Returns null for resolved events.
+ */
+export function computeSlaStatus(event: EscalationEvent): SlaStatus | null {
+  if (event.status === "resolved") return null;
+
+  const targetHours = SLA_TARGET_HOURS[event.severity];
+  const createdMs = new Date(event.createdAt).getTime();
+  const deadlineMs = createdMs + targetHours * 60 * 60 * 1000;
+  const deadlineAt = new Date(deadlineMs).toISOString();
+  const now = Date.now();
+  const remainingMs = deadlineMs - now;
+  const totalMs = targetHours * 60 * 60 * 1000;
+  const elapsed = (now - createdMs) / totalMs; // 0..1+
+
+  // Determine urgency band
+  let urgency: SlaUrgency;
+  if (remainingMs <= 0) {
+    urgency = "breached";
+  } else if (elapsed >= 0.8) {
+    urgency = "red";
+  } else if (elapsed >= 0.5) {
+    urgency = "amber";
+  } else {
+    urgency = "green";
+  }
+
+  return {
+    targetHours,
+    deadlineAt,
+    remainingMs,
+    countdownLabel: formatCountdown(remainingMs),
+    urgency,
+    elapsed,
+    breached: remainingMs <= 0,
+  };
+}
+
+/**
+ * Format milliseconds into a human-readable countdown.
+ * Positive: "12h 34m", "2h 05m", "45m"
+ * Negative: "BREACHED 3h 12m ago"
+ */
+function formatCountdown(ms: number): string {
+  const abs = Math.abs(ms);
+  const totalMinutes = Math.floor(abs / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  let label: string;
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    const remHours = hours % 24;
+    label = `${days}d ${remHours}h`;
+  } else if (hours > 0) {
+    label = `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  } else {
+    label = `${minutes}m`;
+  }
+
+  if (ms < 0) {
+    return `BREACHED ${label} ago`;
+  }
+  return label;
+}
+
 // ============================================================
 // SUPABASE CRUD
 // ============================================================
@@ -733,6 +837,22 @@ export function getTriggerTypeLabel(type: TriggerType): string {
     renewal_risk: "Renewal Risk",
   };
   return labels[type] || type;
+}
+
+/**
+ * Get Tailwind classes for SLA urgency band.
+ */
+export function getSlaUrgencyStyles(urgency: SlaUrgency): { bg: string; text: string; border: string; ring: string } {
+  switch (urgency) {
+    case "green":
+      return { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200", ring: "ring-emerald-300" };
+    case "amber":
+      return { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200", ring: "ring-amber-300" };
+    case "red":
+      return { bg: "bg-red-50", text: "text-red-700", border: "border-red-200", ring: "ring-red-300" };
+    case "breached":
+      return { bg: "bg-red-100", text: "text-red-900", border: "border-red-400", ring: "ring-red-500" };
+  }
 }
 
 export function getSeverityColor(severity: EscalationSeverity): { bg: string; text: string; border: string } {

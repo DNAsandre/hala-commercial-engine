@@ -135,6 +135,25 @@ Rollback point: `23ba3a6c` (Sprint 7 Escalation Engine checkpoint)
 
 ---
 
+# Sprint 8b — Escalation SLA Tracking (Countdown Timers)
+
+Rollback point: `f361b666` (Sprint 8 Escalation Dashboard checkpoint)
+
+## Tasks
+- [x] Define SLA target resolution times per severity (RED=24h, AMBER=72h)
+- [x] Add SLA computation (dynamic from severity+created_at, no schema change needed)
+- [x] Implement SLA computation logic in escalation-engine.ts
+- [x] Build EscalationCountdown component with live timer (3 variants)
+- [x] Integrate countdown into GlobalEscalations table (new SLA Timer column)
+- [x] Integrate countdown into detail drawer (CountdownDetail card)
+- [x] Integrate countdown into workspace Escalations tab (CountdownMini)
+- [x] Add SLA BREACHED badge for overdue escalations (pulsing red)
+- [x] Update header stats with SLA Breached count (6th stat card)
+- [x] Test all timers and breach indicators — ALL PASS
+- [x] 0 TypeScript errors
+
+---
+
 # Governance Compliance Audit — TODO
 
 ## 1. Policy Gate Enforcement Structure

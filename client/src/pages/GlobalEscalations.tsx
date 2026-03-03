@@ -1,6 +1,7 @@
 /*
  * GlobalEscalations — Global Risk Console
- * Sprint 8: Aggregates all escalation_events across workspaces
+ * Sprint 8 + 8b: Aggregates all escalation_events across workspaces
+ * Sprint 8b: SLA countdown timers with urgency indicators
  *
  * Design: Swiss Precision Instrument
  * Deep navy accents, warm white background, IBM Plex Sans
@@ -45,11 +46,13 @@ import {
   resolveEscalation,
   acknowledgeEscalation,
   getTriggerTypeLabel,
+  computeSlaStatus,
   type EscalationEvent,
   type EscalationSeverity,
   type EscalationStatus,
   type TriggerType,
 } from "@/lib/escalation-engine";
+import { CountdownBadge, CountdownDetail } from "@/components/EscalationCountdown";
 
 // ============================================================
 // HELPERS
@@ -215,6 +218,9 @@ function ResolveDrawer({
             <StatusBadge status={event.status} />
             <AgingBadge createdAt={event.createdAt} severity={event.severity} status={event.status} />
           </div>
+
+          {/* SLA Countdown Detail */}
+          <CountdownDetail event={event} />
 
           {/* Trigger info */}
           <div className="space-y-2">
@@ -383,12 +389,17 @@ export default function GlobalEscalations() {
   // Stats
   const stats = useMemo(() => {
     const open = roleFilteredEvents.filter(e => e.status === "open" || e.status === "acknowledged");
+    const slaBreachedCount = open.filter(e => {
+      const sla = computeSlaStatus(e);
+      return sla?.breached === true;
+    }).length;
     return {
       totalOpen: open.length,
       redCount: open.filter(e => e.severity === "red").length,
       amberCount: open.filter(e => e.severity === "amber").length,
       criticalCount: open.filter(e => e.severity === "red" && daysOpen(e.createdAt) >= 3).length,
       overdueCount: open.filter(e => e.severity === "red" && daysOpen(e.createdAt) >= 7).length,
+      slaBreachedCount,
     };
   }, [roleFilteredEvents]);
 
@@ -433,7 +444,7 @@ export default function GlobalEscalations() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
         <Card className="border-border">
           <CardContent className="p-4">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Total Open</div>
@@ -462,6 +473,12 @@ export default function GlobalEscalations() {
           <CardContent className="p-4">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Overdue (&gt;7d)</div>
             <div className={`text-2xl font-bold ${stats.overdueCount > 0 ? "text-red-800 animate-pulse" : "text-foreground"}`}>{stats.overdueCount}</div>
+          </CardContent>
+        </Card>
+        <Card className={`${stats.slaBreachedCount > 0 ? "border-red-500 bg-red-100 ring-1 ring-red-300" : "border-border"}`}>
+          <CardContent className="p-4">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">SLA Breached</div>
+            <div className={`text-2xl font-bold ${stats.slaBreachedCount > 0 ? "text-red-900 animate-pulse" : "text-foreground"}`}>{stats.slaBreachedCount}</div>
           </CardContent>
         </Card>
       </div>
@@ -553,6 +570,7 @@ export default function GlobalEscalations() {
                 <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Trigger</th>
                 <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Assigned To</th>
                 <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Status</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">SLA Timer</th>
                 <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Created</th>
                 <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Age</th>
                 <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>
@@ -561,14 +579,14 @@ export default function GlobalEscalations() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">
+                  <td colSpan={9} className="px-4 py-12 text-center text-muted-foreground">
                     <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />
                     Loading escalations...
                   </td>
                 </tr>
               ) : filteredEvents.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">
+                  <td colSpan={9} className="px-4 py-12 text-center text-muted-foreground">
                     <Shield className="w-8 h-8 mx-auto mb-2 text-muted-foreground/40" />
                     <div className="text-sm font-medium">No escalations match filters</div>
                     <div className="text-xs mt-1">Adjust filters or check back later</div>
@@ -613,6 +631,11 @@ export default function GlobalEscalations() {
                       {/* Status */}
                       <td className="px-4 py-3">
                         <StatusBadge status={event.status} />
+                      </td>
+
+                      {/* SLA Timer */}
+                      <td className="px-4 py-3">
+                        <CountdownBadge event={event} />
                       </td>
 
                       {/* Created */}

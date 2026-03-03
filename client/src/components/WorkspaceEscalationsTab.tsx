@@ -1,6 +1,7 @@
 /**
  * WorkspaceEscalationsTab — Escalation event list with severity badges,
  * status flow (open → acknowledged → resolved), and Admin resolve flow.
+ * Sprint 8b: SLA countdown mini indicators added.
  * 
  * Design: Hala navy + amber/red severity system. Serif headings.
  */
@@ -44,6 +45,7 @@ import {
   getSeverityColor,
   getStatusColor,
 } from "@/lib/escalation-engine";
+import { CountdownMini } from "@/components/EscalationCountdown";
 
 interface WorkspaceEscalationsTabProps {
   workspaceId: string;
@@ -278,6 +280,9 @@ export function WorkspaceEscalationsTab({
                   </span>
                 )}
               </div>
+
+              {/* SLA Countdown Mini */}
+              <CountdownMini event={event} />
 
               {/* Action buttons */}
               {event.status !== "resolved" && isAdmin && (
