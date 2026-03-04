@@ -1576,21 +1576,15 @@ export default function DocumentComposer({
     };
   }, [isDirty, mode, handleSave]);
 
-  // PDF Compile
+  // PDF Compile — navigate to Output Studio instead of popup
   const handleCompilePDF = useCallback(() => {
-    const results = resolveDocumentTokens(
-      document.blocks.map(b => ({ content: b.content, block_key: b.block_key })),
-      resolutionContext,
-      document.doc_type,
-    );
-
-    const allMissing = results.flatMap(r => r.result.missingTokens);
-    const compiledHtml = results.map(r => r.result.renderedText).join("\n<hr style='margin:2rem 0;border-color:#e5e7eb;' />\n");
-
-    setCompiledPreviewHtml(compiledHtml);
-    setPreviewMissingTokens(allMissing);
-    setShowPDFPreview(true);
-  }, [document, resolutionContext]);
+    // Save first, then navigate to Output Studio for professional PDF rendering
+    if (isDirty) {
+      handleSave();
+    }
+    const studioUrl = `/composer/${document.id}/view?from=editor`;
+    navigate(studioUrl);
+  }, [document, isDirty, handleSave, navigate]);
 
   const handleApproveCompile = useCallback(async () => {
     setShowPDFPreview(false);

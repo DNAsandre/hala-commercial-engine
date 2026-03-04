@@ -71,6 +71,7 @@ function AppRouter() {
     <Switch>
       {/* ── Public (any authenticated user) ─────────────────── */}
       <Route path="/" component={Dashboard} />
+      <Route path="/dashboard" component={Dashboard} />
       <Route path="/workspaces" component={Workspaces} />
       <Route path="/workspaces/:id" component={WorkspaceDetail} />
       <Route path="/customers" component={Customers} />
