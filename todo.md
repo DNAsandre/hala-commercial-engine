@@ -669,3 +669,22 @@ Rollback point: Sprint 13 checkpoint
 - [ ] Arabic text renders RTL correctly
 - [ ] Translation bot produces Arabic output
 - [ ] 0 TypeScript errors
+
+
+---
+
+# Bug Fixes — User Feedback Round 1
+
+## Fix 1: Back to Editor navigation broken
+- [ ] Output Studio "Back to Editor" navigates to wrong URL instead of returning to the document editor
+- [ ] Must work for quotes, proposals, SLAs, tenders — any document type
+
+## Fix 2: Delete button for draft documents
+- [ ] Add delete button on draft quotes, proposals, SLAs in workspace Documents tab
+- [ ] Only show delete on drafts (not approved/sent documents)
+- [ ] Confirm dialog before deletion
+
+## Fix 3: Compile view not inserting editor content properly
+- [ ] Output Studio must pull actual editor block content into the PDF pages
+- [ ] Match the professional layout from Hala's uploaded PDF examples
+- [ ] Cover page, pricing tables, scope of work, terms — all must show real content

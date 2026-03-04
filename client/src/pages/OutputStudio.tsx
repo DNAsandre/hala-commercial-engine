@@ -41,7 +41,7 @@ import { syncCompiledDocCreate } from "@/lib/supabase-sync";
 
 // PDF Engine imports
 import {
-  type PDFRenderContext, type PDFTemplate, type PDFSectionData,
+  type PDFRenderContext, type PDFTemplate, type PDFSectionData, type PricingRow,
   type LanguageMode, type WatermarkMode, type CoverStyle,
   type BrandingProfile as PDFBrandingProfile,
   fetchPDFTemplates, getPDFTemplate, HALA_BRANDING,
@@ -77,9 +77,11 @@ function readNavContext(): NavContext {
   return { from, workspaceId };
 }
 
-function buildEditorUrl(docInstanceId: string, ctx: NavContext): string {
-  if (ctx.from === "workspace" && ctx.workspaceId) {
-    return `/workspaces/${ctx.workspaceId}?tab=documents`;
+function buildEditorUrl(docInstanceId: string, ctx: NavContext, docWorkspaceId?: string | null): string {
+  // Always prefer navigating back to the workspace if we have a workspace ID
+  const wsId = ctx.workspaceId || docWorkspaceId;
+  if (wsId) {
+    return `/workspaces/${wsId}?tab=documents`;
   }
   if (ctx.from === "documents") {
     return `/editor?instance=${docInstanceId}&from=documents`;
@@ -87,8 +89,9 @@ function buildEditorUrl(docInstanceId: string, ctx: NavContext): string {
   return `/editor?instance=${docInstanceId}`;
 }
 
-function buildBackLabel(ctx: NavContext): string {
-  if (ctx.from === "workspace" && ctx.workspaceId) return "Back to Workspace";
+function buildBackLabel(ctx: NavContext, docWorkspaceId?: string | null): string {
+  const wsId = ctx.workspaceId || docWorkspaceId;
+  if (wsId) return "Back to Workspace";
   if (ctx.from === "documents") return "Back to Editor";
   return "Back to Editor";
 }
@@ -135,57 +138,62 @@ function buildPDFRenderContext(
   // Build sections_data from resolved blocks
   const sections_data: Record<string, PDFSectionData> = {};
 
-  // Map block keys to section content_keys
-  const blockToSection: Record<string, string> = {
-    "cover.hero": "cover",
-    "cover_hero": "cover",
-    "confidentiality.locked": "confidentiality",
-    "confidentiality_locked": "confidentiality",
-    "intro.narrative": "introduction",
-    "intro_narrative": "introduction",
-    "scope.list": "scope",
-    "scope_list": "scope",
-    "pricing.table.single": "pricing",
-    "pricing_table_single": "pricing",
-    "pricing.table.multi": "pricing",
-    "totals.number_to_words": "totals",
-    "terms.standard": "terms",
-    "terms_standard": "terms",
-    "signature.dual": "signature",
-    "signature_dual": "signature",
-    "sla.matrix": "sla_matrix",
-    "sla_matrix": "sla_matrix",
-  };
+  // Track which blocks have been handled
+  const handledBlocks = new Set<string>();
 
   for (const block of blocks) {
-    const sectionKey = blockToSection[block.key] || block.key;
     const resolvedContent = resolvedBlocks[block.key] || block.content;
+    const key = block.key;
 
-    if (sectionKey === "introduction" || sectionKey === "scope") {
-      const contentKey = sectionKey === "introduction" ? "introduction" : "scope";
-      sections_data[contentKey] = {
-        type: sectionKey === "introduction" ? "introduction" : "scope_of_work",
+    // ── Cover ──
+    if (key === "cover.hero" || key === "cover_hero") {
+      handledBlocks.add(key);
+      // Cover is rendered by the template system, no sections_data needed
+      continue;
+    }
+
+    // ── Confidentiality ──
+    if (key === "confidentiality.locked" || key === "confidentiality_locked") {
+      handledBlocks.add(key);
+      sections_data["confidentiality"] = {
+        type: "confidentiality",
         content_html: resolvedContent,
         content_html_ar: language !== "en" ? translateToArabic(stripHtml(resolvedContent)).translated : undefined,
       };
-    } else if (sectionKey === "terms") {
-      // Parse terms from HTML content
-      const termItems = parseTermsFromHtml(resolvedContent);
-      const translatedTerms = language !== "en" ? translateTerms(termItems.map(t => ({ title: t.title_en, content: t.content_en }))) : [];
-      sections_data["terms"] = {
-        type: "terms_and_conditions",
-        terms: termItems.map((t, i) => ({
-          ...t,
-          title_ar: translatedTerms[i]?.title_ar || "",
-          content_ar: translatedTerms[i]?.content_ar || "",
-        })),
+      continue;
+    }
+
+    // ── Introduction / Narrative ──
+    if (key === "intro.narrative" || key === "intro_narrative") {
+      handledBlocks.add(key);
+      sections_data["introduction"] = {
+        type: "introduction",
+        content_html: resolvedContent,
+        content_html_ar: language !== "en" ? translateToArabic(stripHtml(resolvedContent)).translated : undefined,
       };
-    } else if (sectionKey === "pricing") {
-      // Use sample pricing rows (or parse from workspace data)
-      const pricingRows = getSamplePricingRows();
+      continue;
+    }
+
+    // ── Scope of Work ──
+    if (key === "scope.list" || key === "scope_list" || key === "scope.table") {
+      handledBlocks.add(key);
+      sections_data["scope"] = {
+        type: "scope_of_work",
+        content_html: resolvedContent,
+        content_html_ar: language !== "en" ? translateToArabic(stripHtml(resolvedContent)).translated : undefined,
+      };
+      continue;
+    }
+
+    // ── Pricing Tables ── (parse actual editor HTML for table data)
+    if (key.startsWith("pricing.") || key.startsWith("quote.pricing")) {
+      handledBlocks.add(key);
+      // Try to parse pricing rows from the editor HTML table
+      const parsedRows = parsePricingFromHtml(resolvedContent);
+      const pricingRows = parsedRows.length > 0 ? parsedRows : getSamplePricingRows();
       if (language !== "en") {
         const translated = translatePricingRows(pricingRows);
-        pricingRows.forEach((row, i) => {
+        pricingRows.forEach((row: PricingRow, i: number) => {
           row.description_ar = translated[i]?.description_ar;
           row.unit_ar = translated[i]?.unit_ar;
         });
@@ -193,11 +201,124 @@ function buildPDFRenderContext(
       sections_data["pricing"] = {
         type: "pricing_table",
         pricing_rows: pricingRows,
+        content_html: resolvedContent,
       };
-    } else if (sectionKey === "sla_matrix") {
+      continue;
+    }
+
+    // ── Totals / Number to Words ──
+    if (key === "totals.number_to_words") {
+      handledBlocks.add(key);
+      // Totals are rendered as part of the pricing table footer
+      if (sections_data["pricing"]) {
+        sections_data["pricing"].content_html = (sections_data["pricing"].content_html || "") + resolvedContent;
+      }
+      continue;
+    }
+
+    // ── Terms & Conditions ──
+    if (key === "terms.standard" || key === "terms_standard") {
+      handledBlocks.add(key);
+      const termItems = parseTermsFromHtml(resolvedContent);
+      const translatedTerms = language !== "en" ? translateTerms(termItems.map(t => ({ title: t.title_en, content: t.content_en }))) : [];
+      sections_data["terms"] = {
+        type: "terms_and_conditions",
+        content_html: resolvedContent,
+        terms: termItems.map((t, i) => ({
+          ...t,
+          title_ar: translatedTerms[i]?.title_ar || "",
+          content_ar: translatedTerms[i]?.content_ar || "",
+        })),
+      };
+      continue;
+    }
+
+    // ── Signature ──
+    if (key === "signature.dual" || key === "signature_dual") {
+      handledBlocks.add(key);
+      // Signature is rendered by the template system
+      continue;
+    }
+
+    // ── SLA Matrix ──
+    if (key === "annexure.b.sla_matrix" || key === "sla.matrix" || key === "sla_matrix") {
+      handledBlocks.add(key);
       sections_data["sla_matrix"] = {
         type: "sla_matrix",
         sla_rows: getSampleSLARows(),
+        content_html: resolvedContent,
+      };
+      continue;
+    }
+
+    // ── Legal Clauses ──
+    if (key === "legal.clauses.locked") {
+      handledBlocks.add(key);
+      sections_data["legal_clauses"] = {
+        type: "legal_clauses",
+        content_html: resolvedContent,
+        content_html_ar: language !== "en" ? translateToArabic(stripHtml(resolvedContent)).translated : undefined,
+      };
+      continue;
+    }
+
+    // ── Legal Party Details ──
+    if (key === "legal.party_details") {
+      handledBlocks.add(key);
+      sections_data["party_details"] = {
+        type: "custom_content",
+        content_html: resolvedContent,
+      };
+      continue;
+    }
+
+    // ── Table of Contents ──
+    if (key === "legal.toc.auto") {
+      handledBlocks.add(key);
+      // TOC is auto-generated by the template system
+      continue;
+    }
+
+    // ── Closing Note ──
+    if (key === "closing.note") {
+      handledBlocks.add(key);
+      sections_data["closing"] = {
+        type: "notes",
+        content_html: resolvedContent,
+        content_html_ar: language !== "en" ? translateToArabic(stripHtml(resolvedContent)).translated : undefined,
+      };
+      continue;
+    }
+
+    // ── Facility Gallery ──
+    if (key === "facility.gallery") {
+      handledBlocks.add(key);
+      sections_data["facility"] = {
+        type: "custom_content",
+        content_html: resolvedContent,
+      };
+      continue;
+    }
+
+    // ── Annexures ──
+    if (key.startsWith("annexure.")) {
+      handledBlocks.add(key);
+      const annexureKey = key.replace(/\./g, "_");
+      sections_data[annexureKey] = {
+        type: "custom_content",
+        content_html: resolvedContent,
+        content_html_ar: language !== "en" ? translateToArabic(stripHtml(resolvedContent)).translated : undefined,
+      };
+      continue;
+    }
+
+    // ── Any unmatched block → render as custom content ──
+    if (!handledBlocks.has(key)) {
+      handledBlocks.add(key);
+      const customKey = key.replace(/\./g, "_");
+      sections_data[customKey] = {
+        type: "custom_content",
+        content_html: resolvedContent,
       };
     }
   }
@@ -275,6 +396,42 @@ function buildPDFRenderContext(
 // Helper: strip HTML tags for translation
 function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+// Helper: parse pricing rows from editor HTML table
+function parsePricingFromHtml(html: string): PricingRow[] {
+  const rows: PricingRow[] = [];
+  try {
+    // Extract table rows from HTML
+    const rowMatches = html.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi);
+    if (!rowMatches || rowMatches.length < 2) return []; // Need at least header + 1 data row
+    
+    // Skip header row, parse data rows
+    for (let i = 1; i < rowMatches.length; i++) {
+      const cellMatches = rowMatches[i].match(/<td[^>]*>([\s\S]*?)<\/td>/gi);
+      if (!cellMatches || cellMatches.length < 2) continue;
+      
+      const cells = cellMatches.map(c => c.replace(/<[^>]*>/g, "").trim());
+      const description = cells[0] || `Item ${i}`;
+      const unit = cells.length >= 3 ? cells[1] : "Per unit";
+      const rateStr = cells.length >= 3 ? cells[2] : cells[1];
+      const rate = parseFloat(rateStr?.replace(/[^\d.]/g, "") || "0");
+      const volumeStr = cells.length >= 4 ? cells[3] : "";
+      const volume = parseInt(volumeStr?.replace(/[^\d]/g, "") || "0", 10);
+      const monthlyStr = cells.length >= 5 ? cells[4] : cells[cells.length - 1];
+      const monthly = parseFloat(monthlyStr?.replace(/[^\d.]/g, "") || "0");
+      
+      rows.push({
+        no: i,
+        description,
+        unit,
+        rate: rate || monthly,
+      });
+    }
+  } catch {
+    // If parsing fails, return empty to fall back to sample data
+  }
+  return rows;
 }
 
 // Helper: parse terms from HTML content
@@ -411,8 +568,8 @@ export default function OutputStudio() {
     }
   }, [currentVersion?.id, resolutionCtx, languageMode, watermarkMode, coverStyle]);
 
-  const editorUrl = docInstance ? buildEditorUrl(docInstance.id, navCtx) : "/editor";
-  const backLabel = buildBackLabel(navCtx);
+  const editorUrl = docInstance ? buildEditorUrl(docInstance.id, navCtx, docInstance.workspace_id) : "/editor";
+  const backLabel = buildBackLabel(navCtx, docInstance?.workspace_id);
 
   // ── Render preview using professional PDF renderer ──
   const renderPreview = useCallback(() => {

@@ -606,6 +606,158 @@ function getDocumentHead(branding: BrandingProfile, language: LanguageMode): str
     font-family: 'Noto Naskh Arabic', 'Traditional Arabic', sans-serif;
   }
   
+  /* ═══ EDITOR CONTENT STYLES ═══ */
+  /* Styles for rich HTML content from the TipTap editor */
+  .content-body p {
+    font-size: 11px;
+    line-height: 1.7;
+    color: #333;
+    text-align: justify;
+    margin-bottom: 10px;
+  }
+  
+  .content-body h1 {
+    font-size: 20px;
+    font-weight: 700;
+    color: ${branding.secondary_color};
+    margin: 20px 0 12px;
+    line-height: 1.2;
+  }
+  
+  .content-body h2 {
+    font-size: 16px;
+    font-weight: 700;
+    color: ${branding.secondary_color};
+    margin: 18px 0 10px;
+    line-height: 1.3;
+  }
+  
+  .content-body h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: ${branding.secondary_color};
+    margin: 14px 0 8px;
+    line-height: 1.3;
+  }
+  
+  .content-body h4, .content-body h5, .content-body h6 {
+    font-size: 12px;
+    font-weight: 600;
+    color: #444;
+    margin: 12px 0 6px;
+  }
+  
+  .content-body ul, .content-body ol {
+    margin: 8px 0 16px 24px;
+    font-size: 11px;
+    line-height: 1.8;
+    color: #333;
+  }
+  
+  .content-body li {
+    margin-bottom: 4px;
+  }
+  
+  .content-body li p {
+    margin-bottom: 2px;
+  }
+  
+  .content-body strong, .content-body b {
+    font-weight: 600;
+    color: #1a1a1a;
+  }
+  
+  .content-body em, .content-body i {
+    font-style: italic;
+  }
+  
+  .content-body blockquote {
+    border-left: 3px solid ${branding.secondary_color};
+    padding: 8px 16px;
+    margin: 12px 0;
+    background: #f8f9fa;
+    font-style: italic;
+    color: #555;
+  }
+  
+  .content-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 10.5px;
+  }
+  
+  .content-body table th {
+    background: ${branding.primary_color};
+    color: white;
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 600;
+    border: 1px solid ${branding.primary_color};
+  }
+  
+  .content-body table td {
+    padding: 7px 12px;
+    border: 1px solid #ddd;
+    vertical-align: top;
+  }
+  
+  .content-body table tr:nth-child(even) {
+    background: #fafafa;
+  }
+  
+  .content-body a {
+    color: ${branding.secondary_color};
+    text-decoration: underline;
+  }
+  
+  .content-body hr {
+    border: none;
+    border-top: 1px solid #ddd;
+    margin: 16px 0;
+  }
+  
+  .content-body code {
+    background: #f0f0f0;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-family: 'Courier New', monospace;
+  }
+  
+  .content-body pre {
+    background: #f5f5f5;
+    padding: 12px;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 12px 0;
+    font-size: 10px;
+  }
+  
+  .content-body img {
+    max-width: 100%;
+    height: auto;
+    margin: 8px 0;
+  }
+  
+  /* Numbered clause lists (legal style) */
+  .content-body .clause-list {
+    counter-reset: clause;
+    list-style: none;
+    padding-left: 0;
+  }
+  
+  .content-body .clause-list > li {
+    counter-increment: clause;
+    margin-bottom: 12px;
+  }
+  
+  .content-body .clause-list > li::before {
+    content: counter(clause) ". ";
+    font-weight: 700;
+    color: ${branding.secondary_color};
+  }
+
   /* ═══ PRINT HELPERS ═══ */
   .page-break { page-break-before: always; }
   .no-break { page-break-inside: avoid; }
@@ -950,7 +1102,48 @@ function renderSLAMatrix(ctx: PDFRenderContext, section: any, data: PDFSectionDa
 function renderTerms(ctx: PDFRenderContext, section: any, data: PDFSectionData | undefined, pageBreak: string): string {
   const isDual = ctx.language === "dual";
   const terms = data?.terms || [];
+  const hasValidTerms = terms.length > 0 && terms.some(t => t.title_en && !t.title_en.startsWith("Clause "));
+  const rawHtml = data?.content_html || "";
   
+  // If we have well-parsed terms, use structured rendering
+  if (hasValidTerms) {
+    return `
+    <div class="content-page"${pageBreak}>
+      ${renderPageHeader(ctx)}
+      <div class="content-body">
+        ${isDual ? `
+        <div class="dual-title-bar">
+          <span class="en">${escapeHtml(section.title_en)}</span>
+          <span class="ar">${escapeHtml(section.title_ar)}</span>
+        </div>
+        <div class="dual-lang">
+          <div class="dual-lang-en">
+            ${terms.map(t => `
+            <div class="no-break" style="margin-bottom: 12px;">
+              <p style="font-weight: 600; font-size: 11px; margin-bottom: 4px;">${t.number}. ${escapeHtml(t.title_en)}</p>
+              <p class="section-text">${escapeHtml(t.content_en)}</p>
+            </div>`).join('')}
+          </div>
+          <div class="dual-lang-ar">
+            ${terms.map(t => `
+            <div class="no-break" style="margin-bottom: 12px;">
+              <p style="font-weight: 600; font-size: 11px; margin-bottom: 4px; font-family: 'Noto Naskh Arabic', sans-serif;">${t.number}. ${escapeHtml(t.title_ar)}</p>
+              <p class="section-text ar-text">${escapeHtml(t.content_ar)}</p>
+            </div>`).join('')}
+          </div>
+        </div>` : `
+        <h1 class="section-title">${escapeHtml(section.title_en)}</h1>
+        ${terms.map(t => `
+        <div class="no-break" style="margin-bottom: 12px;">
+          <p style="font-weight: 600; font-size: 11px; margin-bottom: 4px;">${t.number}. ${escapeHtml(t.title_en)}</p>
+          <p class="section-text">${escapeHtml(t.content_en)}</p>
+        </div>`).join('')}`}
+      </div>
+      ${renderPageFooter(ctx)}
+    </div>`;
+  }
+  
+  // Fall back to rendering the raw editor HTML content directly
   return `
   <div class="content-page"${pageBreak}>
     ${renderPageHeader(ctx)}
@@ -959,30 +1152,9 @@ function renderTerms(ctx: PDFRenderContext, section: any, data: PDFSectionData |
       <div class="dual-title-bar">
         <span class="en">${escapeHtml(section.title_en)}</span>
         <span class="ar">${escapeHtml(section.title_ar)}</span>
-      </div>
-      <div class="dual-lang">
-        <div class="dual-lang-en">
-          ${terms.map(t => `
-          <div class="no-break" style="margin-bottom: 12px;">
-            <p style="font-weight: 600; font-size: 11px; margin-bottom: 4px;">${t.number} ${escapeHtml(t.title_en)}</p>
-            <p class="section-text">${escapeHtml(t.content_en)}</p>
-          </div>`).join('')}
-        </div>
-        <div class="dual-lang-ar">
-          ${terms.map(t => `
-          <div class="no-break" style="margin-bottom: 12px;">
-            <p style="font-weight: 600; font-size: 11px; margin-bottom: 4px; font-family: 'Noto Naskh Arabic', sans-serif;">${t.number} ${escapeHtml(t.title_ar)}</p>
-            <p class="section-text ar-text">${escapeHtml(t.content_ar)}</p>
-          </div>`).join('')}
-        </div>
       </div>` : `
-      <h1 class="section-title">${escapeHtml(section.title_en)}</h1>
-      ${terms.map(t => `
-      <div class="no-break" style="margin-bottom: 12px;">
-        <p style="font-weight: 600; font-size: 11px; margin-bottom: 4px;">${t.number} ${escapeHtml(t.title_en)}</p>
-        <p class="section-text">${escapeHtml(t.content_en)}</p>
-      </div>`).join('')}
-      ${data?.content_html || ""}`}
+      <h1 class="section-title">${escapeHtml(section.title_en)}</h1>`}
+      ${rawHtml}
     </div>
     ${renderPageFooter(ctx)}
   </div>`;

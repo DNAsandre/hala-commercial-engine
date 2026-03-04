@@ -48,6 +48,7 @@ import { resolveOrCreateDocInstanceAsync } from "@/hooks/useResolveDocInstance";
 import { useDocInstances, type HydratedDocInstance } from "@/hooks/useDocuments";
 import { navigationV1 } from "@/components/DashboardLayout";
 import { handleSupabaseError } from "@/lib/supabase-error";
+import { syncDocInstanceDelete } from "@/lib/supabase-sync";
 import { isPricingLocked, getPricingLockReason, canOverridePricingLock, logOverrideAudit, canEditCosts, type DeltaReport } from "@/lib/sla-integrity";
 import { evaluateWorkspaceEscalations, checkStageOverride, fetchEscalationsByWorkspace, type EscalationEvent } from "@/lib/escalation-engine";
 import { PricingLockOverrideModal } from "@/components/PricingLockOverrideModal";
@@ -129,6 +130,9 @@ export default function WorkspaceDetail() {
 
   // Doc instances refetch trigger
   const [docRefetchKey, setDocRefetchKey] = useState(0);
+
+  // Delete draft document state
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
 
   // SLA Integrity Guard state
   const [pricingOverrideOpen, setPricingOverrideOpen] = useState(false);
@@ -421,6 +425,24 @@ export default function WorkspaceDetail() {
   const handleTemplateSelect = (template: DocTemplate) => {
     setTemplatePickerOpen(false);
     openInComposer(templatePickerDocType as "quote" | "proposal" | "sla", `new-${ws.id}-${template.id}`);
+  };
+
+  // ── Delete Draft Document ──
+  const handleDeleteDraft = async (docId: string, docTitle: string) => {
+    if (!window.confirm(`Delete draft "${docTitle}"? This cannot be undone.`)) return;
+    setDeletingDocId(docId);
+    try {
+      const ok = await syncDocInstanceDelete(docId);
+      if (ok) {
+        toast.success(`Draft "${docTitle}" deleted`);
+        setDocRefetchKey(k => k + 1);
+      } else {
+        toast.error("Failed to delete document");
+      }
+    } catch {
+      toast.error("Failed to delete document");
+    }
+    setDeletingDocId(null);
   };
 
   // ── Open in Composer ──
@@ -957,6 +979,11 @@ export default function WorkspaceDetail() {
                         <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => navigate(`/composer/${d.id}/view?from=workspace&workspaceId=${ws.id}`)}>
                           <Eye className="w-3 h-3 mr-1" /> View
                         </Button>
+                        {d.status === "draft" && (
+                          <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => handleDeleteDraft(d.id, d.title)} disabled={deletingDocId === d.id}>
+                            <Trash2 className="w-3 h-3 mr-1" /> {deletingDocId === d.id ? "Deleting..." : "Delete"}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}</div> : <p className="text-xs text-muted-foreground">No quotes yet. <Button variant="link" className="text-xs p-0" onClick={() => handleNewDocument("quote")}>Create one</Button></p>}
@@ -997,6 +1024,11 @@ export default function WorkspaceDetail() {
                         <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => navigate(`/composer/${d.id}/view?from=workspace&workspaceId=${ws.id}`)}>
                           <Eye className="w-3 h-3 mr-1" /> View
                         </Button>
+                        {d.status === "draft" && (
+                          <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => handleDeleteDraft(d.id, d.title)} disabled={deletingDocId === d.id}>
+                            <Trash2 className="w-3 h-3 mr-1" /> {deletingDocId === d.id ? "Deleting..." : "Delete"}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}</div> : <p className="text-xs text-muted-foreground">No proposals yet. <Button variant="link" className="text-xs p-0" onClick={() => handleNewDocument("proposal")}>Create one</Button></p>}
@@ -1037,6 +1069,11 @@ export default function WorkspaceDetail() {
                         <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => navigate(`/composer/${d.id}/view?from=workspace&workspaceId=${ws.id}`)}>
                           <Eye className="w-3 h-3 mr-1" /> View
                         </Button>
+                        {d.status === "draft" && (
+                          <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => handleDeleteDraft(d.id, d.title)} disabled={deletingDocId === d.id}>
+                            <Trash2 className="w-3 h-3 mr-1" /> {deletingDocId === d.id ? "Deleting..." : "Delete"}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}</div> : <p className="text-xs text-muted-foreground">No SLAs yet. <Button variant="link" className="text-xs p-0" onClick={() => handleNewDocument("sla")}>Create one</Button></p>}

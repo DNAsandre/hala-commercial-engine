@@ -475,3 +475,38 @@ export async function syncVaultAssetCreate(asset: Record<string, any>): Promise<
   const { error } = await supabase.from("vault_assets").upsert(row, { onConflict: 'id' });
   if (error) handleSupabaseError('syncVaultAssetCreate', error, { entityId: asset.id });
 }
+
+// ============================================================
+// DOC INSTANCE DELETE
+// ============================================================
+
+export async function syncDocInstanceDelete(instanceId: string): Promise<boolean> {
+  try {
+    // Delete versions first (child records)
+    const { error: vError } = await supabase
+      .from("doc_instance_versions")
+      .delete()
+      .eq("doc_instance_id", instanceId);
+    if (vError) handleSupabaseError('syncDocInstanceDelete:versions', vError, { entityId: instanceId });
+
+    // Delete compiled documents
+    const { error: cError } = await supabase
+      .from("compiled_documents")
+      .delete()
+      .eq("doc_instance_id", instanceId);
+    if (cError) handleSupabaseError('syncDocInstanceDelete:compiled', cError, { entityId: instanceId });
+
+    // Delete the instance itself
+    const { error } = await supabase
+      .from("doc_instances")
+      .delete()
+      .eq("id", instanceId);
+    if (error) {
+      handleSupabaseError('syncDocInstanceDelete', error, { entityId: instanceId });
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}

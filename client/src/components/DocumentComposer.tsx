@@ -1582,9 +1582,19 @@ export default function DocumentComposer({
     if (isDirty) {
       handleSave();
     }
-    const studioUrl = `/composer/${document.id}/view?from=editor`;
-    navigate(studioUrl);
-  }, [document, isDirty, handleSave, navigate]);
+    const params = new URLSearchParams();
+    if (workspaceId) {
+      params.set("from", "workspace");
+      params.set("workspaceId", workspaceId);
+    } else if (document.workspace_id) {
+      params.set("from", "workspace");
+      params.set("workspaceId", document.workspace_id);
+    } else {
+      params.set("from", "editor");
+    }
+    const qs = params.toString();
+    navigate(`/composer/${document.id}/view${qs ? `?${qs}` : ''}`);
+  }, [document, isDirty, handleSave, navigate, workspaceId]);
 
   const handleApproveCompile = useCallback(async () => {
     setShowPDFPreview(false);
