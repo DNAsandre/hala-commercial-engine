@@ -1,125 +1,150 @@
-import React from "react";
+import React, { Suspense } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch, Redirect } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
+import PageErrorBoundary from "./components/PageErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import DashboardLayout from "./components/DashboardLayout";
 import { ComposerDirtyProvider } from "./contexts/ComposerDirtyContext";
 import RequireRole from "./components/RequireRole";
+import { Loader2 } from "lucide-react";
+
+// ── Eagerly loaded (lightweight, frequently visited) ──────────
 import Dashboard from "./pages/Dashboard";
 import Workspaces from "./pages/Workspaces";
-import WorkspaceDetail from "./pages/WorkspaceDetail";
 import Customers from "./pages/Customers";
-import CustomerDetail from "./pages/CustomerDetail";
-import Quotes from "./pages/Quotes";
-import Proposals from "./pages/Proposals";
-import SLAs from "./pages/SLAs";
-import Approvals from "./pages/Approvals";
-import PnLCalculator from "./pages/PnLCalculator";
-import CRMSync from "./pages/CRMSync";
-import Documents from "./pages/Documents";
-import Tenders from "./pages/Tenders";
-import TenderBoard from "./pages/TenderBoard";
-import Handover from "./pages/Handover";
-import AdminGovernance from "./pages/AdminGovernance";
-import AdminPanel from "./pages/AdminPanel";
-import AuditTrail from "./pages/AuditTrail";
-import Editor from "./pages/Editor";
 import Login from "./pages/Login";
-import BotRegistry from "./pages/BotRegistry";
-import BotBuilder from "./pages/BotBuilder";
-import SignalEngine from "./pages/SignalEngine";
-import BotAudit from "./pages/BotAudit";
-import EcrDashboard from "./pages/EcrDashboard";
-import EcrMetrics from "./pages/EcrMetrics";
-import EcrRuleSets from "./pages/EcrRuleSets";
-import EcrSnapshots from "./pages/EcrSnapshots";
-import EcrScoring from "./pages/EcrScoring";
-import EcrConnectors from "./pages/EcrConnectors";
-import Renewals from "./pages/Renewals";
-import RenewalDetail from "./pages/RenewalDetail";
-import RenewalGates from "./pages/RenewalGates";
-import RevenueExposure from "./pages/RevenueExposure";
-import EcrUpgrades from "./pages/EcrUpgrades";
-import TemplateManager from "./pages/TemplateManager";
-import BrandingProfiles from "./pages/BrandingProfiles";
-import BlockLibrary from "./pages/BlockLibrary";
-import BlockBuilder from "./pages/BlockBuilder";
-import VariablesManager from "./pages/VariablesManager";
-import TemplateDesigner from "./pages/TemplateDesigner";
-import OutputStudio from "./pages/OutputStudio";
-import GlobalEscalations from "./pages/GlobalEscalations";
-import AIProviders from "./pages/AIProviders";
-import EditorBotBuilder from "./pages/EditorBotBuilder";
-import KnowledgebaseManager from "./pages/KnowledgebaseManager";
-import CRMSyncConsole from "./pages/CRMSyncConsole";
-import PDFStudio from "./pages/PDFStudio";
-import { Loader2 } from "lucide-react";
+
+// ── Lazy loaded (heavy pages) ─────────────────────────────────
+const WorkspaceDetail = React.lazy(() => import("./pages/WorkspaceDetail"));
+const CustomerDetail = React.lazy(() => import("./pages/CustomerDetail"));
+const Quotes = React.lazy(() => import("./pages/Quotes"));
+const Proposals = React.lazy(() => import("./pages/Proposals"));
+const SLAs = React.lazy(() => import("./pages/SLAs"));
+const Approvals = React.lazy(() => import("./pages/Approvals"));
+const PnLCalculator = React.lazy(() => import("./pages/PnLCalculator"));
+const CRMSync = React.lazy(() => import("./pages/CRMSync"));
+const Documents = React.lazy(() => import("./pages/Documents"));
+const Tenders = React.lazy(() => import("./pages/Tenders"));
+const TenderBoard = React.lazy(() => import("./pages/TenderBoard"));
+const Handover = React.lazy(() => import("./pages/Handover"));
+const AdminGovernance = React.lazy(() => import("./pages/AdminGovernance"));
+const AdminPanel = React.lazy(() => import("./pages/AdminPanel"));
+const AuditTrail = React.lazy(() => import("./pages/AuditTrail"));
+const Editor = React.lazy(() => import("./pages/Editor"));
+const BotRegistry = React.lazy(() => import("./pages/BotRegistry"));
+const BotBuilder = React.lazy(() => import("./pages/BotBuilder"));
+const SignalEngine = React.lazy(() => import("./pages/SignalEngine"));
+const BotAudit = React.lazy(() => import("./pages/BotAudit"));
+const EcrDashboard = React.lazy(() => import("./pages/EcrDashboard"));
+const EcrMetrics = React.lazy(() => import("./pages/EcrMetrics"));
+const EcrRuleSets = React.lazy(() => import("./pages/EcrRuleSets"));
+const EcrSnapshots = React.lazy(() => import("./pages/EcrSnapshots"));
+const EcrScoring = React.lazy(() => import("./pages/EcrScoring"));
+const EcrConnectors = React.lazy(() => import("./pages/EcrConnectors"));
+const Renewals = React.lazy(() => import("./pages/Renewals"));
+const RenewalDetail = React.lazy(() => import("./pages/RenewalDetail"));
+const RenewalGates = React.lazy(() => import("./pages/RenewalGates"));
+const RevenueExposure = React.lazy(() => import("./pages/RevenueExposure"));
+const EcrUpgrades = React.lazy(() => import("./pages/EcrUpgrades"));
+const TemplateManager = React.lazy(() => import("./pages/TemplateManager"));
+const BrandingProfiles = React.lazy(() => import("./pages/BrandingProfiles"));
+const BlockLibrary = React.lazy(() => import("./pages/BlockLibrary"));
+const BlockBuilder = React.lazy(() => import("./pages/BlockBuilder"));
+const VariablesManager = React.lazy(() => import("./pages/VariablesManager"));
+const TemplateDesigner = React.lazy(() => import("./pages/TemplateDesigner"));
+const OutputStudio = React.lazy(() => import("./pages/OutputStudio"));
+const GlobalEscalations = React.lazy(() => import("./pages/GlobalEscalations"));
+const AIProviders = React.lazy(() => import("./pages/AIProviders"));
+const EditorBotBuilder = React.lazy(() => import("./pages/EditorBotBuilder"));
+const KnowledgebaseManager = React.lazy(() => import("./pages/KnowledgebaseManager"));
+const CRMSyncConsole = React.lazy(() => import("./pages/CRMSyncConsole"));
+const PDFStudio = React.lazy(() => import("./pages/PDFStudio"));
 
 /**
  * Admin-only routes: require "admin" role.
- * These pages manage system configuration, governance rules, bot behavior,
- * and audit trails — they should not be accessible to sales/viewer users.
  */
 const ADMIN_ROLES = ["admin"];
+
+/** Compact loading spinner for page transitions */
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center py-24">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
+
+/** Wraps lazy pages with Suspense + per-page error boundary */
+function LazyPage({ children }: { children: React.ReactNode }) {
+  return (
+    <PageErrorBoundary>
+      <Suspense fallback={<PageLoader />}>
+        {children}
+      </Suspense>
+    </PageErrorBoundary>
+  );
+}
 
 function AppRouter() {
   return (
     <Switch>
-      {/* ── Public (any authenticated user) ─────────────────── */}
+      {/* ── Eagerly loaded (no Suspense needed) ──────────────── */}
       <Route path="/" component={Dashboard} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/workspaces" component={Workspaces} />
-      <Route path="/workspaces/:id" component={WorkspaceDetail} />
       <Route path="/customers" component={Customers} />
-      <Route path="/customers/:id" component={CustomerDetail} />
-      <Route path="/quotes" component={Quotes} />
-      <Route path="/proposals" component={Proposals} />
-      <Route path="/slas" component={SLAs} />
-      <Route path="/approvals" component={Approvals} />
-      <Route path="/pnl" component={PnLCalculator} />
-      <Route path="/crm-sync" component={CRMSync} />
-      <Route path="/documents" component={Documents} />
-      <Route path="/tenders" component={Tenders} />
-      <Route path="/tender-board" component={TenderBoard} />
-      <Route path="/handover" component={Handover} />
-      <Route path="/editor" component={Editor} />
-      <Route path="/renewals" component={Renewals} />
-      <Route path="/renewals/:id" component={RenewalDetail} />
-      <Route path="/ecr" component={EcrDashboard} />
-      <Route path="/ecr-scoring" component={EcrScoring} />
-      <Route path="/composer/:docInstanceId/view" component={OutputStudio} />
-      <Route path="/escalations" component={GlobalEscalations} />
-      <Route path="/pdf-studio" component={PDFStudio} />
 
-      {/* ── Admin-only routes ───────────────────────────────── */}
-      <Route path="/admin">{() => <RequireRole roles={ADMIN_ROLES} component={AdminGovernance} />}</Route>
-      <Route path="/admin-panel">{() => <RequireRole roles={ADMIN_ROLES} component={AdminPanel} />}</Route>
-      <Route path="/audit">{() => <RequireRole roles={ADMIN_ROLES} component={AuditTrail} />}</Route>
-      <Route path="/bot-registry">{() => <RequireRole roles={ADMIN_ROLES} component={BotRegistry} />}</Route>
-      <Route path="/bot-builder">{() => <RequireRole roles={ADMIN_ROLES} component={BotBuilder} />}</Route>
-      <Route path="/signal-engine">{() => <RequireRole roles={ADMIN_ROLES} component={SignalEngine} />}</Route>
-      <Route path="/bot-audit">{() => <RequireRole roles={ADMIN_ROLES} component={BotAudit} />}</Route>
-      <Route path="/ecr-metrics">{() => <RequireRole roles={ADMIN_ROLES} component={EcrMetrics} />}</Route>
-      <Route path="/ecr-rule-sets">{() => <RequireRole roles={ADMIN_ROLES} component={EcrRuleSets} />}</Route>
-      <Route path="/ecr-snapshots">{() => <RequireRole roles={ADMIN_ROLES} component={EcrSnapshots} />}</Route>
-      <Route path="/ecr-connectors">{() => <RequireRole roles={ADMIN_ROLES} component={EcrConnectors} />}</Route>
-      <Route path="/renewal-gates">{() => <RequireRole roles={ADMIN_ROLES} component={RenewalGates} />}</Route>
-      <Route path="/revenue-exposure">{() => <RequireRole roles={ADMIN_ROLES} component={RevenueExposure} />}</Route>
-      <Route path="/ecr-upgrades">{() => <RequireRole roles={ADMIN_ROLES} component={EcrUpgrades} />}</Route>
-      <Route path="/template-manager">{() => <RequireRole roles={ADMIN_ROLES} component={TemplateManager} />}</Route>
-      <Route path="/branding-profiles">{() => <RequireRole roles={ADMIN_ROLES} component={BrandingProfiles} />}</Route>
-      <Route path="/block-library">{() => <RequireRole roles={ADMIN_ROLES} component={BlockLibrary} />}</Route>
-      <Route path="/block-builder">{() => <RequireRole roles={ADMIN_ROLES} component={BlockBuilder} />}</Route>
-      <Route path="/variables">{() => <RequireRole roles={ADMIN_ROLES} component={VariablesManager} />}</Route>
-      <Route path="/templates/:templateId/designer">{() => <RequireRole roles={ADMIN_ROLES} component={TemplateDesigner} />}</Route>
-      <Route path="/ai-providers">{() => <RequireRole roles={ADMIN_ROLES} component={AIProviders} />}</Route>
-      <Route path="/editor-bot-builder">{() => <RequireRole roles={ADMIN_ROLES} component={EditorBotBuilder} />}</Route>
-      <Route path="/knowledgebase">{() => <RequireRole roles={ADMIN_ROLES} component={KnowledgebaseManager} />}</Route>
-      <Route path="/crm-sync-console">{() => <RequireRole roles={ADMIN_ROLES} component={CRMSyncConsole} />}</Route>
+      {/* ── Lazy loaded public routes ────────────────────────── */}
+      <Route path="/workspaces/:id">{() => <LazyPage><WorkspaceDetail /></LazyPage>}</Route>
+      <Route path="/customers/:id">{() => <LazyPage><CustomerDetail /></LazyPage>}</Route>
+      <Route path="/quotes">{() => <LazyPage><Quotes /></LazyPage>}</Route>
+      <Route path="/proposals">{() => <LazyPage><Proposals /></LazyPage>}</Route>
+      <Route path="/slas">{() => <LazyPage><SLAs /></LazyPage>}</Route>
+      <Route path="/approvals">{() => <LazyPage><Approvals /></LazyPage>}</Route>
+      <Route path="/pnl">{() => <LazyPage><PnLCalculator /></LazyPage>}</Route>
+      <Route path="/crm-sync">{() => <LazyPage><CRMSync /></LazyPage>}</Route>
+      <Route path="/documents">{() => <LazyPage><Documents /></LazyPage>}</Route>
+      <Route path="/tenders">{() => <LazyPage><Tenders /></LazyPage>}</Route>
+      <Route path="/tender-board">{() => <LazyPage><TenderBoard /></LazyPage>}</Route>
+      <Route path="/handover">{() => <LazyPage><Handover /></LazyPage>}</Route>
+      <Route path="/editor">{() => <LazyPage><Editor /></LazyPage>}</Route>
+      <Route path="/renewals">{() => <LazyPage><Renewals /></LazyPage>}</Route>
+      <Route path="/renewals/:id">{() => <LazyPage><RenewalDetail /></LazyPage>}</Route>
+      <Route path="/ecr">{() => <LazyPage><EcrDashboard /></LazyPage>}</Route>
+      <Route path="/ecr-scoring">{() => <LazyPage><EcrScoring /></LazyPage>}</Route>
+      <Route path="/composer/:docInstanceId/view">{() => <LazyPage><OutputStudio /></LazyPage>}</Route>
+      <Route path="/escalations">{() => <LazyPage><GlobalEscalations /></LazyPage>}</Route>
+      <Route path="/pdf-studio">{() => <LazyPage><PDFStudio /></LazyPage>}</Route>
+
+      {/* ── Admin-only routes (lazy + role guard) ────────────── */}
+      <Route path="/admin">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={AdminGovernance} /></LazyPage>}</Route>
+      <Route path="/admin-panel">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={AdminPanel} /></LazyPage>}</Route>
+      <Route path="/audit">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={AuditTrail} /></LazyPage>}</Route>
+      <Route path="/bot-registry">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={BotRegistry} /></LazyPage>}</Route>
+      <Route path="/bot-builder">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={BotBuilder} /></LazyPage>}</Route>
+      <Route path="/signal-engine">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={SignalEngine} /></LazyPage>}</Route>
+      <Route path="/bot-audit">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={BotAudit} /></LazyPage>}</Route>
+      <Route path="/ecr-metrics">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={EcrMetrics} /></LazyPage>}</Route>
+      <Route path="/ecr-rule-sets">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={EcrRuleSets} /></LazyPage>}</Route>
+      <Route path="/ecr-snapshots">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={EcrSnapshots} /></LazyPage>}</Route>
+      <Route path="/ecr-connectors">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={EcrConnectors} /></LazyPage>}</Route>
+      <Route path="/renewal-gates">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={RenewalGates} /></LazyPage>}</Route>
+      <Route path="/revenue-exposure">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={RevenueExposure} /></LazyPage>}</Route>
+      <Route path="/ecr-upgrades">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={EcrUpgrades} /></LazyPage>}</Route>
+      <Route path="/template-manager">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={TemplateManager} /></LazyPage>}</Route>
+      <Route path="/branding-profiles">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={BrandingProfiles} /></LazyPage>}</Route>
+      <Route path="/block-library">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={BlockLibrary} /></LazyPage>}</Route>
+      <Route path="/block-builder">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={BlockBuilder} /></LazyPage>}</Route>
+      <Route path="/variables">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={VariablesManager} /></LazyPage>}</Route>
+      <Route path="/templates/:templateId/designer">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={TemplateDesigner} /></LazyPage>}</Route>
+      <Route path="/ai-providers">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={AIProviders} /></LazyPage>}</Route>
+      <Route path="/editor-bot-builder">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={EditorBotBuilder} /></LazyPage>}</Route>
+      <Route path="/knowledgebase">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={KnowledgebaseManager} /></LazyPage>}</Route>
+      <Route path="/crm-sync-console">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={CRMSyncConsole} /></LazyPage>}</Route>
 
       {/* ── 404 ─────────────────────────────────────────────── */}
       <Route component={NotFound} />

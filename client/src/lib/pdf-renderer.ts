@@ -322,31 +322,50 @@ function getDocumentHead(branding: BrandingProfile, language: LanguageMode): str
     margin-bottom: 8px;
   }
   
-  /* ═══ DUAL LANGUAGE ═══ */
-  .dual-heading {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background: linear-gradient(90deg, ${branding.primary_color}, ${branding.secondary_color});
-    color: white;
-    padding: 8px 16px;
-    margin-bottom: 12px;
+  /* ═══ DUAL LANGUAGE — Block separation (EN block then AR block) ═══ */
+  .ar-block {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 2px solid ${branding.secondary_color};
+    direction: rtl;
+    text-align: right;
+    font-family: 'Noto Naskh Arabic', 'Traditional Arabic', sans-serif;
   }
   
-  .dual-heading .en { font-size: 15px; font-weight: 700; }
-  .dual-heading .ar {
-    font-size: 15px; font-weight: 700;
+  .ar-block-label {
+    display: inline-block;
+    background: ${branding.secondary_color};
+    color: white;
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px 10px;
+    margin-bottom: 10px;
+    font-family: 'Noto Naskh Arabic', 'Traditional Arabic', sans-serif;
+  }
+  
+  .ar-block .section-heading {
     font-family: 'Noto Naskh Arabic', 'Traditional Arabic', sans-serif;
     direction: rtl;
+    text-align: right;
   }
   
-  .dual-cols {
-    display: flex; gap: 20px;
+  .ar-block .section-text {
+    font-family: 'Noto Naskh Arabic', 'Traditional Arabic', sans-serif;
+    direction: rtl;
+    text-align: right;
+    line-height: 1.8;
   }
   
-  .dual-col-en { flex: 1; text-align: left; direction: ltr; }
-  .dual-col-ar {
-    flex: 1; text-align: right; direction: rtl;
+  .ar-block .lettered-list {
+    direction: rtl;
+    text-align: right;
+    font-family: 'Noto Naskh Arabic', 'Traditional Arabic', sans-serif;
+    line-height: 1.8;
+  }
+  
+  .ar-block .editor-content {
+    direction: rtl;
+    text-align: right;
     font-family: 'Noto Naskh Arabic', 'Traditional Arabic', sans-serif;
   }
   
@@ -848,17 +867,26 @@ function renderConfidentiality(ctx: PDFRenderContext, _section: any): string {
   
   return `
   <div class="doc-section">
-    <h2 class="section-heading">Confidentiality Statement${isDual ? ` <span class="ar-text" style="font-family: 'Noto Naskh Arabic', sans-serif; float: right;">بيان السرية</span>` : ""}</h2>
+    <h2 class="section-heading">Confidentiality Statement</h2>
     
     <p class="section-text">
       The information contained within this document is confidential between ${ctx.branding.company_name_en} and ${ctx.customer_name}.
     </p>
-    ${isDual ? `<p class="section-text ar-text" style="margin-bottom: 10px;">المعلومات الواردة في هذه الوثيقة سرية بين ${ctx.branding.company_name_ar} و ${ctx.customer_name_ar || ctx.customer_name}.</p>` : ""}
-    
     <p class="section-text">
       This document is prepared and published by ${ctx.branding.company_name_en.split(' Co.')[0]} exclusively for the use by ${ctx.customer_name} employees on a need-to-know basis. It contains confidential and proprietary information, and under no circumstances should this document, or a copy, in any form, be given or any of its contents disclosed to anyone who is not an authorized recipient.
     </p>
-    ${isDual ? `<p class="section-text ar-text">تم إعداد ونشر هذه الوثيقة حصرياً لاستخدام موظفي ${ctx.customer_name_ar || ctx.customer_name} على أساس الحاجة إلى المعرفة. تحتوي على معلومات سرية وملكية خاصة، ولا يجوز بأي حال من الأحوال إعطاء هذه الوثيقة أو نسخة منها أو الكشف عن محتوياتها لأي شخص غير مخول.</p>` : ""}
+    
+    ${isDual ? `
+    <div class="ar-block">
+      <span class="ar-block-label">الترجمة العربية</span>
+      <h2 class="section-heading">بيان السرية</h2>
+      <p class="section-text">
+        المعلومات الواردة في هذه الوثيقة سرية بين ${ctx.branding.company_name_ar} و ${ctx.customer_name_ar || ctx.customer_name}.
+      </p>
+      <p class="section-text">
+        تم إعداد ونشر هذه الوثيقة حصرياً لاستخدام موظفي ${ctx.customer_name_ar || ctx.customer_name} على أساس الحاجة إلى المعرفة. تحتوي على معلومات سرية وملكية خاصة، ولا يجوز بأي حال من الأحوال إعطاء هذه الوثيقة أو نسخة منها أو الكشف عن محتوياتها لأي شخص غير مخول.
+      </p>
+    </div>` : ""}
   </div>`;
 }
 
@@ -869,24 +897,22 @@ function renderIntroduction(ctx: PDFRenderContext, section: any, data: PDFSectio
   
   return `
   <div class="doc-section">
-    ${isDual ? `
-    <div class="dual-heading">
-      <span class="en">${escapeHtml(section.title_en)}</span>
-      <span class="ar">${escapeHtml(section.title_ar)}</span>
-    </div>` : `
-    <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>`}
+    <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>
     
     ${customContent ? `<div class="editor-content">${customContent}</div>` : `
     <p class="section-text">
       HALA SCS is a leading supply chain solution provider with over 20 years of extensive experience in Saudi Arabia. We are pioneers in four main verticals (petrochemical, healthcare, FMCG / F&B, Industrial) where we successfully help our clients mitigate their supply chain risk, optimize the cost, and sustain their logistics.
     </p>`}
     
-    ${isDual && !customContentAr ? `
-    <div class="ar-text" style="margin-top: 10px;">
-      <p class="section-text ar-text">
-        هلا لخدمات الإمدادات المساندة هي شركة رائدة في حلول سلسلة الإمداد مع أكثر من 20 عامًا من الخبرة الواسعة في المملكة العربية السعودية.
-      </p>
-    </div>` : isDual && customContentAr ? `<div class="ar-text" style="margin-top: 10px;">${customContentAr}</div>` : ""}
+    ${isDual ? `
+    <div class="ar-block">
+      <span class="ar-block-label">الترجمة العربية</span>
+      <h2 class="section-heading">${escapeHtml(section.title_ar)}</h2>
+      ${customContentAr ? `<div class="editor-content">${customContentAr}</div>` : `
+      <p class="section-text">
+        هلا لخدمات الإمدادات المساندة هي شركة رائدة في حلول سلسلة الإمداد مع أكثر من 20 عاماً من الخبرة الواسعة في المملكة العربية السعودية.
+      </p>`}
+    </div>` : ""}
   </div>`;
 }
 
@@ -895,12 +921,7 @@ function renderScopeOfWork(ctx: PDFRenderContext, section: any, data: PDFSection
   
   return `
   <div class="doc-section">
-    ${isDual ? `
-    <div class="dual-heading">
-      <span class="en">${escapeHtml(section.title_en)}</span>
-      <span class="ar">${escapeHtml(section.title_ar)}</span>
-    </div>` : `
-    <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>`}
+    <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>
     
     ${data?.content_html ? `<div class="editor-content">${data.content_html}</div>` : `
     <ol class="lettered-list">
@@ -913,9 +934,19 @@ function renderScopeOfWork(ctx: PDFRenderContext, section: any, data: PDFSection
       <li>Outbound orders will be processed per customer instructions and the shipping documents will be prepared for each shipment.</li>
     </ol>`}
     
-    ${isDual && data?.content_html_ar ? `
-    <div class="ar-text" style="margin-top: 10px;">
-      ${data.content_html_ar}
+    ${isDual ? `
+    <div class="ar-block">
+      <span class="ar-block-label">الترجمة العربية</span>
+      <h2 class="section-heading">${escapeHtml(section.title_ar)}</h2>
+      ${data?.content_html_ar ? `<div class="editor-content">${data.content_html_ar}</div>` : `
+      <ol class="lettered-list">
+        <li>مساحة تخزين مخصصة في المستودع المحدد.</li>
+        <li>تخزين بدرجة حرارة متحكم بها حسب المواصفات المتفق عليها.</li>
+        <li>مناولة البضائع دخولاً وخروجاً.</li>
+        <li>فحص الشحنات الواردة للتأكد من عدم وجود أضرار ومطابقة الكميات.</li>
+        <li>تسجيل معلومات الشحنات الواردة في نظام إدارة المستودعات.</li>
+        <li>معالجة طلبات الشحن حسب تعليمات العميل وإعداد مستندات الشحن.</li>
+      </ol>`}
     </div>` : ""}
   </div>`;
 }
@@ -929,12 +960,7 @@ function renderPricingTable(ctx: PDFRenderContext, section: any, data: PDFSectio
   
   return `
   <div class="doc-section">
-    ${isDual ? `
-    <div class="dual-heading">
-      <span class="en">${escapeHtml(section.title_en)}</span>
-      <span class="ar">${escapeHtml(section.title_ar)}</span>
-    </div>` : `
-    <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>`}
+    <h2 class="section-heading">${escapeHtml(section.title_en)}${isDual ? ` <span style="font-family: 'Noto Naskh Arabic', sans-serif; font-size: 14px; font-weight: 400; color: #666; float: right;">${escapeHtml(section.title_ar)}</span>` : ''}</h2>
     
     <table class="pricing-table">
       <thead>
@@ -973,12 +999,7 @@ function renderSLAMatrix(ctx: PDFRenderContext, section: any, data: PDFSectionDa
   
   return `
   <div class="doc-section">
-    ${isDual ? `
-    <div class="dual-heading">
-      <span class="en">${escapeHtml(section.title_en)}</span>
-      <span class="ar">${escapeHtml(section.title_ar)}</span>
-    </div>` : `
-    <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>`}
+    <h2 class="section-heading">${escapeHtml(section.title_en)}${isDual ? ` <span style="font-family: 'Noto Naskh Arabic', sans-serif; font-size: 14px; font-weight: 400; color: #666; float: right;">${escapeHtml(section.title_ar)}</span>` : ''}</h2>
     
     <table class="sla-table">
       <thead>
@@ -1018,40 +1039,35 @@ function renderTerms(ctx: PDFRenderContext, section: any, data: PDFSectionData |
   const hasValidTerms = terms.length > 0 && terms.some(t => t.title_en && !t.title_en.startsWith("Clause "));
   const rawHtml = data?.content_html || "";
   
-  let termsContent = "";
+  // English terms content
+  let enTermsContent = "";
+  let arTermsContent = "";
   
   if (hasValidTerms) {
-    if (isDual) {
-      termsContent = `
-      <div class="dual-cols">
-        <div class="dual-col-en">
-          <ol class="lettered-list">
-            ${terms.map(t => `<li><strong>${escapeHtml(t.title_en)}</strong><br>${escapeHtml(t.content_en)}</li>`).join('')}
-          </ol>
-        </div>
-        <div class="dual-col-ar">
-          <ol class="lettered-list" style="direction: rtl;">
-            ${terms.map(t => `<li><strong>${escapeHtml(t.title_ar)}</strong><br>${escapeHtml(t.content_ar)}</li>`).join('')}
-          </ol>
-        </div>
-      </div>`;
-    } else {
-      termsContent = `
-      <ol class="lettered-list">
-        ${terms.map(t => `
-        <li>
-          ${t.title_en !== t.content_en ? `<strong>${escapeHtml(t.title_en)}:</strong> ` : ""}${escapeHtml(t.content_en)}
-        </li>`).join('')}
-      </ol>`;
-    }
-  } else if (rawHtml) {
-    termsContent = `<div class="editor-content">${rawHtml}</div>`;
-  } else {
-    termsContent = `
+    enTermsContent = `
     <ol class="lettered-list">
-      <li>Working hours: 1 Shift from 8:00 am – 5:00 pm (8 hours). Workdays: Sunday to Thursday.</li>
+      ${terms.map(t => `
+      <li>
+        ${t.title_en !== t.content_en ? `<strong>${escapeHtml(t.title_en)}:</strong> ` : ""}${escapeHtml(t.content_en)}
+      </li>`).join('')}
+    </ol>`;
+    
+    arTermsContent = `
+    <ol class="lettered-list">
+      ${terms.map(t => `
+      <li>
+        ${t.title_ar !== t.content_ar ? `<strong>${escapeHtml(t.title_ar)}:</strong> ` : ""}${escapeHtml(t.content_ar)}
+      </li>`).join('')}
+    </ol>`;
+  } else if (rawHtml) {
+    enTermsContent = `<div class="editor-content">${rawHtml}</div>`;
+    arTermsContent = ``;
+  } else {
+    enTermsContent = `
+    <ol class="lettered-list">
+      <li>Working hours: 1 Shift from 8:00 am \u2013 5:00 pm (8 hours). Workdays: Sunday to Thursday.</li>
       <li>Pricing includes but is not limited to: Security (24/7), Warehouse management and manpower, Sprinkler system and fire extinguishers, Standard type Electric Forklift and Reach Truck.</li>
-      <li>Rates are based on a 12-month contract term, with 30 Days' notice for extension or non-renewal.</li>
+      <li>Rates are based on a 12-month contract term, with 30 Days\u2019 notice for extension or non-renewal.</li>
       <li>All due invoices shall be paid within thirty (30) days of the date of receipt.</li>
       <li>Rates are exclusive of VAT. 15% VAT will be applied to invoices as per local regulations.</li>
       <li>Storage is subject to space availability.</li>
@@ -1059,17 +1075,29 @@ function renderTerms(ctx: PDFRenderContext, section: any, data: PDFSectionData |
       <li>Rates are based on standard pallets (Dimensions: L: 1.2m X W: 1.0m X H: 1.m).</li>
       <li>Maximum allowable weight is: 1,000kg.</li>
     </ol>`;
+    arTermsContent = `
+    <ol class="lettered-list">
+      <li>\u0633\u0627\u0639\u0627\u062a \u0627\u0644\u0639\u0645\u0644: \u0648\u0631\u062f\u064a\u0629 \u0648\u0627\u062d\u062f\u0629 \u0645\u0646 8:00 \u0635\u0628\u0627\u062d\u0627\u064b \u2013 5:00 \u0645\u0633\u0627\u0621\u064b. \u0623\u064a\u0627\u0645 \u0627\u0644\u0639\u0645\u0644: \u0627\u0644\u0623\u062d\u062f \u0625\u0644\u0649 \u0627\u0644\u062e\u0645\u064a\u0633.</li>
+      <li>\u062a\u0634\u0645\u0644 \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0639\u0644\u0649 \u0633\u0628\u064a\u0644 \u0627\u0644\u0645\u062b\u0627\u0644 \u0644\u0627 \u0627\u0644\u062d\u0635\u0631: \u0627\u0644\u0623\u0645\u0646 (24/7)\u060c \u0625\u062f\u0627\u0631\u0629 \u0627\u0644\u0645\u0633\u062a\u0648\u062f\u0639\u0627\u062a \u0648\u0627\u0644\u0642\u0648\u0649 \u0627\u0644\u0639\u0627\u0645\u0644\u0629.</li>
+      <li>\u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0645\u0628\u0646\u064a\u0629 \u0639\u0644\u0649 \u0639\u0642\u062f \u0644\u0645\u062f\u0629 12 \u0634\u0647\u0631\u0627\u064b\u060c \u0645\u0639 \u0625\u0634\u0639\u0627\u0631 \u0642\u0628\u0644 30 \u064a\u0648\u0645\u0627\u064b.</li>
+      <li>\u064a\u062c\u0628 \u062f\u0641\u0639 \u062c\u0645\u064a\u0639 \u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631 \u0627\u0644\u0645\u0633\u062a\u062d\u0642\u0629 \u062e\u0644\u0627\u0644 \u062b\u0644\u0627\u062b\u064a\u0646 (30) \u064a\u0648\u0645\u0627\u064b.</li>
+      <li>\u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0644\u0627 \u062a\u0634\u0645\u0644 \u0636\u0631\u064a\u0628\u0629 \u0627\u0644\u0642\u064a\u0645\u0629 \u0627\u0644\u0645\u0636\u0627\u0641\u0629. \u0633\u064a\u062a\u0645 \u062a\u0637\u0628\u064a\u0642 15% \u0636\u0631\u064a\u0628\u0629 \u0627\u0644\u0642\u064a\u0645\u0629 \u0627\u0644\u0645\u0636\u0627\u0641\u0629.</li>
+      <li>\u0627\u0644\u062a\u062e\u0632\u064a\u0646 \u064a\u062e\u0636\u0639 \u0644\u062a\u0648\u0641\u0631 \u0627\u0644\u0645\u0633\u0627\u062d\u0629.</li>
+      <li>\u0635\u0644\u0627\u062d\u064a\u0629 \u0627\u0644\u0639\u0631\u0636 30 \u064a\u0648\u0645\u0627\u064b.</li>
+    </ol>`;
   }
   
   return `
   <div class="doc-section">
+    <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>
+    ${enTermsContent}
+    
     ${isDual ? `
-    <div class="dual-heading">
-      <span class="en">${escapeHtml(section.title_en)}</span>
-      <span class="ar">${escapeHtml(section.title_ar)}</span>
-    </div>` : `
-    <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>`}
-    ${termsContent}
+    <div class="ar-block">
+      <span class="ar-block-label">\u0627\u0644\u062a\u0631\u062c\u0645\u0629 \u0627\u0644\u0639\u0631\u0628\u064a\u0629</span>
+      <h2 class="section-heading">${escapeHtml(section.title_ar)}</h2>
+      ${arTermsContent}
+    </div>` : ""}
   </div>`;
 }
 
