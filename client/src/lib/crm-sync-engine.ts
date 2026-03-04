@@ -2,7 +2,7 @@
  * Sprint 12 — CRM Production Integration + Sync Engine Hardening
  * 
  * Production-ready bi-directional CRM sync with:
- * - Zoho CRM (current) + GoHighLevel/GHL (migration target)
+ * - Zoho CRM (current) + DNA Supersystems (migration target)
  * - Idempotent writes via sync event deduplication
  * - Exponential backoff retry (1m → 5m → 15m → 1h → 6h)
  * - Conflict resolution (timestamp-based last-write-wins)
@@ -108,7 +108,7 @@ export interface SyncHealthStats {
 const MAX_RETRIES = 5;
 const RETRY_BACKOFF_MINUTES = [1, 5, 15, 60, 360]; // 1m → 5m → 15m → 1h → 6h
 
-// GHL-specific field name mappings
+// DNA Supersystems-specific field name mappings (GHL white-label)
 const GHL_STAGE_MAP: Record<string, string> = {
   prospecting: "New Lead",
   qualified: "Qualified",
@@ -169,7 +169,7 @@ const SEED_CONNECTIONS: CRMConnection[] = [
   {
     id: "crm-conn-ghl",
     provider: "ghl",
-    name: "GoHighLevel (Migration Target)",
+    name: "DNA Supersystems (Migration Target)",
     base_url: "https://rest.gohighlevel.com/v1",
     enabled: true,
     auth_method: "api_key",
@@ -182,7 +182,7 @@ const SEED_CONNECTIONS: CRMConnection[] = [
       location_id: "hala-ksa",
       pipeline_id: "commercial-pipeline",
       pipeline_stages: GHL_STAGE_MAP,
-      webhook_url: "/api/webhooks/ghl",
+      webhook_url: "/api/webhooks/dna",
       migration_mode: true, // read-only sync during migration
     },
   },
@@ -204,7 +204,7 @@ const SEED_MAPPINGS: CRMFieldMapping[] = [
   { id: "fm-z8", connection_id: "crm-conn-zoho", local_table: "customers", local_field: "city", crm_field: "Billing_City", direction: "both", transform: null, active: true },
   { id: "fm-z9", connection_id: "crm-conn-zoho", local_table: "customers", local_field: "industry", crm_field: "Industry", direction: "both", transform: null, active: true },
   { id: "fm-z10", connection_id: "crm-conn-zoho", local_table: "customers", local_field: "contactEmail", crm_field: "Email", direction: "both", transform: null, active: true },
-  // GHL Opportunity mappings
+  // DNA Supersystems Opportunity mappings
   { id: "fm-g1", connection_id: "crm-conn-ghl", local_table: "workspaces", local_field: "title", crm_field: "name", direction: "both", transform: null, active: true },
   { id: "fm-g2", connection_id: "crm-conn-ghl", local_table: "workspaces", local_field: "stage", crm_field: "pipelineStageId", direction: "both", transform: "map:ghl_stages", active: true },
   { id: "fm-g3", connection_id: "crm-conn-ghl", local_table: "workspaces", local_field: "estimatedValue", crm_field: "monetaryValue", direction: "both", transform: null, active: true },
@@ -286,23 +286,23 @@ const SEED_SYNC_EVENTS: HardenedSyncEvent[] = [
     created_at: "2026-02-15T11:00:00Z", processed_at: "2026-02-15T11:00:01Z",
     conflict_detail: "Local updated 2026-02-15T10:30:00Z vs CRM updated 2026-02-15T09:00:00Z → Local wins",
   },
-  // GHL events (migration mode — read-only sync)
+  // DNA Supersystems events (migration mode — read-only sync)
   {
     id: "cse-008", connection_id: "crm-conn-ghl", entity_type: "deal", entity_id: "w5",
     direction: "outbound", trigger: "manual_push", status: "success",
     payload: { name: "Almarai Riyadh Phase 2", monetaryValue: 8500000, pipelineStageId: "Solution Design" },
-    response: { id: "ghl-opp-001", status: "created" }, error: null,
+    response: { id: "dna-opp-001", status: "created" }, error: null,
     retry_count: 0, max_retries: MAX_RETRIES, next_retry_at: null,
-    idempotency_key: "ghl-w5-deal-20260301",
+    idempotency_key: "dna-w5-deal-20260301",
     created_at: "2026-03-01T10:00:00Z", processed_at: "2026-03-01T10:00:02Z", conflict_detail: null,
   },
   {
     id: "cse-009", connection_id: "crm-conn-ghl", entity_type: "customer", entity_id: "c3",
     direction: "outbound", trigger: "customer_created", status: "success",
     payload: { contactName: "Almarai", email: "faisal@almarai.com", phone: "+966-11-555-0003" },
-    response: { id: "ghl-contact-001", status: "created" }, error: null,
+    response: { id: "dna-contact-001", status: "created" }, error: null,
     retry_count: 0, max_retries: MAX_RETRIES, next_retry_at: null,
-    idempotency_key: "ghl-c3-customer-20260301",
+    idempotency_key: "dna-c3-customer-20260301",
     created_at: "2026-03-01T10:01:00Z", processed_at: "2026-03-01T10:01:01Z", conflict_detail: null,
   },
   {
@@ -310,10 +310,10 @@ const SEED_SYNC_EVENTS: HardenedSyncEvent[] = [
     direction: "outbound", trigger: "manual_push", status: "retrying",
     payload: { name: "Ma'aden Jubail Expansion 2500PP", monetaryValue: 3400000, pipelineStageId: "Quote Sent" },
     response: { status: 401, message: "Unauthorized" },
-    error: "GHL API returned 401 — check API key configuration",
+    error: "DNA Supersystems API returned 401 — check API key configuration",
     retry_count: 1, max_retries: MAX_RETRIES,
     next_retry_at: new Date(Date.now() + 5 * 60000).toISOString(),
-    idempotency_key: "ghl-w1-deal-20260302",
+    idempotency_key: "dna-w1-deal-20260302",
     created_at: "2026-03-02T08:00:00Z", processed_at: null, conflict_detail: null,
   },
 ];
@@ -422,7 +422,7 @@ export async function testConnection(connectionId: string): Promise<{ success: b
     const mockLatency = 120 + Math.floor(Math.random() * 200);
 
     if (conn.provider === "ghl" && conn.health_status === "configuring") {
-      return { success: false, latency_ms: mockLatency, message: "GHL API key not configured. Add GOHIGHLEVEL_API_KEY to Supabase secrets." };
+      return { success: false, latency_ms: mockLatency, message: "DNA Supersystems API key not configured. Add DNA_SUPERSYSTEMS_API_KEY to Supabase secrets." };
     }
 
     await updateConnection(connectionId, {
@@ -550,9 +550,9 @@ export async function triggerOutboundSync(params: {
   const events: HardenedSyncEvent[] = [];
 
   for (const conn of targetConnections) {
-    // Check migration mode for GHL
+    // Check migration mode for DNA Supersystems
     if (conn.provider === "ghl" && conn.config?.migration_mode && params.trigger !== "manual_push") {
-      continue; // Skip auto-triggers for GHL in migration mode
+      continue; // Skip auto-triggers for DNA Supersystems in migration mode
     }
 
     const idempotencyKey = `${conn.provider}-${params.entityId}-${params.trigger}-${now.slice(0, 10).replace(/-/g, "")}`;
@@ -1070,8 +1070,8 @@ async function getLocalUpdatedAt(entityType: SyncEntityType, entityId: string): 
 
 function getEdgeFunctionName(provider: CRMProvider, entityType: SyncEntityType): string {
   if (provider === "ghl") {
-    if (entityType === "customer" || entityType === "contact") return "ghl-push-contact";
-    return "ghl-push-deal";
+    if (entityType === "customer" || entityType === "contact") return "dna-push-contact";
+    return "dna-push-deal";
   }
   // Default to Zoho
   if (entityType === "customer" || entityType === "contact") return "crm-push-customer";

@@ -57,7 +57,7 @@
 
 5. **CRM Sync Widget (right column)** — Shows:
    - Zoho connection status (green "Connected" or red "Disconnected")
-   - GHL connection status
+   - DNA Supersystems connection status
    - Last sync timestamp
    - Pending / Failed sync counts
    - Click "View Console" → should navigate to CRM Sync Console
@@ -636,7 +636,7 @@
 
 1. **Connection Cards** — 2 CRM connections:
    - **Zoho CRM** — Status: Connected (green), Last sync timestamp
-   - **GoHighLevel** — Status: Configuring (amber), Migration mode
+   - **DNA Supersystems** — Status: Configuring (amber), Migration mode
 
 2. **Connection Actions:**
    - Toggle enable/disable
@@ -651,7 +651,7 @@
    - Connection, Direction (inbound/outbound), Status, Entity Type, Timestamp
 
 5. **Filters** — Try each:
-   - Connection: Zoho / GHL / All
+   - Connection: Zoho / DNA Supersystems / All
    - Direction: Inbound / Outbound / All
    - Status: Success / Failed / Pending / Retrying / All
    - Entity Type: workspace / customer / deal / All
@@ -660,7 +660,7 @@
 
 7. **Field Mapping Viewer** — Shows field mappings:
    - Zoho: 10 mappings (workspace_name → Deal_Name, etc.)
-   - GHL: 7 mappings
+   - DNA Supersystems: 7 mappings
    - Direction badges (inbound/outbound)
 
 8. **Conflict Resolution Log** — Shows resolved conflicts with timestamps
@@ -822,7 +822,7 @@
 
 1. **AI Generation** — Uses mock/fallback responses if Supabase Edge Functions are not deployed. You'll see a "CloudOff" banner in the editor if AI services are unavailable. This is expected behavior.
 
-2. **CRM Sync** — Uses simulated sync events. Real Zoho/GHL integration requires Edge Function deployment with API keys.
+2. **CRM Sync** — Uses simulated sync events. Real Zoho/DNA Supersystems integration requires Edge Function deployment with API keys.
 
 3. **PDF Download** — Downloads as HTML (not native PDF). To get a PDF: open the HTML file in Chrome → Print → Save as PDF (set to A4, no margins).
 

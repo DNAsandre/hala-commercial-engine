@@ -22,7 +22,7 @@
 
 ### Layer 4 — Activity & Quick Access
 - Commercial Activity: 12 events with icons, timestamps, descriptions
-- CRM Sync: Zoho CRM (Active), GoHighLevel (Active), 5 synced, 3 pending, 1 failed
+- CRM Sync: Zoho CRM (Active), DNA Supersystems (Active), 5 synced, 3 pending, 1 failed
 - Quick Access: Approvals (1 pending), Renewals, Revenue Exposure, Signals (2 critical)
 - Quick Links: Handover, Tender Board, CRM Sync, Document Vault, Policy Gates
 

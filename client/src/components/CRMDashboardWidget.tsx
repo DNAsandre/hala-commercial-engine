@@ -107,7 +107,7 @@ export default function CRMDashboardWidget() {
               <div key={conn.id} className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <StatusIcon className={`w-3.5 h-3.5 ${healthColors[conn.health_status] || "text-muted-foreground"} ${conn.health_status === "configuring" ? "animate-spin" : ""}`} />
-                  <span className="text-sm">{conn.provider === "zoho" ? "Zoho CRM" : "GoHighLevel"}</span>
+                  <span className="text-sm">{conn.provider === "zoho" ? "Zoho CRM" : "DNA Supersystems"}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   {conn.enabled ? (

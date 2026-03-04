@@ -1133,7 +1133,7 @@ export default function AdminPanel() {
           <div className="flex items-center justify-between mb-2">
             <div>
               <h2 className="text-base font-semibold">CRM Sync Console</h2>
-              <p className="text-xs text-muted-foreground">Bi-directional CRM integration — Zoho CRM + GoHighLevel</p>
+              <p className="text-xs text-muted-foreground">Bi-directional CRM integration — Zoho CRM + DNA Supersystems</p>
             </div>
             <Link href="/crm-sync-console">
               <Button variant="outline" size="sm" className="gap-1.5">

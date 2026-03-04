@@ -1,7 +1,7 @@
 /**
  * Sprint 12 — CRM Sync Console
  * 
- * Admin page for managing CRM connections (Zoho + GHL),
+ * Admin page for managing CRM connections (Zoho + DNA Supersystems),
  * viewing sync events, retrying failures, and monitoring health.
  */
 
@@ -75,7 +75,7 @@ function healthBadge(status: CRMConnection["health_status"]) {
 
 function providerLogo(provider: string) {
   if (provider === "zoho") return "🟠";
-  if (provider === "ghl") return "🟢";
+  if (provider === "ghl") return "🟢"; // DNA Supersystems
   return "⚪";
 }
 
@@ -213,7 +213,7 @@ export default function CRMSyncConsole() {
             CRM Sync Console
           </h1>
           <p className="text-sm text-zinc-500 mt-1">
-            Bi-directional CRM integration — Zoho CRM + GoHighLevel
+            Bi-directional CRM integration — Zoho CRM + DNA Supersystems
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={loadData} className="gap-1">

@@ -2,7 +2,7 @@
 
 ## Dashboard (Sprint 13 - CRM Widget)
 - Dashboard loads correctly
-- CRM Sync widget visible in bottom section with "Zoho CRM Active 15m ago", "GoHighLevel Active Never"
+- CRM Sync widget visible in bottom section with "Zoho CRM Active 15m ago", "DNA Supersystems Active Never"
 - Shows 5 synced, 3 pending, 1 failed counts
 - "1 sync failures — check CRM Console" warning visible
 - Console link present
