@@ -19,9 +19,10 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import {
   FileText, Printer, Eye, Download, Settings, Globe, Languages,
-  ChevronRight, ChevronDown, Plus, Trash2, GripVertical, Search,
+  ChevronRight, ChevronDown, ChevronUp, Plus, Trash2, GripVertical, Search,
   CheckCircle2, AlertTriangle, BookOpen, ArrowRight, RefreshCw,
   Loader2, Copy, X, Stamp, FileSignature, LayoutTemplate, Palette,
+  ZoomIn, ZoomOut, ChevronsUpDown, ArrowDown, ArrowUp, Maximize2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -131,6 +132,9 @@ export default function PDFStudio() {
   const [activeTab, setActiveTab] = useState("preview");
   const [showSections, setShowSections] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [previewZoom, setPreviewZoom] = useState(100);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
 
   const templates = fetchPDFTemplates();
   const selectedTemplate = getPDFTemplate(selectedTemplateId);
@@ -268,6 +272,46 @@ export default function PDFStudio() {
       previewRef.current.contentWindow.print();
     }
   }, []);
+
+  // Page navigation helpers
+  const scrollToPage = useCallback((pageNum: number) => {
+    if (!previewRef.current?.contentDocument) return;
+    const doc = previewRef.current.contentDocument;
+    const pages = doc.querySelectorAll('.cover-page, .content-page');
+    if (pages[pageNum - 1]) {
+      pages[pageNum - 1].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setCurrentPage(pageNum);
+    }
+  }, []);
+
+  // Track scroll position to update current page indicator
+  useEffect(() => {
+    const iframe = previewRef.current;
+    if (!iframe?.contentDocument) return;
+    const doc = iframe.contentDocument;
+    const pages = doc.querySelectorAll('.cover-page, .content-page');
+    setTotalPages(pages.length);
+
+    const handleScroll = () => {
+      const scrollTop = doc.documentElement.scrollTop || doc.body.scrollTop;
+      let page = 1;
+      pages.forEach((p, i) => {
+        const el = p as HTMLElement;
+        if (scrollTop >= el.offsetTop - 100) page = i + 1;
+      });
+      setCurrentPage(page);
+    };
+
+    const win = iframe.contentWindow;
+    if (win) {
+      win.addEventListener('scroll', handleScroll);
+      // Initial count
+      setTimeout(() => {
+        setTotalPages(doc.querySelectorAll('.cover-page, .content-page').length);
+      }, 300);
+      return () => win.removeEventListener('scroll', handleScroll);
+    }
+  }, [previewHTML]);
 
   // Pricing row management
   const addPricingRow = () => {
@@ -615,6 +659,7 @@ export default function PDFStudio() {
             <TabsContent value="preview">
               <Card className="border border-border shadow-none">
                 <CardContent className="p-0">
+                  {/* ── Top toolbar with document info ── */}
                   <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/30">
                     <div className="flex items-center gap-2">
                       <Badge variant="outline" className="text-[10px]">
@@ -627,17 +672,105 @@ export default function PDFStudio() {
                         <Badge variant="outline" className="text-[10px] capitalize">{watermark}</Badge>
                       )}
                     </div>
-                    <span className="text-[10px] text-muted-foreground">
-                      Ref: {generateReferenceNumber()}
-                    </span>
+                    <div className="flex items-center gap-3">
+                      {/* Page navigation */}
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0"
+                          onClick={() => scrollToPage(Math.max(1, currentPage - 1))}
+                          disabled={currentPage <= 1}
+                        >
+                          <ArrowUp className="w-3 h-3" />
+                        </Button>
+                        <span className="text-[10px] font-medium text-muted-foreground min-w-[60px] text-center">
+                          Page {currentPage} / {totalPages || '...'}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0"
+                          onClick={() => scrollToPage(Math.min(totalPages, currentPage + 1))}
+                          disabled={currentPage >= totalPages}
+                        >
+                          <ArrowDown className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      {/* Zoom controls */}
+                      <div className="flex items-center gap-1 border-l border-border pl-3">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0"
+                          onClick={() => setPreviewZoom(z => Math.max(50, z - 10))}
+                        >
+                          <ZoomOut className="w-3 h-3" />
+                        </Button>
+                        <span className="text-[10px] font-medium text-muted-foreground min-w-[32px] text-center">
+                          {previewZoom}%
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0"
+                          onClick={() => setPreviewZoom(z => Math.min(150, z + 10))}
+                        >
+                          <ZoomIn className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground border-l border-border pl-3">
+                        Ref: {generateReferenceNumber()}
+                      </span>
+                    </div>
                   </div>
-                  <iframe
-                    ref={previewRef}
-                    className="w-full border-0"
-                    style={{ height: "calc(100vh - 200px)", minHeight: "600px" }}
-                    title="PDF Preview"
-                    sandbox="allow-same-origin"
-                  />
+
+                  {/* ── Quick page jump bar ── */}
+                  {totalPages > 0 && (
+                    <div className="flex items-center gap-1 px-4 py-1.5 border-b border-border bg-muted/10 overflow-x-auto">
+                      <span className="text-[9px] text-muted-foreground font-medium mr-1 shrink-0">Jump to:</span>
+                      {Array.from({ length: totalPages }, (_, i) => (
+                        <button
+                          key={i}
+                          onClick={() => scrollToPage(i + 1)}
+                          className={`text-[9px] px-2 py-0.5 rounded-sm transition-colors shrink-0 ${
+                            currentPage === i + 1
+                              ? 'bg-primary text-primary-foreground font-semibold'
+                              : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+                          }`}
+                        >
+                          {i === 0 ? 'Cover' : `P${i + 1}`}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* ── PDF Preview iframe ── */}
+                  <div className="relative bg-neutral-100">
+                    <iframe
+                      ref={previewRef}
+                      className="w-full border-0 mx-auto block"
+                      style={{
+                        height: "calc(100vh - 240px)",
+                        minHeight: "700px",
+                        transform: `scale(${previewZoom / 100})`,
+                        transformOrigin: 'top center',
+                        width: `${10000 / previewZoom}%`,
+                      }}
+                      title="PDF Preview"
+                      sandbox="allow-same-origin"
+                    />
+                    {/* Scroll hint overlay on first load */}
+                    {currentPage === 1 && totalPages > 1 && (
+                      <div
+                        className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/70 text-white px-4 py-2 rounded-full text-xs cursor-pointer hover:bg-black/90 transition-colors animate-bounce"
+                        onClick={() => scrollToPage(2)}
+                      >
+                        <ChevronsUpDown className="w-3.5 h-3.5" />
+                        Scroll down or click to see document pages ({totalPages} pages)
+                      </div>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
