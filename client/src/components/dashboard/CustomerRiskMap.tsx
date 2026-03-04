@@ -1,5 +1,7 @@
 /**
  * Customer Risk Heatmap — Color-coded grid based on ECR, escalations, renewal risk, SLA
+ *
+ * DESIGN: Compact cards with overflow protection, truncated text
  */
 import { useMemo } from "react";
 import { Link } from "wouter";
@@ -87,13 +89,13 @@ export default function CustomerRiskMap({ customers, signals, workspaces }: Cust
   }), [riskData]);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5">
-      <div className="flex items-center justify-between mb-4">
-        <div>
+    <div className="bg-card border border-border rounded-xl p-5 overflow-hidden">
+      <div className="flex items-center justify-between mb-4 gap-2">
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold text-foreground">Customer Risk Map</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">ECR, escalations, renewal & payment risk</p>
+          <p className="text-xs text-muted-foreground mt-0.5 truncate">ECR, escalations, renewal &amp; payment risk</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           {(["red", "yellow", "green"] as RiskLevel[]).map(r => (
             <div key={r} className="flex items-center gap-1.5">
               <div className={`w-2.5 h-2.5 rounded-full ${riskColors[r].dot}`} />
@@ -106,13 +108,13 @@ export default function CustomerRiskMap({ customers, signals, workspaces }: Cust
         {riskData.map(c => {
           const colors = riskColors[c.risk];
           const inner = (
-            <div className={`p-3 rounded-lg border ${colors.bg} ${colors.border} hover:shadow-sm transition-shadow cursor-pointer`}>
-              <div className="flex items-center gap-2 mb-1">
-                <div className={`w-2 h-2 rounded-full ${colors.dot}`} />
+            <div className={`p-2.5 rounded-lg border ${colors.bg} ${colors.border} hover:shadow-sm transition-shadow cursor-pointer overflow-hidden`}>
+              <div className="flex items-center gap-1.5 mb-1 min-w-0">
+                <div className={`w-2 h-2 rounded-full shrink-0 ${colors.dot}`} />
                 <span className="text-xs font-bold text-foreground truncate">{c.name}</span>
               </div>
-              <p className="text-[10px] text-muted-foreground">{formatSAR(c.revenue)}</p>
-              <p className={`text-[10px] mt-1 ${colors.text} leading-tight`}>
+              <p className="text-[10px] text-muted-foreground truncate">{formatSAR(c.revenue)}</p>
+              <p className={`text-[10px] mt-0.5 ${colors.text} leading-tight truncate`}>
                 {c.reasons.slice(0, 2).join(" · ")}
               </p>
             </div>

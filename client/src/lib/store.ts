@@ -506,6 +506,14 @@ export function formatSAR(amount: number): string {
   return new Intl.NumberFormat("en-SA", { style: "currency", currency: "SAR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
 }
 
+/** Compact SAR format for KPI cards: SAR 87.5M, SAR 800K, SAR 1,200 */
+export function formatSARCompact(amount: number): string {
+  if (Math.abs(amount) >= 1_000_000_000) return `SAR ${(amount / 1_000_000_000).toFixed(1)}B`;
+  if (Math.abs(amount) >= 1_000_000) return `SAR ${(amount / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(amount) >= 10_000) return `SAR ${(amount / 1_000).toFixed(0)}K`;
+  return formatSAR(amount);
+}
+
 export function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`;
 }

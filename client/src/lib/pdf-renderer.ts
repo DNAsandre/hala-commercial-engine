@@ -960,7 +960,7 @@ function renderPricingTable(ctx: PDFRenderContext, section: any, data: PDFSectio
   
   return `
   <div class="doc-section">
-    <h2 class="section-heading">${escapeHtml(section.title_en)}${isDual ? ` <span style="font-family: 'Noto Naskh Arabic', sans-serif; font-size: 14px; font-weight: 400; color: #666; float: right;">${escapeHtml(section.title_ar)}</span>` : ''}</h2>
+    <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>
     
     <table class="pricing-table">
       <thead>
@@ -990,6 +990,13 @@ function renderPricingTable(ctx: PDFRenderContext, section: any, data: PDFSectio
     </table>
     
     ${data?.content_html && (!data?.pricing_rows || data.pricing_rows.length === 0) ? `<div class="editor-content" style="margin-top: 8px;">${data.content_html}</div>` : ""}
+    
+    ${isDual ? `
+    <div class="ar-block">
+      <span class="ar-block-label">الترجمة العربية</span>
+      <h2 class="section-heading">${escapeHtml(section.title_ar)}</h2>
+      <p class="section-text">الجدول أعلاه يوضح الأسعار المقترحة بالريال السعودي. جميع الأسعار لا تشمل ضريبة القيمة المضافة.</p>
+    </div>` : ""}
   </div>`;
 }
 
@@ -999,13 +1006,12 @@ function renderSLAMatrix(ctx: PDFRenderContext, section: any, data: PDFSectionDa
   
   return `
   <div class="doc-section">
-    <h2 class="section-heading">${escapeHtml(section.title_en)}${isDual ? ` <span style="font-family: 'Noto Naskh Arabic', sans-serif; font-size: 14px; font-weight: 400; color: #666; float: right;">${escapeHtml(section.title_ar)}</span>` : ''}</h2>
+    <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>
     
     <table class="sla-table">
       <thead>
         <tr>
           <th>SLA Metric</th>
-          ${isDual ? '<th class="ar-text">المقياس</th>' : ''}
           <th>Target</th>
           <th>Measurement</th>
           <th>Penalty</th>
@@ -1016,7 +1022,6 @@ function renderSLAMatrix(ctx: PDFRenderContext, section: any, data: PDFSectionDa
         ${rows.map(row => `
         <tr>
           <td class="severity-${row.severity}">${escapeHtml(row.metric)}</td>
-          ${isDual ? `<td class="ar-text severity-${row.severity}">${escapeHtml(row.metric_ar || '')}</td>` : ''}
           <td>${escapeHtml(row.target)}</td>
           <td>${escapeHtml(row.measurement)}</td>
           <td>${escapeHtml(row.penalty)}</td>
@@ -1030,6 +1035,39 @@ function renderSLAMatrix(ctx: PDFRenderContext, section: any, data: PDFSectionDa
         </tr>`).join('')}
       </tbody>
     </table>
+    
+    ${isDual ? `
+    <div class="ar-block">
+      <span class="ar-block-label">\u0627\u0644\u062a\u0631\u062c\u0645\u0629 \u0627\u0644\u0639\u0631\u0628\u064a\u0629</span>
+      <h2 class="section-heading">${escapeHtml(section.title_ar)}</h2>
+      <table class="sla-table" style="direction: rtl;">
+        <thead>
+          <tr>
+            <th>\u0627\u0644\u0645\u0642\u064a\u0627\u0633</th>
+            <th>\u0627\u0644\u0647\u062f\u0641</th>
+            <th>\u0627\u0644\u0642\u064a\u0627\u0633</th>
+            <th>\u0627\u0644\u063a\u0631\u0627\u0645\u0629</th>
+            <th style="width: 55px;">\u0627\u0644\u062e\u0637\u0648\u0631\u0629</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(row => `
+          <tr>
+            <td class="severity-${row.severity}">${escapeHtml(row.metric_ar || row.metric)}</td>
+            <td>${escapeHtml(row.target)}</td>
+            <td>${escapeHtml(row.measurement)}</td>
+            <td>${escapeHtml(row.penalty)}</td>
+            <td style="text-align: center;">
+              <span style="display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 8px; font-weight: 600;
+                background: ${row.severity === 'critical' ? '#fef2f2' : row.severity === 'high' ? '#fff7ed' : row.severity === 'medium' ? '#fefce8' : '#f0fdf4'};
+                color: ${row.severity === 'critical' ? '#dc2626' : row.severity === 'high' ? '#ea580c' : row.severity === 'medium' ? '#ca8a04' : '#16a34a'};">
+                ${row.severity.toUpperCase()}
+              </span>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : ""}
   </div>`;
 }
 
@@ -1104,72 +1142,62 @@ function renderTerms(ctx: PDFRenderContext, section: any, data: PDFSectionData |
 function renderSignature(ctx: PDFRenderContext, _section: any): string {
   const isDual = ctx.language === "dual" || ctx.language === "ar";
   
+  // Helper to render a signature party block (English-only)
+  function sigPartyEN(name: string, partyLabel: string) {
+    return `
+      <div class="signature-party">
+        <div class="signature-party-header">${escapeHtml(name)} ("${partyLabel}")</div>
+        <div class="signature-party-body">
+          <div class="signature-field"><span class="label">Name</span><span class="value"></span></div>
+          <div class="signature-field"><span class="label">Designation</span><span class="value"></span></div>
+          <div class="signature-field"><span class="label">Date</span><span class="value"></span></div>
+          <div class="signature-field"><span class="label">Signature</span><span class="value" style="min-height: 35px;"></span></div>
+          <div class="stamp-area">Company Stamp</div>
+        </div>
+      </div>`;
+  }
+  
+  // Helper to render a signature party block (Arabic-only)
+  function sigPartyAR(name: string) {
+    return `
+      <div class="signature-party" style="direction: rtl; text-align: right;">
+        <div class="signature-party-header" style="font-family: 'Noto Naskh Arabic', sans-serif;">${escapeHtml(name)}</div>
+        <div class="signature-party-body">
+          <div class="signature-field"><span class="label" style="font-family: 'Noto Naskh Arabic', sans-serif;">\u0627\u0644\u0623\u0633\u0645</span><span class="value"></span></div>
+          <div class="signature-field"><span class="label" style="font-family: 'Noto Naskh Arabic', sans-serif;">\u0627\u0644\u0645\u0646\u0635\u0628</span><span class="value"></span></div>
+          <div class="signature-field"><span class="label" style="font-family: 'Noto Naskh Arabic', sans-serif;">\u0627\u0644\u062a\u0627\u0631\u064a\u062e</span><span class="value"></span></div>
+          <div class="signature-field"><span class="label" style="font-family: 'Noto Naskh Arabic', sans-serif;">\u0627\u0644\u062a\u0648\u0642\u064a\u0639</span><span class="value" style="min-height: 35px;"></span></div>
+          <div class="stamp-area" style="font-family: 'Noto Naskh Arabic', sans-serif;">\u062e\u062a\u0645 \u0627\u0644\u0634\u0631\u0643\u0629</div>
+        </div>
+      </div>`;
+  }
+  
+  const halaNameEN = ctx.branding.company_name_en.split(' Co.')[0];
+  const halaNameAR = ctx.branding.company_name_ar;
+  const custNameAR = ctx.customer_name_ar || ctx.customer_name;
+  
   return `
   <div class="signature-section">
     <div class="closing-text">
       We thank you for giving ${ctx.branding.company_name_en} this opportunity and look forward to being your Supply Chain Partner in KSA.
     </div>
-    ${isDual ? `<div class="closing-text ar-text" style="font-family: 'Noto Naskh Arabic', sans-serif;">نشكركم على منح ${ctx.branding.company_name_ar} هذه الفرصة ونتطلع إلى أن نكون شريككم في سلسلة الإمداد في المملكة العربية السعودية.</div>` : ""}
     
     <div class="signature-block">
-      <!-- HALA Party -->
-      <div class="signature-party">
-        <div class="signature-party-header">
-          ${ctx.branding.company_name_en.split(' Co.')[0]}
-          ${isDual ? `<br><span style="font-family: 'Noto Naskh Arabic', sans-serif; font-size: 10px;">("هلا")</span>` : ` ("HALA")`}
-        </div>
-        <div class="signature-party-body">
-          <div class="signature-field">
-            <span class="label">Name ${isDual ? '<span class="label-ar">الأسم</span>' : ''}</span>
-            <span class="value"></span>
-          </div>
-          <div class="signature-field">
-            <span class="label">Designation ${isDual ? '<span class="label-ar">المنصب</span>' : ''}</span>
-            <span class="value"></span>
-          </div>
-          <div class="signature-field">
-            <span class="label">Date ${isDual ? '<span class="label-ar">التاريخ</span>' : ''}</span>
-            <span class="value"></span>
-          </div>
-          <div class="signature-field">
-            <span class="label">Signature ${isDual ? '<span class="label-ar">التوقيع</span>' : ''}</span>
-            <span class="value" style="min-height: 35px;"></span>
-          </div>
-          <div class="stamp-area">
-            Company Stamp${isDual ? ' / <span style="font-family: \'Noto Naskh Arabic\', sans-serif;">ختم الشركة</span>' : ''}
-          </div>
-        </div>
-      </div>
-      
-      <!-- Customer Party -->
-      <div class="signature-party">
-        <div class="signature-party-header">
-          ${escapeHtml(ctx.customer_name)}
-          ${isDual && ctx.customer_name_ar ? `<br><span style="font-family: 'Noto Naskh Arabic', sans-serif; font-size: 10px;">("${escapeHtml(ctx.customer_name_ar)}")</span>` : ` ("the Customer")`}
-        </div>
-        <div class="signature-party-body">
-          <div class="signature-field">
-            <span class="label">Name ${isDual ? '<span class="label-ar">الأسم</span>' : ''}</span>
-            <span class="value"></span>
-          </div>
-          <div class="signature-field">
-            <span class="label">Designation ${isDual ? '<span class="label-ar">المنصب</span>' : ''}</span>
-            <span class="value"></span>
-          </div>
-          <div class="signature-field">
-            <span class="label">Date ${isDual ? '<span class="label-ar">التاريخ</span>' : ''}</span>
-            <span class="value"></span>
-          </div>
-          <div class="signature-field">
-            <span class="label">Signature ${isDual ? '<span class="label-ar">التوقيع</span>' : ''}</span>
-            <span class="value" style="min-height: 35px;"></span>
-          </div>
-          <div class="stamp-area">
-            Company Stamp${isDual ? ' / <span style="font-family: \'Noto Naskh Arabic\', sans-serif;">ختم الشركة</span>' : ''}
-          </div>
-        </div>
-      </div>
+      ${sigPartyEN(halaNameEN, "HALA")}
+      ${sigPartyEN(ctx.customer_name, "the Customer")}
     </div>
+    
+    ${isDual ? `
+    <div class="ar-block" style="margin-top: 20px; padding-top: 14px;">
+      <span class="ar-block-label">\u0627\u0644\u062a\u0631\u062c\u0645\u0629 \u0627\u0644\u0639\u0631\u0628\u064a\u0629</span>
+      <div class="closing-text" style="font-family: 'Noto Naskh Arabic', sans-serif; direction: rtl; text-align: right;">
+        \u0646\u0634\u0643\u0631\u0643\u0645 \u0639\u0644\u0649 \u0645\u0646\u062d ${ctx.branding.company_name_ar} \u0647\u0630\u0647 \u0627\u0644\u0641\u0631\u0635\u0629 \u0648\u0646\u062a\u0637\u0644\u0639 \u0625\u0644\u0649 \u0623\u0646 \u0646\u0643\u0648\u0646 \u0634\u0631\u064a\u0643\u0643\u0645 \u0641\u064a \u0633\u0644\u0633\u0644\u0629 \u0627\u0644\u0625\u0645\u062f\u0627\u062f \u0641\u064a \u0627\u0644\u0645\u0645\u0644\u0643\u0629 \u0627\u0644\u0639\u0631\u0628\u064a\u0629 \u0627\u0644\u0633\u0639\u0648\u062f\u064a\u0629.
+      </div>
+      <div class="signature-block" style="margin-top: 12px;">
+        ${sigPartyAR(halaNameAR)}
+        ${sigPartyAR(custNameAR)}
+      </div>
+    </div>` : ""}
   </div>`;
 }
 
@@ -1189,6 +1217,7 @@ function renderTableOfContents(ctx: PDFRenderContext, sections: any[]): string {
 }
 
 function renderNotes(ctx: PDFRenderContext, section: any, data: PDFSectionData | undefined): string {
+  const isDual = ctx.language === "dual";
   const notes = data?.notes || [];
   
   return `
@@ -1199,15 +1228,36 @@ function renderNotes(ctx: PDFRenderContext, section: any, data: PDFSectionData |
       ${notes.map(n => `<li>${escapeHtml(n)}</li>`).join('')}
     </ul>` : `
     <p style="color: #666; font-style: italic; font-size: 11px;">Rates are exclusive of VAT. 15% VAT will be applied to invoices as per local regulations.</p>`}
+    
+    ${isDual ? `
+    <div class="ar-block" style="margin-top: 10px; padding-top: 8px;">
+      <span class="ar-block-label">\u0627\u0644\u062a\u0631\u062c\u0645\u0629 \u0627\u0644\u0639\u0631\u0628\u064a\u0629</span>
+      <div class="note-title" style="font-family: 'Noto Naskh Arabic', sans-serif;">\u0645\u0644\u0627\u062d\u0638\u0629:</div>
+      <ul style="margin: 4px 16px 0 0; font-size: 11px; line-height: 1.8; font-family: 'Noto Naskh Arabic', sans-serif;">
+        <li>\u062c\u0645\u064a\u0639 \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0644\u0627 \u062a\u0634\u0645\u0644 \u0636\u0631\u064a\u0628\u0629 \u0627\u0644\u0642\u064a\u0645\u0629 \u0627\u0644\u0645\u0636\u0627\u0641\u0629 (15%) \u0645\u0627 \u0644\u0645 \u064a\u064f\u0630\u0643\u0631 \u062e\u0644\u0627\u0641 \u0630\u0644\u0643.</li>
+        <li>\u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u0633\u0627\u0631\u064a\u0629 \u0644\u0645\u062f\u0629 30 \u064a\u0648\u0645\u0627\u064b \u0645\u0646 \u062a\u0627\u0631\u064a\u062e \u0647\u0630\u0627 \u0627\u0644\u0639\u0631\u0636.</li>
+        <li>\u062a\u064f\u0637\u0628\u0642 \u0627\u0644\u062d\u062f\u0648\u062f \u0627\u0644\u062f\u0646\u064a\u0627 \u0644\u0644\u0631\u0633\u0648\u0645 \u0643\u0645\u0627 \u0647\u0648 \u0645\u0648\u0636\u062d \u0641\u064a \u062c\u062f\u0648\u0644 \u0627\u0644\u0623\u0633\u0639\u0627\u0631.</li>
+        <li>\u0627\u0644\u062e\u062f\u0645\u0627\u062a \u0627\u0644\u0625\u0636\u0627\u0641\u064a\u0629 \u063a\u064a\u0631 \u0627\u0644\u0645\u0630\u0643\u0648\u0631\u0629 \u0623\u0639\u0644\u0627\u0647 \u0633\u064a\u062a\u0645 \u062a\u0633\u0639\u064a\u0631\u0647\u0627 \u0628\u0634\u0643\u0644 \u0645\u0646\u0641\u0635\u0644.</li>
+      </ul>
+    </div>` : ""}
   </div>`;
 }
 
 function renderCustomContent(ctx: PDFRenderContext, section: any, data: PDFSectionData | undefined): string {
+  const isDual = ctx.language === "dual";
+  
   return `
   ${data?.content_html ? `
   <div class="doc-section">
     <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>
     <div class="editor-content">${data.content_html}</div>
+    
+    ${isDual && data?.content_html_ar ? `
+    <div class="ar-block">
+      <span class="ar-block-label">\u0627\u0644\u062a\u0631\u062c\u0645\u0629 \u0627\u0644\u0639\u0631\u0628\u064a\u0629</span>
+      <h2 class="section-heading">${escapeHtml(section.title_ar || section.title_en)}</h2>
+      <div class="editor-content">${data.content_html_ar}</div>
+    </div>` : ''}
   </div>` : ''}`;
 }
 

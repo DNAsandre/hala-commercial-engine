@@ -1,5 +1,7 @@
 /**
  * Renewal Exposure Chart — Bar chart showing contract renewals by time bucket
+ *
+ * DESIGN: Compact bar chart with overflow-hidden container
  */
 import { useMemo } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
@@ -16,10 +18,10 @@ export default function RenewalExposure({ customers }: RenewalExposureProps) {
   const data = useMemo(() => {
     const now = Date.now();
     const buckets = [
-      { label: "0–30d", min: 0, max: 30, count: 0, revenue: 0 },
-      { label: "30–60d", min: 30, max: 60, count: 0, revenue: 0 },
-      { label: "60–90d", min: 60, max: 90, count: 0, revenue: 0 },
-      { label: "90–180d", min: 90, max: 180, count: 0, revenue: 0 },
+      { label: "0-30d", min: 0, max: 30, count: 0, revenue: 0 },
+      { label: "30-60d", min: 30, max: 60, count: 0, revenue: 0 },
+      { label: "60-90d", min: 60, max: 90, count: 0, revenue: 0 },
+      { label: "90-180d", min: 90, max: 180, count: 0, revenue: 0 },
     ];
 
     customers.filter(c => c.status === "Active" && c.contractExpiry).forEach(c => {
@@ -41,26 +43,27 @@ export default function RenewalExposure({ customers }: RenewalExposureProps) {
   const totalRevenue = data.reduce((s, d) => s + d.revenue, 0);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5">
+    <div className="bg-card border border-border rounded-xl p-5 overflow-hidden">
       <div className="flex items-center justify-between mb-4">
-        <div>
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold text-foreground">Renewal Exposure</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">{totalRenewals} contracts · {formatSAR(totalRevenue)}</p>
+          <p className="text-xs text-muted-foreground mt-0.5 truncate">{totalRenewals} contracts · {formatSAR(totalRevenue)}</p>
         </div>
       </div>
-      <div className="h-48">
+      <div className="h-44 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 5, right: 5, left: 5, bottom: 5 }} barSize={40}>
+          <BarChart data={data} margin={{ top: 5, right: 5, left: -10, bottom: 5 }} barSize={36}>
             <XAxis
               dataKey="label"
-              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+              tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
               axisLine={false}
               tickLine={false}
             />
             <YAxis
-              tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
+              tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
               axisLine={false}
               tickLine={false}
+              width={40}
               tickFormatter={(v: number) => `${(v / 1000000).toFixed(1)}M`}
             />
             <Tooltip
@@ -81,11 +84,11 @@ export default function RenewalExposure({ customers }: RenewalExposureProps) {
           </BarChart>
         </ResponsiveContainer>
       </div>
-      <div className="flex items-center justify-center gap-4 mt-2">
+      <div className="flex items-center justify-center gap-3 mt-2 flex-wrap">
         {data.map((d, i) => (
           <div key={d.label} className="flex items-center gap-1.5">
-            <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: BUCKET_COLORS[i] }} />
-            <span className="text-[10px] text-muted-foreground">{d.label}: {d.count}</span>
+            <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: BUCKET_COLORS[i] }} />
+            <span className="text-[10px] text-muted-foreground whitespace-nowrap">{d.label}: {d.count}</span>
           </div>
         ))}
       </div>

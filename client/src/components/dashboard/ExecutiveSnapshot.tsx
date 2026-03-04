@@ -1,12 +1,14 @@
 /**
  * Executive Snapshot — Top Row KPI Cards
  * Large metric cards with trend arrows and mini sparklines
+ * 
+ * DESIGN: Contained KPI cards with overflow protection, responsive text sizing
  */
 import { useMemo } from "react";
 import { TrendingUp, TrendingDown, Minus, AlertTriangle, FileCheck, RefreshCw, ShieldAlert, DollarSign } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer } from "recharts";
 import type { Workspace, Customer, Signal } from "@/lib/store";
-import { formatSAR } from "@/lib/store";
+import { formatSAR, formatSARCompact } from "@/lib/store";
 
 interface ExecutiveSnapshotProps {
   workspaces: Workspace[];
@@ -36,22 +38,22 @@ function KPICard({ label, value, subtext, trend, sparkData, sparkColor, icon: Ic
   accentClass: string;
 }) {
   return (
-    <div className="bg-card border border-border rounded-xl p-5 flex flex-col gap-3 hover:shadow-md transition-shadow">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${accentClass}`}>
-            <Icon className="w-4.5 h-4.5" />
+    <div className="bg-card border border-border rounded-xl p-4 flex flex-col gap-2.5 hover:shadow-md transition-shadow overflow-hidden min-w-0">
+      <div className="flex items-center justify-between gap-1">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${accentClass}`}>
+            <Icon className="w-4 h-4" />
           </div>
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground leading-tight" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{label}</span>
         </div>
         <TrendArrow direction={trend} />
       </div>
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <p className="text-3xl font-bold tracking-tight text-foreground leading-none">{value}</p>
-          <p className="text-xs text-muted-foreground mt-1.5">{subtext}</p>
+      <div className="flex items-end justify-between gap-2 min-w-0">
+        <div className="min-w-0 flex-1">
+          <p className="text-base font-bold tracking-tight text-foreground leading-none" title={value}>{value}</p>
+          <p className="text-[10px] text-muted-foreground mt-1 truncate">{subtext}</p>
         </div>
-        <div className="w-24 h-10 flex-shrink-0">
+        <div className="w-12 h-7 shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={sparkData} margin={{ top: 2, right: 0, left: 0, bottom: 2 }}>
               <defs>
@@ -116,10 +118,10 @@ export default function ExecutiveSnapshot({ workspaces, customers, signals, esca
   const escalationSpark = generateSparkline([0, 1, 2, 1, 3, 2, 4, 3, metrics.escalations.count]);
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
       <KPICard
         label="Active Pipeline"
-        value={formatSAR(metrics.pipeline.value)}
+        value={formatSARCompact(metrics.pipeline.value)}
         subtext={`${metrics.pipeline.count} active workspaces`}
         trend="up"
         sparkData={pipelineSpark}
@@ -130,7 +132,7 @@ export default function ExecutiveSnapshot({ workspaces, customers, signals, esca
       <KPICard
         label="In Negotiation"
         value={String(metrics.negotiation.count)}
-        subtext={formatSAR(metrics.negotiation.value)}
+        subtext={formatSARCompact(metrics.negotiation.value)}
         trend={metrics.negotiation.count > 2 ? "up" : "flat"}
         sparkData={negotiationSpark}
         sparkColor="#6366f1"
@@ -139,7 +141,7 @@ export default function ExecutiveSnapshot({ workspaces, customers, signals, esca
       />
       <KPICard
         label="Revenue at Risk"
-        value={formatSAR(metrics.atRisk.value)}
+        value={formatSARCompact(metrics.atRisk.value)}
         subtext={`${metrics.atRisk.count} red signals`}
         trend={metrics.atRisk.count > 0 ? "down" : "flat"}
         sparkData={riskSpark}
@@ -150,7 +152,7 @@ export default function ExecutiveSnapshot({ workspaces, customers, signals, esca
       <KPICard
         label="Renewals (90d)"
         value={String(metrics.renewals.count)}
-        subtext={formatSAR(metrics.renewals.value)}
+        subtext={formatSARCompact(metrics.renewals.value)}
         trend={metrics.renewals.count > 0 ? "up" : "flat"}
         sparkData={renewalSpark}
         sparkColor="#f59e0b"

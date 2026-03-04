@@ -1,5 +1,7 @@
 /**
  * Revenue Forecast Chart — 12-month projection with committed, forecast, and pipeline
+ *
+ * DESIGN: Area chart with contained legend, proper margins to prevent overflow
  */
 import { useMemo } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
@@ -61,14 +63,29 @@ export default function RevenueForecast({ workspaces, customers }: RevenueForeca
   }, [workspaces, customers]);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5">
+    <div className="bg-card border border-border rounded-xl p-5 overflow-hidden">
       <div className="mb-4">
         <h3 className="text-sm font-semibold text-foreground">Revenue Forecast</h3>
-        <p className="text-xs text-muted-foreground mt-0.5">12-month projection — committed, forecast & pipeline</p>
+        <p className="text-xs text-muted-foreground mt-0.5">12-month projection — committed, forecast &amp; pipeline</p>
       </div>
-      <div className="h-64">
+      {/* Legend above chart to avoid overlap */}
+      <div className="flex items-center gap-4 mb-2 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-1.5 rounded-full bg-emerald-500" />
+          <span className="text-[10px] text-muted-foreground">committed</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-1.5 rounded-full bg-indigo-500" />
+          <span className="text-[10px] text-muted-foreground">forecast</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-1.5 rounded-full bg-amber-500" />
+          <span className="text-[10px] text-muted-foreground">pipeline</span>
+        </div>
+      </div>
+      <div className="h-56 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+          <AreaChart data={data} margin={{ top: 5, right: 10, left: -5, bottom: 5 }}>
             <defs>
               <linearGradient id="grad-committed" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
@@ -85,14 +102,16 @@ export default function RevenueForecast({ workspaces, customers }: RevenueForeca
             </defs>
             <XAxis
               dataKey="month"
-              tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
+              tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
               axisLine={false}
               tickLine={false}
+              interval="preserveStartEnd"
             />
             <YAxis
-              tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
+              tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
               axisLine={false}
               tickLine={false}
+              width={42}
               tickFormatter={(v: number) => `${(v / 1000000).toFixed(1)}M`}
             />
             <Tooltip
@@ -104,13 +123,6 @@ export default function RevenueForecast({ workspaces, customers }: RevenueForeca
                 boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
               }}
               formatter={(value: number, name: string) => [formatSAR(value), name.charAt(0).toUpperCase() + name.slice(1)]}
-            />
-            <Legend
-              verticalAlign="top"
-              align="right"
-              iconType="circle"
-              iconSize={8}
-              wrapperStyle={{ fontSize: "11px", paddingBottom: "8px" }}
             />
             <Area type="monotone" dataKey="committed" stroke="#10b981" strokeWidth={2} fill="url(#grad-committed)" dot={false} />
             <Area type="monotone" dataKey="forecast" stroke="#6366f1" strokeWidth={2} fill="url(#grad-forecast)" dot={false} strokeDasharray="4 2" />

@@ -1,7 +1,9 @@
 /**
  * Executive Intelligence Dashboard — Command Center
- * Three-layer layout: KPI Snapshot → Charts & Intelligence → Activity Feed
+ * Three-layer layout: KPI Snapshot -> Charts & Intelligence -> Activity Feed
  * Powered by Supabase live data + Recharts visualizations.
+ *
+ * DESIGN: Contained panels with overflow protection, pipeline drill-down filtering
  */
 
 import { useState, useMemo } from "react";
@@ -18,6 +20,7 @@ import {
   Truck,
   FileText,
   ShieldCheck,
+  X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +30,7 @@ import {
   getStageLabel,
   getStageColor,
 } from "@/lib/store";
-import type { Workspace, Signal } from "@/lib/store";
+import type { Workspace, Signal, WorkspaceStage } from "@/lib/store";
 import { navigationV1 } from "@/components/DashboardLayout";
 import { useWorkspaces, useCustomers, useSignals, useApprovalRecords } from "@/hooks/useSupabase";
 
@@ -50,18 +53,18 @@ function AttentionItem({ workspace, allSignals }: { workspace: Workspace; allSig
 
   return (
     <Link href={`/workspaces/${workspace.id}`}>
-      <div className="flex items-center gap-4 p-3 rounded-lg border border-border hover:bg-muted/50 transition-colors group">
+      <div className="flex items-center gap-4 p-3 rounded-lg border border-border hover:bg-muted/50 transition-colors group min-w-0">
         <div className={`rag-dot shrink-0 ${worstSeverity === "red" ? "rag-dot-red" : worstSeverity === "amber" ? "rag-dot-amber" : "rag-dot-green"}`} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <span className="text-sm font-medium text-foreground truncate">{workspace.customerName}</span>
-            <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${getStageColor(workspace.stage)}`}>
+            <Badge variant="outline" className={`text-[10px] px-1.5 py-0 shrink-0 ${getStageColor(workspace.stage)}`}>
               {getStageLabel(workspace.stage)}
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5 truncate">{workspace.title}</p>
           {wsSignals[0] && (
-            <p className={`text-xs mt-1 ${worstSeverity === "red" ? "rag-red" : "rag-amber"}`}>
+            <p className={`text-xs mt-1 line-clamp-2 ${worstSeverity === "red" ? "rag-red" : "rag-amber"}`}>
               {wsSignals[0].message}
             </p>
           )}
@@ -88,6 +91,9 @@ export default function Dashboard() {
     workspaceType: "all",
   });
 
+  // Pipeline drill-down state
+  const [pipelineStageFilter, setPipelineStageFilter] = useState<WorkspaceStage | null>(null);
+
   const loading = wsLoading || custLoading || sigLoading || appLoading;
 
   // Apply filters
@@ -113,9 +119,24 @@ export default function Dashboard() {
     return signals.filter(s => wsIds.has(s.workspaceId));
   }, [signals, filteredWorkspaces]);
 
-  // Attention workspaces
+  // Attention workspaces — with optional pipeline stage filter
   const attentionWorkspaces = useMemo(() => {
-    return filteredWorkspaces
+    let candidates = filteredWorkspaces;
+
+    // If a pipeline stage is selected, show ALL workspaces in that stage (not just attention-worthy ones)
+    if (pipelineStageFilter) {
+      return candidates
+        .filter(w => w.stage === pipelineStageFilter)
+        .sort((a, b) => {
+          const aRed = a.ragStatus === "red" ? 0 : a.ragStatus === "amber" ? 1 : 2;
+          const bRed = b.ragStatus === "red" ? 0 : b.ragStatus === "amber" ? 1 : 2;
+          return aRed - bRed || b.estimatedValue - a.estimatedValue;
+        })
+        .slice(0, 12);
+    }
+
+    // Default: show workspaces needing attention
+    return candidates
       .filter(w => w.ragStatus === "red" || w.ragStatus === "amber" || w.daysInStage > 10)
       .sort((a, b) => {
         if (a.ragStatus === "red" && b.ragStatus !== "red") return -1;
@@ -123,7 +144,7 @@ export default function Dashboard() {
         return b.daysInStage - a.daysInStage;
       })
       .slice(0, 8);
-  }, [filteredWorkspaces]);
+  }, [filteredWorkspaces, pipelineStageFilter]);
 
   const pendingApprovals = approvalRecords.filter(a => a.decision === "pending");
   const escalationCount = filteredSignals.filter(s => s.severity === "red" || s.severity === "amber").length;
@@ -138,7 +159,7 @@ export default function Dashboard() {
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
-      {/* ═══ HEADER + FILTERS ═══ */}
+      {/* HEADER + FILTERS */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-serif font-bold text-foreground">Commercial Command</h1>
@@ -149,7 +170,7 @@ export default function Dashboard() {
         <DashboardFilters filters={filters} onChange={setFilters} />
       </div>
 
-      {/* ═══ LAYER 1: EXECUTIVE SNAPSHOT (5 KPI Cards) ═══ */}
+      {/* LAYER 1: EXECUTIVE SNAPSHOT (5 KPI Cards) */}
       <ExecutiveSnapshot
         workspaces={filteredWorkspaces}
         customers={filteredCustomers}
@@ -157,9 +178,13 @@ export default function Dashboard() {
         escalationCount={escalationCount}
       />
 
-      {/* ═══ LAYER 2: CHARTS & INTELLIGENCE ═══ */}
+      {/* LAYER 2: CHARTS & INTELLIGENCE */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <PipelineFunnel workspaces={filteredWorkspaces} />
+        <PipelineFunnel
+          workspaces={filteredWorkspaces}
+          onStageClick={setPipelineStageFilter}
+          activeStage={pipelineStageFilter}
+        />
         <RevenueForecast workspaces={filteredWorkspaces} customers={filteredCustomers} />
       </div>
 
@@ -175,20 +200,46 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <RenewalExposure customers={filteredCustomers} />
         <div className="lg:col-span-2">
-          {/* Attention Required */}
-          <Card className="border border-border shadow-none h-full">
+          {/* Attention Required — with drill-down filter */}
+          <Card className="border border-border shadow-none h-full overflow-hidden">
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-amber-500" />
-                  Attention Required
-                </CardTitle>
-                <Link href="/workspaces">
-                  <span className="text-xs text-primary hover:underline flex items-center gap-1">
-                    View all <ArrowRight className="w-3 h-3" />
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2 min-w-0">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                  <span className="truncate">
+                    {pipelineStageFilter
+                      ? `${getStageLabel(pipelineStageFilter)} Stage`
+                      : "Attention Required"
+                    }
                   </span>
-                </Link>
+                  {pipelineStageFilter && (
+                    <button
+                      onClick={() => setPipelineStageFilter(null)}
+                      className="ml-1 p-0.5 rounded-md hover:bg-muted transition-colors shrink-0"
+                      title="Clear filter"
+                    >
+                      <X className="w-3.5 h-3.5 text-muted-foreground" />
+                    </button>
+                  )}
+                </CardTitle>
+                <div className="flex items-center gap-2 shrink-0">
+                  {pipelineStageFilter && (
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-primary/30 text-primary">
+                      Filtered
+                    </Badge>
+                  )}
+                  <Link href="/workspaces">
+                    <span className="text-xs text-primary hover:underline flex items-center gap-1 whitespace-nowrap">
+                      View all <ArrowRight className="w-3 h-3" />
+                    </span>
+                  </Link>
+                </div>
               </div>
+              {pipelineStageFilter && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Showing workspaces in <strong>{getStageLabel(pipelineStageFilter)}</strong> stage. Click the bar again or press X to clear.
+                </p>
+              )}
             </CardHeader>
             <CardContent className="pt-0">
               <div className="space-y-1.5">
@@ -196,7 +247,12 @@ export default function Dashboard() {
                   <AttentionItem key={ws.id} workspace={ws} allSignals={filteredSignals} />
                 ))}
                 {attentionWorkspaces.length === 0 && (
-                  <p className="text-sm text-muted-foreground py-8 text-center">No items requiring attention</p>
+                  <p className="text-sm text-muted-foreground py-8 text-center">
+                    {pipelineStageFilter
+                      ? `No workspaces in ${getStageLabel(pipelineStageFilter)} stage`
+                      : "No items requiring attention"
+                    }
+                  </p>
                 )}
               </div>
             </CardContent>
@@ -204,7 +260,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ═══ LAYER 3: ACTIVITY FEED + CRM SYNC ═══ */}
+      {/* LAYER 3: ACTIVITY FEED + CRM SYNC */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
           <ActivityFeed workspaces={filteredWorkspaces} signals={filteredSignals} approvals={approvalRecords} />
@@ -212,50 +268,50 @@ export default function Dashboard() {
         <CRMDashboardWidget />
       </div>
 
-      {/* ═══ QUICK ACCESS CARDS ═══ */}
+      {/* QUICK ACCESS CARDS */}
       {navigationV1 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Link href="/approvals">
-            <div className="flex items-center gap-3 p-3.5 rounded-xl border border-border hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group bg-card">
-              <div className="w-9 h-9 rounded-lg bg-amber-50 dark:bg-amber-900/30 flex items-center justify-center">
+            <div className="flex items-center gap-3 p-3.5 rounded-xl border border-border hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group bg-card overflow-hidden">
+              <div className="w-9 h-9 rounded-lg bg-amber-50 dark:bg-amber-900/30 flex items-center justify-center shrink-0">
                 <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold group-hover:text-primary transition-colors">Approvals</p>
-                <p className="text-[10px] text-muted-foreground">{pendingApprovals.length} pending</p>
+                <p className="text-xs font-semibold group-hover:text-primary transition-colors truncate">Approvals</p>
+                <p className="text-[10px] text-muted-foreground truncate">{pendingApprovals.length} pending</p>
               </div>
             </div>
           </Link>
           <Link href="/renewals">
-            <div className="flex items-center gap-3 p-3.5 rounded-xl border border-border hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group bg-card">
-              <div className="w-9 h-9 rounded-lg bg-violet-50 dark:bg-violet-900/30 flex items-center justify-center">
+            <div className="flex items-center gap-3 p-3.5 rounded-xl border border-border hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group bg-card overflow-hidden">
+              <div className="w-9 h-9 rounded-lg bg-violet-50 dark:bg-violet-900/30 flex items-center justify-center shrink-0">
                 <RefreshCw className="w-4 h-4 text-violet-600 dark:text-violet-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold group-hover:text-primary transition-colors">Renewals</p>
-                <p className="text-[10px] text-muted-foreground">Contracts expiring</p>
+                <p className="text-xs font-semibold group-hover:text-primary transition-colors truncate">Renewals</p>
+                <p className="text-[10px] text-muted-foreground truncate">Contracts expiring</p>
               </div>
             </div>
           </Link>
           <Link href="/revenue-exposure">
-            <div className="flex items-center gap-3 p-3.5 rounded-xl border border-border hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group bg-card">
-              <div className="w-9 h-9 rounded-lg bg-red-50 dark:bg-red-900/30 flex items-center justify-center">
+            <div className="flex items-center gap-3 p-3.5 rounded-xl border border-border hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group bg-card overflow-hidden">
+              <div className="w-9 h-9 rounded-lg bg-red-50 dark:bg-red-900/30 flex items-center justify-center shrink-0">
                 <DollarSign className="w-4 h-4 text-red-600 dark:text-red-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold group-hover:text-primary transition-colors">Revenue Exposure</p>
-                <p className="text-[10px] text-muted-foreground">At-risk revenue</p>
+                <p className="text-xs font-semibold group-hover:text-primary transition-colors truncate">Revenue Exposure</p>
+                <p className="text-[10px] text-muted-foreground truncate">At-risk revenue</p>
               </div>
             </div>
           </Link>
           <Link href="/signal-engine">
-            <div className="flex items-center gap-3 p-3.5 rounded-xl border border-border hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group bg-card">
-              <div className="w-9 h-9 rounded-lg bg-orange-50 dark:bg-orange-900/30 flex items-center justify-center">
+            <div className="flex items-center gap-3 p-3.5 rounded-xl border border-border hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer group bg-card overflow-hidden">
+              <div className="w-9 h-9 rounded-lg bg-orange-50 dark:bg-orange-900/30 flex items-center justify-center shrink-0">
                 <Radio className="w-4 h-4 text-orange-600 dark:text-orange-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold group-hover:text-primary transition-colors">Signals</p>
-                <p className="text-[10px] text-muted-foreground">{filteredSignals.filter(s => s.severity === "red").length} critical</p>
+                <p className="text-xs font-semibold group-hover:text-primary transition-colors truncate">Signals</p>
+                <p className="text-[10px] text-muted-foreground truncate">{filteredSignals.filter(s => s.severity === "red").length} critical</p>
               </div>
             </div>
           </Link>

@@ -1,5 +1,7 @@
 /**
  * SLA Compliance Chart — Donut showing breaches, near-breach, and healthy SLAs
+ *
+ * DESIGN: Compact donut with contained legend, overflow-hidden
  */
 import { useMemo } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
@@ -46,21 +48,21 @@ export default function SLACompliance({ signals, workspaces }: SLAComplianceProp
   const healthyPct = total > 0 ? Math.round((data.find(d => d.name === "Healthy")?.value || 0) / total * 100) : 100;
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5">
+    <div className="bg-card border border-border rounded-xl p-5 overflow-hidden">
       <div className="mb-4">
         <h3 className="text-sm font-semibold text-foreground">SLA Performance</h3>
         <p className="text-xs text-muted-foreground mt-0.5">Last 90 days compliance</p>
       </div>
-      <div className="flex items-center gap-6">
-        <div className="relative h-40 w-40 flex-shrink-0">
+      <div className="flex items-center gap-4">
+        <div className="relative h-36 w-36 shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
                 data={data}
                 cx="50%"
                 cy="50%"
-                innerRadius={40}
-                outerRadius={65}
+                innerRadius={36}
+                outerRadius={58}
                 paddingAngle={3}
                 dataKey="value"
                 stroke="none"
@@ -82,21 +84,21 @@ export default function SLACompliance({ signals, workspaces }: SLAComplianceProp
             </PieChart>
           </ResponsiveContainer>
           {/* Center label */}
-          <div className="absolute inset-0 flex items-center justify-center">
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="text-center">
-              <p className="text-2xl font-bold text-foreground">{healthyPct}%</p>
+              <p className="text-xl font-bold text-foreground">{healthyPct}%</p>
               <p className="text-[10px] text-muted-foreground">Healthy</p>
             </div>
           </div>
         </div>
-        <div className="space-y-3 flex-1">
+        <div className="space-y-2.5 flex-1 min-w-0">
           {data.map(d => (
-            <div key={d.name} className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: d.color }} />
-                <span className="text-xs text-foreground">{d.name}</span>
+            <div key={d.name} className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: d.color }} />
+                <span className="text-xs text-foreground truncate">{d.name}</span>
               </div>
-              <span className="text-sm font-bold text-foreground">{d.value}</span>
+              <span className="text-sm font-bold text-foreground shrink-0">{d.value}</span>
             </div>
           ))}
           <div className="pt-2 border-t border-border">

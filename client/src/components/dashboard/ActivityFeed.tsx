@@ -1,5 +1,7 @@
 /**
  * Activity Intelligence Feed — Recent commercial activity events
+ *
+ * DESIGN: Compact feed with overflow protection, truncated text
  */
 import { useMemo } from "react";
 import { Link } from "wouter";
@@ -39,7 +41,7 @@ export default function ActivityFeed({ workspaces, signals, approvals }: Activit
         iconColor: s.severity === "red" ? "text-red-500" : s.severity === "amber" ? "text-amber-500" : "text-emerald-500",
         iconBg: s.severity === "red" ? "bg-red-50 dark:bg-red-900/30" : s.severity === "amber" ? "bg-amber-50 dark:bg-amber-900/30" : "bg-emerald-50 dark:bg-emerald-900/30",
         label: s.severity === "red" ? "Escalation triggered" : s.severity === "amber" ? "Warning signal" : "Info signal",
-        detail: `${ws?.customerName || "Unknown"} — ${s.message.slice(0, 50)}…`,
+        detail: `${ws?.customerName || "Unknown"} — ${s.message.slice(0, 50)}`,
         timestamp: s.createdAt,
         workspaceId: s.workspaceId,
       });
@@ -88,7 +90,7 @@ export default function ActivityFeed({ workspaces, signals, approvals }: Activit
   }, [workspaces, signals, approvals]);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5">
+    <div className="bg-card border border-border rounded-xl p-5 overflow-hidden">
       <div className="mb-4">
         <h3 className="text-sm font-semibold text-foreground">Commercial Activity</h3>
         <p className="text-xs text-muted-foreground mt-0.5">Recent events across all workspaces</p>
@@ -97,14 +99,14 @@ export default function ActivityFeed({ workspaces, signals, approvals }: Activit
         {activities.map(a => {
           const Icon = a.icon;
           const content = (
-            <div className="flex items-start gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors cursor-pointer">
-              <div className={`w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 ${a.iconBg}`}>
+            <div className="flex items-start gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors cursor-pointer min-w-0">
+              <div className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${a.iconBg}`}>
                 <Icon className={`w-3.5 h-3.5 ${a.iconColor}`} />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-medium text-foreground">{a.label}</p>
-                  <span className="text-[10px] text-muted-foreground flex-shrink-0">{a.timestamp}</span>
+                <div className="flex items-center justify-between gap-2 min-w-0">
+                  <p className="text-xs font-medium text-foreground truncate">{a.label}</p>
+                  <span className="text-[10px] text-muted-foreground shrink-0 whitespace-nowrap">{a.timestamp}</span>
                 </div>
                 <p className="text-[11px] text-muted-foreground truncate mt-0.5">{a.detail}</p>
               </div>

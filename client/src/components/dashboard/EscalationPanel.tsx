@@ -1,5 +1,7 @@
 /**
  * Escalation Intelligence Panel — Severity pie chart, timeline, top risk workspaces
+ *
+ * DESIGN: Three-column layout with overflow protection on all text elements
  */
 import { useMemo } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
@@ -59,25 +61,25 @@ export default function EscalationPanel({ signals, workspaces }: EscalationPanel
   }, [signals, workspaces]);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5">
+    <div className="bg-card border border-border rounded-xl p-5 overflow-hidden">
       <div className="mb-4">
         <h3 className="text-sm font-semibold text-foreground">Escalation Intelligence</h3>
-        <p className="text-xs text-muted-foreground mt-0.5">Signal severity, timeline & top risk workspaces</p>
+        <p className="text-xs text-muted-foreground mt-0.5">Signal severity, timeline &amp; top risk workspaces</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
         {/* Severity Pie */}
-        <div>
+        <div className="overflow-hidden">
           <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">Severity</p>
-          <div className="h-36">
+          <div className="h-32">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={severityData}
                   cx="50%"
                   cy="50%"
-                  innerRadius={30}
-                  outerRadius={55}
+                  innerRadius={28}
+                  outerRadius={50}
                   paddingAngle={3}
                   dataKey="value"
                   stroke="none"
@@ -97,28 +99,28 @@ export default function EscalationPanel({ signals, workspaces }: EscalationPanel
               </PieChart>
             </ResponsiveContainer>
           </div>
-          <div className="flex justify-center gap-4 mt-1">
+          <div className="flex justify-center gap-3 mt-1 flex-wrap">
             {severityData.map(d => (
               <div key={d.name} className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: d.color }} />
-                <span className="text-[10px] text-muted-foreground">{d.name} ({d.value})</span>
+                <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                <span className="text-[10px] text-muted-foreground whitespace-nowrap">{d.name} ({d.value})</span>
               </div>
             ))}
           </div>
         </div>
 
         {/* Timeline */}
-        <div>
+        <div className="overflow-hidden min-w-0">
           <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">Recent Events</p>
           <div className="space-y-2">
             {timeline.map(s => (
-              <div key={s.id} className="flex items-start gap-2">
-                <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${
+              <div key={s.id} className="flex items-start gap-2 min-w-0">
+                <div className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${
                   s.severity === "red" ? "bg-red-500" : s.severity === "amber" ? "bg-amber-500" : "bg-emerald-500"
                 }`} />
-                <div className="min-w-0">
-                  <p className="text-[11px] text-foreground leading-tight truncate">{s.message.slice(0, 60)}…</p>
-                  <p className="text-[10px] text-muted-foreground">{s.workspaceName} · {s.createdAt}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] text-foreground leading-tight line-clamp-2">{s.message.slice(0, 70)}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">{s.workspaceName} · {s.createdAt}</p>
                 </div>
               </div>
             ))}
@@ -126,17 +128,17 @@ export default function EscalationPanel({ signals, workspaces }: EscalationPanel
         </div>
 
         {/* Top Risk Workspaces */}
-        <div>
+        <div className="overflow-hidden min-w-0">
           <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">Top Risk</p>
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             {topRiskWS.map(ws => (
               <Link key={ws.wsId} href={`/workspaces/${ws.wsId}`}>
-                <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer">
-                  <div className="min-w-0">
+                <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium text-foreground truncate">{ws.name}</p>
-                    <p className="text-[10px] text-muted-foreground truncate">{ws.title}</p>
+                    <p className="text-[10px] text-muted-foreground truncate max-w-[160px]">{ws.title}</p>
                   </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <div className="flex items-center gap-1 shrink-0">
                     {ws.red > 0 && (
                       <span className="text-[10px] font-bold text-red-500 bg-red-50 dark:bg-red-900/30 px-1.5 py-0.5 rounded">{ws.red}</span>
                     )}
