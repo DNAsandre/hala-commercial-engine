@@ -554,3 +554,118 @@ Rollback point: `21d516dc` (Sprint 11 checkpoint)
 
 ## Phase 7: Deploy
 - [ ] Push to GitHub
+
+
+---
+
+# Sprint 13 — CRM Dashboard Widget + Sync Badges + Workspace Integration
+
+Rollback point: `936264fb` (Sprint 12 checkpoint)
+
+## A) CRM Dashboard Widget
+- [ ] Add compact CRM health indicator card to main Dashboard
+- [ ] Show: last sync time, pending count, failed count, connection status
+- [ ] Link to full CRM Sync Console
+- [ ] Auto-refresh every 30 seconds
+
+## B) CRM Sync Badges in Workspace
+- [ ] Add CRM status badge to workspace cards (Synced / Pending / Failed / Not Synced)
+- [ ] Add "Sync Now" button in WorkspaceDetail (admin-only)
+- [ ] Show last CRM sync timestamp in workspace detail header
+- [ ] Wire triggerOutboundSync to workspace stage changes
+
+## C) CRM Entity Mapping Viewer
+- [ ] Show CRM entity ID mapping in workspace detail (Zoho ID, GHL ID)
+- [ ] Link to CRM record (external URL)
+- [ ] Show sync history per workspace entity
+
+## D) Acceptance
+- [ ] Dashboard shows CRM health widget
+- [ ] Workspace cards show sync status badge
+- [ ] Admin can trigger manual sync from workspace
+- [ ] 0 TypeScript errors
+
+---
+
+# Sprint 14 — Production PDF Engine (Commercial-Grade + Dual-Language EN/AR)
+
+Rollback point: Sprint 13 checkpoint
+
+## A) PDF Engine Core (pdf-engine.ts)
+- [ ] PDFTemplate interface (id, name, doc_type, version, layout_config, header_config, footer_config, styling_config)
+- [ ] PDFRenderConfig interface (branding, watermark, language, sections)
+- [ ] Seed templates: Quote, Proposal, SLA/MSA, Service Order, Financial Proposal
+- [ ] Rendering pipeline: Document Blocks → Structured Render Map → Layout Engine → Styled HTML → PDF
+- [ ] Section-based rendering (cover, confidentiality, intro, scope, pricing, terms, SLA matrix, legal, signatures)
+
+## B) Cover Page Generator
+- [ ] Full-page cover with navy blue gradient + wave design (matching Hala's actual PDFs)
+- [ ] Dynamic title, subtitle, customer name, reference number, date
+- [ ] Optional background image support
+- [ ] Cover page variants: Style A (wave design), Style B (minimal corporate)
+
+## C) Header/Footer System
+- [ ] Repeating header: Hala logo (left) + document title (center) + customer logo (right)
+- [ ] Repeating footer: "COMPLETED BY: Hala SCS | DATE: DD MM YYYY | REF: HSCS_DDMMYYYY"
+- [ ] Page numbering: "Page X of Y" right-aligned
+- [ ] Arabic header variant for bilingual documents
+
+## D) Professional Table Rendering
+- [ ] Pricing tables with dark header row, clean borders, SAR currency formatting
+- [ ] Totals row with emphasis styling
+- [ ] VAT row support
+- [ ] Multi-option pricing (Option 1, Option 2, Option 3 columns)
+- [ ] SLA Matrix table with response times, escalation tiers, severity highlighting
+
+## E) Signature Section
+- [ ] Dual-party signature block (Hala + Customer)
+- [ ] Bilingual labels (English + Arabic)
+- [ ] Company stamp placeholder
+- [ ] Date and designation fields
+- [ ] "who warrants that he is duly authorized to sign" text
+
+## F) Arabic Translation Bot
+- [ ] New AI bot type: "arabic_translator" in ai-runs.ts
+- [ ] Translate document sections from English to Arabic
+- [ ] Support for legal/commercial Arabic terminology
+- [ ] Human review before applying translations
+- [ ] Translation memory/cache for consistent terminology
+- [ ] Bot appears in Editor Bot Builder with KB attachment support
+
+## G) Dual-Language PDF Support
+- [ ] Two-column layout: English (left) + Arabic (right, RTL)
+- [ ] Arabic font support (Noto Naskh Arabic or Amiri)
+- [ ] RTL text direction for Arabic columns
+- [ ] Bilingual section headings
+- [ ] Bilingual table headers
+- [ ] Bilingual signature blocks
+- [ ] Language toggle: English-only, Arabic-only, Dual-language
+
+## H) PDF Studio UI (Admin Page)
+- [ ] Template manager with CRUD operations
+- [ ] Live PDF preview panel
+- [ ] Template configuration: cover style, table style, signature layout, margins, header/footer variants
+- [ ] Document type selector (Quote, Proposal, SLA, Service Order)
+- [ ] Language mode selector (EN, AR, EN+AR)
+- [ ] Watermark mode selector (Draft, Confidential, Final)
+- [ ] Brand profile selector
+- [ ] Generate PDF button with download
+- [ ] Admin Panel tab integration
+
+## I) Workspace PDF Generation
+- [ ] "Generate PDF" button in workspace document tabs
+- [ ] Template selection dropdown
+- [ ] Language mode selection
+- [ ] Preview before download
+- [ ] Audit logging for PDF generation events
+
+## J) Acceptance
+- [ ] Quote PDF matches Hala's actual design quality
+- [ ] Proposal PDF has proper section hierarchy
+- [ ] SLA/MSA PDF has dual-language layout
+- [ ] Pricing tables render with SAR formatting
+- [ ] Cover page renders with wave design
+- [ ] Header/footer repeat on every page
+- [ ] Arabic text renders RTL correctly
+- [ ] Translation bot produces Arabic output
+- [ ] 0 TypeScript errors

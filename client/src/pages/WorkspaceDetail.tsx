@@ -54,6 +54,7 @@ import { PricingLockOverrideModal } from "@/components/PricingLockOverrideModal"
 import { SlaVerificationChecklistComponent } from "@/components/SlaVerificationChecklist";
 import { SlaVsPnlDeltaBanner } from "@/components/SlaVsPnlDeltaBanner";
 import { WorkspaceEscalationsTab } from "@/components/WorkspaceEscalationsTab";
+import CRMSyncBadge from "@/components/CRMSyncBadge";
 import { usePnLByWorkspace } from "@/hooks/useSupabase";
 import {
   isWorkspaceIntegrationEnabled, getOrCreateCycle, startRenewal, updateRenewalOwner,
@@ -515,6 +516,7 @@ export default function WorkspaceDetail() {
                 {getWorkspaceTypeLabel(wsType)}
               </Badge>
               <Badge variant="outline" className={`text-xs ${getEffectiveStageColor(ws)}`}>{getEffectiveStageLabel(ws)}</Badge>
+              <CRMSyncBadge workspaceId={ws.id} workspaceTitle={ws.title} variant="badge" />
               {ws.crmDealId && <span className="text-xs text-muted-foreground data-value">CRM: {ws.crmDealId}</span>}
               {isTender && ws.submissionDeadline && (
                 <span className="text-xs text-muted-foreground">Deadline: <span className="font-medium data-value">{ws.submissionDeadline}</span></span>

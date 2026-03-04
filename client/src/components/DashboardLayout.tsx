@@ -55,6 +55,7 @@ import {
   LogOut,
   AlertTriangle,
   ArrowUpDown,
+  Printer,
 } from "lucide-react";
 import { getRoleLabel } from "@/lib/store";
 import { useSignals } from "@/hooks/useSupabase";
@@ -121,6 +122,7 @@ const simplifiedNavItems = [
   { path: "/workspaces", label: "Workspaces", icon: Briefcase, group: "core" },
   { path: "/tenders", label: "Tenders", icon: Gavel, group: "core" },
   { path: "/escalations", label: "Escalations", icon: AlertTriangle, group: "core" },
+  { path: "/pdf-studio", label: "PDF Studio", icon: Printer, group: "core" },
   { path: "/admin", label: "Governance", icon: Settings, group: "system", adminOnly: true },
   { path: "/admin-panel", label: "Admin", icon: Wrench, group: "system", adminOnly: true },
   { path: "/audit", label: "Audit Trail", icon: ClipboardList, group: "system" },

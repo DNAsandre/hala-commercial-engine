@@ -56,6 +56,7 @@ import AIProviders from "./pages/AIProviders";
 import EditorBotBuilder from "./pages/EditorBotBuilder";
 import KnowledgebaseManager from "./pages/KnowledgebaseManager";
 import CRMSyncConsole from "./pages/CRMSyncConsole";
+import PDFStudio from "./pages/PDFStudio";
 import { Loader2 } from "lucide-react";
 
 /**
@@ -91,6 +92,7 @@ function AppRouter() {
       <Route path="/ecr-scoring" component={EcrScoring} />
       <Route path="/composer/:docInstanceId/view" component={OutputStudio} />
       <Route path="/escalations" component={GlobalEscalations} />
+      <Route path="/pdf-studio" component={PDFStudio} />
 
       {/* ── Admin-only routes ───────────────────────────────── */}
       <Route path="/admin">{() => <RequireRole roles={ADMIN_ROLES} component={AdminGovernance} />}</Route>

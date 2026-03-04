@@ -32,6 +32,7 @@ import {
   WORKSPACE_STAGES,
 } from "@/lib/store";
 import { navigationV1 } from "@/components/DashboardLayout";
+import CRMDashboardWidget from "@/components/CRMDashboardWidget";
 import type { Workspace, Customer } from "@/lib/store";
 import { useWorkspaces, useCustomers, useSignals, useApprovalRecords } from "@/hooks/useSupabase";
 
@@ -268,6 +269,9 @@ export default function Dashboard() {
               </div>
             </CardContent>
           </Card>
+
+          {/* CRM Sync Widget */}
+          <CRMDashboardWidget />
 
           {/* Expiring Contracts */}
           <Card className="border border-border shadow-none">
