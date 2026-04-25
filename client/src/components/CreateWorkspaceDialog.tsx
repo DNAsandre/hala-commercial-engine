@@ -1,10 +1,9 @@
 /*
- * CreateWorkspaceDialog — Manual workspace creation
- * Allows creating workspaces without CRM sync
- * Full form with customer selection, deal details, and initial stage
+ * CreateWorkspaceDialog — Mode-aware creation
+ * Adapts form fields and labels based on operating mode (tender / commercial / renewal)
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { getCurrentUser } from "@/lib/auth-state";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -21,13 +20,40 @@ import { logAuditAction } from "@/hooks/useMutations";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
 
+type OperatingMode = "tenders" | "commercial" | "renewals";
+
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated?: () => void;
+  defaultMode?: OperatingMode;
 }
 
-export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated }: Props) {
+const MODE_LABELS: Record<OperatingMode, { title: string; description: string; titleLabel: string; titlePlaceholder: string; button: string }> = {
+  tenders: {
+    title: "New Tender",
+    description: "Create a new tender workspace for tracking a tender opportunity.",
+    titleLabel: "Tender Title",
+    titlePlaceholder: "e.g., Ma'aden Jubail Expansion — Logistics RFP",
+    button: "Create Tender",
+  },
+  commercial: {
+    title: "New Commercial Deal",
+    description: "Create a commercial workspace for managing a new business opportunity.",
+    titleLabel: "Deal Title",
+    titlePlaceholder: "e.g., SABIC Jubail Expansion 3000PP",
+    button: "Create Deal",
+  },
+  renewals: {
+    title: "New Renewal",
+    description: "Create a renewal workspace for tracking a contract renewal.",
+    titleLabel: "Renewal Title",
+    titlePlaceholder: "e.g., Almarai Contract Renewal 2026",
+    button: "Create Renewal",
+  },
+};
+
+export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated, defaultMode = "commercial" }: Props) {
   const { data: customers } = useCustomers();
   const { data: workspaces } = useWorkspaces();
   const { data: users } = useUsers();
@@ -40,12 +66,13 @@ export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated }:
   const [palletVolume, setPalletVolume] = useState("");
   const [notes, setNotes] = useState("");
   const [crmDealId, setCrmDealId] = useState("");
+  const [deadline, setDeadline] = useState("");
   const [isNew, setIsNew] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState("");
 
+  const labels = MODE_LABELS[defaultMode];
   const activeCustomers = customers.filter((c: any) => c.status === "Active");
   const salesUsers = users.filter((u: any) => ["salesman", "regional_sales_head", "admin"].includes(u.role));
-
   const selectedCustomer = customers.find((c: any) => c.id === customerId);
 
   function handleSubmit() {
@@ -58,7 +85,7 @@ export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated }:
       return;
     }
     if (!title.trim()) {
-      toast.error("Please enter a workspace title");
+      toast.error(`Please enter a ${defaultMode === "tenders" ? "tender" : defaultMode === "renewals" ? "renewal" : "deal"} title`);
       return;
     }
     if (!owner) {
@@ -68,6 +95,8 @@ export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated }:
 
     const customerName = isNew ? newCustomerName.trim() : (selectedCustomer?.name || "Unknown");
     const now = new Date().toISOString().split("T")[0];
+
+    const wsType = defaultMode === "tenders" ? "tender" : defaultMode === "renewals" ? "renewal" : undefined;
 
     const newWorkspace: Workspace = {
       id: `w${nanoid(6)}`,
@@ -88,13 +117,14 @@ export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated }:
       daysInStage: 0,
       approvalState: "not_required",
       notes: notes.trim(),
+      ...(wsType ? { type: wsType as any } : {}),
+      ...(wsType === "tender" ? { tenderStage: "draft", submissionDeadline: deadline || undefined } : {}),
     };
 
     createWs.mutate(newWorkspace).then(result => {
       if (result) {
-        // Log audit entry
-        logAuditAction("workspace", newWorkspace.id, "created", getCurrentUser().id, getCurrentUser().name, `Workspace "${title.trim()}" created for ${customerName}`);
-        toast.success("Workspace created", {
+        logAuditAction("workspace", newWorkspace.id, "created", getCurrentUser().id, getCurrentUser().name, `${labels.title} "${title.trim()}" created for ${customerName}`);
+        toast.success(labels.title + " created", {
           description: `${customerName} — ${title.trim()}`,
         });
         // Reset form
@@ -106,6 +136,7 @@ export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated }:
         setPalletVolume("");
         setNotes("");
         setCrmDealId("");
+        setDeadline("");
         setIsNew(false);
         setNewCustomerName("");
         onOpenChange(false);
@@ -118,9 +149,9 @@ export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated }:
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-serif text-lg">Create New Workspace</DialogTitle>
+          <DialogTitle className="font-serif text-lg">{labels.title}</DialogTitle>
           <DialogDescription className="text-xs">
-            Manually create a commercial workspace. Workspaces can also be auto-created from Zoho CRM when a deal reaches "Qualified" stage.
+            {labels.description}
           </DialogDescription>
         </DialogHeader>
 
@@ -179,12 +210,12 @@ export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated }:
             )}
           </div>
 
-          {/* Workspace Title */}
+          {/* Title */}
           <div className="space-y-1.5">
-            <Label htmlFor="ws-title" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Workspace Title</Label>
+            <Label htmlFor="ws-title" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{labels.titleLabel}</Label>
             <Input
               id="ws-title"
-              placeholder="e.g., SABIC Jubail Expansion 3000PP"
+              placeholder={labels.titlePlaceholder}
               value={title}
               onChange={e => setTitle(e.target.value)}
             />
@@ -226,15 +257,27 @@ export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated }:
                 onChange={e => setEstimatedValue(e.target.value)}
               />
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pallet Volume</Label>
-              <Input
-                type="number"
-                placeholder="e.g., 2500"
-                value={palletVolume}
-                onChange={e => setPalletVolume(e.target.value)}
-              />
-            </div>
+            {/* Tender: deadline, Commercial: pallets, Renewal: pallets */}
+            {defaultMode === "tenders" ? (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Submission Deadline</Label>
+                <Input
+                  type="date"
+                  value={deadline}
+                  onChange={e => setDeadline(e.target.value)}
+                />
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pallet Volume</Label>
+                <Input
+                  type="number"
+                  placeholder="e.g., 2500"
+                  value={palletVolume}
+                  onChange={e => setPalletVolume(e.target.value)}
+                />
+              </div>
+            )}
           </div>
 
           {/* CRM Link (optional) */}
@@ -263,7 +306,7 @@ export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated }:
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handleSubmit}>Create Workspace</Button>
+          <Button onClick={handleSubmit}>{labels.button}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

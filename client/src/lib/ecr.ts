@@ -184,17 +184,32 @@ export const mockRuleSets: EcrRuleSet[] = [
   {
     id: 'rs-2', versionNumber: 2, name: 'ECR Standard v2',
     description: 'Revised weights — increased GP% and revenue growth emphasis, reduced tenure weight',
-    status: 'active', createdBy: 'Amin Al-Rashid', createdAt: '2025-02-20T00:00:00Z',
+    status: 'archived', createdBy: 'Amin Al-Rashid', createdAt: '2025-02-20T00:00:00Z',
   },
   {
     id: 'rs-3', versionNumber: 3, name: 'ECR Enhanced v3 (Draft)',
     description: 'Experimental — adds credit risk score and rebalances strategic value',
     status: 'draft', createdBy: 'Amin Al-Rashid', createdAt: '2025-03-10T00:00:00Z',
   },
+  {
+    id: 'rs-4', versionNumber: 4, name: 'ECR Value-Ops-Fin Structure (40/30/30)',
+    description: 'Formalized 40% Commercial Value, 30% Operational Complexity, 30% Financial Behavior structure.',
+    status: 'active', createdBy: 'Amin Al-Rashid', createdAt: '2026-04-22T00:00:00Z',
+  },
 ];
 
 export const mockRuleWeights: EcrRuleWeight[] = [
-  // v2 (active) weights — must total 100
+  // v4 formalized weights — 40% Value (met-2: 25, met-4: 10, met-8: 5), 30% Ops (met-5: 10, met-6: 10, met-7: 10), 30% Finance (met-1: 15, met-3: 15)
+  { id: 'rw-24', ruleSetId: 'rs-4', metricId: 'met-2', weight: 25, createdAt: '2026-04-22T00:00:00Z' }, // revenue growth
+  { id: 'rw-25', ruleSetId: 'rs-4', metricId: 'met-4', weight: 10, createdAt: '2026-04-22T00:00:00Z' }, // contract tenure
+  { id: 'rw-26', ruleSetId: 'rs-4', metricId: 'met-8', weight: 5,  createdAt: '2026-04-22T00:00:00Z' }, // strategic value
+  { id: 'rw-27', ruleSetId: 'rs-4', metricId: 'met-5', weight: 10, createdAt: '2026-04-22T00:00:00Z' }, // sla compliance
+  { id: 'rw-28', ruleSetId: 'rs-4', metricId: 'met-6', weight: 10, createdAt: '2026-04-22T00:00:00Z' }, // volume utilization
+  { id: 'rw-29', ruleSetId: 'rs-4', metricId: 'met-7', weight: 10, createdAt: '2026-04-22T00:00:00Z' }, // dispute rate
+  { id: 'rw-30', ruleSetId: 'rs-4', metricId: 'met-1', weight: 15, createdAt: '2026-04-22T00:00:00Z' }, // gps_percent
+  { id: 'rw-31', ruleSetId: 'rs-4', metricId: 'met-3', weight: 15, createdAt: '2026-04-22T00:00:00Z' }, // dso_days
+
+  // v2 weights (archived)
   { id: 'rw-1', ruleSetId: 'rs-2', metricId: 'met-1', weight: 25, createdAt: '2025-02-20T00:00:00Z' },
   { id: 'rw-2', ruleSetId: 'rs-2', metricId: 'met-2', weight: 15, createdAt: '2025-02-20T00:00:00Z' },
   { id: 'rw-3', ruleSetId: 'rs-2', metricId: 'met-3', weight: 15, createdAt: '2025-02-20T00:00:00Z' },
@@ -220,6 +235,20 @@ export const mockRuleWeights: EcrRuleWeight[] = [
   { id: 'rw-21', ruleSetId: 'rs-3', metricId: 'met-5', weight: 10, createdAt: '2025-03-10T00:00:00Z' },
   { id: 'rw-22', ruleSetId: 'rs-3', metricId: 'met-6', weight: 10, createdAt: '2025-03-10T00:00:00Z' },
   { id: 'rw-23', ruleSetId: 'rs-3', metricId: 'met-7', weight: 10, createdAt: '2025-03-10T00:00:00Z' },
+];
+
+export interface EcrAuditTrailEntry {
+  id: string;
+  customerId: string;
+  previousGrade: Grade | null;
+  newGrade: Grade;
+  reason: string;
+  timestamp: string;
+}
+
+export const mockEcrAuditTrail: EcrAuditTrailEntry[] = [
+  { id: 'at-1', customerId: 'cust-sabic', previousGrade: 'C', newGrade: 'B', reason: 'DSO improvement over Q1', timestamp: '2025-04-05T10:00:00Z' },
+  { id: 'at-2', customerId: 'cust-sabic', previousGrade: 'B', newGrade: 'A', reason: 'Transition to 40/30/30 new weighting algorithm', timestamp: '2026-04-22T08:00:00Z' },
 ];
 
 // Customers reference from existing store — we'll use customer IDs from there
@@ -398,10 +427,23 @@ export function computeEcrScore(
   const snapshotValues = values.filter(v => v.snapshotId === snapshotId);
   const activeMetrics = metrics.filter(m => m.active);
 
+  // Defensive: clamp negative weights and compute sum
+  const sanitizedWeights = ruleWeights.map(w => ({ ...w, weight: Math.max(0, w.weight) }));
+  const weightSum = sanitizedWeights.reduce((sum, w) => {
+    // Only count weights for metrics that exist
+    const metric = activeMetrics.find(m => m.id === w.metricId);
+    return metric ? sum + w.weight : sum;
+  }, 0);
+
+  // Warn if weights don't sum to 100 (indicates data corruption or draft state)
+  if (weightSum > 0 && Math.abs(weightSum - 100) > 0.01) {
+    console.warn(`[ECR] Weight integrity warning for rule set ${ruleSetId}: weights sum to ${weightSum}%, expected 100%`);
+  }
+
   const breakdown: EcrScoreBreakdown[] = [];
   let totalScore = 0;
 
-  for (const rw of ruleWeights) {
+  for (const rw of sanitizedWeights) {
     const metric = activeMetrics.find(m => m.id === rw.metricId);
     if (!metric) continue;
 
@@ -446,12 +488,12 @@ export const mockScores: EcrScore[] = (() => {
   for (const cs of customerSnapshots) {
     const snap = snapshot.find(s => s.id === cs.snapshotId);
     if (!snap) continue;
-    const { totalScore, grade, confidenceScore } = computeEcrScore(cs.snapshotId, 'rs-2');
+    const { totalScore, grade, confidenceScore } = computeEcrScore(cs.snapshotId, 'rs-4');
     results.push({
       id: `score-${cs.snapshotId}`,
       customerId: cs.customerId,
       snapshotId: cs.snapshotId,
-      ruleSetId: 'rs-2',
+      ruleSetId: 'rs-4',
       totalScore,
       grade,
       confidenceScore,
@@ -560,4 +602,47 @@ export function getEcrScoreByCustomerName(storeName: string): EcrScore | undefin
   const ecrId = getEcrCustomerIdByName(storeName);
   if (!ecrId) return undefined;
   return getLatestScore(ecrId);
+}
+
+// ─── AUDIT TRAIL & ORCHESTRATION ─────────────────────────────
+
+export function getEcrHistory(customerId: string): EcrAuditTrailEntry[] {
+  return mockEcrAuditTrail
+    .filter(entry => entry.customerId === customerId)
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+}
+
+/**
+ * calculateECR function implementing the dynamic 40/30/30 rating via rs-4.
+ * Uses the latest snapshot for the customer.
+ */
+export function calculateECR(customerId: string): EcrScore | undefined {
+  const snapshots = getCustomerSnapshots(customerId);
+  if (!snapshots.length) return undefined;
+
+  // Most recent snapshot based on end period
+  const latestSnapshot = snapshots.sort((a, b) => new Date(b.periodEnd).getTime() - new Date(a.periodEnd).getTime())[0];
+  
+  const activeRuleSet = getActiveRuleSet();
+  if (!activeRuleSet) return undefined;
+
+  const { totalScore, grade, confidenceScore, breakdown } = computeEcrScore(
+    latestSnapshot.id,
+    activeRuleSet.id,
+    mockMetrics,
+    mockRuleWeights,
+    mockInputValues
+  );
+
+  return {
+    id: `dynamic-score-${Date.now()}`,
+    customerId,
+    snapshotId: latestSnapshot.id,
+    ruleSetId: activeRuleSet.id,
+    totalScore,
+    grade,
+    confidenceScore,
+    computedAt: new Date().toISOString(),
+    computedBySystem: true,
+  };
 }

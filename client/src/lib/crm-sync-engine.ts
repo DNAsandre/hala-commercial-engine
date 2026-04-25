@@ -122,6 +122,7 @@ const GHL_STAGE_MAP: Record<string, string> = {
   closed_won: "Won",
   contract_signed: "Signed",
   go_live: "Active",
+  closed_lost: "Closed Lost",
 };
 
 // Zoho-specific field name mappings
@@ -138,6 +139,7 @@ const ZOHO_STAGE_MAP: Record<string, string> = {
   closed_won: "Closed Won",
   contract_signed: "Contract Signed",
   go_live: "Go Live",
+  closed_lost: "Closed Lost",
 };
 
 // ============================================================
@@ -360,7 +362,7 @@ export async function fetchConnections(): Promise<CRMConnection[]> {
       connections = data.map(mapConnection);
       return connections;
     }
-  } catch { /* fallback */ }
+  } catch (e) { console.warn("[CRM Sync] fetchConnections fallback:", e); }
   return [...connections];
 }
 
@@ -376,10 +378,10 @@ export async function updateConnection(
   try {
     const row = mapConnectionToRow(connections[idx]);
     await supabase.from("crm_connections").upsert(row, { onConflict: "id" });
-  } catch { /* in-memory fallback */ }
+  } catch (e) { console.warn("[CRM Sync] updateConnection persist fallback:", e); }
 
   const user = getCurrentUser();
-  syncAuditEntry({
+  void syncAuditEntry({
     id: crypto.randomUUID(),
     entityType: "crm_connection",
     entityId: connectionId,
@@ -416,7 +418,8 @@ export async function testConnection(connectionId: string): Promise<{ success: b
     });
     
     return { success: true, latency_ms: latency, message: data?.message || "Connection successful" };
-  } catch {
+  } catch (err) {
+    console.warn('[crm-sync] Edge Function fallback:', err);
     // Mock success for demo (Edge Function not deployed)
     const latency = Date.now() - start;
     const mockLatency = 120 + Math.floor(Math.random() * 200);
@@ -456,7 +459,7 @@ export async function fetchFieldMappings(connectionId?: string): Promise<CRMFiel
       }
       return connectionId ? mapped : fieldMappings;
     }
-  } catch { /* fallback */ }
+  } catch (e) { console.warn("[CRM Sync] fetchFieldMappings fallback:", e); }
   return connectionId ? fieldMappings.filter((m) => m.connection_id === connectionId) : [...fieldMappings];
 }
 
@@ -483,7 +486,7 @@ export async function fetchSyncEvents(options?: {
       syncEvents = data.map(mapSyncEvent);
       return syncEvents;
     }
-  } catch { /* fallback */ }
+  } catch (e) { console.warn("[CRM Sync] fetchSyncEvents fallback:", e); }
 
   let filtered = [...syncEvents];
   if (options?.connectionId) filtered = filtered.filter((e) => e.connection_id === options.connectionId);
@@ -555,7 +558,8 @@ export async function triggerOutboundSync(params: {
       continue; // Skip auto-triggers for DNA Supersystems in migration mode
     }
 
-    const idempotencyKey = `${conn.provider}-${params.entityId}-${params.trigger}-${now.slice(0, 10).replace(/-/g, "")}`;
+    // C2 FIX: Minute-level granularity to allow multiple same-day syncs while deduplicating rapid-fire duplicates
+    const idempotencyKey = `${conn.provider}-${params.entityId}-${params.trigger}-${now.slice(0, 16).replace(/[-:T]/g, "")}`;
 
     // Deduplication check
     const existing = syncEvents.find((e) => e.idempotency_key === idempotencyKey && e.status === "success");
@@ -593,14 +597,14 @@ export async function triggerOutboundSync(params: {
     // Persist to Supabase
     try {
       await supabase.from("crm_sync_events_v2").insert(mapSyncEventToRow(event));
-    } catch { /* in-memory fallback */ }
+    } catch (e) { console.warn("[CRM Sync] event persist fallback:", e); }
 
     // Fire Edge Function (non-blocking)
-    processOutboundEvent(event, conn).catch(() => {});
+    processOutboundEvent(event, conn).catch((err) => { console.warn('[crm-sync] processOutbound fallback:', err); });
   }
 
   // Audit log
-  syncAuditEntry({
+  void syncAuditEntry({
     id: crypto.randomUUID(),
     entityType: "crm_sync",
     entityId: params.entityId,
@@ -619,7 +623,8 @@ export async function triggerOutboundSync(params: {
 // ============================================================
 
 async function processOutboundEvent(event: HardenedSyncEvent, conn: CRMConnection): Promise<void> {
-  // Update status to processing
+  // C7 FIX: Guard against concurrent processing of the same event
+  if (event.status === "processing") return;
   event.status = "processing";
 
   const edgeFunctionName = getEdgeFunctionName(conn.provider, event.entity_type);
@@ -647,7 +652,7 @@ async function processOutboundEvent(event: HardenedSyncEvent, conn: CRMConnectio
     // Update connection last_sync_at
     await updateConnection(conn.id, { last_sync_at: event.processed_at, health_status: "connected" });
 
-    syncAuditEntry({
+    void syncAuditEntry({
       id: crypto.randomUUID(),
       entityType: "crm_sync",
       entityId: event.entity_id,
@@ -665,7 +670,7 @@ async function processOutboundEvent(event: HardenedSyncEvent, conn: CRMConnectio
   // Persist updated event
   try {
     await supabase.from("crm_sync_events_v2").upsert(mapSyncEventToRow(event), { onConflict: "id" });
-  } catch { /* in-memory is already updated */ }
+  } catch (e) { console.warn("[CRM Sync] event upsert fallback:", e); }
 }
 
 // ============================================================
@@ -687,7 +692,7 @@ async function handleSyncFailure(event: HardenedSyncEvent, conn: CRMConnection, 
     // Create escalation event
     await createSyncFailureEscalation(event, conn);
 
-    syncAuditEntry({
+    void syncAuditEntry({
       id: crypto.randomUUID(),
       entityType: "crm_sync",
       entityId: event.entity_id,
@@ -703,7 +708,7 @@ async function handleSyncFailure(event: HardenedSyncEvent, conn: CRMConnection, 
     const backoffMinutes = RETRY_BACKOFF_MINUTES[Math.min(event.retry_count - 1, RETRY_BACKOFF_MINUTES.length - 1)];
     event.next_retry_at = new Date(Date.now() + backoffMinutes * 60000).toISOString();
 
-    syncAuditEntry({
+    void syncAuditEntry({
       id: crypto.randomUUID(),
       entityType: "crm_sync",
       entityId: event.entity_id,
@@ -787,13 +792,16 @@ export async function bulkResync(connectionId: string, entityType?: SyncEntityTy
     event.trigger = "bulk_resync";
   }
 
-  // Process all (non-blocking)
-  for (const event of failedEvents) {
-    processOutboundEvent(event, conn).catch(() => {});
-  }
+  // C5 FIX: Process sequentially with 500ms delay to avoid CRM rate-limit cascade
+  (async () => {
+    for (const event of failedEvents) {
+      await processOutboundEvent(event, conn).catch((err) => { console.warn('[crm-sync] bulkResync processOutbound fallback:', err); });
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  })();
 
   const user = getCurrentUser();
-  syncAuditEntry({
+  void syncAuditEntry({
     id: crypto.randomUUID(),
     entityType: "crm_sync",
     entityId: connectionId,
@@ -834,7 +842,8 @@ export async function processInboundWebhook(params: {
   }
 
   const now = new Date().toISOString();
-  const idempotencyKey = `${conn.provider}-${entityInfo.crm_id}-inbound-${now.slice(0, 10).replace(/-/g, "")}`;
+  // C6 FIX: Minute-level granularity for inbound deduplication
+  const idempotencyKey = `${conn.provider}-${entityInfo.crm_id}-inbound-${now.slice(0, 16).replace(/[-:T]/g, "")}`;
 
   // 3. Map CRM fields to local fields
   const mappedData = applyInboundMappings(conn.id, entityInfo.entity_type, params.payload);
@@ -908,7 +917,7 @@ export async function processInboundWebhook(params: {
     conflictRecord.sync_event_id = syncEvent.id;
     conflicts.unshift(conflictRecord);
 
-    syncAuditEntry({
+    void syncAuditEntry({
       id: crypto.randomUUID(),
       entityType: "crm_sync",
       entityId: entityInfo.local_id || entityInfo.crm_id,
@@ -923,7 +932,7 @@ export async function processInboundWebhook(params: {
   // 6. Upsert local entity (if CRM wins or no conflict)
   if (!conflictRecord || conflictRecord.resolution === "crm_wins") {
     // In production, this would update the local entity via the store
-    syncAuditEntry({
+    void syncAuditEntry({
       id: crypto.randomUUID(),
       entityType: "crm_sync",
       entityId: entityInfo.local_id || entityInfo.crm_id,
@@ -1063,7 +1072,8 @@ async function getLocalUpdatedAt(entityType: SyncEntityType, entityId: string): 
     const table = entityType === "deal" || entityType === "deal_stage" ? "workspaces" : "customers";
     const { data } = await supabase.from(table).select("updated_at").eq("id", entityId).single();
     return data?.updated_at || null;
-  } catch {
+  } catch (err) {
+    console.warn('[crm-sync] getCRMConnectionStatus fallback:', err);
     return null;
   }
 }

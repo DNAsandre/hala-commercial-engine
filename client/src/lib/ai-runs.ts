@@ -204,13 +204,46 @@ export const editorBots: EditorBot[] = [
 ];
 
 // ============================================================
-// IN-MEMORY STORE
+// SUPABASE-BACKED STORE (with in-memory fallback)
 // ============================================================
 
-let aiRuns: AIRun[] = [];
+import {
+  fetchEditorBots, insertAIRun as dbInsertAIRun,
+  updateAIRunStatus as dbUpdateAIRunStatus, fetchAIRuns as dbFetchAIRuns,
+} from "./supabase-data";
+
+// Local cache for bots (refreshed on first access)
+let _botCache: EditorBot[] | null = null;
+let _botCacheTime = 0;
+const BOT_CACHE_TTL = 30_000; // 30 seconds
+
+// In-memory fallback for AI runs (used if DB insert fails)
+let aiRunsFallback: AIRun[] = [];
+
+async function loadBots(): Promise<EditorBot[]> {
+  if (_botCache !== null && Date.now() - _botCacheTime < BOT_CACHE_TTL) return _botCache;
+  try {
+    const live = await fetchEditorBots();
+    // Cache the result even if empty — empty is a valid state (admin disabled all bots)
+    _botCache = live;
+    _botCacheTime = Date.now();
+    return live;
+  } catch (err) {
+    console.warn('[ai-runs] loadBots Supabase fallback:', err);
+    // Only fall back to hardcoded bots on actual network/DB error
+    if (_botCache !== null) return _botCache; // use stale cache if available
+    return editorBots; // hardcoded fallback as last resort
+  }
+}
+
+/** Force-refresh the bot cache (call after CRUD on editor_bots) */
+export function invalidateBotCache(): void {
+  _botCache = null;
+  _botCacheTime = 0;
+}
 
 // ============================================================
-// CRUD OPERATIONS
+// CRUD OPERATIONS (Supabase-backed with local mirror)
 // ============================================================
 
 export function createAIRun(params: Omit<AIRun, "id" | "created_at" | "applied_at" | "status">): AIRun {
@@ -221,11 +254,18 @@ export function createAIRun(params: Omit<AIRun, "id" | "created_at" | "applied_a
     created_at: new Date().toISOString(),
     applied_at: null,
   };
-  aiRuns.push(run);
+
+  // Always keep a local copy (survives even if DB insert fails)
+  aiRunsFallback.push(run);
+
+  // Persist to Supabase in parallel — warn on failure, don't swallow
+  dbInsertAIRun(run).catch((err) => {
+    console.warn("[ai-runs] DB insert failed, run preserved in local memory:", err);
+  });
 
   // Audit log
   const user = getCurrentUser();
-  syncAuditEntry({
+  void syncAuditEntry({
     id: crypto.randomUUID(),
     timestamp: run.created_at,
     userId: user?.id || "system",
@@ -244,97 +284,111 @@ export function createAIRun(params: Omit<AIRun, "id" | "created_at" | "applied_a
       target_block_ids: run.target_block_ids,
       run_mode: run.run_mode,
     },
-  }).catch(() => {});
+  }).catch((err) => { console.warn('[ai-runs] createAIRun audit fallback:', err); });
 
   return run;
 }
 
-export function applyAIRun(runId: string): AIRun | null {
-  const run = aiRuns.find(r => r.id === runId);
-  if (!run || run.status !== "draft") return null;
+export function applyAIRun(runId: string): void {
+  const appliedAt = new Date().toISOString();
 
-  run.status = "applied";
-  run.applied_at = new Date().toISOString();
+  // Update local mirror immediately (always available)
+  const local = aiRunsFallback.find(r => r.id === runId);
+  if (local) { local.status = "applied"; local.applied_at = appliedAt; }
 
+  // Persist to Supabase
+  dbUpdateAIRunStatus(runId, "applied", appliedAt).catch((err) => {
+    console.warn("[ai-runs] DB status update failed for apply:", err);
+  });
+
+  // Audit log
   const user = getCurrentUser();
-  syncAuditEntry({
+  void syncAuditEntry({
     id: crypto.randomUUID(),
-    timestamp: run.applied_at,
+    timestamp: appliedAt,
     userId: user?.id || "system",
     userName: user?.name || "System",
     action: "ai_draft_applied",
     entityType: "ai_run",
-    entityId: run.id,
-    details: `AI draft applied: ${run.bot_name} output committed to ${run.target_scope === "block" ? `block ${run.target_block_ids[0]}` : `${run.target_block_ids.length} blocks in document ${run.doc_instance_id}`}`,
-    metadata: {
-      bot_id: run.bot_id,
-      provider: run.provider,
-      model: run.model,
-      doc_instance_id: run.doc_instance_id,
-      target_block_ids: run.target_block_ids,
-    },
-  }).catch(() => {});
-
-  return run;
+    entityId: runId,
+    details: `AI draft applied: run ${runId} committed`,
+    metadata: { run_id: runId },
+  }).catch((err) => { console.warn('[ai-runs] applyAIRun audit fallback:', err); });
 }
 
-export function discardAIRun(runId: string): AIRun | null {
-  const run = aiRuns.find(r => r.id === runId);
-  if (!run || run.status !== "draft") return null;
+export function discardAIRun(runId: string): void {
+  // Update local mirror immediately
+  const local = aiRunsFallback.find(r => r.id === runId);
+  if (local) local.status = "discarded";
 
-  run.status = "discarded";
+  // Persist to Supabase
+  dbUpdateAIRunStatus(runId, "discarded").catch((err) => {
+    console.warn("[ai-runs] DB status update failed for discard:", err);
+  });
 
+  // Audit log
   const user = getCurrentUser();
-  syncAuditEntry({
+  void syncAuditEntry({
     id: crypto.randomUUID(),
     timestamp: new Date().toISOString(),
     userId: user?.id || "system",
     userName: user?.name || "System",
     action: "ai_draft_discarded",
     entityType: "ai_run",
-    entityId: run.id,
-    details: `AI draft discarded: ${run.bot_name} output rejected for ${run.target_scope === "block" ? `block ${run.target_block_ids[0]}` : `document ${run.doc_instance_id}`}`,
-    metadata: {
-      bot_id: run.bot_id,
-      doc_instance_id: run.doc_instance_id,
-    },
-  }).catch(() => {});
-
-  return run;
+    entityId: runId,
+    details: `AI draft discarded: run ${runId} rejected`,
+    metadata: { run_id: runId },
+  }).catch((err) => { console.warn('[ai-runs] discardAIRun audit fallback:', err); });
 }
 
-export function getAIRunsForDocument(docInstanceId: string): AIRun[] {
-  return aiRuns.filter(r => r.doc_instance_id === docInstanceId).sort((a, b) =>
-    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  );
+export async function getAIRunsForDocument(docInstanceId: string): Promise<AIRun[]> {
+  try {
+    const dbRuns = await dbFetchAIRuns(docInstanceId);
+    // Merge: DB runs + any local-only runs not yet persisted
+    const dbIds = new Set(dbRuns.map(r => r.id));
+    const localOnly = aiRunsFallback.filter(r => r.doc_instance_id === docInstanceId && !dbIds.has(r.id));
+    const merged = [...dbRuns, ...localOnly].sort((a, b) =>
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+    return merged;
+  } catch (err) {
+    console.warn('[ai-runs] getAIRunsForDocument Supabase fallback:', err);
+    // DB unavailable — return local-only
+    return aiRunsFallback.filter(r => r.doc_instance_id === docInstanceId).sort((a, b) =>
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+  }
 }
 
 export function getAIRunById(runId: string): AIRun | null {
-  return aiRuns.find(r => r.id === runId) || null;
+  return aiRunsFallback.find(r => r.id === runId) || null;
 }
 
 // ============================================================
-// BOT QUERY HELPERS
+// BOT QUERY HELPERS (async — reads from DB with fallback)
 // ============================================================
 
-export function getBlockBots(docType: string): EditorBot[] {
-  return editorBots.filter(b =>
+export async function getBlockBots(docType: string): Promise<EditorBot[]> {
+  const bots = await loadBots();
+  return bots.filter(b =>
     b.bot_type === "block" &&
     b.enabled &&
     b.allowed_doc_types.includes(docType)
   );
 }
 
-export function getDocumentBots(docType: string): EditorBot[] {
-  return editorBots.filter(b =>
+export async function getDocumentBots(docType: string): Promise<EditorBot[]> {
+  const bots = await loadBots();
+  return bots.filter(b =>
     b.bot_type === "document" &&
     b.enabled &&
     b.allowed_doc_types.includes(docType)
   );
 }
 
-export function getEditorBotById(botId: string): EditorBot | null {
-  return editorBots.find(b => b.id === botId) || null;
+export async function getEditorBotById(botId: string): Promise<EditorBot | null> {
+  const bots = await loadBots();
+  return bots.find(b => b.id === botId) || null;
 }
 
 // ============================================================
@@ -369,7 +423,7 @@ export async function generateBlockContent(
   docInstanceId?: string,
   workspaceId?: string,
 ): Promise<BlockGenerateResult> {
-  const bot = getEditorBotById(botId);
+  const bot = await getEditorBotById(botId);
 
   // 1. Retrieve KB context
   let retrievedChunks: RetrievedChunk[] = [];
@@ -491,7 +545,7 @@ export async function generateDocumentContent(
   runMode: DocumentRunMode,
 ): Promise<{ suggestions: DocumentBlockSuggestion[]; tokens_input: number; tokens_output: number }> {
   // Try real AI via Edge Functions first
-  const bot = getEditorBotById(botId);
+  const bot = await getEditorBotById(botId);
   if (bot) {
     try {
       const blockSummary = blocks.map(b => `[${b.key}] ${b.name}: ${b.content.replace(/<[^>]*>/g, "").substring(0, 200)}`).join("\n");

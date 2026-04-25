@@ -36,9 +36,32 @@ export function clearGlobalAuthUser(): void {
   _currentUser = DEFAULT_USER;
 }
 
-/** Called by engine files to get the current authenticated user */
+const DEV_ROLE_KEY = 'dev_role_override';
+
+/** Called by engine files to get the current authenticated user.
+ *  In DEV mode only: respects localStorage dev_role_override for testing. */
 export function getCurrentUser(): AuthUser {
+  if (import.meta.env.DEV) {
+    const devRole = localStorage.getItem(DEV_ROLE_KEY);
+    if (devRole) return { ..._currentUser, role: devRole };
+  }
   return _currentUser;
+}
+
+/** DEV only — set a temporary role override for testing. No-op in production. */
+export function setDevRoleOverride(role: string | null): void {
+  if (!import.meta.env.DEV) return;
+  if (role) {
+    localStorage.setItem(DEV_ROLE_KEY, role);
+  } else {
+    localStorage.removeItem(DEV_ROLE_KEY);
+  }
+}
+
+/** DEV only — read the active override (null if none or in production). */
+export function getDevRoleOverride(): string | null {
+  if (!import.meta.env.DEV) return null;
+  return localStorage.getItem(DEV_ROLE_KEY);
 }
 
 /** Check if the current user is actually authenticated (not the default fallback) */

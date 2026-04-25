@@ -111,7 +111,7 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
         fetch(url)
           .then(r => r.text())
           .then(setTextContent)
-          .catch(() => setTextContent("Unable to load file content."));
+          .catch((err) => { console.warn('[DocumentViewer] fetch fallback:', err); setTextContent("Unable to load file content."); });
       }
     }
   }, [doc?.id, activeVersion]);

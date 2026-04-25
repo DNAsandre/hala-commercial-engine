@@ -15,35 +15,62 @@ import { useLocation } from 'wouter';
 import {
   BarChart3, TrendingUp, TrendingDown, Minus, Users, Award,
   Shield, ArrowRight, Clock, ChevronRight, Database, FileText,
-  Calculator, Layers, Plug, AlertTriangle
+  Calculator, Layers, Plug, AlertTriangle, Loader2
 } from 'lucide-react';
 import {
-  mockScores, mockSnapshots, mockMetrics, mockRuleSets,
-  mockConnectors, mockRuleWeights,
-  ecrCustomerNames, getGradeBg, getGradeColor,
-  computeEcrScore, getLatestScore, getCustomerScores,
-  mockInputValues,
-  type Grade
+  getGradeBg, getGradeColor,
+  type Grade, type EcrScore,
 } from '@/lib/ecr';
+import {
+  useEcrMetrics, useEcrRuleSets, useEcrScores, useEcrSnapshots,
+} from '@/hooks/useSupabase';
 
 export default function EcrDashboard() {
   const [, navigate] = useLocation();
 
-  // Summary data
-  const activeRuleSet = mockRuleSets.find(rs => rs.status === 'active');
-  const activeMetrics = mockMetrics.filter(m => m.active);
-  const customerIds = Object.keys(ecrCustomerNames);
+  // Live Supabase data
+  const { data: metrics, loading: metricsLoading } = useEcrMetrics();
+  const { data: ruleSets, loading: ruleSetsLoading } = useEcrRuleSets();
+  const { data: scores, loading: scoresLoading } = useEcrScores();
+  const { data: snapshots, loading: snapshotsLoading } = useEcrSnapshots();
+
+  const loading = metricsLoading || ruleSetsLoading || scoresLoading || snapshotsLoading;
+
+  const activeRuleSet = useMemo(() => ruleSets.find(rs => rs.status === 'active'), [ruleSets]);
+  const activeMetrics = useMemo(() => metrics.filter(m => m.active), [metrics]);
+
+  // Build unique customer IDs from scores
+  const customerIds = useMemo(() => {
+    const ids = new Set<string>();
+    scores.forEach(s => ids.add(s.customerId));
+    snapshots.forEach(s => ids.add(s.customerId));
+    return Array.from(ids);
+  }, [scores, snapshots]);
+
+  // Build customer name lookup from scores (customerId -> display name)
+  // We derive names from the customerId pattern (e.g. "cust-sabic" → "SABIC")
+  const customerNames = useMemo(() => {
+    const names: Record<string, string> = {};
+    for (const id of customerIds) {
+      // Derive a readable name from the customer ID
+      const raw = id.replace('cust-', '').replace(/-/g, ' ');
+      names[id] = raw.charAt(0).toUpperCase() + raw.slice(1);
+    }
+    return names;
+  }, [customerIds]);
 
   const customerSummaries = useMemo(() => {
     return customerIds.map(custId => {
-      const scores = getCustomerScores(custId);
-      const latest = getLatestScore(custId);
-      const snapshots = mockSnapshots.filter(s => s.customerId === custId);
+      const custScores = scores.filter(s => s.customerId === custId);
+      const latest = custScores.length > 0
+        ? custScores.sort((a, b) => new Date(b.computedAt).getTime() - new Date(a.computedAt).getTime())[0]
+        : undefined;
+      const custSnapshots = snapshots.filter(s => s.customerId === custId);
 
       // Trend: compare latest two scores
       let trend: 'up' | 'down' | 'stable' = 'stable';
-      if (scores.length >= 2) {
-        const sorted = [...scores].sort((a, b) => new Date(b.computedAt).getTime() - new Date(a.computedAt).getTime());
+      if (custScores.length >= 2) {
+        const sorted = [...custScores].sort((a, b) => new Date(b.computedAt).getTime() - new Date(a.computedAt).getTime());
         const diff = sorted[0].totalScore - sorted[1].totalScore;
         if (diff > 2) trend = 'up';
         else if (diff < -2) trend = 'down';
@@ -51,15 +78,15 @@ export default function EcrDashboard() {
 
       return {
         customerId: custId,
-        name: ecrCustomerNames[custId],
+        name: customerNames[custId] || custId,
         latestScore: latest,
-        scoreCount: scores.length,
-        snapshotCount: snapshots.length,
+        scoreCount: custScores.length,
+        snapshotCount: custSnapshots.length,
         trend,
-        scores,
+        scores: custScores,
       };
     }).sort((a, b) => (b.latestScore?.totalScore ?? 0) - (a.latestScore?.totalScore ?? 0));
-  }, []);
+  }, [customerIds, scores, snapshots, customerNames]);
 
   // Grade distribution
   const gradeDistribution = useMemo(() => {
@@ -81,6 +108,14 @@ export default function EcrDashboard() {
     if (trend === 'down') return <TrendingDown className="w-4 h-4 text-red-500" />;
     return <Minus className="w-4 h-4 text-slate-400" />;
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -225,7 +260,7 @@ export default function EcrDashboard() {
                   </div>
                   <div className="flex-1">
                     <h3 className="font-semibold text-slate-900">Rule Sets</h3>
-                    <p className="text-xs text-slate-500">{mockRuleSets.length} versions, {activeRuleSet?.name} active</p>
+                    <p className="text-xs text-slate-500">{ruleSets.length} versions, {activeRuleSet?.name} active</p>
                   </div>
                   <ArrowRight className="w-4 h-4 text-slate-400" />
                 </div>
@@ -240,7 +275,7 @@ export default function EcrDashboard() {
                   </div>
                   <div className="flex-1">
                     <h3 className="font-semibold text-slate-900">Input Snapshots</h3>
-                    <p className="text-xs text-slate-500">{mockSnapshots.length} snapshots across {new Set(mockSnapshots.map(s => s.customerId)).size} customers</p>
+                    <p className="text-xs text-slate-500">{snapshots.length} snapshots across {new Set(snapshots.map(s => s.customerId)).size} customers</p>
                   </div>
                   <ArrowRight className="w-4 h-4 text-slate-400" />
                 </div>
@@ -255,7 +290,7 @@ export default function EcrDashboard() {
                   </div>
                   <div className="flex-1">
                     <h3 className="font-semibold text-slate-900">Score Results</h3>
-                    <p className="text-xs text-slate-500">{mockScores.length} scores computed</p>
+                    <p className="text-xs text-slate-500">{scores.length} scores computed</p>
                   </div>
                   <ArrowRight className="w-4 h-4 text-slate-400" />
                 </div>
@@ -270,7 +305,7 @@ export default function EcrDashboard() {
                   </div>
                   <div className="flex-1">
                     <h3 className="font-semibold text-slate-900">Connectors</h3>
-                    <p className="text-xs text-slate-500">{mockConnectors.length} registered, {mockConnectors.filter(c => c.status === 'enabled').length} enabled</p>
+                    <p className="text-xs text-slate-500">0 registered, 0 enabled (planned)</p>
                   </div>
                   <ArrowRight className="w-4 h-4 text-slate-400" />
                 </div>

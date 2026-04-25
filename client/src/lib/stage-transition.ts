@@ -35,6 +35,11 @@ import { syncWorkspaceStage, syncAuditEntry } from "./supabase-sync";
 
 export let strict_mode = false;
 
+// Roles authorized to perform governance overrides
+const OVERRIDE_AUTHORIZED_ROLES = ["director", "ceo_cfo", "admin"];
+// Roles authorized to revert stage transitions
+const REVERT_AUTHORIZED_ROLES = ["director", "ceo_cfo", "admin"];
+
 export function setStrictMode(enabled: boolean): void {
   strict_mode = enabled;
 }
@@ -178,6 +183,7 @@ export function getStageDisplayName(stage: WorkspaceStage): string {
     commercial_approved: "Commercial Approved",
     sla_drafting: "SLA Drafting",
     contract_ready: "Contract Ready",
+    closed_lost: "Closed Lost",
   };
   return labels[stage] ?? stage;
 }
@@ -373,7 +379,7 @@ function logTransitionAudit(
       : `Stage advance blocked at '${getStageDisplayName(fromStage)}'. ${message}`,
   };
   // Persist audit entry to Supabase (no in-memory push)
-  syncAuditEntry(entry);
+  void syncAuditEntry(entry);
 }
 
 /**
@@ -382,6 +388,8 @@ function logTransitionAudit(
 export interface AdvanceStageOptions {
   /** If provided, allows transition despite validation warnings (soft governance mode) */
   overrideReason?: string;
+  /** The role of the user attempting the override (required for RBAC validation) */
+  userRole?: string;
 }
 
 /**
@@ -459,16 +467,32 @@ export function advanceStage(workspaceId: string, options?: AdvanceStageOptions)
     }
 
     // ── SOFT MODE: allow override if reason provided ──
-    if (!options?.overrideReason) {
-      // No override reason — block (user hasn't provided justification yet)
+    if (!options?.overrideReason || options.overrideReason.trim().length < 10) {
+      // No override reason or too short — block
       const msg = errors.join(" ");
       logTransitionAudit(workspace, fromStage, toStage, false, msg);
       return {
         success: false,
-        message: errors[0],
+        message: !options?.overrideReason
+          ? errors[0]
+          : "Override reason must be at least 10 characters.",
         nextStage: toStage,
         fromStage,
         validationErrors: errors,
+      };
+    }
+
+    // RBAC: only authorized roles can perform governance overrides
+    const userRole = options.userRole || getCurrentUser().role;
+    if (!OVERRIDE_AUTHORIZED_ROLES.includes(userRole)) {
+      const msg = `Role "${userRole}" is not authorized to perform governance overrides. Required: ${OVERRIDE_AUTHORIZED_ROLES.join(", ")}`;
+      logTransitionAudit(workspace, fromStage, toStage, false, msg);
+      return {
+        success: false,
+        message: msg,
+        nextStage: toStage,
+        fromStage,
+        validationErrors: [...errors, msg],
       };
     }
 
@@ -493,7 +517,7 @@ export function advanceStage(workspaceId: string, options?: AdvanceStageOptions)
     workspace.daysInStage = 0;
     workspace.updatedAt = now.toISOString().slice(0, 10);
     // Persist to Supabase
-    syncWorkspaceStage(workspace.id, toStage, 0);
+    void syncWorkspaceStage(workspace.id, toStage, 0);
 
     const successMsg = `Stage advanced from ${getStageDisplayName(fromStage)} to ${getStageDisplayName(toStage)} (governance override).`;
     logTransitionAudit(workspace, fromStage, toStage, true, successMsg, overrideRecord);
@@ -539,7 +563,7 @@ export function advanceStage(workspaceId: string, options?: AdvanceStageOptions)
   workspace.daysInStage = 0;
   workspace.updatedAt = new Date().toISOString().slice(0, 10);
   // Persist to Supabase
-  syncWorkspaceStage(workspace.id, toStage, 0);
+  void syncWorkspaceStage(workspace.id, toStage, 0);
 
   const now = new Date();
   const successMsg = `Stage advanced from ${getStageDisplayName(fromStage)} to ${getStageDisplayName(toStage)}.`;
@@ -680,16 +704,32 @@ export function advanceToStage(
       };
     }
 
-    // Soft mode without override reason: block
-    if (!options?.overrideReason) {
+    // Soft mode without override reason or too short: block
+    if (!options?.overrideReason || options.overrideReason.trim().length < 10) {
       const msg = errors.join(" ");
       logTransitionAudit(workspace, originalStage, targetStage, false, msg);
       return {
         success: false,
-        message: errors[0],
+        message: !options?.overrideReason
+          ? errors[0]
+          : "Override reason must be at least 10 characters.",
         nextStage: targetStage,
         fromStage: originalStage,
         validationErrors: errors,
+      };
+    }
+
+    // RBAC: only authorized roles can perform governance overrides
+    const userRole = options.userRole || getCurrentUser().role;
+    if (!OVERRIDE_AUTHORIZED_ROLES.includes(userRole)) {
+      const msg = `Role "${userRole}" is not authorized to perform governance overrides. Required: ${OVERRIDE_AUTHORIZED_ROLES.join(", ")}`;
+      logTransitionAudit(workspace, originalStage, targetStage, false, msg);
+      return {
+        success: false,
+        message: msg,
+        nextStage: targetStage,
+        fromStage: originalStage,
+        validationErrors: [...errors, msg],
       };
     }
 
@@ -877,9 +917,20 @@ export interface RevertResult {
  * Does NOT re-run validation rules — this is a governance undo, not a new transition.
  */
 export function revertStage(workspaceId: string): RevertResult {
+  // RBAC: only the original transitioner or director+ can revert
+  const currentUser = getCurrentUser();
+  const record = undoRecords.get(workspaceId);
+  if (record && record.userId !== currentUser.id && !REVERT_AUTHORIZED_ROLES.includes(currentUser.role)) {
+    return {
+      success: false,
+      message: `Role "${currentUser.role}" is not authorized to revert this transition. Only the original user (${record.userName}) or director+ can undo.`,
+      revertedFrom: record.toStage,
+      revertedTo: record.fromStage,
+    };
+  }
+
   const eligibility = checkUndoEligibility(workspaceId);
   if (!eligibility.eligible) {
-    const record = undoRecords.get(workspaceId);
     return {
       success: false,
       message: eligibility.reasons.join(" "),
@@ -888,22 +939,22 @@ export function revertStage(workspaceId: string): RevertResult {
     };
   }
 
-  const record = undoRecords.get(workspaceId)!;
+  const undoRecord = undoRecords.get(workspaceId)!;
   const workspace = workspaces.find(w => w.id === workspaceId);
   if (!workspace) {
-    return { success: false, message: "Workspace not found.", revertedFrom: record.toStage, revertedTo: record.fromStage };
+    return { success: false, message: "Workspace not found.", revertedFrom: undoRecord.toStage, revertedTo: undoRecord.fromStage };
   }
 
   // Revert the stage
   const revertedFrom = workspace.stage;
-  workspace.stage = record.fromStage;
+  workspace.stage = undoRecord.fromStage;
   workspace.daysInStage = 0;
   workspace.updatedAt = new Date().toISOString().slice(0, 10);
   // Persist to Supabase
-  syncWorkspaceStage(workspace.id, record.fromStage, 0);
+  void syncWorkspaceStage(workspace.id, undoRecord.fromStage, 0);
 
   const now = new Date();
-  const msg = `Stage reverted from '${getStageDisplayName(revertedFrom)}' to '${getStageDisplayName(record.fromStage)}' (undo).`;
+  const msg = `Stage reverted from '${getStageDisplayName(revertedFrom)}' to '${getStageDisplayName(undoRecord.fromStage)}' (undo by ${currentUser.name}).`;
 
   // Audit log
   const entry: AuditEntry = {
@@ -911,23 +962,23 @@ export function revertStage(workspaceId: string): RevertResult {
     entityType: "workspace",
     entityId: workspaceId,
     action: "stage_reverted",
-    userId: getCurrentUser().id,
-    userName: getCurrentUser().name,
+    userId: currentUser.id,
+    userName: currentUser.name,
     timestamp: now.toISOString(),
     details: msg,
   };
   // Persist audit entry to Supabase (no in-memory push)
-  syncAuditEntry(entry);
+  void syncAuditEntry(entry);
 
   // Stage history
   stageHistory.unshift({
     id: `sh-rv-${crypto.randomUUID()}`,
     workspaceId,
     fromStage: revertedFrom,
-    toStage: record.fromStage,
+    toStage: undoRecord.fromStage,
     action: "reverted",
-    userId: getCurrentUser().id,
-    userName: getCurrentUser().name,
+    userId: currentUser.id,
+    userName: currentUser.name,
     timestamp: now.toISOString(),
     reason: msg,
   });
@@ -939,7 +990,7 @@ export function revertStage(workspaceId: string): RevertResult {
     success: true,
     message: msg,
     revertedFrom,
-    revertedTo: record.fromStage,
+    revertedTo: undoRecord.fromStage,
   };
 }
 

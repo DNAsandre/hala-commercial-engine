@@ -103,7 +103,8 @@ export default function VersionHistoryPanel({
       }) + " " + d.toLocaleTimeString("en-US", {
         hour: "2-digit", minute: "2-digit",
       });
-    } catch {
+    } catch (err) {
+      console.warn('[VersionHistory] formatDate fallback:', err);
       return iso;
     }
   };
@@ -120,7 +121,8 @@ export default function VersionHistoryPanel({
       if (diffHr < 24) return `${diffHr}h ago`;
       const diffDay = Math.floor(diffHr / 24);
       return `${diffDay}d ago`;
-    } catch {
+    } catch (err) {
+      console.warn('[VersionHistory] relativeTime fallback:', err);
       return "";
     }
   };

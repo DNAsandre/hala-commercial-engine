@@ -49,23 +49,24 @@ export default function CRMDashboardWidget() {
   const [stats, setStats] = useState<SyncHealthStats | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const loadData = async () => {
-    try {
-      const conns = await fetchConnections();
-      setConnections(conns);
-      const s = getSyncHealthStats();
-      setStats(s);
-    } catch {
-      // fallback
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 30000); // refresh every 30s
-    return () => clearInterval(interval);
+    let cancelled = false;
+    const guardedLoad = async () => {
+      try {
+        const conns = await fetchConnections();
+        if (cancelled) return;
+        setConnections(conns);
+        const s = getSyncHealthStats();
+        setStats(s);
+      } catch (err) {
+        console.warn('[CRMDashboardWidget] loadData fallback:', err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    guardedLoad();
+    const interval = setInterval(guardedLoad, 30000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
   if (loading) {

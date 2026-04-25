@@ -860,12 +860,6 @@ export function resolveOrCreateDocInstance(params: {
   );
   if (existing) return existing;
 
-  // Also search by customer + doc_type (fallback for loose linking)
-  const byCustomer = docInstances.find(
-    di => di.doc_type === params.doc_type && di.customer_id === params.customer_id
-  );
-  if (byCustomer) return byCustomer;
-
   // Create new instance using default published template
   const publishedTemplates = getPublishedTemplates().filter(t => t.doc_type === params.doc_type);
   const template = publishedTemplates[0];
@@ -993,7 +987,8 @@ export function saveToVault(params: {
     id: `va-${crypto.randomUUID()}`,
     ...params,
     file_url: `/vault/${params.doc_instance_id}-${params.status}.pdf`,
-    checksum: `sha256:${Math.random().toString(36).substring(2, 14)}`,
+    // B8 FIX: Use crypto.randomUUID for honest uniqueness (real SHA-256 requires async SubtleCrypto)
+    checksum: `sha256:${crypto.randomUUID().replace(/-/g, '')}`,
     created_by: 'Amin Al-Rashid',
     created_at: new Date().toISOString(),
     sent_to_crm: false,

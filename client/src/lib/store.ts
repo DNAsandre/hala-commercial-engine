@@ -10,7 +10,7 @@ import { nanoid } from "nanoid";
 
 export type UserRole = "salesman" | "regional_sales_head" | "regional_ops_head" | "director" | "ceo_cfo" | "admin";
 export type Region = "East" | "Central" | "West";
-export type WorkspaceStage = "qualified" | "solution_design" | "quoting" | "proposal_active" | "negotiation" | "commercial_approved" | "sla_drafting" | "contract_ready" | "contract_sent" | "contract_signed" | "handover" | "go_live";
+export type WorkspaceStage = "qualified" | "solution_design" | "quoting" | "proposal_active" | "negotiation" | "commercial_approved" | "sla_drafting" | "contract_ready" | "contract_sent" | "contract_signed" | "handover" | "go_live" | "closed_lost";
 export type QuoteState = "draft" | "submitted" | "approved" | "rejected" | "superseded";
 export type ProposalState = "draft" | "ready_for_crm" | "sent" | "negotiation_active" | "commercial_approved";
 export type SLAState = "draft" | "operational_review" | "submitted" | "approved" | "superseded";
@@ -436,6 +436,165 @@ export const TENDER_WORKSPACE_STAGES: { value: TenderWorkspaceStage; label: stri
 // Renewal workspace stages (reuses commercial stages but starts from negotiation)
 export const RENEWAL_WORKSPACE_STAGES = WORKSPACE_STAGES;
 
+// ═══════════════════════════════════════════════════════════════
+// COMMERCIAL MILESTONES — Decision-domain lifecycle strip (9 stages)
+// Matches the Commercial Pipeline lifecycle tracker exactly.
+// ═══════════════════════════════════════════════════════════════
+export const COMMERCIAL_MILESTONES: { value: string; label: string; color: string }[] = [
+  { value: "qualified",           label: "Qualified",           color: "bg-blue-100 text-blue-800" },
+  { value: "solution_design",     label: "Solution Design",     color: "bg-indigo-100 text-indigo-800" },
+  { value: "quoting",             label: "Quoting",             color: "bg-violet-100 text-violet-800" },
+  { value: "proposal_active",     label: "Proposal Active",     color: "bg-purple-100 text-purple-800" },
+  { value: "negotiation",         label: "Negotiation",         color: "bg-amber-100 text-amber-800" },
+  { value: "commercial_approved", label: "Commercial Approved", color: "bg-emerald-100 text-emerald-800" },
+  { value: "contract_signed",     label: "Contract Signed",     color: "bg-green-100 text-green-800" },
+  { value: "go_live",             label: "Go-Live",             color: "bg-green-200 text-green-900" },
+  { value: "closed_lost",         label: "Closed Lost",         color: "bg-red-100 text-red-700" },
+];
+
+// Map WorkspaceStage values → COMMERCIAL_MILESTONES for display
+export function mapToCommercialMilestone(stage: string): string {
+  const map: Record<string, string> = {
+    "qualified":           "qualified",
+    "solution_design":     "solution_design",
+    "quoting":             "quoting",
+    "proposal_active":     "proposal_active",
+    "negotiation":         "negotiation",
+    "commercial_approved": "commercial_approved",
+    // Old intermediate stages collapse into nearest milestone
+    "sla_drafting":        "commercial_approved",
+    "contract_ready":      "contract_signed",
+    "contract_sent":       "contract_signed",
+    "contract_signed":     "contract_signed",
+    "handover":            "go_live",
+    "go_live":             "go_live",
+    "closed_lost":         "closed_lost",
+  };
+  return map[stage] || stage;
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// COMMERCIAL KANBAN — Internal working board columns
+// Separate from milestones: represents current work state
+// ═══════════════════════════════════════════════════════════════
+export const COMMERCIAL_KANBAN_COLUMNS: { value: string; label: string }[] = [
+  { value: "not_ready",                label: "Not Ready" },
+  { value: "solution_design_needed",   label: "Solution Design Needed" },
+  { value: "determine_pnl",           label: "Determine P&L" },
+  { value: "quote_draft_review",      label: "Quote Draft / Review" },
+  { value: "proposal_drafting",       label: "Proposal Drafting" },
+  { value: "ready_for_crm",           label: "Ready for CRM" },
+  { value: "negotiation_active",      label: "Negotiation Active" },
+  { value: "commercial_approval",     label: "Commercial Approval Needed" },
+  { value: "contracting_sla",         label: "Contracting / SLA Drafting" },
+  { value: "handover_golive_prep",    label: "Handover / Go-Live Prep" },
+];
+
+// ═══════════════════════════════════════════════════════════════
+// DOCUMENT SUB-LIFECYCLES — Object-level truth layers
+// These do NOT overload the main milestone strip.
+// ═══════════════════════════════════════════════════════════════
+
+export type QuoteSubState = "draft" | "submitted_for_approval" | "approved" | "rejected" | "superseded";
+export const QUOTE_STATES: { value: QuoteSubState; label: string; color: string }[] = [
+  { value: "draft",                    label: "Draft",                   color: "bg-slate-100 text-slate-700" },
+  { value: "submitted_for_approval",   label: "Submitted for Approval",  color: "bg-blue-100 text-blue-700" },
+  { value: "approved",                 label: "Approved",                color: "bg-emerald-100 text-emerald-700" },
+  { value: "rejected",                 label: "Rejected",                color: "bg-red-100 text-red-700" },
+  { value: "superseded",               label: "Superseded",              color: "bg-gray-100 text-gray-500" },
+];
+
+export type ProposalSubState = "draft" | "ready_for_crm" | "sent" | "negotiation_active" | "commercial_approval_pending" | "commercial_approved" | "rejected" | "superseded" | "closed";
+export const PROPOSAL_STATES: { value: ProposalSubState; label: string; color: string }[] = [
+  { value: "draft",                          label: "Draft",                       color: "bg-slate-100 text-slate-700" },
+  { value: "ready_for_crm",                  label: "Ready for CRM",               color: "bg-cyan-100 text-cyan-700" },
+  { value: "sent",                           label: "Sent",                        color: "bg-blue-100 text-blue-700" },
+  { value: "negotiation_active",             label: "Negotiation Active",          color: "bg-amber-100 text-amber-700" },
+  { value: "commercial_approval_pending",    label: "Approval Pending",            color: "bg-orange-100 text-orange-700" },
+  { value: "commercial_approved",            label: "Commercial Approved",         color: "bg-emerald-100 text-emerald-700" },
+  { value: "rejected",                       label: "Rejected",                    color: "bg-red-100 text-red-700" },
+  { value: "superseded",                     label: "Superseded",                  color: "bg-gray-100 text-gray-500" },
+  { value: "closed",                         label: "Closed",                      color: "bg-gray-100 text-gray-500" },
+];
+
+export type SlaSubState = "not_started" | "draft" | "operational_review" | "submitted_for_approval" | "approved" | "rejected" | "superseded";
+export const SLA_STATES: { value: SlaSubState; label: string; color: string }[] = [
+  { value: "not_started",               label: "Not Started",               color: "bg-gray-50 text-gray-400" },
+  { value: "draft",                      label: "Draft",                     color: "bg-slate-100 text-slate-700" },
+  { value: "operational_review",         label: "Operational Review",        color: "bg-blue-100 text-blue-700" },
+  { value: "submitted_for_approval",     label: "Submitted for Approval",    color: "bg-amber-100 text-amber-700" },
+  { value: "approved",                   label: "Approved",                  color: "bg-emerald-100 text-emerald-700" },
+  { value: "rejected",                   label: "Rejected",                  color: "bg-red-100 text-red-700" },
+  { value: "superseded",                 label: "Superseded",                color: "bg-gray-100 text-gray-500" },
+];
+
+export type HandoverSubState = "not_started" | "initiated" | "legal_complete" | "finance_setup_complete" | "operations_briefed" | "client_portal_setup" | "training_complete" | "go_live_scheduled" | "completed";
+export const HANDOVER_STATES: { value: HandoverSubState; label: string; color: string }[] = [
+  { value: "not_started",               label: "Not Started",             color: "bg-gray-50 text-gray-400" },
+  { value: "initiated",                 label: "Initiated",               color: "bg-blue-100 text-blue-700" },
+  { value: "legal_complete",            label: "Legal Complete",           color: "bg-indigo-100 text-indigo-700" },
+  { value: "finance_setup_complete",    label: "Finance Setup",           color: "bg-violet-100 text-violet-700" },
+  { value: "operations_briefed",        label: "Ops Briefed",             color: "bg-purple-100 text-purple-700" },
+  { value: "client_portal_setup",       label: "Portal Setup",            color: "bg-cyan-100 text-cyan-700" },
+  { value: "training_complete",         label: "Training Complete",       color: "bg-teal-100 text-teal-700" },
+  { value: "go_live_scheduled",         label: "Go-Live Scheduled",       color: "bg-lime-100 text-lime-700" },
+  { value: "completed",                 label: "Completed",               color: "bg-emerald-100 text-emerald-700" },
+];
+
+// Helper: derive sub-lifecycle display state from existing workspace data
+export function deriveSubLifecycleStates(ws: Workspace, quotes: any[], proposals: any[], slas: any[]) {
+  const latestQuote = quotes.length > 0 ? quotes[quotes.length - 1] : null;
+  const latestProposal = proposals.length > 0 ? proposals[proposals.length - 1] : null;
+  const latestSla = slas.length > 0 ? slas[slas.length - 1] : null;
+
+  // Derive quote sub-state
+  let quoteState: QuoteSubState | null = null;
+  if (latestQuote) {
+    const qState = latestQuote.state || latestQuote.status;
+    if (qState === "draft") quoteState = "draft";
+    else if (qState === "submitted") quoteState = "submitted_for_approval";
+    else if (qState === "approved") quoteState = "approved";
+    else if (qState === "rejected") quoteState = "rejected";
+    else if (qState === "superseded") quoteState = "superseded";
+    else quoteState = "draft";
+  }
+
+  // Derive proposal sub-state
+  let proposalState: ProposalSubState | null = null;
+  if (latestProposal) {
+    const pState = latestProposal.state || latestProposal.status;
+    if (pState === "draft") proposalState = "draft";
+    else if (pState === "sent") proposalState = "sent";
+    else if (pState === "commercial_approved") proposalState = "commercial_approved";
+    else if (pState === "rejected") proposalState = "rejected";
+    else proposalState = "draft";
+  }
+
+  // Derive SLA sub-state from workspace stage
+  let slaState: SlaSubState = "not_started";
+  if (latestSla) {
+    const sState = latestSla.status || latestSla.state;
+    if (sState === "draft") slaState = "draft";
+    else if (sState === "under_review") slaState = "operational_review";
+    else if (sState === "active" || sState === "approved") slaState = "approved";
+    else slaState = "draft";
+  } else {
+    // Infer from workspace stage
+    const milestoneIdx = COMMERCIAL_MILESTONES.findIndex(m => m.value === mapToCommercialMilestone(ws.stage));
+    const contractingIdx = COMMERCIAL_MILESTONES.findIndex(m => m.value === "contracting");
+    if (milestoneIdx >= contractingIdx && contractingIdx >= 0) slaState = "draft";
+  }
+
+  // Derive handover sub-state
+  let handoverState: HandoverSubState = "not_started";
+  const ms = mapToCommercialMilestone(ws.stage);
+  if (ms === "handover_active") handoverState = "initiated";
+  else if (ms === "go_live") handoverState = "completed";
+
+  return { quoteState, proposalState, slaState, handoverState };
+}
+
 // Dynamic stage engine — returns correct stages for workspace type
 export function getStagesForType(type?: WorkspaceType): { value: string; label: string; color: string }[] {
   switch (type) {
@@ -443,6 +602,11 @@ export function getStagesForType(type?: WorkspaceType): { value: string; label: 
     case "renewal": return RENEWAL_WORKSPACE_STAGES;
     default: return WORKSPACE_STAGES;
   }
+}
+
+// Commercial milestone-aware stage resolution
+export function getCommercialMilestones(): { value: string; label: string; color: string }[] {
+  return COMMERCIAL_MILESTONES;
 }
 
 export function getWorkspaceType(ws: Workspace): WorkspaceType {

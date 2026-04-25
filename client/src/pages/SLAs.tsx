@@ -29,7 +29,7 @@ interface SLARecord {
   version: number;
   effectiveDate: string;
   expiryDate: string;
-  kpis: { name: string; target: string; actual: string; status: "met" | "warning" | "breach" }[];
+  kpis: { name: string; target: string; actual: string; status: "met" | "warning" | "breach" | "pending" }[];
   lastReview: string;
   nextReview: string;
 }
@@ -62,9 +62,9 @@ const mockSLAs: SLARecord[] = [
     id: "sla3", customerName: "Maaden", customerId: "c3", title: "Maaden Distribution SLA",
     status: "draft", version: 1, effectiveDate: "2025-03-01", expiryDate: "2027-02-28",
     kpis: [
-      { name: "Receiving Accuracy", target: "99.5%", actual: "-", status: "met" },
-      { name: "Order Accuracy", target: "99.8%", actual: "-", status: "met" },
-      { name: "On-Time Dispatch", target: "98%", actual: "-", status: "met" },
+      { name: "Receiving Accuracy", target: "99.5%", actual: "-", status: "pending" },
+      { name: "Order Accuracy", target: "99.8%", actual: "-", status: "pending" },
+      { name: "On-Time Dispatch", target: "98%", actual: "-", status: "pending" },
     ],
     lastReview: "-", nextReview: "2025-06-01",
   },
@@ -101,7 +101,33 @@ const kpiStatusColors: Record<string, string> = {
   met: "text-emerald-600 bg-emerald-50",
   warning: "text-amber-600 bg-amber-50",
   breach: "text-red-600 bg-red-50",
+  pending: "text-slate-500 bg-slate-50",
 };
+
+// 3C: Auto-compute KPI status from target vs actual values
+function computeKPIStatus(target: string, actual: string): "met" | "warning" | "breach" | "pending" {
+  // 3B: No actual data means pending
+  if (!actual || actual === "-" || actual === "N/A") return "pending";
+  // Parse percentage values
+  const targetMatch = target.match(/([\d.]+)%/);
+  const actualMatch = actual.match(/([\d.]+)%/);
+  if (targetMatch && actualMatch) {
+    const t = parseFloat(targetMatch[1]);
+    const a = parseFloat(actualMatch[1]);
+    const isLessBetter = target.startsWith("<") || target.startsWith("≤") || target.startsWith("<=");
+    if (isLessBetter) {
+      if (a <= t) return "met";
+      if (a <= t * 1.5) return "warning";
+      return "breach";
+    } else {
+      if (a >= t) return "met";
+      if (a >= t - 1.0) return "warning";
+      return "breach";
+    }
+  }
+  // Non-percentage targets — return the static status as fallback
+  return "met";
+}
 
 export default function SLAs() {
   const { data: customers } = useCustomers();
@@ -284,7 +310,8 @@ export default function SLAs() {
                             customer_name: sla.customerName,
                           });
                           setEditingSLA({ customerName: sla.customerName, customerId: sla.customerId, slaId: sla.id, existingInstanceId: instance.id });
-                        } catch {
+                        } catch (err) {
+                          console.warn('[SLAs] resolveOrCreateDocInstance fallback:', err);
                           setEditingSLA({ customerName: sla.customerName, customerId: sla.customerId, slaId: sla.id });
                         }
                       }}>

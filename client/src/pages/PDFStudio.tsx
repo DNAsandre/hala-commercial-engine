@@ -109,6 +109,10 @@ export default function PDFStudio() {
   const [watermark, setWatermark] = useState<WatermarkMode>("none");
   const [coverStyle, setCoverStyle] = useState<CoverStyle>("wave");
   const [selectedCustomerId, setSelectedCustomerId] = useState("c1");
+  // 5B: Stable reference number per session (memoized once)
+  const sessionRef = useRef(generateReferenceNumber() + `-${crypto.randomUUID().slice(0,4)}`);
+  // 8A: Track if user manually edited Arabic pricing
+  const [arabicDirty, setArabicDirty] = useState(false);
   const [documentTitle, setDocumentTitle] = useState("3PL Warehousing Proposal");
   const [documentSubtitle, setDocumentSubtitle] = useState("");
 
@@ -120,6 +124,23 @@ export default function PDFStudio() {
 
   // Terms
   const [terms, setTerms] = useState<TermItem[]>(SAMPLE_TERMS);
+
+  // Gap 7: Editable notes
+  const [notes, setNotes] = useState<string[]>([
+    "All prices are exclusive of VAT (15%) unless otherwise stated.",
+    "Rates are valid for 30 days from the date of this proposal.",
+    "Minimum charges apply as specified in the pricing table.",
+    "Additional services not listed above will be quoted separately.",
+  ]);
+
+  // Gap 5: Section content editing (Introduction & Scope)
+  const [introContentEn, setIntroContentEn] = useState("");
+  const [introContentAr, setIntroContentAr] = useState("");
+  const [scopeContentEn, setScopeContentEn] = useState("");
+  const [scopeContentAr, setScopeContentAr] = useState("");
+
+  // Gap 1: Section toggle overrides
+  const [sectionOverrides, setSectionOverrides] = useState<Record<string, boolean>>({});
 
   // Translation bot state
   const [translationInput, setTranslationInput] = useState("");
@@ -136,10 +157,21 @@ export default function PDFStudio() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
 
+  // Gap 6: Reset section overrides when template changes
+  useEffect(() => {
+    setSectionOverrides({});
+  }, [selectedTemplateId]);
+
   const templates = fetchPDFTemplates();
   const selectedTemplate = getPDFTemplate(selectedTemplateId);
   const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
   const dictStats = getDictionaryStats();
+
+  // Gap 1: Helper to check if a section is enabled (overrides > template defaults)
+  const isSectionEnabled = (sectionId: string, templateEnabled: boolean) => {
+    if (sectionId in sectionOverrides) return sectionOverrides[sectionId];
+    return templateEnabled;
+  };
 
   // Build render context
   const renderContext = useMemo<PDFRenderContext | null>(() => {
@@ -148,24 +180,29 @@ export default function PDFStudio() {
     const sectionsData: Record<string, PDFSectionData> = {
       cover: { type: "cover" },
       confidentiality: { type: "confidentiality" },
-      introduction: { type: "introduction" },
-      scope: { type: "scope_of_work" },
+      introduction: { type: "introduction", content_html: introContentEn || undefined, content_html_ar: introContentAr || undefined },
+      scope: { type: "scope_of_work", content_html: scopeContentEn || undefined, content_html_ar: scopeContentAr || undefined },
       pricing: { type: "pricing_table", pricing_rows: pricingRows },
       sla_matrix: { type: "sla_matrix", sla_rows: slaRows },
       terms: { type: "terms_and_conditions", terms },
       commercial_terms: { type: "commercial_terms", terms },
       legal: { type: "legal_clauses", terms },
       signature: { type: "signature" },
-      notes: { type: "notes", notes: [
-        "All prices are exclusive of VAT (15%) unless otherwise stated.",
-        "Rates are valid for 30 days from the date of this proposal.",
-        "Minimum charges apply as specified in the pricing table.",
-        "Additional services not listed above will be quoted separately.",
-      ]},
+      notes: { type: "notes", notes },
+    };
+
+    // Gap 1: Apply section overrides to the template
+    const overriddenTemplate = {
+      ...selectedTemplate,
+      cover_style: coverStyle,
+      sections: selectedTemplate.sections.map(s => ({
+        ...s,
+        enabled: isSectionEnabled(s.id, s.enabled),
+      })),
     };
 
     return {
-      template: { ...selectedTemplate, cover_style: coverStyle },
+      template: overriddenTemplate,
       branding: HALA_BRANDING,
       watermark,
       language,
@@ -174,11 +211,11 @@ export default function PDFStudio() {
       customer_name: selectedCustomer?.name || "Customer",
       customer_name_ar: translateToArabic(selectedCustomer?.name || "Customer").translated,
       customer_logo_url: "",
-      reference_number: generateReferenceNumber(),
+      reference_number: sessionRef.current,
       date: new Date().toISOString(),
       sections_data: sectionsData,
     };
-  }, [selectedTemplate, coverStyle, watermark, language, documentTitle, documentSubtitle, selectedCustomer, pricingRows, slaRows, terms]);
+  }, [selectedTemplate, coverStyle, watermark, language, documentTitle, documentSubtitle, selectedCustomer, pricingRows, slaRows, terms, notes, introContentEn, introContentAr, scopeContentEn, scopeContentAr, sectionOverrides]);
 
   // Generate HTML preview
   const previewHTML = useMemo(() => {
@@ -215,10 +252,17 @@ export default function PDFStudio() {
     }
   }, [dictSearch, dictCategory]);
 
-  // Auto-translate pricing rows when switching to dual
+  // Auto-translate pricing rows when switching to dual — 8A: protect manual Arabic edits
   const handleLanguageChange = (lang: LanguageMode) => {
     setLanguage(lang);
     if (lang === "dual" || lang === "ar") {
+      if (arabicDirty) {
+        const overwrite = window.confirm(
+          "You have manually edited Arabic pricing descriptions.\n\n" +
+          "Auto-translate will overwrite your changes. Proceed?"
+        );
+        if (!overwrite) return;
+      }
       // Auto-translate pricing rows
       const translated = translatePricingRows(pricingRows.map(r => ({ description: r.description, unit: r.unit })));
       setPricingRows(prev => prev.map((row, i) => ({
@@ -226,12 +270,23 @@ export default function PDFStudio() {
         description_ar: translated[i]?.description_ar || "",
         unit_ar: translated[i]?.unit_ar || "",
       })));
+      setArabicDirty(false);
       toast.success("Auto-translated pricing rows to Arabic");
     }
   };
 
-  // Download HTML
+  // Download HTML — with pre-download validation
   const handleDownload = useCallback(() => {
+    // 1B: Warn on zero-rate rows
+    const zeroRateRows = pricingRows.filter(r => r.rate === 0 && !r.is_total && !r.is_vat);
+    if (zeroRateRows.length > 0) {
+      const proceed = window.confirm(
+        `Warning: ${zeroRateRows.length} pricing row(s) have a rate of SAR 0.00.\n\n` +
+        zeroRateRows.map(r => `• ${r.description}`).join('\n') +
+        '\n\nProceed with download?'
+      );
+      if (!proceed) return;
+    }
     setGenerating(true);
     setTimeout(() => {
       // Use iframe content for reliable download (previewHTML may be stale in closure)
@@ -264,7 +319,7 @@ export default function PDFStudio() {
       });
       setGenerating(false);
     }, 500);
-  }, [previewHTML, documentTitle, language, renderContext, selectedTemplateId, selectedTemplate, selectedCustomer, watermark]);
+  }, [previewHTML, documentTitle, language, renderContext, selectedTemplateId, selectedTemplate, selectedCustomer, watermark, pricingRows]);
 
   // Print preview
   const handlePrint = useCallback(() => {
@@ -327,9 +382,46 @@ export default function PDFStudio() {
     setPricingRows(prev => prev.filter((_, i) => i !== index));
   };
 
-  const updatePricingRow = (index: number, field: keyof PricingRow, value: any) => {
+  // 1D: Properly typed value parameter instead of 'any'
+  const updatePricingRow = (index: number, field: keyof PricingRow, value: string | number | boolean | undefined) => {
     setPricingRows(prev => prev.map((row, i) => i === index ? { ...row, [field]: value } : row));
   };
+
+  // Gap 2: SLA row management
+  const addSlaRow = () => {
+    setSlaRows(prev => [...prev, {
+      metric: "New Metric",
+      metric_ar: "",
+      target: "99%",
+      measurement: "Monthly",
+      penalty: "As per SLA terms",
+      severity: "medium" as const,
+    }]);
+  };
+
+  const removeSlaRow = (index: number) => {
+    setSlaRows(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Gap 3: Terms management
+  const addTerm = () => {
+    setTerms(prev => [...prev, {
+      number: `${prev.length + 1}.`,
+      title_en: "New Clause",
+      title_ar: "بند جديد",
+      content_en: "",
+      content_ar: "",
+    }]);
+  };
+
+  const removeTerm = (index: number) => {
+    setTerms(prev => prev.filter((_, i) => i !== index).map((t, i) => ({ ...t, number: `${i + 1}.` })));
+  };
+
+  // Gap 4: Auto-computed pricing summary
+  const pricingSubtotal = pricingRows.filter(r => !r.is_total && !r.is_vat).reduce((sum, r) => sum + r.rate, 0);
+  const pricingVAT = pricingSubtotal * 0.15;
+  const pricingGrandTotal = pricingSubtotal + pricingVAT;
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto">
@@ -479,7 +571,7 @@ export default function PDFStudio() {
                 onClick={() => setShowSections(!showSections)}
               >
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <FileText className="w-4 h-4" /> Sections ({selectedTemplate?.sections.filter(s => s.enabled).length || 0})
+                  <FileText className="w-4 h-4" /> Sections ({selectedTemplate?.sections.filter(s => isSectionEnabled(s.id, s.enabled)).length || 0})
                 </CardTitle>
                 {showSections ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
               </button>
@@ -489,11 +581,13 @@ export default function PDFStudio() {
                 <div className="space-y-1.5">
                   {selectedTemplate.sections
                     .sort((a, b) => a.order - b.order)
-                    .map(section => (
+                    .map(section => {
+                      const enabled = isSectionEnabled(section.id, section.enabled);
+                      return (
                       <div key={section.id} className="flex items-center gap-2 p-2 rounded-md border border-border">
                         <GripVertical className="w-3.5 h-3.5 text-muted-foreground cursor-grab" />
                         <div className="flex-1 min-w-0">
-                          <span className="text-xs font-medium truncate block">{section.title_en}</span>
+                          <span className={`text-xs font-medium truncate block ${!enabled ? 'line-through text-muted-foreground' : ''}`}>{section.title_en}</span>
                           {language !== "en" && (
                             <span className="text-[10px] text-muted-foreground block" dir="rtl">{section.title_ar}</span>
                           )}
@@ -501,9 +595,13 @@ export default function PDFStudio() {
                         <Badge variant="outline" className="text-[9px] px-1 py-0">
                           {section.type.replace(/_/g, " ")}
                         </Badge>
-                        <div className={`w-2 h-2 rounded-full ${section.enabled ? "bg-emerald-500" : "bg-gray-300"}`} />
+                        <button
+                          onClick={() => setSectionOverrides(prev => ({ ...prev, [section.id]: !enabled }))}
+                          className={`w-3 h-3 rounded-full border-2 cursor-pointer transition-colors ${enabled ? 'bg-emerald-500 border-emerald-600' : 'bg-gray-200 border-gray-300'}`}
+                          title={enabled ? 'Click to disable section' : 'Click to enable section'}
+                        />
                       </div>
-                    ))}
+                    );})}
                 </div>
               </CardContent>
             )}
@@ -644,6 +742,9 @@ export default function PDFStudio() {
               <TabsTrigger value="preview" className="gap-1.5">
                 <Eye className="w-3.5 h-3.5" /> Preview
               </TabsTrigger>
+              <TabsTrigger value="content" className="gap-1.5">
+                <Settings className="w-3.5 h-3.5" /> Content
+              </TabsTrigger>
               <TabsTrigger value="pricing" className="gap-1.5">
                 <FileText className="w-3.5 h-3.5" /> Pricing Table
               </TabsTrigger>
@@ -720,7 +821,7 @@ export default function PDFStudio() {
                         </Button>
                       </div>
                       <span className="text-[10px] text-muted-foreground border-l border-border pl-3">
-                        Ref: {generateReferenceNumber()}
+                        Ref: {sessionRef.current}
                       </span>
                     </div>
                   </div>
@@ -775,6 +876,95 @@ export default function PDFStudio() {
               </Card>
             </TabsContent>
 
+            {/* ── Content Editor (Gap 5 + 7) ── */}
+            <TabsContent value="content">
+              <div className="space-y-4">
+                {/* Introduction */}
+                <Card className="border border-border shadow-none">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-semibold">Introduction</CardTitle>
+                    <p className="text-[10px] text-muted-foreground">Leave blank to use the default Hala SCS introduction text</p>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <textarea
+                      value={introContentEn}
+                      onChange={e => setIntroContentEn(e.target.value)}
+                      className="w-full text-xs p-3 border border-border rounded resize-none bg-background min-h-[80px]"
+                      placeholder="Custom introduction text (English)... Leave empty for default."
+                      rows={3}
+                    />
+                    {language !== "en" && (
+                      <textarea
+                        value={introContentAr}
+                        onChange={e => setIntroContentAr(e.target.value)}
+                        className="w-full text-xs p-3 border border-border rounded resize-none bg-background min-h-[80px] text-right"
+                        dir="rtl"
+                        style={{ fontFamily: "'Noto Naskh Arabic', sans-serif" }}
+                        placeholder="نص المقدمة المخصص (عربي)..."
+                        rows={3}
+                      />
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Scope of Work */}
+                <Card className="border border-border shadow-none">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-semibold">Scope of Work</CardTitle>
+                    <p className="text-[10px] text-muted-foreground">Leave blank to use the default scope of work items</p>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <textarea
+                      value={scopeContentEn}
+                      onChange={e => setScopeContentEn(e.target.value)}
+                      className="w-full text-xs p-3 border border-border rounded resize-none bg-background min-h-[80px]"
+                      placeholder="Custom scope of work (English)... Leave empty for default."
+                      rows={4}
+                    />
+                    {language !== "en" && (
+                      <textarea
+                        value={scopeContentAr}
+                        onChange={e => setScopeContentAr(e.target.value)}
+                        className="w-full text-xs p-3 border border-border rounded resize-none bg-background min-h-[80px] text-right"
+                        dir="rtl"
+                        style={{ fontFamily: "'Noto Naskh Arabic', sans-serif" }}
+                        placeholder="نطاق العمل المخصص (عربي)..."
+                        rows={4}
+                      />
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Notes */}
+                <Card className="border border-border shadow-none">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-sm font-semibold">Notes</CardTitle>
+                      <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setNotes(prev => [...prev, ""])}>
+                        <Plus className="w-3 h-3 mr-1" /> Add Note
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {notes.map((note, i) => (
+                      <div key={i} className="flex gap-2">
+                        <Input
+                          value={note}
+                          onChange={e => setNotes(prev => prev.map((n, j) => j === i ? e.target.value : n))}
+                          className="h-8 text-xs flex-1"
+                          placeholder={`Note ${i + 1}...`}
+                        />
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => setNotes(prev => prev.filter((_, j) => j !== i))}>
+                          <Trash2 className="w-3 h-3 text-red-500" />
+                        </Button>
+                      </div>
+                    ))}
+                    {notes.length === 0 && <p className="text-xs text-muted-foreground text-center py-2">No notes. Click "Add Note" to add one.</p>}
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+
             {/* ── Pricing Table Editor ── */}
             <TabsContent value="pricing">
               <Card className="border border-border shadow-none">
@@ -821,7 +1011,7 @@ export default function PDFStudio() {
                               <Input
                                 type="number"
                                 value={row.rate}
-                                onChange={e => updatePricingRow(i, "rate", parseFloat(e.target.value) || 0)}
+                                onChange={e => updatePricingRow(i, "rate", Math.max(0, parseFloat(e.target.value) || 0))}
                                 className="h-7 text-xs text-right"
                               />
                             </td>
@@ -829,7 +1019,7 @@ export default function PDFStudio() {
                               <Input
                                 type="number"
                                 value={row.rate_option2 || ""}
-                                onChange={e => updatePricingRow(i, "rate_option2", parseFloat(e.target.value) || undefined)}
+                                onChange={e => { const v = parseFloat(e.target.value); updatePricingRow(i, "rate_option2", !isNaN(v) ? Math.max(0, v) : undefined); }}
                                 className="h-7 text-xs text-right"
                                 placeholder="-"
                               />
@@ -857,6 +1047,25 @@ export default function PDFStudio() {
                       </p>
                     </div>
                   )}
+                  {/* Gap 4: Pricing Summary */}
+                  <div className="mt-4 border-t border-border pt-3">
+                    <div className="flex justify-end">
+                      <div className="w-64 space-y-1.5">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-muted-foreground">Subtotal:</span>
+                          <span className="font-medium">{formatSARPdf(pricingSubtotal)}</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-muted-foreground">VAT (15%):</span>
+                          <span className="font-medium">{formatSARPdf(pricingVAT)}</span>
+                        </div>
+                        <div className="flex justify-between text-xs border-t border-border pt-1.5">
+                          <span className="font-semibold">Grand Total:</span>
+                          <span className="font-bold text-emerald-700">{formatSARPdf(pricingGrandTotal)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -865,7 +1074,12 @@ export default function PDFStudio() {
             <TabsContent value="sla">
               <Card className="border border-border shadow-none">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-semibold">SLA Matrix</CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-semibold">SLA Matrix</CardTitle>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={addSlaRow}>
+                      <Plus className="w-3 h-3 mr-1" /> Add Row
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <div className="overflow-x-auto">
@@ -878,6 +1092,7 @@ export default function PDFStudio() {
                           <th className="text-left p-2 font-medium text-muted-foreground w-32">Measurement</th>
                           <th className="text-left p-2 font-medium text-muted-foreground w-40">Penalty</th>
                           <th className="text-center p-2 font-medium text-muted-foreground w-20">Severity</th>
+                          <th className="p-2 w-10"></th>
                         </tr>
                       </thead>
                       <tbody>
@@ -947,7 +1162,7 @@ export default function PDFStudio() {
                                 value={row.severity}
                                 onValueChange={v => {
                                   const newRows = [...slaRows];
-                                  newRows[i] = { ...newRows[i], severity: v as any };
+                                  newRows[i] = { ...newRows[i], severity: v as SLAMatrixRow["severity"] };
                                   setSlaRows(newRows);
                                 }}
                               >
@@ -959,6 +1174,11 @@ export default function PDFStudio() {
                                   <SelectItem value="low">Low</SelectItem>
                                 </SelectContent>
                               </Select>
+                            </td>
+                            <td className="p-2">
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => removeSlaRow(i)}>
+                                <Trash2 className="w-3 h-3 text-red-500" />
+                              </Button>
                             </td>
                           </tr>
                         ))}
@@ -975,9 +1195,14 @@ export default function PDFStudio() {
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-sm font-semibold">Terms & Conditions</CardTitle>
-                    <Badge variant="outline" className="text-[10px]">
-                      {terms.length} clauses
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="text-[10px]">
+                        {terms.length} clauses
+                      </Badge>
+                      <Button size="sm" variant="outline" className="h-7 text-xs" onClick={addTerm}>
+                        <Plus className="w-3 h-3 mr-1" /> Add Clause
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -985,6 +1210,9 @@ export default function PDFStudio() {
                     <div key={i} className="p-3 rounded-md border border-border">
                       <div className="flex items-center gap-2 mb-2">
                         <Badge variant="outline" className="text-[10px]">{term.number}</Badge>
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => removeTerm(i)}>
+                          <Trash2 className="w-3 h-3 text-red-500" />
+                        </Button>
                         <Input
                           value={term.title_en}
                           onChange={e => {

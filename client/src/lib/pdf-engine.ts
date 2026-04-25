@@ -398,12 +398,16 @@ export function formatDatePdf(dateStr?: string): string {
   return `${day} ${month} ${year}`;
 }
 
+// 5A: Sequence counter to prevent same-day reference collisions
+let refSequence = 0;
 export function generateReferenceNumber(date?: string): string {
   const d = date ? new Date(date) : new Date();
   const day = String(d.getDate()).padStart(2, "0");
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const year = d.getFullYear();
-  return `HSCS_${day}${month}${year}`;
+  refSequence++;
+  const seq = String(refSequence).padStart(3, "0");
+  return `HSCS_${day}${month}${year}-${seq}`;
 }
 
 // ============================================================
@@ -418,7 +422,7 @@ export function logPDFGeneration(params: {
   watermark: WatermarkMode;
 }) {
   const user = getCurrentUser();
-  syncAuditEntry({
+  void syncAuditEntry({
     id: crypto.randomUUID(),
     entityType: "pdf_generation",
     entityId: params.templateId,

@@ -1,19 +1,14 @@
 import { getCurrentUser } from "./auth-state";
 /*
- * Tender Engine — Governed Tender Module
- * Mirrors the architecture of stage-transition.ts for Workspaces.
+ * Tender Engine — Commercial Lifecycle Engine
  *
- * Architecture:
- *   1. TENDER_STATUS_ORDER — canonical ordered list (source of truth)
- *   2. TenderTransitionRule[] — per-transition validation functions
- *   3. advanceTenderStatus() — centralized transition handler
- *   4. Audit logging on every attempt (success or failure)
- *   5. Soft Governance Mode — reuses strict_mode from stage-transition.ts
- *   6. Workspace linkage suggestions (Won → Commercial Approved, Lost → Closed)
- *   7. Undo within 5 minutes, after that requires reason entry
- *   8. Permission checks: only Owner or Admin can move to Won/Lost
+ * Redesigned for decision-first, human-controlled stage management.
+ * No blocking, no governance enforcement, no typing confirmations.
+ * Movement is instant. System logs but never blocks.
  *
- * No duplicate logic paths. Reuses governance framework concepts.
+ * 10-Stage Lifecycle:
+ *   Identified → Preparing Submission → Submitted → Clarification →
+ *   Technical Review → Commercial Review → Negotiation → Awarded / Lost / Withdrawn
  */
 
 import {
@@ -25,75 +20,164 @@ import {
   customers,
   formatSAR,
 } from "./store";
-import { getStrictMode } from "./stage-transition";
 import { syncTenderCreate, syncTenderUpdate, syncAuditEntry } from "./supabase-sync";
 
-// ─── TENDER STATUS ─────────────────────────────────────────
+// ─── TENDER MILESTONE (LIFECYCLE) ──────────────────────────
 
-export type TenderStatus =
-  | "draft"
-  | "in_preparation"
+export type TenderMilestone =
+  | "identified"
+  | "preparing_submission"
   | "submitted"
-  | "under_evaluation"
-  | "won"
+  | "clarification"
+  | "technical_review"
+  | "commercial_review"
+  | "negotiation"
+  | "awarded"
   | "lost"
   | "withdrawn";
 
-export const TENDER_STATUS_ORDER: TenderStatus[] = [
-  "draft",
-  "in_preparation",
+// Keep TenderStatus as alias for backward compatibility
+export type TenderStatus = TenderMilestone;
+
+export const TENDER_MILESTONE_ORDER: TenderMilestone[] = [
+  "identified",
+  "preparing_submission",
   "submitted",
-  "under_evaluation",
-  "won",
-  "lost",
+  "clarification",
+  "technical_review",
+  "commercial_review",
+  "negotiation",
+  "awarded",
 ];
 
-// Kanban columns (excludes withdrawn — that's a side action)
-export const TENDER_KANBAN_COLUMNS: TenderStatus[] = [
-  "draft",
-  "in_preparation",
+// Active (non-terminal) milestones — shown in kanban and filters
+export const TENDER_KANBAN_COLUMNS: TenderMilestone[] = [
+  "identified",
+  "preparing_submission",
   "submitted",
-  "under_evaluation",
-  "won",
+  "clarification",
+  "technical_review",
+  "commercial_review",
+  "negotiation",
+  "awarded",
   "lost",
+  "withdrawn",
 ];
 
-export function getTenderStatusIndex(status: TenderStatus): number {
-  return TENDER_STATUS_ORDER.indexOf(status);
+// Terminal milestones
+export const TENDER_TERMINAL: TenderMilestone[] = ["awarded", "lost", "withdrawn"];
+
+// Recommended (soft) transitions — guidance only, never enforced
+export const TENDER_SOFT_TRANSITIONS: Record<TenderMilestone, TenderMilestone[]> = {
+  identified: ["preparing_submission"],
+  preparing_submission: ["submitted"],
+  submitted: ["clarification", "technical_review", "commercial_review"],
+  clarification: ["technical_review", "commercial_review", "negotiation"],
+  technical_review: ["commercial_review", "negotiation"],
+  commercial_review: ["negotiation"],
+  negotiation: ["awarded", "lost"],
+  awarded: [],
+  lost: [],
+  withdrawn: [],
+};
+
+export function getMilestoneIndex(milestone: TenderMilestone): number {
+  return TENDER_MILESTONE_ORDER.indexOf(milestone);
 }
 
-export function getNextTenderStatus(current: TenderStatus): TenderStatus | null {
-  const idx = getTenderStatusIndex(current);
-  if (idx === -1 || idx >= TENDER_STATUS_ORDER.length - 1) return null;
-  // Won and Lost are terminal — no next
-  if (current === "won" || current === "lost") return null;
-  return TENDER_STATUS_ORDER[idx + 1];
+export function getSuggestedNextMilestones(current: TenderMilestone): TenderMilestone[] {
+  return TENDER_SOFT_TRANSITIONS[current] ?? [];
 }
 
-export function getTenderStatusDisplayName(status: TenderStatus): string {
-  const labels: Record<TenderStatus, string> = {
-    draft: "Draft",
-    in_preparation: "In Preparation",
+export function getPrimaryNextMilestone(current: TenderMilestone): TenderMilestone | null {
+  const suggestions = getSuggestedNextMilestones(current);
+  return suggestions[0] ?? null;
+}
+
+export function getTenderStatusDisplayName(status: TenderMilestone): string {
+  const labels: Record<TenderMilestone, string> = {
+    identified: "Identified",
+    preparing_submission: "Preparing Submission",
     submitted: "Submitted",
-    under_evaluation: "Under Evaluation",
-    won: "Won",
+    clarification: "Clarification",
+    technical_review: "Technical Review",
+    commercial_review: "Commercial Review",
+    negotiation: "Negotiation",
+    awarded: "Awarded",
     lost: "Lost",
     withdrawn: "Withdrawn",
   };
   return labels[status] ?? status;
 }
 
-export function getTenderStatusColor(status: TenderStatus): string {
-  const colors: Record<TenderStatus, string> = {
-    draft: "bg-slate-100 text-slate-700",
-    in_preparation: "bg-blue-100 text-blue-700",
-    submitted: "bg-violet-100 text-violet-700",
-    under_evaluation: "bg-amber-100 text-amber-700",
-    won: "bg-emerald-100 text-emerald-700",
-    lost: "bg-red-100 text-red-700",
-    withdrawn: "bg-gray-100 text-gray-500",
+// Short labels for the milestone strip
+export function getTenderMilestoneShortLabel(status: TenderMilestone): string {
+  const labels: Record<TenderMilestone, string> = {
+    identified: "Identified",
+    preparing_submission: "Preparing",
+    submitted: "Submitted",
+    clarification: "Clarification",
+    technical_review: "Tech Review",
+    commercial_review: "Commercial",
+    negotiation: "Negotiation",
+    awarded: "Awarded",
+    lost: "Lost",
+    withdrawn: "Withdrawn",
+  };
+  return labels[status] ?? status;
+}
+
+export function getTenderStatusColor(status: TenderMilestone): string {
+  const colors: Record<TenderMilestone, string> = {
+    identified: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
+    preparing_submission: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+    submitted: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
+    clarification: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+    technical_review: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300",
+    commercial_review: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300",
+    negotiation: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300",
+    awarded: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+    lost: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+    withdrawn: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
   };
   return colors[status] ?? "";
+}
+
+// Margin signal interpretation
+export function getMarginSignal(gpPercent: number): { label: string; color: "green" | "amber" | "red" } {
+  if (gpPercent >= 25) return { label: "Healthy", color: "green" };
+  if (gpPercent >= 20) return { label: "Tight", color: "amber" };
+  return { label: "Risk", color: "red" };
+}
+
+// Time risk interpretation
+export function getTimeRisk(deadlineStr: string): { label: string; color: "green" | "amber" | "red" } {
+  const days = Math.ceil((new Date(deadlineStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  if (days < 0) return { label: "Overdue", color: "red" };
+  if (days <= 7) return { label: `Due in ${days}d`, color: "red" };
+  if (days <= 21) return { label: `Due in ${days}d`, color: "amber" };
+  return { label: "On Track", color: "green" };
+}
+
+// State signal — what does the current milestone imply?
+export function getStateSignal(status: TenderMilestone, daysInStatus: number): string {
+  const signals: Record<TenderMilestone, string> = {
+    identified: "Needs qualification",
+    preparing_submission: "Submission in progress",
+    submitted: "Awaiting customer response",
+    clarification: "Clarification round active",
+    technical_review: "Technical evaluation underway",
+    commercial_review: "Commercial evaluation underway",
+    negotiation: "In active negotiation",
+    awarded: "Contract awarded",
+    lost: "Tender not awarded",
+    withdrawn: "Tender withdrawn",
+  };
+  const base = signals[status] ?? status;
+  if (daysInStatus > 21 && !TENDER_TERMINAL.includes(status)) {
+    return `${base} — stalled ${daysInStatus}d`;
+  }
+  return base;
 }
 
 export type TenderSource = "CRM" | "Direct" | "Referral";
@@ -112,13 +196,14 @@ export interface Tender {
   probabilityPercent: number;
   assignedOwner: string;
   assignedTeamMembers: string[];
-  status: TenderStatus;
+  status: TenderMilestone;
   source: TenderSource;
   region: Region;
   createdAt: string;
   updatedAt: string;
   daysInStatus: number;
   notes: string;
+  crmSynced?: boolean;
 }
 
 // ─── MOCK DATA ─────────────────────────────────────────────
@@ -132,19 +217,20 @@ export const tenders: Tender[] = [
     customerId: "c2",
     customerName: "Ma'aden",
     title: "Ma'aden Jubail Expansion — Logistics RFP",
-    submissionDeadline: "2026-03-20",
+    submissionDeadline: "2026-05-20",
     estimatedValue: 3400000,
     targetGpPercent: 22,
     probabilityPercent: 60,
     assignedOwner: "Ra'ed",
     assignedTeamMembers: ["Ra'ed", "Yazan", "Finance"],
-    status: "in_preparation",
+    status: "preparing_submission",
     source: "CRM",
     region: "East",
     createdAt: "2026-01-15",
     updatedAt: "2026-02-14",
     daysInStatus: 8,
     notes: "Linked to workspace w1. Technical draft in progress.",
+    crmSynced: false,
   },
   {
     id: "tn-002",
@@ -152,19 +238,20 @@ export const tenders: Tender[] = [
     customerId: "c1",
     customerName: "SABIC",
     title: "SABIC National Warehousing Services Tender",
-    submissionDeadline: "2026-04-01",
+    submissionDeadline: "2026-06-01",
     estimatedValue: 15000000,
     targetGpPercent: 25,
     probabilityPercent: 45,
     assignedOwner: "Ra'ed",
     assignedTeamMembers: ["Ra'ed", "Albert", "Yazan", "Finance", "Legal"],
-    status: "draft",
+    status: "identified",
     source: "Direct",
     region: "East",
     createdAt: "2026-02-01",
     updatedAt: "2026-02-15",
     daysInStatus: 14,
     notes: "Large strategic tender. Committee formation pending.",
+    crmSynced: false,
   },
   {
     id: "tn-003",
@@ -172,7 +259,7 @@ export const tenders: Tender[] = [
     customerId: "c1",
     customerName: "Aramco Services",
     title: "Aramco Dhahran VAS Expansion Tender",
-    submissionDeadline: "2026-03-10",
+    submissionDeadline: "2026-04-30",
     estimatedValue: 12000000,
     targetGpPercent: 28,
     probabilityPercent: 75,
@@ -185,6 +272,7 @@ export const tenders: Tender[] = [
     updatedAt: "2026-02-10",
     daysInStatus: 5,
     notes: "Submitted on time. Awaiting evaluation committee review.",
+    crmSynced: false,
   },
   {
     id: "tn-004",
@@ -198,13 +286,14 @@ export const tenders: Tender[] = [
     probabilityPercent: 70,
     assignedOwner: "Hano",
     assignedTeamMembers: ["Hano", "Yazan", "Finance"],
-    status: "in_preparation",
+    status: "commercial_review",
     source: "CRM",
     region: "Central",
     createdAt: "2026-01-20",
     updatedAt: "2026-02-16",
     daysInStatus: 5,
     notes: "High-value strategic account. Technical analysis complete.",
+    crmSynced: false,
   },
   {
     id: "tn-005",
@@ -218,13 +307,14 @@ export const tenders: Tender[] = [
     probabilityPercent: 55,
     assignedOwner: "Hano",
     assignedTeamMembers: ["Hano", "Albert"],
-    status: "under_evaluation",
+    status: "technical_review",
     source: "Referral",
     region: "West",
     createdAt: "2025-11-15",
     updatedAt: "2026-02-12",
     daysInStatus: 12,
     notes: "Evaluation ongoing. Shortlisted with 2 competitors.",
+    crmSynced: false,
   },
   {
     id: "tn-006",
@@ -232,19 +322,20 @@ export const tenders: Tender[] = [
     customerId: "c4",
     customerName: "Sadara Chemical",
     title: "Sadara Contract Renewal Tender 2025",
-    submissionDeadline: "2026-02-28",
+    submissionDeadline: "2026-05-28",
     estimatedValue: 2800000,
     targetGpPercent: 24,
     probabilityPercent: 85,
     assignedOwner: "Albert",
     assignedTeamMembers: ["Albert", "Ra'ed"],
-    status: "under_evaluation",
+    status: "negotiation",
     source: "CRM",
     region: "East",
     createdAt: "2025-10-15",
     updatedAt: "2026-02-14",
     daysInStatus: 3,
     notes: "Renewal tender. Strong relationship. High probability.",
+    crmSynced: false,
   },
   {
     id: "tn-007",
@@ -258,13 +349,14 @@ export const tenders: Tender[] = [
     probabilityPercent: 0,
     assignedOwner: "Hano",
     assignedTeamMembers: ["Hano", "Yazan"],
-    status: "won",
+    status: "awarded",
     source: "Direct",
     region: "East",
     createdAt: "2025-08-01",
     updatedAt: "2025-12-20",
     daysInStatus: 58,
     notes: "Won. Contract signed. Handover initiated.",
+    crmSynced: true,
   },
   {
     id: "tn-008",
@@ -285,20 +377,21 @@ export const tenders: Tender[] = [
     updatedAt: "2025-12-05",
     daysInStatus: 73,
     notes: "Lost to competitor. Price was 12% higher.",
+    crmSynced: true,
   },
 ];
 
-// ─── TENDER TRANSITION TYPES ───────────────────────────────
+// ─── TRANSITION TYPES ──────────────────────────────────────
 
 export interface TenderTransitionContext {
   tender: Tender;
-  fromStatus: TenderStatus;
-  toStatus: TenderStatus;
+  fromStatus: TenderMilestone;
+  toStatus: TenderMilestone;
 }
 
 export interface TenderTransitionRule {
-  from: TenderStatus | "*";
-  to: TenderStatus | "*";
+  from: TenderMilestone | "*";
+  to: TenderMilestone | "*";
   name: string;
   validate: (ctx: TenderTransitionContext) => string | null;
 }
@@ -314,21 +407,18 @@ export interface TenderGovernanceOverride {
   userName: string;
   timestamp: string;
   overriddenRules: string[];
-  fromStatus: TenderStatus;
-  toStatus: TenderStatus;
+  fromStatus: TenderMilestone;
+  toStatus: TenderMilestone;
   tenderId: string;
 }
 
 export interface TenderTransitionResult {
   success: boolean;
   message: string;
-  nextStatus: TenderStatus | null;
-  fromStatus: TenderStatus;
+  nextStatus: TenderMilestone | null;
+  fromStatus: TenderMilestone;
   validationErrors: string[];
   transitionTimestamp?: string;
-  governanceOverride?: boolean;
-  overrideRecord?: TenderGovernanceOverride;
-  /** If tender moved to Won/Lost, a workspace suggestion may be included */
   workspaceSuggestion?: WorkspaceSuggestion | null;
 }
 
@@ -339,23 +429,21 @@ export interface WorkspaceSuggestion {
   message: string;
 }
 
-// ─── GOVERNANCE OVERRIDE LOG ───────────────────────────────
-
 export const tenderGovernanceOverrides: TenderGovernanceOverride[] = [];
 
-// ─── TENDER STAGE HISTORY ──────────────────────────────────
+// ─── STAGE HISTORY ─────────────────────────────────────────
 
 export interface TenderStageHistoryEntry {
   id: string;
   tenderId: string;
-  fromStatus: TenderStatus;
-  toStatus: TenderStatus;
-  action: "advanced" | "reverted" | "advanced_with_override";
+  fromStatus: TenderMilestone;
+  toStatus: TenderMilestone;
+  action: "advanced" | "reverted";
   userId: string;
   userName: string;
   timestamp: string;
   reason: string;
-  overrideRecord?: TenderGovernanceOverride;
+  note?: string;
 }
 
 export const tenderStageHistory: TenderStageHistoryEntry[] = [];
@@ -364,8 +452,8 @@ export const tenderStageHistory: TenderStageHistoryEntry[] = [];
 
 export interface TenderUndoRecord {
   tenderId: string;
-  fromStatus: TenderStatus;
-  toStatus: TenderStatus;
+  fromStatus: TenderMilestone;
+  toStatus: TenderMilestone;
   timestamp: number;
   userId: string;
   userName: string;
@@ -374,227 +462,131 @@ export interface TenderUndoRecord {
 const tenderUndoRecords: Map<string, TenderUndoRecord> = new Map();
 const UNDO_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
-// ─── VALIDATION RULES ──────────────────────────────────────
-
-const tenderRules: TenderTransitionRule[] = [
-  // Draft → In Preparation: must have assigned team members
-  {
-    from: "draft",
-    to: "in_preparation",
-    name: "Team Assignment Check",
-    validate: (ctx) => {
-      if (ctx.tender.assignedTeamMembers.length === 0) {
-        return "At least one team member must be assigned before moving to In Preparation.";
-      }
-      return null;
-    },
-  },
-
-  // In Preparation → Submitted: must have submission deadline in the future
-  {
-    from: "in_preparation",
-    to: "submitted",
-    name: "Deadline Validity Check",
-    validate: (ctx) => {
-      const deadline = new Date(ctx.tender.submissionDeadline);
-      const now = new Date();
-      if (deadline < now) {
-        return `Submission deadline (${ctx.tender.submissionDeadline}) has passed. Update the deadline before submitting.`;
-      }
-      return null;
-    },
-  },
-
-  // In Preparation → Submitted: must have estimated value > 0
-  {
-    from: "in_preparation",
-    to: "submitted",
-    name: "Value Estimation Check",
-    validate: (ctx) => {
-      if (ctx.tender.estimatedValue <= 0) {
-        return "Estimated value must be greater than zero before submission.";
-      }
-      return null;
-    },
-  },
-
-  // * → Won: permission check — only Owner or Admin
-  {
-    from: "*",
-    to: "won",
-    name: "Won Permission Check",
-    validate: (ctx) => {
-      // Current user is Amin Al-Rashid (Admin) — always passes
-      // In production, check actual user role
-      const currentUserRole = getCurrentUser().role;
-      const currentUserName = getCurrentUser().name;
-      const isOwner = ctx.tender.assignedOwner === currentUserName;
-      const isAdmin = currentUserRole === "admin";
-      if (!isOwner && !isAdmin) {
-        return "Only the assigned Owner or an Admin can move a tender to Won.";
-      }
-      return null;
-    },
-  },
-
-  // * → Lost: permission check — only Owner or Admin
-  {
-    from: "*",
-    to: "lost",
-    name: "Lost Permission Check",
-    validate: (ctx) => {
-      const currentUserRole = getCurrentUser().role;
-      const currentUserName = getCurrentUser().name;
-      const isOwner = ctx.tender.assignedOwner === currentUserName;
-      const isAdmin = currentUserRole === "admin";
-      if (!isOwner && !isAdmin) {
-        return "Only the assigned Owner or an Admin can move a tender to Lost.";
-      }
-      return null;
-    },
-  },
-
-  // Won/Lost are terminal — cannot move further
-  {
-    from: "won",
-    to: "*",
-    name: "Won Terminal Check",
-    validate: () => "Tender is Won — this is a terminal status. No further transitions allowed.",
-  },
-  {
-    from: "lost",
-    to: "*",
-    name: "Lost Terminal Check",
-    validate: () => "Tender is Lost — this is a terminal status. No further transitions allowed.",
-  },
-
-  // Withdrawn is terminal
-  {
-    from: "withdrawn",
-    to: "*",
-    name: "Withdrawn Terminal Check",
-    validate: () => "Tender is Withdrawn — this is a terminal status. No further transitions allowed.",
-  },
-
-  // Cannot skip from Draft directly to Submitted
-  {
-    from: "draft",
-    to: "submitted",
-    name: "Preparation Required",
-    validate: () => "Tender must go through In Preparation before being Submitted.",
-  },
-
-  // Cannot skip from Draft directly to Under Evaluation
-  {
-    from: "draft",
-    to: "under_evaluation",
-    name: "Submission Required",
-    validate: () => "Tender must be Submitted before entering Under Evaluation.",
-  },
-
-  // GP% threshold check for submission
-  {
-    from: "in_preparation",
-    to: "submitted",
-    name: "GP% Threshold Check",
-    validate: (ctx) => {
-      if (ctx.tender.targetGpPercent < 22) {
-        return `Target GP% is ${ctx.tender.targetGpPercent.toFixed(1)}% — below the 22% threshold. Director approval may be required.`;
-      }
-      return null;
-    },
-  },
-];
-
-// ─── ENGINE ────────────────────────────────────────────────
-
-function runTenderValidationsDetailed(ctx: TenderTransitionContext): TenderValidationFailure[] {
-  const failures: TenderValidationFailure[] = [];
-  for (const rule of tenderRules) {
-    const fromMatch = rule.from === "*" || rule.from === ctx.fromStatus;
-    const toMatch = rule.to === "*" || rule.to === ctx.toStatus;
-    if (fromMatch && toMatch) {
-      const err = rule.validate(ctx);
-      if (err) failures.push({ ruleName: rule.name, error: err });
-    }
-  }
-  return failures;
-}
+// ─── ENGINE — FRICTIONLESS MOVEMENT ───────────────────────
 
 /**
- * Pre-flight validation for a tender transition.
+ * Move tender milestone instantly. No blocking, no required approvals.
+ * Logs the transition. Optionally stores a user note.
  */
-export function preflightTenderValidation(
+export function moveTenderMilestone(
   tenderId: string,
-  targetStatus: TenderStatus,
-): TenderValidationFailure[] {
+  targetMilestone: TenderMilestone,
+  note?: string,
+): TenderTransitionResult {
   const tender = tenders.find(t => t.id === tenderId);
-  if (!tender) return [];
-  return runTenderValidationsDetailed({
-    tender,
-    fromStatus: tender.status,
-    toStatus: targetStatus,
-  });
-}
+  if (!tender) {
+    return {
+      success: false,
+      message: "Tender not found.",
+      nextStatus: null,
+      fromStatus: "identified",
+      validationErrors: ["Tender ID does not exist."],
+    };
+  }
 
-/**
- * Log a tender transition attempt to the audit trail.
- */
-function logTenderTransitionAudit(
-  tender: Tender,
-  fromStatus: TenderStatus,
-  toStatus: TenderStatus | null,
-  success: boolean,
-  message: string,
-  override?: TenderGovernanceOverride,
-): void {
-  const action = override
-    ? "tender_status_advanced_override"
-    : success
-      ? "tender_status_advanced"
-      : "tender_status_advance_blocked";
+  const fromStatus = tender.status;
 
-  const overrideDetails = override
-    ? ` [GOVERNANCE OVERRIDE] Reason: "${override.overrideReason}" | Rules overridden: ${override.overriddenRules.join(", ")} | Approver: ${override.userName}`
-    : "";
+  if (fromStatus === targetMilestone) {
+    return {
+      success: false,
+      message: "Tender is already at this milestone.",
+      nextStatus: null,
+      fromStatus,
+      validationErrors: [],
+    };
+  }
 
+  const now = new Date();
+  tender.status = targetMilestone;
+  tender.daysInStatus = 0;
+  tender.updatedAt = now.toISOString().slice(0, 10);
+
+  // Persist to Supabase (best-effort, non-blocking)
+  void syncTenderUpdate(tenderId, { status: targetMilestone, daysInStatus: 0 });
+
+  const successMsg = `Milestone updated to ${getTenderStatusDisplayName(targetMilestone)}.`;
+
+  // Audit log
   const entry: AuditEntry = {
     id: `al-tn-${crypto.randomUUID()}`,
     entityType: "tender",
     entityId: tender.id,
-    action,
+    action: "tender_status_advanced",
     userId: getCurrentUser().id,
     userName: getCurrentUser().name,
-    timestamp: new Date().toISOString(),
-    details: success
-      ? `Tender status advanced from '${getTenderStatusDisplayName(fromStatus)}' to '${getTenderStatusDisplayName(toStatus!)}'. ${message}${overrideDetails}`
-      : `Tender status advance blocked at '${getTenderStatusDisplayName(fromStatus)}'. ${message}`,
+    timestamp: now.toISOString(),
+    details: `${successMsg} (from ${getTenderStatusDisplayName(fromStatus)})${note ? ` — Note: "${note}"` : ""}`,
   };
-  // Persist audit entry to Supabase (no in-memory push)
-  syncAuditEntry(entry);
+  void syncAuditEntry(entry);
+
+  tenderStageHistory.unshift({
+    id: `tsh-${crypto.randomUUID()}`,
+    tenderId,
+    fromStatus,
+    toStatus: targetMilestone,
+    action: "advanced",
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
+    timestamp: now.toISOString(),
+    reason: successMsg,
+    note,
+  });
+
+  tenderUndoRecords.set(tenderId, {
+    tenderId,
+    fromStatus,
+    toStatus: targetMilestone,
+    timestamp: now.getTime(),
+    userId: getCurrentUser().id,
+    userName: getCurrentUser().name,
+  });
+
+  const suggestion = generateWorkspaceSuggestion(tender, targetMilestone);
+
+  return {
+    success: true,
+    message: successMsg,
+    nextStatus: targetMilestone,
+    fromStatus,
+    validationErrors: [],
+    transitionTimestamp: now.toISOString(),
+    workspaceSuggestion: suggestion,
+  };
 }
 
-/**
- * Generate workspace suggestion when tender moves to Won or Lost.
- */
+// Backward-compat alias
+export function advanceTenderStatus(
+  tenderId: string,
+  targetStatus: TenderMilestone,
+  _options?: { overrideReason?: string },
+): TenderTransitionResult {
+  return moveTenderMilestone(tenderId, targetStatus, _options?.overrideReason);
+}
+
+export function preflightTenderValidation(
+  _tenderId: string,
+  _targetStatus: TenderMilestone,
+): TenderValidationFailure[] {
+  // No blocking validations in this phase
+  return [];
+}
+
 function generateWorkspaceSuggestion(
   tender: Tender,
-  newStatus: TenderStatus,
+  newStatus: TenderMilestone,
 ): WorkspaceSuggestion | null {
   if (!tender.linkedWorkspaceId) return null;
-
   const workspace = workspaces.find(w => w.id === tender.linkedWorkspaceId);
   if (!workspace) return null;
 
-  if (newStatus === "won") {
+  if (newStatus === "awarded") {
     return {
       type: "advance_to_commercial_approved",
       workspaceId: workspace.id,
       workspaceName: workspace.title,
-      message: `Tender won. Consider advancing workspace "${workspace.title}" to Commercial Approved.`,
+      message: `Tender awarded. Consider advancing workspace "${workspace.title}" to Commercial Approved.`,
     };
   }
-
   if (newStatus === "lost") {
     return {
       type: "mark_closed_lost",
@@ -603,198 +595,15 @@ function generateWorkspaceSuggestion(
       message: `Tender lost. Consider marking workspace "${workspace.title}" as Closed – Lost.`,
     };
   }
-
   return null;
 }
 
-export interface AdvanceTenderOptions {
-  overrideReason?: string;
-}
-
-/**
- * Centralized transition handler for tenders.
- * Same architecture as advanceStage() for workspaces.
- */
-export function advanceTenderStatus(
-  tenderId: string,
-  targetStatus: TenderStatus,
-  options?: AdvanceTenderOptions,
-): TenderTransitionResult {
-  const tender = tenders.find(t => t.id === tenderId);
-  if (!tender) {
-    return {
-      success: false,
-      message: "Tender not found.",
-      nextStatus: null,
-      fromStatus: "draft",
-      validationErrors: ["Tender ID does not exist."],
-    };
-  }
-
-  const fromStatus = tender.status;
-
-  // Same status — no-op
-  if (fromStatus === targetStatus) {
-    return {
-      success: false,
-      message: "Tender is already in this status.",
-      nextStatus: null,
-      fromStatus,
-      validationErrors: [],
-    };
-  }
-
-  // Run validations
-  const failures = runTenderValidationsDetailed({
-    tender,
-    fromStatus,
-    toStatus: targetStatus,
-  });
-  const errors = failures.map(f => f.error);
-
-  if (failures.length > 0) {
-    const strict = getStrictMode();
-
-    // Strict mode: hard block
-    if (strict) {
-      const msg = errors.join(" ");
-      logTenderTransitionAudit(tender, fromStatus, targetStatus, false, msg);
-      return {
-        success: false,
-        message: errors[0],
-        nextStatus: targetStatus,
-        fromStatus,
-        validationErrors: errors,
-      };
-    }
-
-    // Soft mode without override reason: block
-    if (!options?.overrideReason) {
-      const msg = errors.join(" ");
-      logTenderTransitionAudit(tender, fromStatus, targetStatus, false, msg);
-      return {
-        success: false,
-        message: errors[0],
-        nextStatus: targetStatus,
-        fromStatus,
-        validationErrors: errors,
-      };
-    }
-
-    // Soft mode with override reason: proceed
-    const now = new Date();
-    const overrideRecord: TenderGovernanceOverride = {
-      overrideReason: options.overrideReason,
-      userId: getCurrentUser().id,
-      userName: getCurrentUser().name,
-      timestamp: now.toISOString(),
-      overriddenRules: failures.map(f => f.ruleName),
-      fromStatus,
-      toStatus: targetStatus,
-      tenderId,
-    };
-
-    tenderGovernanceOverrides.unshift(overrideRecord);
-
-    tender.status = targetStatus;
-    tender.daysInStatus = 0;
-    tender.updatedAt = now.toISOString().slice(0, 10);
-    // Persist to Supabase
-    syncTenderUpdate(tenderId, { status: targetStatus, daysInStatus: 0 });
-
-    const successMsg = `Tender status advanced from ${getTenderStatusDisplayName(fromStatus)} to ${getTenderStatusDisplayName(targetStatus)} (governance override).`;
-    logTenderTransitionAudit(tender, fromStatus, targetStatus, true, successMsg, overrideRecord);
-
-    tenderStageHistory.unshift({
-      id: `tsh-${crypto.randomUUID()}`,
-      tenderId,
-      fromStatus,
-      toStatus: targetStatus,
-      action: "advanced_with_override",
-      userId: getCurrentUser().id,
-      userName: getCurrentUser().name,
-      timestamp: now.toISOString(),
-      reason: successMsg,
-      overrideRecord,
-    });
-
-    tenderUndoRecords.set(tenderId, {
-      tenderId,
-      fromStatus,
-      toStatus: targetStatus,
-      timestamp: now.getTime(),
-      userId: getCurrentUser().id,
-      userName: getCurrentUser().name,
-    });
-
-    const suggestion = generateWorkspaceSuggestion(tender, targetStatus);
-
-    return {
-      success: true,
-      message: successMsg,
-      nextStatus: targetStatus,
-      fromStatus,
-      validationErrors: errors,
-      transitionTimestamp: now.toISOString(),
-      governanceOverride: true,
-      overrideRecord,
-      workspaceSuggestion: suggestion,
-    };
-  }
-
-  // No validation failures — advance directly
-  const now = new Date();
-  tender.status = targetStatus;
-  tender.daysInStatus = 0;
-  tender.updatedAt = now.toISOString().slice(0, 10);
-  // Persist to Supabase
-  syncTenderUpdate(tenderId, { status: targetStatus, daysInStatus: 0 });
-
-  const successMsg = `Tender status advanced from ${getTenderStatusDisplayName(fromStatus)} to ${getTenderStatusDisplayName(targetStatus)}.`;
-  logTenderTransitionAudit(tender, fromStatus, targetStatus, true, successMsg);
-
-  tenderStageHistory.unshift({
-    id: `tsh-${crypto.randomUUID()}`,
-    tenderId,
-    fromStatus,
-    toStatus: targetStatus,
-    action: "advanced",
-    userId: getCurrentUser().id,
-    userName: getCurrentUser().name,
-    timestamp: now.toISOString(),
-    reason: successMsg,
-  });
-
-  tenderUndoRecords.set(tenderId, {
-    tenderId,
-    fromStatus,
-    toStatus: targetStatus,
-    timestamp: now.getTime(),
-    userId: getCurrentUser().id,
-    userName: getCurrentUser().name,
-  });
-
-  const suggestion = generateWorkspaceSuggestion(tender, targetStatus);
-
-  return {
-    success: true,
-    message: successMsg,
-    nextStatus: targetStatus,
-    fromStatus,
-    validationErrors: [],
-    transitionTimestamp: now.toISOString(),
-    governanceOverride: false,
-    workspaceSuggestion: suggestion,
-  };
-}
-
-// ─── UNDO / REVERT ─────────────────────────────────────────
+// ─── UNDO ──────────────────────────────────────────────────
 
 export interface TenderUndoEligibility {
   eligible: boolean;
   reasons: string[];
   remainingMs: number;
-  /** If outside 5-min window, reversal still allowed with reason */
   requiresReason: boolean;
 }
 
@@ -803,49 +612,27 @@ export function checkTenderUndoEligibility(tenderId: string): TenderUndoEligibil
   if (!record) {
     return { eligible: false, reasons: ["No recent transition to undo."], remainingMs: 0, requiresReason: false };
   }
-
   const elapsed = Date.now() - record.timestamp;
   const remaining = Math.max(0, UNDO_WINDOW_MS - elapsed);
-
-  // Within 5 minutes — free undo
   if (elapsed <= UNDO_WINDOW_MS) {
     return { eligible: true, reasons: [], remainingMs: remaining, requiresReason: false };
   }
-
-  // After 5 minutes — still allowed but requires reason entry
-  return { eligible: true, reasons: ["Undo window expired. Reason required for reversal."], remainingMs: 0, requiresReason: true };
+  return { eligible: true, reasons: [], remainingMs: 0, requiresReason: false };
 }
 
 export interface TenderRevertResult {
   success: boolean;
   message: string;
-  revertedFrom: TenderStatus;
-  revertedTo: TenderStatus;
+  revertedFrom: TenderMilestone;
+  revertedTo: TenderMilestone;
 }
 
-export function revertTenderStatus(tenderId: string, reason?: string): TenderRevertResult {
-  const eligibility = checkTenderUndoEligibility(tenderId);
-  if (!eligibility.eligible) {
-    const record = tenderUndoRecords.get(tenderId);
-    return {
-      success: false,
-      message: eligibility.reasons.join(" "),
-      revertedFrom: record?.toStatus ?? "draft",
-      revertedTo: record?.fromStatus ?? "draft",
-    };
+export function revertTenderStatus(tenderId: string): TenderRevertResult {
+  const record = tenderUndoRecords.get(tenderId);
+  if (!record) {
+    return { success: false, message: "No transition to undo.", revertedFrom: "identified", revertedTo: "identified" };
   }
 
-  // If reason is required (past 5 min) but not provided, block
-  if (eligibility.requiresReason && !reason) {
-    return {
-      success: false,
-      message: "Undo window has expired. A reason is required for reversal.",
-      revertedFrom: "draft",
-      revertedTo: "draft",
-    };
-  }
-
-  const record = tenderUndoRecords.get(tenderId)!;
   const tender = tenders.find(t => t.id === tenderId);
   if (!tender) {
     return { success: false, message: "Tender not found.", revertedFrom: record.toStatus, revertedTo: record.fromStatus };
@@ -855,12 +642,10 @@ export function revertTenderStatus(tenderId: string, reason?: string): TenderRev
   tender.status = record.fromStatus;
   tender.daysInStatus = 0;
   tender.updatedAt = new Date().toISOString().slice(0, 10);
-  // Persist to Supabase
-  syncTenderUpdate(tenderId, { status: record.fromStatus, daysInStatus: 0 });
+  void syncTenderUpdate(tenderId, { status: record.fromStatus, daysInStatus: 0 });
 
   const now = new Date();
-  const reasonText = reason ? ` Reason: "${reason}"` : "";
-  const msg = `Tender status reverted from '${getTenderStatusDisplayName(revertedFrom)}' to '${getTenderStatusDisplayName(record.fromStatus)}' (undo).${reasonText}`;
+  const msg = `Milestone reverted from ${getTenderStatusDisplayName(revertedFrom)} to ${getTenderStatusDisplayName(record.fromStatus)}.`;
 
   const entry: AuditEntry = {
     id: `al-tn-rv-${crypto.randomUUID()}`,
@@ -872,8 +657,7 @@ export function revertTenderStatus(tenderId: string, reason?: string): TenderRev
     timestamp: now.toISOString(),
     details: msg,
   };
-  // Persist audit entry to Supabase (no in-memory push)
-  syncAuditEntry(entry);
+  void syncAuditEntry(entry);
 
   tenderStageHistory.unshift({
     id: `tsh-rv-${crypto.randomUUID()}`,
@@ -888,13 +672,7 @@ export function revertTenderStatus(tenderId: string, reason?: string): TenderRev
   });
 
   tenderUndoRecords.delete(tenderId);
-
-  return {
-    success: true,
-    message: msg,
-    revertedFrom,
-    revertedTo: record.fromStatus,
-  };
+  return { success: true, message: msg, revertedFrom, revertedTo: record.fromStatus };
 }
 
 export function hasTenderUndoRecord(tenderId: string): boolean {
@@ -905,29 +683,35 @@ export function getTenderStageHistory(tenderId: string): readonly TenderStageHis
   return tenderStageHistory.filter(h => h.tenderId === tenderId);
 }
 
-// ─── RULE REGISTRY ─────────────────────────────────────────
+// Backward-compat shims
+export function getNextTenderStatus(current: TenderMilestone): TenderMilestone | null {
+  return getPrimaryNextMilestone(current);
+}
 
-export function registerTenderRule(rule: TenderTransitionRule): void {
-  tenderRules.push(rule);
+export function getTenderStatusIndex(status: TenderMilestone): number {
+  return getMilestoneIndex(status);
+}
+
+export function registerTenderRule(_rule: TenderTransitionRule): void {
+  // No-op in human-first mode
 }
 
 export function getRegisteredTenderRules(): readonly TenderTransitionRule[] {
-  return tenderRules;
+  return [];
 }
 
-// ─── METRICS HELPERS ───────────────────────────────────────
+// ─── METRICS ───────────────────────────────────────────────
 
-export function getTenderMetrics() {
-  const open = tenders.filter(t => !["won", "lost", "withdrawn"].includes(t.status));
-  const won = tenders.filter(t => t.status === "won");
-  const lost = tenders.filter(t => t.status === "lost");
-  const decided = won.length + lost.length;
-  const winRate = decided > 0 ? (won.length / decided) * 100 : 0;
+export function getTenderMetrics(liveTenders?: Tender[]) {
+  const src = liveTenders ?? tenders;
+  const open = src.filter(t => !TENDER_TERMINAL.includes(t.status));
+  const awarded = src.filter(t => t.status === "awarded");
+  const lost = src.filter(t => t.status === "lost");
+  const decided = awarded.length + lost.length;
+  const winRate = decided > 0 ? (awarded.length / decided) * 100 : 0;
 
-  // Average submission cycle: days from createdAt to when status became "submitted"
-  // For mock, use daysInStatus as approximation
-  const submitted = tenders.filter(t =>
-    ["submitted", "under_evaluation", "won", "lost"].includes(t.status)
+  const submitted = src.filter(t =>
+    ["submitted", "clarification", "technical_review", "commercial_review", "negotiation", "awarded", "lost"].includes(t.status)
   );
   const avgCycleDays = submitted.length > 0
     ? submitted.reduce((sum, t) => {
@@ -940,23 +724,38 @@ export function getTenderMetrics() {
   const activePipelineValue = open.reduce((sum, t) => sum + t.estimatedValue, 0);
   const weightedPipeline = open.reduce((sum, t) => sum + t.estimatedValue * (t.probabilityPercent / 100), 0);
 
+  // Stalled: open tenders with daysInStatus > 14
+  const stalled = open.filter(t => t.daysInStatus > 14);
+
+  // Risk signals
+  const lowMargin = open.filter(t => t.targetGpPercent < 22);
+  const overdue = open.filter(t => {
+    if (!t.submissionDeadline) return false;
+    const days = Math.ceil((new Date(t.submissionDeadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+    return days < 0;
+  });
+
   return {
     totalOpen: open.length,
-    totalWon: won.length,
+    totalAwarded: awarded.length,
     totalLost: lost.length,
     winRate,
+    totalWon: awarded.length,
     avgSubmissionCycleDays: Math.round(avgCycleDays),
     activePipelineValue,
     weightedPipeline,
+    stalled,
+    lowMargin,
+    overdue,
     byStatus: TENDER_KANBAN_COLUMNS.map(s => ({
       status: s,
-      count: tenders.filter(t => t.status === s).length,
-      value: tenders.filter(t => t.status === s).reduce((sum, t) => sum + t.estimatedValue, 0),
+      count: src.filter(t => t.status === s).length,
+      value: src.filter(t => t.status === s).reduce((sum, t) => sum + t.estimatedValue, 0),
     })),
   };
 }
 
-// ─── CRUD HELPERS ──────────────────────────────────────────
+// ─── CRUD ──────────────────────────────────────────────────
 
 export function createTender(data: Omit<Tender, "id" | "createdAt" | "updatedAt" | "daysInStatus">): Tender {
   const now = new Date().toISOString().slice(0, 10);
@@ -968,10 +767,8 @@ export function createTender(data: Omit<Tender, "id" | "createdAt" | "updatedAt"
     daysInStatus: 0,
   };
   tenders.unshift(tender);
-  // Persist to Supabase
-  syncTenderCreate(tender);
+  void syncTenderCreate(tender);
 
-  // Audit log
   const entry: AuditEntry = {
     id: `al-tn-cr-${crypto.randomUUID()}`,
     entityType: "tender",
@@ -982,8 +779,7 @@ export function createTender(data: Omit<Tender, "id" | "createdAt" | "updatedAt"
     timestamp: new Date().toISOString(),
     details: `Tender "${tender.title}" created for ${tender.customerName}. Estimated value: ${formatSAR(tender.estimatedValue)}.`,
   };
-  // Persist audit entry to Supabase (no in-memory push)
-  syncAuditEntry(entry);
+  void syncAuditEntry(entry);
 
   return tender;
 }

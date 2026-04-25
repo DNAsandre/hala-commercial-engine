@@ -215,7 +215,9 @@ export function computeEcrWithEvolution(
   values: EcrInputValue[] = mockInputValues
 ): EvolutionScoreResult {
   const controls = getEvolutionControls(ruleSetId);
-  const ruleWeights = weights.filter((w) => w.ruleSetId === ruleSetId);
+  const rawWeights = weights.filter((w) => w.ruleSetId === ruleSetId);
+  // Defensive: clamp negative weights
+  const ruleWeights = rawWeights.map(w => ({ ...w, weight: Math.max(0, w.weight) }));
   const snapshotValues = values.filter((v) => v.snapshotId === snapshotId);
   const activeMetrics = metrics.filter((m) => m.active);
 

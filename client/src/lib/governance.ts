@@ -397,6 +397,7 @@ const VALID_TRANSITIONS: Record<WorkspaceStage, WorkspaceStage[]> = {
   contract_signed: ["handover"],
   handover: ["go_live", "contract_signed"],
   go_live: [],
+  closed_lost: [],
 };
 
 export interface StageTransitionRequest {

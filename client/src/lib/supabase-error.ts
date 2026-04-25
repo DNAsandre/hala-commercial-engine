@@ -96,6 +96,61 @@ export function handleSupabaseError(
   // persistErrorToSupabase(ctx).catch(() => {});
 }
 
+// ── Fetch Error State (per-operation last-error tracker) ────
+// Allows components to distinguish "data is empty" from "fetch failed"
+
+const fetchErrorState: Map<string, ErrorContext> = new Map();
+
+/**
+ * Record a fetch error for a specific operation.
+ * Called by supabase-data.ts fetchers on failure.
+ */
+export function setFetchError(operation: string, error: SupabaseError): void {
+  const ctx: ErrorContext = {
+    operation,
+    error,
+    timestamp: new Date().toISOString(),
+  };
+  fetchErrorState.set(operation, ctx);
+}
+
+/**
+ * Clear the fetch error for an operation (e.g., on successful retry).
+ */
+export function clearFetchError(operation: string): void {
+  fetchErrorState.delete(operation);
+}
+
+/**
+ * Get the last fetch error for a specific operation.
+ * Returns null if the last fetch succeeded.
+ */
+export function getFetchError(operation: string): ErrorContext | null {
+  return fetchErrorState.get(operation) ?? null;
+}
+
+/**
+ * Check if ANY fetch operation is currently in error state.
+ * Useful for dashboard-level health indicators.
+ */
+export function hasFetchErrors(): boolean {
+  return fetchErrorState.size > 0;
+}
+
+/**
+ * Get all current fetch errors (for admin/debug views).
+ */
+export function getAllFetchErrors(): ReadonlyMap<string, ErrorContext> {
+  return fetchErrorState;
+}
+
+/**
+ * Clear all fetch errors (e.g., on full page refresh/retry).
+ */
+export function clearAllFetchErrors(): void {
+  fetchErrorState.clear();
+}
+
 /**
  * Wrap a Supabase operation with automatic error handling.
  * Returns true if the operation succeeded, false if it failed.

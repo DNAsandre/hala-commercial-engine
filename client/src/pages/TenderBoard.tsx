@@ -1,12 +1,8 @@
 /**
- * Tender Board — Kanban View of Tenders by Status
- * Swiss Precision Instrument Design
+ * Tender Board — Kanban View of Tenders by Milestone
  *
- * Uses the SAME centralized tender transition handler from tender-engine.ts.
- * No duplicate logic paths. All governance checks, audit logging, and undo
- * flow through advanceTenderStatus().
- *
- * Drag-and-drop powered by native HTML5 drag events.
+ * Drag-and-drop to any column — instant, no blocking, no governance modal.
+ * Human-controlled milestone movement.
  */
 
 import { useState, useCallback, useMemo } from "react";
@@ -40,27 +36,22 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Link, useLocation } from "wouter";
 import { formatSAR } from "@/lib/store";
 import { useWorkspaces } from "@/hooks/useSupabase";
-import { Loader2 } from "lucide-react";
 import {
   tenders,
   type Tender,
-  type TenderStatus,
+  type TenderMilestone,
   TENDER_KANBAN_COLUMNS,
+  TENDER_TERMINAL,
   getTenderStatusDisplayName,
+  getTenderMilestoneShortLabel,
   getTenderStatusColor,
-  getTenderStatusIndex,
-  advanceTenderStatus,
-  preflightTenderValidation,
-  checkTenderUndoEligibility,
+  moveTenderMilestone,
   revertTenderStatus,
   getTenderMetrics,
-  type TenderValidationFailure,
   type WorkspaceSuggestion,
 } from "@/lib/tender-engine";
 
@@ -68,53 +59,37 @@ import {
 
 const GP_THRESHOLD = 22;
 
-const STATUS_COLUMN_COLORS: Record<TenderStatus, string> = {
-  draft: "border-t-slate-400",
-  in_preparation: "border-t-blue-400",
+const STATUS_COLUMN_COLORS: Record<TenderMilestone, string> = {
+  identified: "border-t-slate-400",
+  preparing_submission: "border-t-blue-400",
   submitted: "border-t-violet-400",
-  under_evaluation: "border-t-amber-400",
-  won: "border-t-emerald-400",
+  clarification: "border-t-amber-400",
+  technical_review: "border-t-cyan-400",
+  commercial_review: "border-t-indigo-400",
+  negotiation: "border-t-orange-400",
+  awarded: "border-t-emerald-400",
   lost: "border-t-red-400",
   withdrawn: "border-t-gray-400",
 };
 
-const STATUS_HEADER_BG: Record<TenderStatus, string> = {
-  draft: "bg-slate-50 dark:bg-slate-900/30",
-  in_preparation: "bg-blue-50 dark:bg-blue-900/30",
+const STATUS_HEADER_BG: Record<TenderMilestone, string> = {
+  identified: "bg-slate-50 dark:bg-slate-900/30",
+  preparing_submission: "bg-blue-50 dark:bg-blue-900/30",
   submitted: "bg-violet-50 dark:bg-violet-900/30",
-  under_evaluation: "bg-amber-50 dark:bg-amber-900/30",
-  won: "bg-emerald-50 dark:bg-emerald-900/30",
+  clarification: "bg-amber-50 dark:bg-amber-900/30",
+  technical_review: "bg-cyan-50 dark:bg-cyan-900/30",
+  commercial_review: "bg-indigo-50 dark:bg-indigo-900/30",
+  negotiation: "bg-orange-50 dark:bg-orange-900/30",
+  awarded: "bg-emerald-50 dark:bg-emerald-900/30",
   lost: "bg-red-50 dark:bg-red-900/30",
   withdrawn: "bg-gray-50 dark:bg-gray-900/30",
 };
-
-// Valid forward transitions map
-function isValidForwardMove(from: TenderStatus, to: TenderStatus): boolean {
-  // Terminal statuses cannot move
-  if (from === "won" || from === "lost" || from === "withdrawn") return false;
-  // Won/Lost can be reached from under_evaluation (or with override from submitted)
-  if (to === "won" || to === "lost") {
-    return from === "under_evaluation" || from === "submitted";
-  }
-  const fromIdx = getTenderStatusIndex(from);
-  const toIdx = getTenderStatusIndex(to);
-  // Only forward, and only to the next status (no skipping in normal flow)
-  return toIdx > fromIdx && toIdx <= fromIdx + 1;
-}
 
 // ─── TYPES ─────────────────────────────────────────────────
 
 interface DragState {
   tenderId: string;
-  fromStatus: TenderStatus;
-}
-
-interface ConfirmationModal {
-  open: boolean;
-  tender: Tender | null;
-  fromStatus: TenderStatus;
-  toStatus: TenderStatus;
-  warnings: TenderValidationFailure[];
+  fromStatus: TenderMilestone;
 }
 
 // ─── COMPONENT ─────────────────────────────────────────────
@@ -122,33 +97,15 @@ interface ConfirmationModal {
 export default function TenderBoard() {
   const [, navigate] = useLocation();
 
-  // Filters
   const [ownerFilter, setOwnerFilter] = useState<string>("all");
   const [regionFilter, setRegionFilter] = useState<string>("all");
   const [riskOnly, setRiskOnly] = useState(false);
 
-  // Drag state
   const [dragState, setDragState] = useState<DragState | null>(null);
-  const [dropTarget, setDropTarget] = useState<TenderStatus | null>(null);
+  const [dropTarget, setDropTarget] = useState<TenderMilestone | null>(null);
 
-  // Confirmation modal
-  const [modal, setModal] = useState<ConfirmationModal>({
-    open: false,
-    tender: null,
-    fromStatus: "draft",
-    toStatus: "draft",
-    warnings: [],
-  });
-  const [overrideReason, setOverrideReason] = useState("");
-  const [confirmText, setConfirmText] = useState("");
-
-  // Undo banner
   const [undoBanner, setUndoBanner] = useState<{ tenderId: string; title: string } | null>(null);
-
-  // Workspace suggestion
   const [wsSuggestion, setWsSuggestion] = useState<WorkspaceSuggestion | null>(null);
-
-  // Refresh trigger
   const [refreshKey, setRefreshKey] = useState(0);
 
   // Unique owners and regions
@@ -160,10 +117,8 @@ export default function TenderBoard() {
     return Array.from(new Set(tenders.map(t => t.region))).sort();
   }, []);
 
-  // Filter tenders
   const filteredTenders = useMemo(() => {
     return tenders.filter(t => {
-      if (t.status === "withdrawn") return false;
       if (ownerFilter !== "all" && t.assignedOwner !== ownerFilter) return false;
       if (regionFilter !== "all" && t.region !== regionFilter) return false;
       if (riskOnly && t.targetGpPercent >= GP_THRESHOLD) return false;
@@ -172,9 +127,8 @@ export default function TenderBoard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownerFilter, regionFilter, riskOnly, refreshKey]);
 
-  // Group tenders by status
   const columns = useMemo(() => {
-    const map = new Map<TenderStatus, Tender[]>();
+    const map = new Map<TenderMilestone, Tender[]>();
     for (const status of TENDER_KANBAN_COLUMNS) {
       map.set(status, []);
     }
@@ -199,7 +153,7 @@ export default function TenderBoard() {
   }, []);
 
   const handleDragOver = useCallback(
-    (e: React.DragEvent, status: TenderStatus) => {
+    (e: React.DragEvent, status: TenderMilestone) => {
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
       setDropTarget(status);
@@ -212,7 +166,7 @@ export default function TenderBoard() {
   }, []);
 
   const handleDrop = useCallback(
-    (e: React.DragEvent, targetStatus: TenderStatus) => {
+    (e: React.DragEvent, targetMilestone: TenderMilestone) => {
       e.preventDefault();
       setDropTarget(null);
 
@@ -220,95 +174,39 @@ export default function TenderBoard() {
       const { tenderId, fromStatus } = dragState;
       setDragState(null);
 
-      // Same column — no-op
-      if (fromStatus === targetStatus) return;
+      if (fromStatus === targetMilestone) return;
 
       const tender = tenders.find(t => t.id === tenderId);
       if (!tender) return;
 
-      // Pre-flight validation
-      const warnings = preflightTenderValidation(tenderId, targetStatus);
-
-      if (warnings.length === 0) {
-        // No warnings — attempt direct transition
-        const result = advanceTenderStatus(tenderId, targetStatus);
-        if (result.success) {
-          toast.success("Status Advanced", { description: result.message });
-          setUndoBanner({ tenderId, title: tender.title });
-          setTimeout(() => setUndoBanner(b => b?.tenderId === tenderId ? null : b), 5 * 60 * 1000);
-          if (result.workspaceSuggestion) {
-            setWsSuggestion(result.workspaceSuggestion);
-          }
-          setRefreshKey(k => k + 1);
-        } else {
-          toast.error("Transition Failed", { description: result.message });
+      // Instant move — no blocking
+      const result = moveTenderMilestone(tenderId, targetMilestone);
+      if (result.success) {
+        toast.success(result.message);
+        setUndoBanner({ tenderId, title: tender.title });
+        setTimeout(() => setUndoBanner(b => b?.tenderId === tenderId ? null : b), 5 * 60 * 1000);
+        if (result.workspaceSuggestion) {
+          setWsSuggestion(result.workspaceSuggestion);
         }
-        return;
+        setRefreshKey(k => k + 1);
+      } else {
+        toast.error(result.message);
       }
-
-      // Warnings exist — open confirmation modal (no silent transitions)
-      setModal({
-        open: true,
-        tender,
-        fromStatus,
-        toStatus: targetStatus,
-        warnings,
-      });
-      setOverrideReason("");
-      setConfirmText("");
     },
     [dragState]
   );
 
-  // ─── MODAL HANDLERS ───────────────────────────────────
-
-  const handleConfirmMove = useCallback(() => {
-    if (!modal.tender) return;
-
-    const targetName = getTenderStatusDisplayName(modal.toStatus);
-    if (confirmText !== targetName) {
-      toast.error("Type the destination status name exactly to confirm.");
-      return;
-    }
-
-    const result = advanceTenderStatus(modal.tender.id, modal.toStatus, {
-      overrideReason: overrideReason || undefined,
-    });
-
-    if (result.success) {
-      toast.success("Status Advanced (Governance Override)", { description: result.message });
-      setModal({ open: false, tender: null, fromStatus: "draft", toStatus: "draft", warnings: [] });
-      setUndoBanner({ tenderId: modal.tender.id, title: modal.tender.title });
-      setTimeout(() => setUndoBanner(b => b?.tenderId === modal.tender?.id ? null : b), 5 * 60 * 1000);
-      if (result.workspaceSuggestion) {
-        setWsSuggestion(result.workspaceSuggestion);
-      }
-      setRefreshKey(k => k + 1);
-    } else {
-      toast.error("Transition Failed", { description: result.message });
-    }
-  }, [modal, confirmText, overrideReason]);
-
-  const handleCancelModal = useCallback(() => {
-    setModal({ open: false, tender: null, fromStatus: "draft", toStatus: "draft", warnings: [] });
-    setOverrideReason("");
-    setConfirmText("");
-  }, []);
+  // ─── UNDO ──────────────────────────────────────────────
 
   const handleUndo = useCallback(() => {
     if (!undoBanner) return;
-    const eligibility = checkTenderUndoEligibility(undoBanner.tenderId);
-    if (eligibility.requiresReason) {
-      toast.info("Undo window expired. Use the Tender detail page to revert with a reason.");
-      return;
-    }
     const result = revertTenderStatus(undoBanner.tenderId);
     if (result.success) {
-      toast.success("Transition Undone", { description: result.message });
+      toast.success(result.message);
       setUndoBanner(null);
       setRefreshKey(k => k + 1);
     } else {
-      toast.error("Undo Failed", { description: result.message });
+      toast.error(result.message);
     }
   }, [undoBanner]);
 
@@ -448,7 +346,7 @@ export default function TenderBoard() {
           {TENDER_KANBAN_COLUMNS.map(status => {
             const cards = columns.get(status) ?? [];
             const isDropping = dropTarget === status && dragState?.fromStatus !== status;
-            const canDrop = dragState ? isValidForwardMove(dragState.fromStatus, status) || status === "won" || status === "lost" : false;
+            const canDrop = dragState ? dragState.fromStatus !== status && !TENDER_TERMINAL.includes(dragState.fromStatus) : false;
             const isInvalidTarget = dragState && !canDrop && status !== dragState.fromStatus;
             const colValue = cards.reduce((s, t) => s + t.estimatedValue, 0);
 
@@ -462,15 +360,15 @@ export default function TenderBoard() {
                   ${isDropping && canDrop ? "bg-primary/5 ring-2 ring-primary/20" : "bg-muted/30"}
                   ${isInvalidTarget ? "opacity-40" : ""}
                 `}
-                onDragOver={(e) => canDrop ? handleDragOver(e, status) : e.preventDefault()}
+                onDragOver={(e) => { if (canDrop) handleDragOver(e, status); else e.preventDefault(); }}
                 onDragLeave={handleDragLeave}
-                onDrop={(e) => canDrop ? handleDrop(e, status) : undefined}
+                onDrop={(e) => { if (canDrop) handleDrop(e, status); }}
               >
                 {/* Column Header */}
                 <div className={`px-3 py-2.5 rounded-t-lg ${STATUS_HEADER_BG[status]}`}>
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-semibold tracking-wide uppercase">
-                      {getTenderStatusDisplayName(status)}
+                      {getTenderMilestoneShortLabel(status)}
                     </span>
                     <Badge variant="secondary" className="text-[10px] h-5 px-1.5 font-mono">
                       {cards.length}
@@ -513,115 +411,6 @@ export default function TenderBoard() {
         </div>
       </div>
 
-      {/* Governance Confirmation Modal */}
-      {modal.open && modal.tender && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-card rounded-lg shadow-xl border border-border w-[520px] max-h-[80vh] overflow-y-auto">
-            {/* Modal Header */}
-            <div className="px-5 py-4 border-b border-border">
-              <div className="flex items-center gap-2 mb-1">
-                <ShieldAlert className="w-4 h-4 text-[var(--color-rag-amber)]" />
-                <span className="text-xs font-semibold uppercase tracking-wider text-[var(--color-rag-amber)]">
-                  Governance Check — Soft Mode
-                </span>
-              </div>
-              <h3 className="text-base font-serif font-bold">
-                Confirm Tender Transition
-              </h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {modal.tender.customerName} — {modal.tender.title}
-              </p>
-            </div>
-
-            {/* From → To */}
-            <div className="px-5 py-3 bg-muted/30">
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <p className="text-[10px] text-muted-foreground uppercase mb-1">From Status</p>
-                  <Badge variant="outline" className={`text-xs ${getTenderStatusColor(modal.fromStatus)}`}>
-                    {getTenderStatusDisplayName(modal.fromStatus)}
-                  </Badge>
-                </div>
-                <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                <div className="flex-1">
-                  <p className="text-[10px] text-muted-foreground uppercase mb-1">To Status</p>
-                  <Badge variant="outline" className={`text-xs ${getTenderStatusColor(modal.toStatus)}`}>
-                    {getTenderStatusDisplayName(modal.toStatus)}
-                  </Badge>
-                </div>
-              </div>
-            </div>
-
-            {/* Validation Warnings */}
-            <div className="px-5 py-3">
-              <p className="text-xs font-semibold mb-2 flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-[var(--color-rag-amber)]" />
-                Validation Warnings ({modal.warnings.length})
-              </p>
-              <div className="space-y-2">
-                {modal.warnings.map((w, i) => (
-                  <div key={i} className="rounded border border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-800 p-2.5">
-                    <p className="text-[10px] font-semibold text-amber-800 dark:text-amber-200 mb-0.5">{w.ruleName}</p>
-                    <p className="text-[11px] text-amber-700 dark:text-amber-300">{w.error}</p>
-                    <Badge variant="outline" className="mt-1 text-[9px] border-amber-300 text-amber-600">
-                      Override Available
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Override Reason */}
-            <div className="px-5 py-3 border-t border-border">
-              <Label className="text-xs font-semibold mb-1.5 block">
-                Override Reason <span className="text-muted-foreground font-normal">(required)</span>
-              </Label>
-              <Textarea
-                placeholder="Provide justification for overriding governance warnings..."
-                value={overrideReason}
-                onChange={e => setOverrideReason(e.target.value)}
-                className="text-xs h-16 resize-none"
-              />
-            </div>
-
-            {/* Type to Confirm */}
-            <div className="px-5 py-3 border-t border-border">
-              <Label className="text-xs text-muted-foreground mb-1.5 block">
-                Type <span className="font-mono font-bold text-foreground">"{getTenderStatusDisplayName(modal.toStatus)}"</span> to confirm
-              </Label>
-              <Input
-                placeholder={getTenderStatusDisplayName(modal.toStatus)}
-                value={confirmText}
-                onChange={e => setConfirmText(e.target.value)}
-                className="text-xs h-8 font-mono"
-              />
-            </div>
-
-            {/* Actions */}
-            <div className="px-5 py-3 border-t border-border flex items-center justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={handleCancelModal}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                className={`${
-                  overrideReason.trim().length > 0 && confirmText === getTenderStatusDisplayName(modal.toStatus)
-                    ? "bg-amber-600 hover:bg-amber-700 text-white"
-                    : ""
-                }`}
-                disabled={
-                  overrideReason.trim().length === 0 ||
-                  confirmText !== getTenderStatusDisplayName(modal.toStatus)
-                }
-                onClick={handleConfirmMove}
-              >
-                <ShieldAlert className="w-3.5 h-3.5 mr-1" />
-                Confirm with Override
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -639,7 +428,7 @@ function TenderCard({ tender, onDragStart, onDragEnd, isDragging }: TenderCardPr
   const isRisk = tender.targetGpPercent < GP_THRESHOLD;
   const isCritical = tender.targetGpPercent < 15;
   const daysLeft = Math.ceil((new Date(tender.submissionDeadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-  const isTerminal = tender.status === "won" || tender.status === "lost";
+  const isTerminal = TENDER_TERMINAL.includes(tender.status);
 
   return (
     <div

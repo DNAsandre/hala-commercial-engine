@@ -323,7 +323,7 @@ startxref
 
 // ─── MOCK DATA ───────────────────────────────────────────────
 
-let docIdCounter = 30;
+
 
 function makeMockDoc(input: {
   id: string;
@@ -815,7 +815,8 @@ export function uploadDocument(input: UploadDocumentInput): UnifiedDocument {
   }
 
   // New document
-  const docId = `doc-${String(++docIdCounter).padStart(3, "0")}`;
+  // B7 FIX: Use crypto.randomUUID() for collision-safe IDs
+  const docId = `doc-${crypto.randomUUID()}`;
   const blobUrl = storeFile(docId, 1, input.file);
 
   const doc: UnifiedDocument = {
@@ -891,7 +892,7 @@ export function createDocument(input: CreateDocumentInput): UnifiedDocument {
   const ext = input.fileName.split(".").pop()?.toLowerCase() || "";
   const mimeType = extensionToMime(ext);
   const doc: UnifiedDocument = {
-    id: `doc-${String(++docIdCounter).padStart(3, "0")}`,
+    id: `doc-${crypto.randomUUID()}`,
     name: input.name,
     category: input.category,
     customerId: input.customerId,
@@ -960,6 +961,9 @@ export function updateDocumentVersion(
   doc.mimeType = mimeType;
 
   if (doc.status === "Final" || doc.status === "Signed") {
+    // B5 FIX: Audit the status downgrade before mutating
+    logDocumentAction(doc, "document_status_downgraded",
+      `Document "${doc.name}" status downgraded from "${doc.status}" to "Draft" due to new version upload by ${uploadedBy}.`);
     doc.status = "Draft";
   }
 
@@ -1210,7 +1214,7 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
     timestamp: new Date().toISOString(),
     details,
   };
-  syncAuditEntry(entry);
+  void syncAuditEntry(entry);
 
   const customerEntry: AuditEntry = {
     id: `al-doc-c-${crypto.randomUUID()}`,
@@ -1222,7 +1226,7 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
     timestamp: new Date().toISOString(),
     details,
   };
-  syncAuditEntry(customerEntry);
+  void syncAuditEntry(customerEntry);
 
   if (doc.workspaceId) {
     const wsEntry: AuditEntry = {
@@ -1235,7 +1239,7 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
       timestamp: new Date().toISOString(),
       details,
     };
-    syncAuditEntry(wsEntry);
+    void syncAuditEntry(wsEntry);
   }
 
   if (doc.tenderId) {
@@ -1249,7 +1253,7 @@ function logDocumentAction(doc: UnifiedDocument, action: string, details: string
       timestamp: new Date().toISOString(),
       details,
     };
-    syncAuditEntry(tnEntry);
+    void syncAuditEntry(tnEntry);
   }
 }
 

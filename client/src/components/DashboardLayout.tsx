@@ -17,6 +17,7 @@
 
 import { useLocation } from "wouter";
 import { useState, useCallback } from "react";
+import { setDevRoleOverride, getDevRoleOverride } from "@/lib/auth-state";
 import {
   LayoutDashboard,
   Briefcase,
@@ -55,7 +56,10 @@ import {
   LogOut,
   AlertTriangle,
   ArrowUpDown,
+  ChevronDown,
   Printer,
+  LayoutList,
+  Handshake,
 } from "lucide-react";
 import { getRoleLabel } from "@/lib/store";
 import { useSignals } from "@/hooks/useSupabase";
@@ -116,13 +120,24 @@ const allNavItems = [
 // ============================================================
 // SIMPLIFIED NAV ITEMS (navigationV1)
 // ============================================================
-const simplifiedNavItems = [
+type NavItem = { path: string; label: string; icon: any; group: string; adminOnly?: boolean; children?: NavItem[] };
+const simplifiedNavItems: NavItem[] = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard, group: "core" },
   { path: "/customers", label: "Customers", icon: Users, group: "core" },
-  { path: "/workspaces", label: "Workspaces", icon: Briefcase, group: "core" },
-  { path: "/tenders", label: "Tenders", icon: Gavel, group: "core" },
+  {
+    path: "/workspaces", label: "Commercial Ops", icon: Briefcase, group: "core",
+    children: [
+      { path: "/tenders", label: "Tenders", icon: Gavel, group: "core" },
+      { path: "/commercial", label: "Commercial", icon: Handshake, group: "core" },
+      { path: "/renewals", label: "Renewals", icon: RotateCcw, group: "core" },
+    ],
+  },
+  { path: "/tenders-overview", label: "Tenders Overview", icon: LayoutList, group: "core" },
+  { path: "/commercial-overview", label: "Commercial Overview", icon: LayoutList, group: "core" },
+  { path: "/renewals-overview", label: "Renewals Overview", icon: LayoutList, group: "core" },
   { path: "/escalations", label: "Escalations", icon: AlertTriangle, group: "core" },
   { path: "/pdf-studio", label: "PDF Studio", icon: Printer, group: "core" },
+  { path: "/document-vault", label: "Document Vault", icon: FolderOpen, group: "core" },
   { path: "/admin", label: "Governance", icon: Settings, group: "system", adminOnly: true },
   { path: "/admin-panel", label: "Admin", icon: Wrench, group: "system", adminOnly: true },
   { path: "/audit", label: "Audit Trail", icon: ClipboardList, group: "system" },
@@ -150,8 +165,21 @@ const simplifiedGroups = ["core", "system"];
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [location, navigate] = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+  const [opsExpanded, setOpsExpanded] = useState(true); // Commercial Ops children expanded
   const { appUser: currentUser, signOut } = useAuth();
-  const effectiveUser = currentUser || { id: "u1", name: "Loading...", email: "", role: "admin", region: "East" };
+  const baseUser = currentUser || { id: "u1", name: "Loading...", email: "", role: "admin", region: "East" };
+
+  // DEV-only: role override for testing. Never exists in production.
+  const [devRoleOverride, setDevRoleState] = useState<string>(() =>
+    import.meta.env.DEV ? (getDevRoleOverride() ?? "") : ""
+  );
+  const handleDevRoleChange = (role: string) => {
+    setDevRoleState(role);
+    setDevRoleOverride(role || null);
+  };
+  const effectiveUser = (import.meta.env.DEV && devRoleOverride)
+    ? { ...baseUser, role: devRoleOverride }
+    : baseUser;
   const { data: signals } = useSignals();
   const redCount = signals.filter(s => s.severity === "red").length;
 
@@ -159,10 +187,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [openEscalationCount, setOpenEscalationCount] = useState(0);
   const escalationPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
-    const load = () => fetchOpenEscalationCount().then(setOpenEscalationCount).catch(() => {});
+    let cancelled = false;
+    const load = () => fetchOpenEscalationCount().then(c => { if (!cancelled) setOpenEscalationCount(c); }).catch((err) => { console.warn('[DashboardLayout] escalation poll fallback:', err); });
     load();
     escalationPollRef.current = setInterval(load, 30_000); // refresh every 30s
-    return () => { if (escalationPollRef.current) clearInterval(escalationPollRef.current); };
+    return () => { cancelled = true; if (escalationPollRef.current) clearInterval(escalationPollRef.current); };
   }, []);
   const totalBadge = redCount + openEscalationCount;
 
@@ -223,6 +252,65 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 {groupItems.map(item => {
                   const isActive = location === item.path || (item.path !== "/" && item.path !== "/admin" && location.startsWith(item.path));
                   const Icon = item.icon;
+                  const hasChildren = 'children' in item && item.children;
+
+                  // Check if any child is active
+                  const isChildActive = hasChildren ? item.children!.some(c => location === c.path || (c.path !== "/" && location.startsWith(c.path + "/"))) : false;
+                  const parentActive = isActive || isChildActive;
+
+                  if (hasChildren) {
+                    return (
+                      <div key={item.path}>
+                        {/* Parent — Commercial Ops */}
+                        <button
+                          onClick={() => setOpsExpanded(!opsExpanded)}
+                          className={cn(
+                            "flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm transition-colors mb-0.5 cursor-pointer w-full",
+                            parentActive
+                              ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                              : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                          )}
+                        >
+                          <Icon className="w-4 h-4 shrink-0" />
+                          {!collapsed && (
+                            <span className="flex-1 flex items-center justify-between">
+                              <span>{item.label}</span>
+                              <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", !opsExpanded && "-rotate-90")} />
+                            </span>
+                          )}
+                        </button>
+
+                        {/* Children — Tenders / Commercial / Renewals */}
+                        {opsExpanded && !collapsed && (
+                          <div className="ml-4 pl-2 border-l border-sidebar-foreground/10">
+                            {item.children!.map(child => {
+                              const childActive = location === child.path || (child.path !== "/" && child.path !== "/workspaces" && location.startsWith(child.path + "/"))
+                                || (child.path === "/workspaces" && child.label === "Commercial" && (location === "/workspaces" || location.startsWith("/workspaces/")))
+                                || (child.path === "/tenders" && child.label === "Tenders" && location.startsWith("/tenders"));
+                              const ChildIcon = child.icon;
+                              return (
+                                <a
+                                  key={child.path + child.label}
+                                  href={child.path}
+                                  onClick={(e) => handleNavClick(e, child.path)}
+                                  className={cn(
+                                    "flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs transition-colors mb-0.5 cursor-pointer",
+                                    childActive
+                                      ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                                      : "text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                                  )}
+                                >
+                                  <ChildIcon className="w-3.5 h-3.5 shrink-0" />
+                                  <span>{child.label}</span>
+                                </a>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
                   return (
                     <a
                       key={item.path}
@@ -289,6 +377,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </button>
             )}
           </div>
+          {!collapsed && import.meta.env.DEV && (
+            <div className="mt-2 px-0.5">
+              <select
+                value={devRoleOverride}
+                onChange={e => handleDevRoleChange(e.target.value)}
+                className="w-full text-[10px] bg-sidebar-accent/30 text-sidebar-foreground/70 border border-sidebar-border/50 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-sidebar-border"
+                title="DEV: override role for testing"
+              >
+                <option value="">— real role —</option>
+                <option value="admin">admin</option>
+                <option value="manager">manager</option>
+                <option value="sales">sales</option>
+                <option value="ops">ops</option>
+                <option value="finance">finance</option>
+                <option value="viewer">viewer</option>
+              </select>
+            </div>
+          )}
         </div>
       </aside>
 

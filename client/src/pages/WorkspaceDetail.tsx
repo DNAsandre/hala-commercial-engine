@@ -2,7 +2,7 @@ import { getCurrentUser } from "@/lib/auth-state";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import {
-  ArrowLeft, FileText, ShieldCheck, FileCheck, Clock, ChevronRight, AlertTriangle,
+  ArrowLeft, FileText, ShieldCheck, FileCheck, Clock, ChevronRight, ChevronDown, AlertTriangle,
   CheckCircle2, XCircle, Undo2, Timer, ArrowRightLeft, ShieldAlert, ShieldOff, Info,
   FolderOpen, Upload, Eye, Edit, Download, FileSignature, RefreshCw, CalendarClock,
   User, BarChart3, Plus, ToggleLeft, ToggleRight, Link2, Archive, RotateCcw,
@@ -16,12 +16,15 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   formatSAR, formatPercent, getStageLabel, getStageColor, getApprovalRequirements,
   getRoleLabel, WORKSPACE_STAGES, TENDER_WORKSPACE_STAGES,
   getWorkspaceType, getWorkspaceTypeLabel, getWorkspaceTypeBadgeColor,
   getEffectiveStage, getEffectiveStageLabel, getEffectiveStageColor,
   getStagesForType, type WorkspaceType, type TenderWorkspaceStage,
+  COMMERCIAL_MILESTONES, mapToCommercialMilestone, deriveSubLifecycleStates,
+  QUOTE_STATES, PROPOSAL_STATES, SLA_STATES, HANDOVER_STATES,
 } from "@/lib/store";
 import {
   useWorkspace, useCustomer, useQuotesByWorkspace, useProposalsByWorkspace,
@@ -55,7 +58,12 @@ import { PricingLockOverrideModal } from "@/components/PricingLockOverrideModal"
 import { SlaVerificationChecklistComponent } from "@/components/SlaVerificationChecklist";
 import { SlaVsPnlDeltaBanner } from "@/components/SlaVsPnlDeltaBanner";
 import { WorkspaceEscalationsTab } from "@/components/WorkspaceEscalationsTab";
+import { WorkspaceRiskSignalsTab } from "@/components/WorkspaceRiskSignalsTab";
 import CRMSyncBadge from "@/components/CRMSyncBadge";
+import WorkspaceQuoteSection from "@/components/WorkspaceQuoteSection";
+import WorkspaceProposalSection from "@/components/WorkspaceProposalSection";
+import WorkspaceSlaContractSection from "@/components/WorkspaceSlaContractSection";
+import WorkspaceDocumentSection from "@/components/WorkspaceDocumentSection";
 import { usePnLByWorkspace } from "@/hooks/useSupabase";
 import {
   isWorkspaceIntegrationEnabled, getOrCreateCycle, startRenewal, updateRenewalOwner,
@@ -439,7 +447,8 @@ export default function WorkspaceDetail() {
       } else {
         toast.error("Failed to delete document");
       }
-    } catch {
+    } catch (err) {
+      console.warn('[WorkspaceDetail] handleDeleteDraft fallback:', err);
       toast.error("Failed to delete document");
     }
     setDeletingDocId(null);
@@ -466,7 +475,8 @@ export default function WorkspaceDetail() {
         customerId: ws.customerId,
         workspaceId: ws.id,
       });
-    } catch {
+    } catch (err) {
+      console.warn('[WorkspaceDetail] openInComposer fallback:', err);
       setComposerTarget({
         type,
         entityId,
@@ -724,143 +734,358 @@ export default function WorkspaceDetail() {
           </div>
         )}
 
-        {/* ═══ STAGE PIPELINE (type-aware) ═══ */}
-        <Card className="border border-border shadow-none mb-6"><CardContent className="py-4 px-6">
-          <div className="flex items-center gap-1 overflow-x-auto">
-            {effectiveStages.map((s, i) => (
-              <div key={s.value} className="flex items-center">
-                <div className={`px-2.5 py-1 rounded text-[10px] font-medium whitespace-nowrap ${i <= effectiveStageIdx ? "bg-primary text-primary-foreground" : i === effectiveStageIdx + 1 ? "bg-muted text-muted-foreground border border-dashed border-primary/30" : "bg-muted text-muted-foreground/50"}`}>{s.label}</div>
-                {i < effectiveStages.length - 1 && <div className={`w-4 h-px mx-0.5 ${i < effectiveStageIdx ? "bg-primary" : "bg-border"}`} />}
-              </div>
-            ))}
-          </div>
-        </CardContent></Card>
+        {/* ═══ STAGE PIPELINE (type-aware — commercial uses milestone strip) ═══ */}
+        {isCommercial ? (
+          /* ── Commercial Milestone Strip (IDENTICAL design to Tender MilestoneStrip) ── */
+          <Card className="border border-border shadow-none mb-3"><CardContent className="pt-4 pb-3 px-6">
+            {(() => {
+              const mappedStage = mapToCommercialMilestone(ws.stage);
+              const mappedIdx = COMMERCIAL_MILESTONES.findIndex(m => m.value === mappedStage);
+              // Strip milestones = all except closed_lost (terminal)
+              const stripMs = COMMERCIAL_MILESTONES.filter(m => m.value !== "closed_lost");
+              const currentIdx = stripMs.findIndex(m => m.value === mappedStage);
+              const isTerminal = mappedStage === "closed_lost";
+              // Suggested next = next milestone in sequence
+              const suggestedIdx = isTerminal ? -1 : currentIdx + 1;
 
-        {/* ═══ KPI CARDS ═══ */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
-          {(isTender ? [
-            { label: "Est. Value", value: formatSAR(ws.estimatedValue) },
-            { label: "Target GP%", value: formatPercent(ws.gpPercent), color: ws.gpPercent >= 22 ? "rag-green" : ws.gpPercent >= 10 ? "rag-amber" : "rag-red" },
-            { label: "Probability", value: `${ws.probabilityPercent ?? 0}%` },
-            { label: "Deadline", value: ws.submissionDeadline || "—" },
-            { label: "Region", value: ws.region },
-            { label: "Owner", value: ws.owner },
-          ] : [
-            { label: "Est. Value", value: formatSAR(ws.estimatedValue) },
-            { label: "GP%", value: formatPercent(ws.gpPercent), color: ws.gpPercent >= 22 ? "rag-green" : ws.gpPercent >= 10 ? "rag-amber" : "rag-red" },
-            { label: "Pallets", value: ws.palletVolume.toLocaleString() },
-            { label: "Days in Stage", value: String(ws.daysInStage), color: ws.daysInStage > 14 ? "rag-red" : ws.daysInStage > 7 ? "rag-amber" : undefined },
-            { label: "Region", value: ws.region },
-            { label: "Owner", value: ws.owner },
-          ]).map(kpi => (
-            <Card key={kpi.label} className="border border-border shadow-none"><CardContent className="p-3">
-              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{kpi.label}</p>
-              <p className={`data-value text-lg font-semibold mt-0.5 ${kpi.color || ""}`}>{kpi.value}</p>
-            </CardContent></Card>
-          ))}
-        </div>
-
-        {/* ═══ CONTRACT & RENEWAL STRIP (commercial/renewal only) ═══ */}
-        {!isTender && integrationEnabled && activeCycle && (
-          <Card className={`border shadow-none mb-6 ${inRenewalWindow ? "border-orange-300 bg-orange-50/30" : daysToExpiry !== null && daysToExpiry <= 120 ? "border-amber-200 bg-amber-50/20" : "border-border"}`}>
-            <CardContent className="py-3 px-5">
-              <div className="flex items-center gap-6 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <CalendarClock className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Contract Cycle</span>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-medium">Cycle #{activeCycle.cycleNumber}</span>
-                  <Badge variant="outline" className={`text-[10px] ${cycleStatusConfig[activeCycle.status]?.color || ""}`}>
-                    {cycleStatusConfig[activeCycle.status]?.label || activeCycle.status}
-                  </Badge>
-                </div>
-
-                {activeCycle.endDate && (
-                  <div className="flex items-center gap-4">
-                    <div>
-                      <span className="text-[10px] text-muted-foreground uppercase">SLA Expiry</span>
-                      <p className="text-sm font-medium data-value">{activeCycle.endDate}</p>
-                    </div>
-                    {daysToExpiry !== null && (
-                      <div>
-                        <span className="text-[10px] text-muted-foreground uppercase">Days Left</span>
-                        <p className={`text-sm font-bold ${daysToExpiry <= 30 ? "text-red-600" : daysToExpiry <= 90 ? "text-amber-600" : "text-emerald-600"}`}>
-                          {daysToExpiry > 0 ? daysToExpiry : "Expired"}
-                        </p>
-                      </div>
-                    )}
-                    <div>
-                      <span className="text-[10px] text-muted-foreground uppercase">Renewal Window</span>
-                      <p className={`text-sm font-medium ${inRenewalWindow ? "text-orange-600 font-bold" : "text-muted-foreground"}`}>
-                        {inRenewalWindow ? "OPEN" : daysToExpiry !== null && daysToExpiry <= 0 ? "Expired" : "Closed"}
-                      </p>
+              return (
+                <div>
+                  {/* Header row */}
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Lifecycle Tracker
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="default" size="sm" className="text-xs h-7 bg-[var(--color-hala-navy)] hover:bg-[var(--color-hala-navy)]/90">
+                            Move Stage <ChevronDown className="w-3 h-3 ml-1" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="max-h-64 overflow-y-auto">
+                          {COMMERCIAL_MILESTONES.map(m => (
+                            <DropdownMenuItem key={m.value} disabled={m.value === mappedStage} onClick={() => {
+                              const reverseMap: Record<string, string> = {};
+                              COMMERCIAL_MILESTONES.forEach(cm => { if (!reverseMap[cm.value]) reverseMap[cm.value] = cm.value; });
+                              const effectiveStage = WORKSPACE_STAGES.find((s: { value: string; label: string }) => mapToCommercialMilestone(s.value) === m.value);
+                              if (effectiveStage) { advanceStage(ws.id); forceUpdate(n => n + 1); toast.success(`Moved to ${m.label}`); }
+                              else { toast.success(`Moved to ${m.label}`); }
+                            }}>
+                              {m.label}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </div>
-                )}
 
-                <div className="flex items-center gap-2">
-                  <User className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground">Renewal Owner:</span>
-                  <Select
-                    value={activeCycle.renewalOwnerId || "unassigned"}
-                    onValueChange={(val) => {
-                      const member = teamMembers.find(m => m.id === val);
-                      if (member) {
-                        updateRenewalOwner(activeCycle.id, member.id, member.name);
-                        forceUpdate(n => n + 1);
-                        toast.success(`Renewal owner changed to ${member.name}`);
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="h-7 w-[140px] text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {teamMembers.map(m => (
-                        <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {/* Strip — dot + label nodes with connectors (matching Tender UI exactly) */}
+                  <div className="flex items-center gap-0 overflow-x-auto pb-1 scrollbar-thin">
+                    {stripMs.map((m, i) => {
+                      const isCurrent = i === currentIdx && !isTerminal;
+                      const isPast = !isTerminal && i < currentIdx;
+                      const isFuture = !isCurrent && !isPast;
+                      const isSuggested = i === suggestedIdx;
+
+                      return (
+                        <div key={m.value} className="flex items-center shrink-0">
+                          {/* Step node */}
+                          <button
+                            onClick={() => !isCurrent && advanceStage(ws.id)}
+                            disabled={isCurrent}
+                            title={isSuggested ? `Suggested next: ${m.label}` : m.label}
+                            className={`
+                              relative flex flex-col items-center px-3 py-2 rounded-lg transition-all group
+                              ${isCurrent
+                                ? "bg-[var(--color-hala-navy)] text-white shadow-md cursor-default"
+                                : isPast
+                                  ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-950/50 cursor-pointer"
+                                  : isSuggested
+                                    ? "border border-dashed border-primary/50 text-primary hover:bg-primary/5 cursor-pointer"
+                                    : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted/40 cursor-pointer"
+                              }
+                            `}
+                          >
+                            {/* Dot */}
+                            <div className={`w-2 h-2 rounded-full mb-1.5 ${
+                              isCurrent ? "bg-white" :
+                              isPast ? "bg-emerald-500" :
+                              isSuggested ? "bg-primary/60" :
+                              "bg-muted-foreground/20"
+                            }`} />
+                            <span className={`text-[10px] font-medium whitespace-nowrap leading-none ${
+                              isCurrent ? "text-white font-semibold" : ""
+                            }`}>
+                              {m.label}
+                            </span>
+                            {isSuggested && (
+                              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-primary animate-pulse" />
+                            )}
+                          </button>
+
+                          {/* Connector */}
+                          {i < stripMs.length - 1 && (
+                            <div className={`h-px w-4 shrink-0 ${
+                              i < currentIdx ? "bg-emerald-400" : "bg-muted-foreground/15"
+                            }`} />
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* Terminal state — separated */}
+                    <div className="ml-3 flex items-center gap-1">
+                      <div className="h-4 w-px bg-border mx-1" />
+                      <button
+                        onClick={() => mappedStage !== "closed_lost" && advanceStage(ws.id)}
+                        disabled={mappedStage === "closed_lost"}
+                        className={`px-2.5 py-1.5 rounded-lg text-[10px] font-medium transition-all cursor-pointer ${
+                          mappedStage === "closed_lost"
+                            ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 cursor-default"
+                            : "text-red-500/60 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-600"
+                        }`}
+                      >
+                        Closed Lost
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Helper microcopy */}
+                  <p className="text-[10px] text-muted-foreground/60 mt-1.5 italic">
+                    Commercial lifecycle tracker — separate from internal working board.
+                    {!isTerminal && suggestedIdx >= 0 && suggestedIdx < stripMs.length && (
+                      <span className="ml-1 text-primary/70 not-italic">
+                        Suggested next: <strong>{stripMs[suggestedIdx]?.label}</strong>
+                      </span>
+                    )}
+                  </p>
                 </div>
-
-                {inRenewalWindow && activeCycle.status !== "renewal_in_progress" && (
-                  <Button size="sm" className="bg-orange-600 hover:bg-orange-700 text-xs h-7 ml-auto"
-                    onClick={async () => {
-                      const newCycle = await startRenewal(ws.id, ws);
-                      setActiveCycle(newCycle);
-                      forceUpdate(n => n + 1);
-                      toast.success("Renewal started — Cycle #" + newCycle.cycleNumber + " created");
-                    }}>
-                    <RefreshCw className="w-3.5 h-3.5 mr-1" /> Start Renewal
-                  </Button>
-                )}
-                {activeCycle.status === "renewal_in_progress" && (
-                  <Badge variant="outline" className="text-[10px] border-blue-300 bg-blue-50 text-blue-700 ml-auto">
-                    <RefreshCw className="w-3 h-3 mr-1" /> Renewal In Progress
-                  </Badge>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+              );
+            })()}
+          </CardContent></Card>
+        ) : (
+          /* ── Tender / Renewal strip (unchanged) ── */
+          <Card className="border border-border shadow-none mb-6"><CardContent className="py-4 px-6">
+            <div className="flex items-center gap-1 overflow-x-auto">
+              {effectiveStages.map((s, i) => (
+                <div key={s.value} className="flex items-center">
+                  <div className={`px-2.5 py-1 rounded text-[10px] font-medium whitespace-nowrap ${i <= effectiveStageIdx ? "bg-primary text-primary-foreground" : i === effectiveStageIdx + 1 ? "bg-muted text-muted-foreground border border-dashed border-primary/30" : "bg-muted text-muted-foreground/50"}`}>{s.label}</div>
+                  {i < effectiveStages.length - 1 && <div className={`w-4 h-px mx-0.5 ${i < effectiveStageIdx ? "bg-primary" : "bg-border"}`} />}
+                </div>
+              ))}
+            </div>
+          </CardContent></Card>
         )}
 
-        {/* ═══ SIGNALS ═══ */}
-        {wsSignals.length > 0 && <div className="mb-6 space-y-2">
-          {wsSignals.map(sig => (
-            <div key={sig.id} className={`flex items-start gap-3 p-3 rounded-lg border ${sig.severity === "red" ? "border-[var(--color-rag-red)]/20 bg-red-50" : sig.severity === "amber" ? "border-[var(--color-rag-amber)]/20 bg-amber-50" : "border-[var(--color-rag-green)]/20 bg-green-50"}`}>
-              <div className={`rag-dot mt-1.5 shrink-0 ${sig.severity === "red" ? "rag-dot-red" : sig.severity === "amber" ? "rag-dot-amber" : "rag-dot-green"}`} />
-              <div>
-                <p className="text-sm font-medium">{sig.type.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">{sig.message}</p>
-              </div>
-            </div>
-          ))}
-        </div>}
+        {/* ═══ COMMERCIAL: SUGGESTED NEXT ACTION + SMART CHIPS + DECISION STATUS ═══ */}
+        {isCommercial && (() => {
+          const sub = deriveSubLifecycleStates(ws, wsQuotes, wsProposals, wsSLAs);
+          const mappedMs = mapToCommercialMilestone(ws.stage);
+          const msIdx = COMMERCIAL_MILESTONES.findIndex(m => m.value === mappedMs);
+          const approvedIdx = COMMERCIAL_MILESTONES.findIndex(m => m.value === "commercial_approved");
+          const contractingIdx = COMMERCIAL_MILESTONES.findIndex(m => m.value === "contracting");
 
-        {/* ═══ TABS (type-aware) ═══ */}
+          // ── Derive suggested next actions ──
+          const nextActions: string[] = [];
+          if (!sub.quoteState && msIdx <= 2) nextActions.push("Create Quote");
+          if (sub.quoteState === "draft") nextActions.push("Submit Quote for Approval");
+          if (sub.quoteState === "approved" && !sub.proposalState) nextActions.push("Create Proposal");
+          if (sub.proposalState === "draft") nextActions.push("Send Proposal to CRM");
+          if (sub.proposalState === "sent") nextActions.push("Follow up on Proposal");
+          if (sub.proposalState === "commercial_approved" && sub.slaState === "not_started") nextActions.push("Start SLA Draft");
+          if (msIdx >= approvedIdx && sub.slaState === "draft") nextActions.push("Submit SLA for Review");
+          if (msIdx >= contractingIdx && sub.slaState === "approved") nextActions.push("Prepare Contract Pack");
+          if (nextActions.length === 0) {
+            if (msIdx === 0) nextActions.push("Begin Solution Design");
+            else nextActions.push("Continue " + (COMMERCIAL_MILESTONES[msIdx]?.label || "Current Phase"));
+          }
+
+          // ── Derive smart chip context ──
+          const quoteContext = !sub.quoteState ? "Not started" : sub.quoteState === "draft" ? "Draft (needs approval)" : sub.quoteState === "submitted_for_approval" ? "Awaiting approval" : sub.quoteState === "approved" ? "Approved ✓" : sub.quoteState === "rejected" ? "Rejected (revise)" : "Superseded";
+          const proposalContext = !sub.proposalState ? (sub.quoteState === "approved" ? "Not started (blocking)" : "Not required yet") : sub.proposalState === "draft" ? "Draft (needs CRM)" : sub.proposalState === "sent" ? "Sent (awaiting response)" : sub.proposalState === "commercial_approved" ? "Approved ✓" : sub.proposalState === "rejected" ? "Rejected (revise)" : PROPOSAL_STATES.find(s => s.value === sub.proposalState)?.label || "Draft";
+          const slaContext = sub.slaState === "not_started" ? (msIdx >= approvedIdx ? "Not started (overdue)" : "Not required yet") : sub.slaState === "draft" ? "Draft (in progress)" : sub.slaState === "approved" ? "Approved ✓" : SLA_STATES.find(s => s.value === sub.slaState)?.label || "—";
+          const handoverContext = sub.handoverState === "not_started" ? "Not required yet" : sub.handoverState === "completed" ? "Completed ✓" : HANDOVER_STATES.find(s => s.value === sub.handoverState)?.label || "In Progress";
+
+          // ── Margin interpretation ──
+          const marginDelta = ws.gpPercent - 22;
+          const marginLabel = ws.gpPercent >= 22 ? "Healthy" : ws.gpPercent >= 10 ? "Tight" : "Critical";
+          const marginDetail = ws.gpPercent >= 22 ? `+${marginDelta.toFixed(1)}% above target` : `${marginDelta.toFixed(1)}% below target`;
+
+          return (
+            <>
+              {/* ── Suggested Next Action ── */}
+              <div className="flex items-center gap-3 mb-3 p-2.5 rounded-lg border border-primary/20 bg-primary/5">
+                <ChevronRight className="w-4 h-4 text-primary shrink-0" />
+                <span className="text-xs font-semibold text-primary">Next:</span>
+                {nextActions.slice(0, 2).map((a, i) => (
+                  <span key={i} className="text-xs font-medium text-foreground">{i > 0 ? " · " : ""}{a}</span>
+                ))}
+              </div>
+
+              {/* ── Smart Sub-Lifecycle Chips ── */}
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
+                {[
+                  { label: "Quote", ctx: quoteContext, color: sub.quoteState === "approved" ? "bg-emerald-100 text-emerald-700" : sub.quoteState === "rejected" ? "bg-red-100 text-red-700" : sub.quoteState ? "bg-blue-50 text-blue-700" : "bg-gray-50 text-gray-400" },
+                  { label: "Proposal", ctx: proposalContext, color: sub.proposalState === "commercial_approved" ? "bg-emerald-100 text-emerald-700" : sub.proposalState === "rejected" ? "bg-red-100 text-red-700" : proposalContext.includes("blocking") ? "bg-amber-100 text-amber-700" : sub.proposalState ? "bg-blue-50 text-blue-700" : "bg-gray-50 text-gray-400" },
+                  { label: "SLA", ctx: slaContext, color: sub.slaState === "approved" ? "bg-emerald-100 text-emerald-700" : slaContext.includes("overdue") ? "bg-red-100 text-red-700" : sub.slaState !== "not_started" ? "bg-blue-50 text-blue-700" : "bg-gray-50 text-gray-400" },
+                  { label: "Handover", ctx: handoverContext, color: sub.handoverState === "completed" ? "bg-emerald-100 text-emerald-700" : sub.handoverState !== "not_started" ? "bg-blue-50 text-blue-700" : "bg-gray-50 text-gray-400" },
+                ].map(c => (
+                  <span key={c.label} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-medium ${c.color}`}>
+                    {c.label}: {c.ctx}
+                  </span>
+                ))}
+              </div>
+
+              {/* ── Decision Status Row (replaces KPI cards) ── */}
+              <div className="grid grid-cols-4 gap-3 mb-4">
+                <div className={`rounded-lg border p-3 ${ws.gpPercent < 10 ? "border-red-200 bg-red-50/60" : ws.gpPercent < 22 ? "border-amber-200 bg-amber-50/60" : "border-emerald-200 bg-emerald-50/60"}`}>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Margin</p>
+                  <p className={`text-sm font-bold mt-0.5 ${ws.gpPercent >= 22 ? "text-emerald-700" : ws.gpPercent >= 10 ? "text-amber-700" : "text-red-700"}`}>{marginLabel}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{marginDetail}</p>
+                </div>
+                <div className={`rounded-lg border p-3 ${!sub.proposalState && sub.quoteState === "approved" ? "border-amber-200 bg-amber-50/60" : "border-border bg-muted/20"}`}>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Execution</p>
+                  <p className="text-sm font-bold mt-0.5">{sub.proposalState ? (PROPOSAL_STATES.find(s => s.value === sub.proposalState)?.label || "Active") : sub.quoteState ? "Quote Only" : "Not Started"}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{formatSAR(ws.estimatedValue)} · {ws.palletVolume.toLocaleString()} plt</p>
+                </div>
+                <div className={`rounded-lg border p-3 ${ws.daysInStage > 14 ? "border-red-200 bg-red-50/60" : ws.daysInStage > 7 ? "border-amber-200 bg-amber-50/60" : "border-border bg-muted/20"}`}>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Time Pressure</p>
+                  <p className={`text-sm font-bold mt-0.5 ${ws.daysInStage > 14 ? "text-red-700" : ws.daysInStage > 7 ? "text-amber-700" : ""}`}>{ws.daysInStage}d in stage</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{ws.daysInStage > 14 ? "Stalled — action needed" : ws.daysInStage > 7 ? "Monitor closely" : "On track"}</p>
+                </div>
+                <div className={`rounded-lg border p-3 ${ws.approvalState === "not_required" ? "border-border bg-muted/20" : ws.approvalState === "fully_approved" ? "border-emerald-200 bg-emerald-50/60" : "border-amber-200 bg-amber-50/60"}`}>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Approval</p>
+                  <p className={`text-sm font-bold mt-0.5 ${ws.approvalState === "fully_approved" ? "text-emerald-700" : ws.approvalState === "pending" ? "text-amber-700" : ""}`}>{ws.approvalState === "fully_approved" ? "Approved" : ws.approvalState === "pending" ? "Pending" : "Not Started"}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{ws.owner} · {ws.region}</p>
+                </div>
+              </div>
+
+              {/* ── Signal Banner (upgraded — with consequence) ── */}
+              {wsSignals.length > 0 && <div className="mb-4 space-y-2">
+                {wsSignals.map(sig => (
+                  <div key={sig.id} className={`flex items-start gap-3 p-3 rounded-lg border ${sig.severity === "red" ? "border-red-200 bg-red-50" : sig.severity === "amber" ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+                    <AlertTriangle className={`w-4 h-4 mt-0.5 shrink-0 ${sig.severity === "red" ? "text-red-500" : sig.severity === "amber" ? "text-amber-500" : "text-emerald-500"}`} />
+                    <div>
+                      <p className="text-sm font-semibold">{sig.type.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{sig.message}</p>
+                      {sig.severity === "amber" && ws.gpPercent < 22 && sig.type === "margin_warning" && (
+                        <p className="text-xs text-amber-700 mt-1">→ Director approval required before advancing · Risk: deal delay</p>
+                      )}
+                      {sig.severity === "red" && sig.type === "margin_critical" && (
+                        <p className="text-xs text-red-700 mt-1">→ CEO/CFO approval required · Consider re-pricing before proposal</p>
+                      )}
+                      {sig.type === "stage_aging" && (
+                        <p className="text-xs text-amber-700 mt-1">→ Action: follow up or escalate to sales head</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>}
+            </>
+          );
+        })()}
+
+        {/* ═══ TENDER/RENEWAL: KPI CARDS (unchanged) ═══ */}
+        {!isCommercial && <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
+            {(isTender ? [
+              { label: "Est. Value", value: formatSAR(ws.estimatedValue) },
+              { label: "Target GP%", value: formatPercent(ws.gpPercent), color: ws.gpPercent >= 22 ? "rag-green" : ws.gpPercent >= 10 ? "rag-amber" : "rag-red" },
+              { label: "Probability", value: `${ws.probabilityPercent ?? 0}%` },
+              { label: "Deadline", value: ws.submissionDeadline || "—" },
+              { label: "Region", value: ws.region },
+              { label: "Owner", value: ws.owner },
+            ] : [
+              { label: "Est. Value", value: formatSAR(ws.estimatedValue) },
+              { label: "GP%", value: formatPercent(ws.gpPercent), color: ws.gpPercent >= 22 ? "rag-green" : ws.gpPercent >= 10 ? "rag-amber" : "rag-red" },
+              { label: "Pallets", value: ws.palletVolume.toLocaleString() },
+              { label: "Days in Stage", value: String(ws.daysInStage), color: ws.daysInStage > 14 ? "rag-red" : ws.daysInStage > 7 ? "rag-amber" : undefined },
+              { label: "Region", value: ws.region },
+              { label: "Owner", value: ws.owner },
+            ]).map(kpi => (
+              <Card key={kpi.label} className="border border-border shadow-none"><CardContent className="p-3">
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{kpi.label}</p>
+                <p className={`data-value text-lg font-semibold mt-0.5 ${kpi.color || ""}`}>{kpi.value}</p>
+              </CardContent></Card>
+            ))}
+          </div>
+
+          {/* CONTRACT & RENEWAL STRIP (renewal/non-tender only — removed from commercial) */}
+          {integrationEnabled && activeCycle && (
+            <Card className={`border shadow-none mb-6 ${inRenewalWindow ? "border-orange-300 bg-orange-50/30" : daysToExpiry !== null && daysToExpiry <= 120 ? "border-amber-200 bg-amber-50/20" : "border-border"}`}>
+              <CardContent className="py-3 px-5">
+                <div className="flex items-center gap-6 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <CalendarClock className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Contract Cycle</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-medium">Cycle #{activeCycle.cycleNumber}</span>
+                    <Badge variant="outline" className={`text-[10px] ${cycleStatusConfig[activeCycle.status]?.color || ""}`}>
+                      {cycleStatusConfig[activeCycle.status]?.label || activeCycle.status}
+                    </Badge>
+                  </div>
+                  {activeCycle.endDate && (
+                    <div className="flex items-center gap-4">
+                      <div>
+                        <span className="text-[10px] text-muted-foreground uppercase">SLA Expiry</span>
+                        <p className="text-sm font-medium data-value">{activeCycle.endDate}</p>
+                      </div>
+                      {daysToExpiry !== null && (
+                        <div>
+                          <span className="text-[10px] text-muted-foreground uppercase">Days Left</span>
+                          <p className={`text-sm font-bold ${daysToExpiry <= 30 ? "text-red-600" : daysToExpiry <= 90 ? "text-amber-600" : "text-emerald-600"}`}>
+                            {daysToExpiry > 0 ? daysToExpiry : "Expired"}
+                          </p>
+                        </div>
+                      )}
+                      <div>
+                        <span className="text-[10px] text-muted-foreground uppercase">Renewal Window</span>
+                        <p className={`text-sm font-medium ${inRenewalWindow ? "text-orange-600 font-bold" : "text-muted-foreground"}`}>
+                          {inRenewalWindow ? "OPEN" : daysToExpiry !== null && daysToExpiry <= 0 ? "Expired" : "Closed"}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <User className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">Renewal Owner:</span>
+                    <Select value={activeCycle.renewalOwnerId || "unassigned"} onValueChange={(val) => { const member = teamMembers.find(m => m.id === val); if (member) { updateRenewalOwner(activeCycle.id, member.id, member.name); forceUpdate(n => n + 1); toast.success(`Renewal owner changed to ${member.name}`); } }}>
+                      <SelectTrigger className="h-7 w-[140px] text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>{teamMembers.map(m => (<SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>))}</SelectContent>
+                    </Select>
+                  </div>
+                  {inRenewalWindow && activeCycle.status !== "renewal_in_progress" && (
+                    <Button size="sm" className="bg-orange-600 hover:bg-orange-700 text-xs h-7 ml-auto" onClick={async () => { const newCycle = await startRenewal(ws.id, ws); setActiveCycle(newCycle); forceUpdate(n => n + 1); toast.success("Renewal started — Cycle #" + newCycle.cycleNumber + " created"); }}>
+                      <RefreshCw className="w-3.5 h-3.5 mr-1" /> Start Renewal
+                    </Button>
+                  )}
+                  {activeCycle.status === "renewal_in_progress" && (
+                    <Badge variant="outline" className="text-[10px] border-blue-300 bg-blue-50 text-blue-700 ml-auto"><RefreshCw className="w-3 h-3 mr-1" /> Renewal In Progress</Badge>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* SIGNALS (tender/renewal — unchanged) */}
+          {wsSignals.length > 0 && <div className="mb-6 space-y-2">
+            {wsSignals.map(sig => (
+              <div key={sig.id} className={`flex items-start gap-3 p-3 rounded-lg border ${sig.severity === "red" ? "border-[var(--color-rag-red)]/20 bg-red-50" : sig.severity === "amber" ? "border-[var(--color-rag-amber)]/20 bg-amber-50" : "border-[var(--color-rag-green)]/20 bg-green-50"}`}>
+                <div className={`rag-dot mt-1.5 shrink-0 ${sig.severity === "red" ? "rag-dot-red" : sig.severity === "amber" ? "rag-dot-amber" : "rag-dot-green"}`} />
+                <div>
+                  <p className="text-sm font-medium">{sig.type.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{sig.message}</p>
+                </div>
+              </div>
+            ))}
+          </div>}
+        </>}
+
+        {/* ═══ TABS (type-aware — commercial uses decision-domain tabs) ═══ */}
         <Tabs defaultValue={initialTab} className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsList className={isCommercial ? "bg-muted/60 rounded-full p-1 gap-0.5" : ""}>
+            <TabsTrigger value="overview" className={isCommercial ? "rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm" : ""}>Overview</TabsTrigger>
             {isTender ? (
               /* Tender workspace tabs */
               <>
@@ -876,8 +1101,26 @@ export default function WorkspaceDetail() {
                 </TabsTrigger>
                 <TabsTrigger value="audit">Audit Trail</TabsTrigger>
               </>
+            ) : isCommercial ? (
+              /* ── Commercial decision-domain tabs ── */
+              <>
+                <TabsTrigger value="commercial" className="rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">Commercial</TabsTrigger>
+                <TabsTrigger value="delivery" className="rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">Delivery</TabsTrigger>
+                <TabsTrigger value="risk_signals" className="rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  Risk & Signals
+                  {workspaceEscalations.filter(e => e.status === "open").length > 0 && (
+                    <span className="ml-1 inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold">
+                      {workspaceEscalations.filter(e => e.status === "open").length}
+                    </span>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="customer_tab" className="rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">Customer</TabsTrigger>
+                <TabsTrigger value="documents" className="rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">Documents</TabsTrigger>
+                <TabsTrigger value="activity" className="rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">Activity</TabsTrigger>
+                <TabsTrigger value="audit" className="rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">Audit Trail</TabsTrigger>
+              </>
             ) : (
-              /* Commercial / Renewal workspace tabs */
+              /* Renewal / other workspace tabs */
               <>
                 {navigationV1 ? (
                   <TabsTrigger value="documents">Documents</TabsTrigger>
@@ -940,6 +1183,364 @@ export default function WorkspaceDetail() {
             </div>
             <Card className="border border-border shadow-none mt-6"><CardHeader className="pb-3"><CardTitle className="text-base font-serif">Notes</CardTitle></CardHeader><CardContent className="pt-0"><p className="text-sm text-muted-foreground">{ws.notes}</p></CardContent></Card>
           </TabsContent>
+
+          {/* ═══ COMMERCIAL TAB (commercial decision-domain) ═══ */}
+          {isCommercial && (
+            <TabsContent value="commercial">
+              {(() => {
+                const sub = deriveSubLifecycleStates(ws, wsQuotes, wsProposals, wsSLAs);
+                const latestQuote = wsQuotes.length > 0 ? wsQuotes[wsQuotes.length - 1] : null;
+                const grossProfit = ws.estimatedValue * (ws.gpPercent / 100);
+                return (
+                  <div className="space-y-6">
+                    {/* Pricing Summary */}
+                    <Card className="border border-border shadow-none">
+                      <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2"><DollarSign className="w-4 h-4 text-muted-foreground" /> Pricing Summary</CardTitle></CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="grid grid-cols-4 gap-4">
+                          <div className="bg-muted/30 rounded-lg p-3">
+                            <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Estimated Value</p>
+                            <p className="text-lg font-bold mt-0.5">{formatSAR(ws.estimatedValue)}</p>
+                          </div>
+                          <div className="bg-muted/30 rounded-lg p-3">
+                            <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">GP%</p>
+                            <p className={`text-lg font-bold mt-0.5 ${ws.gpPercent >= 22 ? "text-emerald-600" : ws.gpPercent >= 10 ? "text-amber-600" : "text-red-600"}`}>{formatPercent(ws.gpPercent)}</p>
+                          </div>
+                          <div className="bg-muted/30 rounded-lg p-3">
+                            <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Est. Gross Profit</p>
+                            <p className="text-lg font-bold mt-0.5">{formatSAR(grossProfit)}</p>
+                          </div>
+                          <div className="bg-muted/30 rounded-lg p-3">
+                            <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Pallets</p>
+                            <p className="text-lg font-bold mt-0.5">{ws.palletVolume.toLocaleString()}</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    {/* Approval Status — collapsed by default */}
+                    {(() => {
+                      const approvedCount = approvalReqs.filter(r => wsApprovals.find(a => a.approverRole === r.role && a.decision === "approved")).length;
+                      const pendingCount = approvalReqs.filter(r => wsApprovals.find(a => a.approverRole === r.role && a.decision === "pending")).length;
+                      const totalCount = approvalReqs.length;
+                      const summaryLabel = approvedCount === totalCount ? "Fully Approved" : pendingCount > 0 ? `${pendingCount} Pending` : "Not Started";
+                      const summaryColor = approvedCount === totalCount ? "text-emerald-700" : pendingCount > 0 ? "text-amber-700" : "text-muted-foreground";
+                      return (
+                        <details className="border border-border rounded-lg">
+                          <summary className="flex items-center justify-between p-3 cursor-pointer hover:bg-muted/30 rounded-lg">
+                            <span className="text-sm font-semibold flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-muted-foreground" /> Approval Status</span>
+                            <span className={`text-xs font-semibold ${summaryColor}`}>{summaryLabel} ({approvedCount}/{totalCount})</span>
+                          </summary>
+                          <div className="px-3 pb-3 space-y-2 border-t border-border pt-2">
+                            <p className="text-xs text-muted-foreground">Based on GP% of {formatPercent(ws.gpPercent)} and {ws.palletVolume.toLocaleString()} pallets</p>
+                            {approvalReqs.map((req, i) => {
+                              const existing = wsApprovals.find(a => a.approverRole === req.role);
+                              return <div key={i} className="flex items-center justify-between p-2 rounded border border-border">
+                                <div><span className="text-sm font-medium">{getRoleLabel(req.role)}</span><span className="text-xs text-muted-foreground ml-2">({req.type})</span></div>
+                                <Badge variant={existing?.decision === "approved" ? "default" : existing?.decision === "pending" ? "secondary" : "outline"} className="text-[10px]">{existing?.decision || "not started"}</Badge>
+                              </div>;
+                            })}
+                          </div>
+                        </details>
+                      );
+                    })()}
+
+                    {/* Document Sub-Lifecycle Cards */}
+                    <div>
+                      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Clock className="w-4 h-4 text-muted-foreground" /> Document Sub-Lifecycles</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        {/* Quote */}
+                        <Card className="border border-border shadow-none">
+                          <CardContent className="p-4">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Quote</span>
+                              {sub.quoteState ? (
+                                <Badge variant="outline" className={`text-[10px] ${QUOTE_STATES.find(s => s.value === sub.quoteState)?.color}`}>
+                                  {QUOTE_STATES.find(s => s.value === sub.quoteState)?.label}
+                                </Badge>
+                              ) : <span className="text-[10px] text-muted-foreground/50">Not started</span>}
+                            </div>
+                            {latestQuote ? (
+                              <div className="space-y-1 text-xs">
+                                <div className="flex justify-between"><span className="text-muted-foreground">Version</span><span className="font-medium">v{latestQuote.version}</span></div>
+                                <div className="flex justify-between"><span className="text-muted-foreground">Created</span><span className="font-medium">{latestQuote.createdAt}</span></div>
+                                <div className="flex justify-between"><span className="text-muted-foreground">GP%</span><span className={`font-medium ${latestQuote.gpPercent >= 22 ? "text-emerald-600" : latestQuote.gpPercent >= 10 ? "text-amber-600" : "text-red-600"}`}>{formatPercent(latestQuote.gpPercent)}</span></div>
+                              </div>
+                            ) : <p className="text-xs text-muted-foreground/60 mt-1">No quote started yet. Create one when pricing is ready.</p>}
+                          </CardContent>
+                        </Card>
+
+                        {/* Proposal */}
+                        <Card className="border border-border shadow-none">
+                          <CardContent className="p-4">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Proposal</span>
+                              {sub.proposalState ? (
+                                <Badge variant="outline" className={`text-[10px] ${PROPOSAL_STATES.find(s => s.value === sub.proposalState)?.color}`}>
+                                  {PROPOSAL_STATES.find(s => s.value === sub.proposalState)?.label}
+                                </Badge>
+                              ) : <span className="text-[10px] text-muted-foreground/50">Not started</span>}
+                            </div>
+                            {wsProposals.length > 0 ? (
+                              <div className="space-y-1 text-xs">
+                                <div className="flex justify-between"><span className="text-muted-foreground">Version</span><span className="font-medium">v{wsProposals[wsProposals.length - 1].version}</span></div>
+                                <div className="flex justify-between"><span className="text-muted-foreground">Title</span><span className="font-medium truncate max-w-[150px]">{wsProposals[wsProposals.length - 1].title}</span></div>
+                                <div className="flex justify-between"><span className="text-muted-foreground">Created</span><span className="font-medium">{wsProposals[wsProposals.length - 1].createdAt}</span></div>
+                              </div>
+                            ) : <p className="text-xs text-muted-foreground/60 mt-1">No proposal drafted yet. Typically starts after quoting.</p>}
+                          </CardContent>
+                        </Card>
+
+                        {/* SLA */}
+                        <Card className="border border-border shadow-none">
+                          <CardContent className="p-4">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">SLA</span>
+                              <Badge variant="outline" className={`text-[10px] ${SLA_STATES.find(s => s.value === sub.slaState)?.color}`}>
+                                {SLA_STATES.find(s => s.value === sub.slaState)?.label}
+                              </Badge>
+                            </div>
+                            {wsSLAs.length > 0 ? (
+                              <div className="space-y-1 text-xs">
+                                <div className="flex justify-between"><span className="text-muted-foreground">Version</span><span className="font-medium">v{wsSLAs[0].version}</span></div>
+                                <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span className="font-medium">{wsSLAs[0].status}</span></div>
+                                <div className="flex justify-between"><span className="text-muted-foreground">Expiry</span><span className="font-medium">{wsSLAs[0].expiryDate}</span></div>
+                              </div>
+                            ) : <p className="text-xs text-muted-foreground/60 mt-1">SLA drafting begins after commercial approval.</p>}
+                          </CardContent>
+                        </Card>
+
+                        {/* Handover */}
+                        <Card className="border border-border shadow-none">
+                          <CardContent className="p-4">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Handover</span>
+                              <Badge variant="outline" className={`text-[10px] ${HANDOVER_STATES.find(s => s.value === sub.handoverState)?.color}`}>
+                                {HANDOVER_STATES.find(s => s.value === sub.handoverState)?.label}
+                              </Badge>
+                            </div>
+                            {sub.handoverState !== "not_started" ? (
+                              <div className="space-y-1 text-xs">
+                                <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span className="font-medium">{HANDOVER_STATES.find(s => s.value === sub.handoverState)?.label}</span></div>
+                              </div>
+                            ) : <p className="text-xs text-muted-foreground/60 mt-1">Handover initiates after contract signing.</p>}
+                          </CardContent>
+                        </Card>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </TabsContent>
+          )}
+
+          {/* ═══ DELIVERY TAB (commercial) ═══ */}
+          {isCommercial && (
+            <TabsContent value="delivery">
+              <div className="space-y-6">
+                <Card className="border border-border shadow-none">
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2"><User className="w-4 h-4 text-muted-foreground" /> Workspace Team</CardTitle></CardHeader>
+                  <CardContent className="pt-0">
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="bg-muted/30 rounded-lg p-3">
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Owner</p>
+                        <p className="text-sm font-semibold mt-0.5">{ws.owner}</p>
+                      </div>
+                      <div className="bg-muted/30 rounded-lg p-3">
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Region</p>
+                        <p className="text-sm font-semibold mt-0.5">{ws.region}</p>
+                      </div>
+                      <div className="bg-muted/30 rounded-lg p-3">
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Days in Stage</p>
+                        <p className={`text-sm font-semibold mt-0.5 ${ws.daysInStage > 14 ? "text-red-600" : ws.daysInStage > 7 ? "text-amber-600" : ""}`}>{ws.daysInStage}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="border border-border shadow-none">
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2"><Truck className="w-4 h-4 text-muted-foreground" /> Operational Context</CardTitle></CardHeader>
+                  <CardContent className="pt-0">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm"><span className="text-muted-foreground">Pallet Volume</span><span className="font-medium">{ws.palletVolume.toLocaleString()}</span></div>
+                        <div className="flex justify-between text-sm"><span className="text-muted-foreground">Estimated Value</span><span className="font-medium">{formatSAR(ws.estimatedValue)}</span></div>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm"><span className="text-muted-foreground">CRM Deal</span><span className="font-medium">{ws.crmDealId || "—"}</span></div>
+                        <div className="flex justify-between text-sm"><span className="text-muted-foreground">CRM Stage</span><span className="font-medium">{ws.crmStage || "—"}</span></div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+          )}
+
+          {/* ═══ RISK & SIGNALS TAB (commercial) ═══ */}
+          {isCommercial && (
+            <TabsContent value="risk_signals">
+              <WorkspaceRiskSignalsTab
+                workspaceId={ws.id}
+                customerId={ws.customerId}
+                contextLabel={ws.customerName || ws.title}
+                derivedSignals={((): import("@/components/WorkspaceRiskSignalsTab").DerivedSignal[] => {
+                  const s: import("@/components/WorkspaceRiskSignalsTab").DerivedSignal[] = [];
+                  if (ws.gpPercent < 10) s.push({ label: "Margin Risk", detail: `GP ${formatPercent(ws.gpPercent)} — critical, CEO/CFO approval needed`, severity: "red" });
+                  else if (ws.gpPercent < 22) s.push({ label: "Margin Risk", detail: `GP ${formatPercent(ws.gpPercent)} — tight, Director approval required`, severity: "amber" });
+                  else s.push({ label: "Margin", detail: `GP ${formatPercent(ws.gpPercent)} — healthy`, severity: "green" });
+                  if (ws.daysInStage > 14) s.push({ label: "Stage Stall", detail: `${ws.daysInStage}d in current stage — action needed`, severity: "red" });
+                  else if (ws.daysInStage > 7) s.push({ label: "Stage Velocity", detail: `${ws.daysInStage}d in current stage — monitor`, severity: "amber" });
+                  if (!ws.crmDealId) s.push({ label: "CRM Not Linked", detail: "Workspace not linked to CRM deal", severity: "amber" });
+                  return s;
+                })()}
+              />
+            </TabsContent>
+          )}
+
+          {/* ═══ CUSTOMER TAB (commercial — ECR + behavior + risk) ═══ */}
+          {isCommercial && (
+            <TabsContent value="customer_tab">
+              {(() => {
+                const dso = customer?.dso || 0;
+                const grade = customer?.grade || "TBA";
+                const payStatus = customer?.paymentStatus || "—";
+                const ecrScore = grade === "A" ? 92 : grade === "B" ? 78 : grade === "C" ? 55 : grade === "D" ? 35 : grade === "F" ? 10 : null;
+                const ecrGrade = ecrScore ? (ecrScore >= 90 ? "A" : ecrScore >= 80 ? "B" : ecrScore >= 60 ? "C" : ecrScore >= 40 ? "D" : "F") : null;
+                const payRisk = payStatus === "Good" ? "Low" : payStatus === "Acceptable" ? "Medium" : "High";
+                const dsoRisk = dso <= 30 ? "Healthy" : dso <= 45 ? "Acceptable" : dso <= 60 ? "Watch" : "Critical";
+                const strategicFit = (customer?.contractValue2025 || 0) > 5000000 ? "Strategic" : (customer?.contractValue2025 || 0) > 1000000 ? "Core" : "Standard";
+                return (
+                  <div className="space-y-6">
+                    {/* Customer Risk Signal Bar */}
+                    <div className={`p-3 rounded-lg border ${payRisk === "High" || dsoRisk === "Critical" ? "border-red-200 bg-red-50" : payRisk === "Medium" || dsoRisk === "Watch" ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className={`w-4 h-4 ${payRisk === "High" ? "text-red-600" : payRisk === "Medium" ? "text-amber-600" : "text-emerald-600"}`} />
+                        <span className={`text-sm font-semibold ${payRisk === "High" ? "text-red-800" : payRisk === "Medium" ? "text-amber-800" : "text-emerald-800"}`}>
+                          {payRisk === "High" ? "High Risk Customer — payment issues detected" : payRisk === "Medium" ? "Medium Risk — monitoring recommended" : "Healthy customer profile"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* ECR + Identity */}
+                    <div className="grid grid-cols-5 gap-3">
+                      <div className={`rounded-lg border p-3 ${ecrGrade === "A" || ecrGrade === "B" ? "border-emerald-200 bg-emerald-50/60" : ecrGrade === "C" ? "border-amber-200 bg-amber-50/60" : ecrGrade ? "border-red-200 bg-red-50/60" : "border-border bg-muted/20"}`}>
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">ECR Score</p>
+                        <p className={`text-lg font-bold mt-0.5 ${ecrGrade === "A" || ecrGrade === "B" ? "text-emerald-700" : ecrGrade === "C" ? "text-amber-700" : ecrGrade ? "text-red-700" : ""}`}>{ecrScore || "—"}</p>
+                        <p className="text-[10px] text-muted-foreground">Grade: {ecrGrade || "Not Scored"}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-muted/20 p-3">
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Customer</p>
+                        <p className="text-sm font-bold mt-0.5">{ws.customerName}</p>
+                        <p className="text-[10px] text-muted-foreground">{customer?.code || "—"} · {customer?.industry || "—"}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-muted/20 p-3">
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Strategic Fit</p>
+                        <p className="text-sm font-bold mt-0.5">{strategicFit}</p>
+                        <p className="text-[10px] text-muted-foreground">{formatSAR(customer?.contractValue2025 || 0)} contract</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-muted/20 p-3">
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Region</p>
+                        <p className="text-sm font-bold mt-0.5">{customer?.region || ws.region}</p>
+                        <p className="text-[10px] text-muted-foreground">{customer?.city || "—"}</p>
+                      </div>
+                      <div className="rounded-lg border border-border bg-muted/20 p-3">
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Account</p>
+                        <p className="text-sm font-bold mt-0.5">{customer?.accountOwner || ws.owner}</p>
+                        <p className="text-[10px] text-muted-foreground">{customer?.serviceType || "—"}</p>
+                      </div>
+                    </div>
+
+                    {/* Payment Behavior Signals */}
+                    <Card className="border border-border shadow-none">
+                      <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2"><BarChart3 className="w-4 h-4 text-muted-foreground" /> Payment Behavior</CardTitle></CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="grid grid-cols-4 gap-4">
+                          <div className={`rounded-lg border p-3 ${payRisk === "High" ? "border-red-200 bg-red-50/60" : payRisk === "Medium" ? "border-amber-200 bg-amber-50/60" : "border-emerald-200 bg-emerald-50/60"}`}>
+                            <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Payment Risk</p>
+                            <p className={`text-sm font-bold mt-0.5 ${payRisk === "High" ? "text-red-700" : payRisk === "Medium" ? "text-amber-700" : "text-emerald-700"}`}>{payRisk}</p>
+                            <p className="text-[10px] text-muted-foreground">{payStatus}</p>
+                          </div>
+                          <div className={`rounded-lg border p-3 ${dsoRisk === "Critical" ? "border-red-200 bg-red-50/60" : dsoRisk === "Watch" ? "border-amber-200 bg-amber-50/60" : "border-border bg-muted/20"}`}>
+                            <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">DSO</p>
+                            <p className={`text-sm font-bold mt-0.5 ${dsoRisk === "Critical" ? "text-red-700" : dsoRisk === "Watch" ? "text-amber-700" : ""}`}>{dso} days</p>
+                            <p className="text-[10px] text-muted-foreground">{dsoRisk}</p>
+                          </div>
+                          <div className="rounded-lg border border-border bg-muted/20 p-3">
+                            <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Contract Expiry</p>
+                            <p className="text-sm font-bold mt-0.5">{customer?.contractExpiry || "—"}</p>
+                          </div>
+                          <div className="rounded-lg border border-border bg-muted/20 p-3">
+                            <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Revenue Trend</p>
+                            <p className="text-sm font-bold mt-0.5">{(customer?.revenue2025 || 0) > (customer?.revenue2024 || 0) ? "↑ Growing" : (customer?.revenue2025 || 0) === (customer?.revenue2024 || 0) ? "→ Flat" : "↓ Declining"}</p>
+                            <p className="text-[10px] text-muted-foreground">{formatSAR(customer?.revenue2025 || 0)} YTD</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    {ws.customerId && (
+                      <Link href={`/customers/${ws.customerId}`}>
+                        <Button variant="outline" size="sm" className="text-xs">
+                          <ExternalLink className="w-3 h-3 mr-1.5" /> Open Full Customer Profile
+                        </Button>
+                      </Link>
+                    )}
+                  </div>
+                );
+              })()}
+            </TabsContent>
+          )}
+
+          {/* ═══ ACTIVITY TAB (commercial) ═══ */}
+          {isCommercial && (
+            <TabsContent value="activity">
+              <div className="space-y-4">
+                {/* Notes */}
+                <Card className="border border-border shadow-none">
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Notes</CardTitle></CardHeader>
+                  <CardContent className="pt-0">
+                    <p className="text-sm text-muted-foreground">{ws.notes || "No notes recorded."}</p>
+                  </CardContent>
+                </Card>
+                {/* Stage History */}
+                <Card className="border border-border shadow-none">
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Stage History</CardTitle></CardHeader>
+                  <CardContent className="pt-0">
+                    {wsStageHistory.length > 0 ? (
+                      <div className="space-y-2">
+                        {wsStageHistory.map((h: any, i: number) => (
+                          <div key={i} className="flex items-center gap-3 text-xs">
+                            <span className="text-muted-foreground w-24 shrink-0">{new Date(h.timestamp).toLocaleDateString()}</span>
+                            <span className="font-medium">{h.fromStage} → {h.toStage}</span>
+                            {h.override && <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-700">Override</Badge>}
+                          </div>
+                        ))}
+                      </div>
+                    ) : <p className="text-xs text-muted-foreground">No stage transitions recorded yet.</p>}
+                  </CardContent>
+                </Card>
+                {/* Recent Audit */}
+                <Card className="border border-border shadow-none">
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Recent Activity</CardTitle></CardHeader>
+                  <CardContent className="pt-0">
+                    {wsAudit.length > 0 ? (
+                      <div className="space-y-2">
+                        {wsAudit.slice(0, 10).map(entry => (
+                          <div key={entry.id} className="flex items-start gap-3 text-xs border-b border-border/50 pb-2 last:border-0">
+                            <span className="text-muted-foreground w-28 shrink-0">{new Date(entry.timestamp).toLocaleDateString()}</span>
+                            <div>
+                              <span className="font-medium">{entry.userName}</span>
+                              <span className="text-muted-foreground ml-1">— {entry.details}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <p className="text-xs text-muted-foreground">No activity recorded.</p>}
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+          )}
 
           {/* ═══ UNIFIED DOCUMENTS TAB (navigationV1) ═══ */}
           {navigationV1 && (
@@ -1226,6 +1827,18 @@ export default function WorkspaceDetail() {
           {navigationV1 && (
             <TabsContent value="commercial">
               <div className="space-y-6">
+                {/* Quote Section — Sprint 3 */}
+                <WorkspaceQuoteSection workspaceId={ws.id} customerId={ws.customerId} customerName={ws.customerName} />
+
+                {/* Proposal Section — Sprint 4 */}
+                <WorkspaceProposalSection workspaceId={ws.id} customerId={ws.customerId} customerName={ws.customerName} />
+
+                {/* SLA + Contract Section — Sprint 5 */}
+                <WorkspaceSlaContractSection workspaceId={ws.id} customerId={ws.customerId} customerName={ws.customerName} quotes={wsQuotes} proposals={wsProposals} />
+
+                {/* Generated Documents — Sprint 6 */}
+                <WorkspaceDocumentSection workspaceId={ws.id} quotes={wsQuotes} proposals={wsProposals} slas={[]} />
+
                 {/* P&L Calculator Link */}
                 <Card className="border border-border shadow-none hover:shadow-sm transition-shadow">
                   <CardContent className="p-5">

@@ -99,9 +99,11 @@ export default function EcrRuleSets() {
   };
 
   const handleWeightChange = (ruleSetId: string, metricId: string, newWeight: number) => {
+    // Clamp to valid range: 0-50 per metric, no negatives
+    const clamped = Math.max(0, Math.min(50, Math.round(newWeight)));
     setWeights(prev => prev.map(w =>
       w.ruleSetId === ruleSetId && w.metricId === metricId
-        ? { ...w, weight: newWeight }
+        ? { ...w, weight: clamped }
         : w
     ));
   };

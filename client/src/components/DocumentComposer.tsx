@@ -14,6 +14,7 @@
  */
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import DOMPurify from "dompurify";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -446,7 +447,7 @@ function PDFPreviewModal({ open, onClose, compiledHtml, missingTokens, onRecompi
         </DialogHeader>
         <div className="flex-1 flex gap-4 overflow-hidden">
           <div className="flex-1 border border-gray-200 rounded-lg overflow-auto bg-white">
-            <div className="p-8 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: compiledHtml }} />
+            <div className="p-8 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(compiledHtml) }} />
           </div>
           <div className="w-64 flex flex-col">
             <h3 className="text-xs font-semibold text-[#1B2A4A] mb-2">Token Status</h3>
@@ -799,7 +800,7 @@ function BlockEditor({
               </Button>
             </div>
           </div>
-          <div className="prose prose-sm max-w-none text-amber-900/80" dangerouslySetInnerHTML={{ __html: aiStaging }} />
+          <div className="prose prose-sm max-w-none text-amber-900/80" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(aiStaging) }} />
         </div>
       )}
 
@@ -1158,7 +1159,7 @@ export default function DocumentComposer({
       setIsLoadingInstance(false);
       // Mark initial load complete so subsequent setDocument calls trigger dirty
       setTimeout(() => { isLoadedRef.current = true; }, 100);
-    }).catch(() => { if (!cancelled) setIsLoadingInstance(false); });
+    }).catch((err) => { console.warn('[DocumentComposer] fetchDocInstance fallback:', err); if (!cancelled) setIsLoadingInstance(false); });
     return () => { cancelled = true; };
   }, [existingInstanceId]);
 
@@ -1495,8 +1496,12 @@ export default function DocumentComposer({
   }, [promptText, document.blocks.length]);
 
   // Save — returns true on success, false on failure
+  // B3 FIX: Ref-based guard prevents React async batching from allowing double-submit
+  const isSavingRef = useRef(false);
+
   const handleSave = useCallback(async (options?: { silent?: boolean }): Promise<boolean> => {
-    if (isSaving) return false;
+    if (isSavingRef.current) return false;
+    isSavingRef.current = true;
     setIsSaving(true);
     setSaveError(false);
     const user = getCurrentUser();
@@ -1539,11 +1544,13 @@ export default function DocumentComposer({
       // Success: reset dirty state
       setIsDirty(false);
       setLastSavedAt(new Date());
+      isSavingRef.current = false;
       setIsSaving(false);
       if (onSave) onSave(document);
       if (!options?.silent) toast.success("Document saved");
       return true;
     } catch (e) {
+      isSavingRef.current = false;
       setIsSaving(false);
       setSaveError(true);
       handleSupabaseError('Save_to_Supabase_failed', { message: String(e) });
@@ -1636,6 +1643,12 @@ export default function DocumentComposer({
   }, [document, onExportPDF, compiledPreviewHtml]);
 
   const handleCanonLock = useCallback(async () => {
+    // B2 FIX: Save current draft state before locking to canon
+    const preSaved = await handleSave({ silent: true });
+    if (!preSaved) {
+      toast.error("Cannot lock to Canon — save failed. Please try again.");
+      return;
+    }
     const now = new Date().toISOString();
     setDocumentDirty(prev => ({
       ...prev, status: "canon", updated_at: now,
@@ -1873,7 +1886,7 @@ export default function DocumentComposer({
               <Eye size={12} className="mr-1" /> Output Studio
             </Button>
             {mode !== "canon" && (
-              <Button variant="default" size="sm" onClick={() => handleCompilePDF()} className="bg-[#1B2A4A] hover:bg-[#2A3F6A] text-xs h-7">
+              <Button variant="default" size="sm" onClick={handleCanonLock} className="bg-[#1B2A4A] hover:bg-[#2A3F6A] text-xs h-7">
                 <Lock size={12} className="mr-1" /> Lock Canon
               </Button>
             )}

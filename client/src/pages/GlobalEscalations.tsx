@@ -53,6 +53,7 @@ import {
   type TriggerType,
 } from "@/lib/escalation-engine";
 import { CountdownBadge, CountdownDetail } from "@/components/EscalationCountdown";
+import { getEventLevel, ESCALATION_LEVELS } from "@/lib/escalation-triggers";
 
 // ============================================================
 // HELPERS
@@ -113,6 +114,30 @@ function AgingBadge({ createdAt, severity, status }: { createdAt: string; severi
   }
 
   return null;
+}
+
+// ============================================================
+// LEVEL BADGE
+// ============================================================
+
+function LevelBadge({ event }: { event: EscalationEvent }) {
+  const level = getEventLevel(event);
+  const config = ESCALATION_LEVELS.find(l => l.level === level);
+  if (!config) return null;
+
+  const styles = [
+    "", // 0 unused
+    "bg-slate-100 text-slate-600 border-slate-200",   // L1
+    "bg-blue-50 text-blue-700 border-blue-200",       // L2
+    "bg-amber-50 text-amber-800 border-amber-300",    // L3
+    "bg-red-100 text-red-900 border-red-300",         // L4
+  ];
+
+  return (
+    <span className={`inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${styles[level]}`}>
+      L{level}
+    </span>
+  );
 }
 
 // ============================================================
@@ -613,8 +638,13 @@ export default function GlobalEscalations() {
 
                       {/* Entity */}
                       <td className="px-4 py-3">
-                        <div className="text-xs font-medium text-foreground">{String(workspaceName)}</div>
-                        <div className="text-[10px] text-muted-foreground capitalize">{event.entityType}</div>
+                        <div className="flex items-center gap-1.5">
+                          <LevelBadge event={event} />
+                          <div>
+                            <div className="text-xs font-medium text-foreground">{String(workspaceName)}</div>
+                            <div className="text-[10px] text-muted-foreground capitalize">{event.entityType}</div>
+                          </div>
+                        </div>
                       </td>
 
                       {/* Trigger */}

@@ -19,8 +19,13 @@ import {
   Check, Copy, Trash2, Eye, ChevronDown, ChevronRight
 , ArrowLeft } from "lucide-react";
 import { brandingProfiles, type BrandingProfile, type FooterFormat } from "@/lib/document-composer";
+import { useDocBrandingProfiles } from "@/hooks/useSupabase";
 
 export default function BrandingProfilesPage() {
+  // Live Supabase data
+  const { data: liveBranding, error: brnError } = useDocBrandingProfiles();
+  const profiles = brnError ? brandingProfiles : liveBranding;
+
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<BrandingProfile | null>(null);
@@ -86,9 +91,9 @@ export default function BrandingProfilesPage() {
       {/* Metrics Strip */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         {[
-          { label: "Total Profiles", value: brandingProfiles.length, icon: Palette, color: "text-blue-600", bg: "bg-blue-50" },
-          { label: "Font Families", value: Array.from(new Set(brandingProfiles.map(bp => bp.font_family))).length, icon: Type, color: "text-purple-600", bg: "bg-purple-50" },
-          { label: "Header Styles", value: Array.from(new Set(brandingProfiles.map(bp => bp.header_style))).length, icon: FileText, color: "text-emerald-600", bg: "bg-emerald-50" },
+          { label: "Total Profiles", value: profiles.length, icon: Palette, color: "text-blue-600", bg: "bg-blue-50" },
+          { label: "Font Families", value: Array.from(new Set(profiles.map(bp => bp.font_family))).length, icon: Type, color: "text-purple-600", bg: "bg-purple-50" },
+          { label: "Header Styles", value: Array.from(new Set(profiles.map(bp => bp.header_style))).length, icon: FileText, color: "text-emerald-600", bg: "bg-emerald-50" },
         ].map((m, i) => (
           <Card key={i} className="border border-gray-200 shadow-none">
             <CardContent className="p-4">
@@ -106,7 +111,7 @@ export default function BrandingProfilesPage() {
 
       {/* Profile Cards */}
       <div className="space-y-3">
-        {brandingProfiles.map((profile) => {
+        {profiles.map((profile) => {
           const isExpanded = expandedId === profile.id;
 
           return (

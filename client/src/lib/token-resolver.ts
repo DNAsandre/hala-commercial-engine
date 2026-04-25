@@ -159,7 +159,8 @@ export async function buildAsyncResolutionContext(
       } else if (input.customerName) {
         entityBindings['recipient_name'] = input.customerName;
       }
-    } catch {
+    } catch (err) {
+      console.warn('[token-resolver] fetchPrimaryContact fallback:', err);
       // Fallback on error
       entityBindings['recipient_name'] = input.customerName || input.entityData?.name || '';
     }

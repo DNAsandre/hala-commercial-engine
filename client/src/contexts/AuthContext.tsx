@@ -77,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setAppUser(profile);
           if (profile) {
             setGlobalAuthUser(profile);
-            seedEscalationEvents().catch(() => {});
+            seedEscalationEvents().catch((err) => { console.warn('[AuthContext] seedEscalation fallback:', err); });
           }
         }
       }

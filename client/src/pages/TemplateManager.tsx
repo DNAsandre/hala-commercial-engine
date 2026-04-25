@@ -26,6 +26,9 @@ import {
   DOC_TYPE_CONFIG, TEMPLATE_STATUS_CONFIG, BLOCK_FAMILY_CONFIG,
   type DocTemplate, type DocType, type TemplateStatus, type RecipeBlock, type LayoutConfig
 } from "@/lib/document-composer";
+import {
+  useDocTemplates, useDocBlocks, useDocBrandingProfiles,
+} from "@/hooks/useSupabase";
 import { navigationV1 } from "@/components/DashboardLayout";
 
 const DOC_TYPE_ICONS: Record<string, typeof FileText> = {
@@ -43,22 +46,33 @@ export default function TemplateManager() {
   const [newName, setNewName] = useState("");
   const [newDocType, setNewDocType] = useState<DocType>("proposal");
   const [newDescription, setNewDescription] = useState("");
-  const [newBrandingId, setNewBrandingId] = useState(brandingProfiles[0]?.id || "");
+
+  // Live Supabase data
+  const { data: liveTemplates, loading: tplLoading, error: tplError } = useDocTemplates();
+  const { data: liveBlocks, error: blkError } = useDocBlocks();
+  const { data: liveBranding, error: brnError } = useDocBrandingProfiles();
+
+  // Use live data; only fall back to mock on error (not on empty — empty is valid)
+  const templates = tplError ? docTemplates : liveTemplates;
+  const blocks = blkError ? blockLibrary : liveBlocks;
+  const branding = brnError ? brandingProfiles : liveBranding;
+
+  const [newBrandingId, setNewBrandingId] = useState(branding[0]?.id || "");
 
   const filtered = useMemo(() => {
-    return docTemplates.filter(t => {
+    return templates.filter(t => {
       if (search && !t.name.toLowerCase().includes(search.toLowerCase()) && !t.description.toLowerCase().includes(search.toLowerCase())) return false;
       if (filterType !== "all" && t.doc_type !== filterType) return false;
       if (filterStatus !== "all" && t.status !== filterStatus) return false;
       return true;
     });
-  }, [search, filterType, filterStatus]);
+  }, [templates, search, filterType, filterStatus]);
 
   // Metrics
-  const totalTemplates = docTemplates.length;
-  const publishedCount = docTemplates.filter(t => t.status === "published").length;
-  const draftCount = docTemplates.filter(t => t.status === "draft").length;
-  const totalVersions = docTemplates.reduce((sum, t) => sum + t.versions.length, 0);
+  const totalTemplates = templates.length;
+  const publishedCount = templates.filter(t => t.status === "published").length;
+  const draftCount = templates.filter(t => t.status === "draft").length;
+  const totalVersions = templates.reduce((sum, t) => sum + t.versions.length, 0);
 
   const handleCreate = () => {
     if (!newName.trim()) { toast.error("Template name is required"); return; }

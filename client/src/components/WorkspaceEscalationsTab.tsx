@@ -76,9 +76,11 @@ export function WorkspaceEscalationsTab({
   // Load tasks when expanding an event
   useEffect(() => {
     if (expandedId && !tasks[expandedId]) {
+      let cancelled = false;
       fetchTasksByEscalation(expandedId).then(t => {
-        setTasks(prev => ({ ...prev, [expandedId]: t }));
+        if (!cancelled) setTasks(prev => ({ ...prev, [expandedId]: t }));
       });
+      return () => { cancelled = true; };
     }
   }, [expandedId]);
 

@@ -132,24 +132,26 @@ export async function syncCustomerCreate(customer: Record<string, any>): Promise
 
 export async function syncTenderCreate(tender: Record<string, any>): Promise<void> {
   const row: Record<string, any> = {
-    id: tender.id,
-    linked_workspace_id: tender.linkedWorkspaceId || null,
-    customer_id: tender.customerId,
-    customer_name: tender.customerName,
-    title: tender.title,
-    submission_deadline: tender.submissionDeadline,
-    estimated_value: tender.estimatedValue,
-    target_gp_percent: tender.targetGpPercent,
-    probability_percent: tender.probabilityPercent,
-    assigned_owner: tender.assignedOwner,
+    id:                    tender.id,
+    reference:             tender.id.toString().toUpperCase(),
+    title:                 tender.title || "",
+    customer_id:           tender.customerId || "",
+    customer_name:         tender.customerName || "",
+    region:                tender.region || "East",
+    phase:                 tender.status || "identified",
+    submission_deadline:   tender.submissionDeadline || null,
+    estimated_value:       tender.estimatedValue || 0,
+    owner:                 tender.assignedOwner || "",
+    notes:                 tender.notes || "",
+    workspace_id:          tender.linkedWorkspaceId || null,
+    target_gp_percent:     tender.targetGpPercent || 0,
+    probability_percent:   tender.probabilityPercent || 0,
     assigned_team_members: JSON.stringify(tender.assignedTeamMembers || []),
-    status: tender.status,
-    source: tender.source,
-    region: tender.region,
-    notes: tender.notes || "",
-    days_in_status: tender.daysInStatus || 0,
-    created_at: tender.createdAt || new Date().toISOString().slice(0, 10),
-    updated_at: tender.updatedAt || new Date().toISOString().slice(0, 10),
+    source:                tender.source || "Direct",
+    days_in_status:        tender.daysInStatus || 0,
+    crm_synced:            tender.crmSynced || false,
+    created_at:            tender.createdAt || new Date().toISOString().slice(0, 10),
+    updated_at:            new Date().toISOString().slice(0, 10),
   };
   const { error } = await supabase.from("tenders").upsert(row, { onConflict: 'id' });
   if (error) handleSupabaseError('syncTenderCreate', error, { entityId: tender.id });
@@ -160,16 +162,20 @@ export async function syncTenderUpdate(
   updates: Record<string, any>
 ): Promise<void> {
   const row: Record<string, any> = { updated_at: new Date().toISOString().slice(0, 10) };
+  // Map camelCase → actual DB column names
   const mapping: Record<string, string> = {
-    status: "status",
-    daysInStatus: "days_in_status",
-    notes: "notes",
-    probabilityPercent: "probability_percent",
-    wonLostReason: "won_lost_reason",
-    assignedOwner: "assigned_owner",
-    estimatedValue: "estimated_value",
-    targetGpPercent: "target_gp_percent",
-    submissionDeadline: "submission_deadline",
+    status:              "phase",
+    daysInStatus:        "days_in_status",
+    notes:               "notes",
+    probabilityPercent:  "probability_percent",
+    wonLostReason:       "notes",
+    assignedOwner:       "owner",
+    estimatedValue:      "estimated_value",
+    targetGpPercent:     "target_gp_percent",
+    submissionDeadline:  "submission_deadline",
+    linkedWorkspaceId:   "workspace_id",
+    source:              "source",
+    region:              "region",
   };
   for (const [key, val] of Object.entries(updates)) {
     const dbKey = mapping[key] || key;
@@ -506,7 +512,8 @@ export async function syncDocInstanceDelete(instanceId: string): Promise<boolean
       return false;
     }
     return true;
-  } catch {
+  } catch (err) {
+    console.warn('[supabase-sync] syncDocInstanceDelete fallback:', err);
     return false;
   }
 }

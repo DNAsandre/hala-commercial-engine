@@ -108,7 +108,7 @@ function logIntegrationAudit(
     details,
   };
   // Write to Supabase only (no in-memory push, no duplicate write)
-  syncAuditEntry(entry);
+  void syncAuditEntry(entry);
 }
 
 // ─── CONTRACT CYCLE HELPERS ─────────────────────────────────

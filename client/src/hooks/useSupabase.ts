@@ -13,11 +13,15 @@ import {
   fetchPnLModels, fetchPnLByWorkspace, fetchHandoverTasks,
   fetchCRMSyncEvents, fetchAuditLog,
   fetchContactsByCustomer, type CustomerContact,
+  fetchTenders, fetchTendersByCustomer, fetchTenderById,
+  fetchRenewalWorkspaces, fetchContractBaselines,
 } from "@/lib/supabase-data";
 import type {
   User, Customer, Workspace, Quote, Proposal, ApprovalRecord,
   Signal, PolicyGate, PnLModel, HandoverTask, CRMSyncEvent, AuditEntry,
 } from "@/lib/store";
+import type { Tender } from "@/lib/tender-engine";
+import type { RenewalWorkspace, ContractBaseline } from "@/lib/renewal-engine";
 
 interface UseQueryResult<T> {
   data: T;
@@ -143,3 +147,162 @@ export function useAuditLog(): UseQueryResult<AuditEntry[]> {
 export function useCustomerContacts(customerId: string): UseQueryResult<CustomerContact[]> {
   return useQuery(() => fetchContactsByCustomer(customerId), [], [customerId]);
 }
+
+// ─── TENDERS ────────────────────────────────────────────────
+
+export function useTenders(): UseQueryResult<Tender[]> {
+  return useQuery(fetchTenders, []);
+}
+
+export function useTender(id: string): UseQueryResult<Tender | null> {
+  return useQuery(() => fetchTenderById(id), null, [id]);
+}
+
+export function useTendersByCustomer(customerId: string): UseQueryResult<Tender[]> {
+  return useQuery(() => fetchTendersByCustomer(customerId), [], [customerId]);
+}
+
+// ─── RENEWALS ────────────────────────────────────────────────
+
+export function useRenewalWorkspaces(): UseQueryResult<RenewalWorkspace[]> {
+  return useQuery(fetchRenewalWorkspaces, []);
+}
+
+export function useContractBaselines(): UseQueryResult<ContractBaseline[]> {
+  return useQuery(fetchContractBaselines, []);
+}
+
+// ─── ECR ─────────────────────────────────────────────────────
+
+import type {
+  EcrMetric, EcrRuleSet, EcrRuleWeight, EcrInputSnapshot,
+  EcrInputValue, EcrScore, EcrAuditTrailEntry,
+} from "@/lib/ecr";
+import {
+  fetchEcrMetrics, fetchEcrRuleSets, fetchActiveEcrRuleSet,
+  fetchEcrRuleWeights, fetchEcrSnapshots, fetchEcrInputValues,
+  fetchEcrScores, fetchEcrAuditTrail,
+} from "@/lib/supabase-data";
+
+export function useEcrMetrics(): UseQueryResult<EcrMetric[]> {
+  return useQuery(fetchEcrMetrics, []);
+}
+
+export function useEcrRuleSets(): UseQueryResult<EcrRuleSet[]> {
+  return useQuery(fetchEcrRuleSets, []);
+}
+
+export function useActiveEcrRuleSet(): UseQueryResult<EcrRuleSet | null> {
+  return useQuery(fetchActiveEcrRuleSet, null);
+}
+
+export function useEcrRuleWeights(ruleSetId?: string): UseQueryResult<EcrRuleWeight[]> {
+  return useQuery(() => fetchEcrRuleWeights(ruleSetId), [], [ruleSetId]);
+}
+
+export function useEcrSnapshots(customerId?: string): UseQueryResult<EcrInputSnapshot[]> {
+  return useQuery(() => fetchEcrSnapshots(customerId), [], [customerId]);
+}
+
+export function useEcrInputValues(snapshotId?: string): UseQueryResult<EcrInputValue[]> {
+  return useQuery(() => fetchEcrInputValues(snapshotId), [], [snapshotId]);
+}
+
+export function useEcrScores(customerId?: string): UseQueryResult<EcrScore[]> {
+  return useQuery(() => fetchEcrScores(customerId), [], [customerId]);
+}
+
+export function useEcrAuditTrail(customerId?: string): UseQueryResult<EcrAuditTrailEntry[]> {
+  return useQuery(() => fetchEcrAuditTrail(customerId), [], [customerId]);
+}
+
+// ─── DOCUMENT COMPOSER ───────────────────────────────────────
+
+import type {
+  DocBlock, BrandingProfile, DocTemplate,
+  DocInstance, CompiledDocument, VaultAsset,
+} from "@/lib/document-composer";
+import {
+  fetchDocBlocks, fetchDocBrandingProfiles, fetchDocTemplates,
+  fetchDocInstances, fetchDocCompiledOutputs, fetchDocVaultAssets,
+} from "@/lib/supabase-data";
+
+export function useDocBlocks(): UseQueryResult<DocBlock[]> {
+  return useQuery(fetchDocBlocks, []);
+}
+
+export function useDocBrandingProfiles(): UseQueryResult<BrandingProfile[]> {
+  return useQuery(fetchDocBrandingProfiles, []);
+}
+
+export function useDocTemplates(): UseQueryResult<DocTemplate[]> {
+  return useQuery(fetchDocTemplates, []);
+}
+
+export function useDocInstances(): UseQueryResult<DocInstance[]> {
+  return useQuery(fetchDocInstances, []);
+}
+
+export function useDocCompiledOutputs(): UseQueryResult<CompiledDocument[]> {
+  return useQuery(fetchDocCompiledOutputs, []);
+}
+
+export function useDocVaultAssets(): UseQueryResult<VaultAsset[]> {
+  return useQuery(fetchDocVaultAssets, []);
+}
+
+// ─── GHL / DNA SUPERSYSTEMS CRM ──────────────────────────────
+
+import type {
+  CRMConfig, CRMContactMap, CRMOpportunityMap,
+  GHLPipeline, GHLContact, GHLOpportunity,
+} from "@/lib/ghl-client";
+import {
+  fetchCRMConfig, fetchContactMaps, fetchOpportunityMaps,
+  fetchGHLPipelines, fetchGHLContacts, fetchGHLOpportunities,
+} from "@/lib/ghl-client";
+
+export function useCRMConfig(): UseQueryResult<CRMConfig | null> {
+  return useQuery(fetchCRMConfig, null);
+}
+
+export function useCRMContactMaps(): UseQueryResult<CRMContactMap[]> {
+  return useQuery(fetchContactMaps, []);
+}
+
+export function useCRMOpportunityMaps(): UseQueryResult<CRMOpportunityMap[]> {
+  return useQuery(fetchOpportunityMaps, []);
+}
+
+export function useGHLPipelines(): UseQueryResult<GHLPipeline[]> {
+  return useQuery(fetchGHLPipelines, []);
+}
+
+export function useGHLContacts(query?: string): UseQueryResult<GHLContact[]> {
+  return useQuery(() => fetchGHLContacts(query), [], [query]);
+}
+
+export function useGHLOpportunities(pipelineId?: string): UseQueryResult<GHLOpportunity[]> {
+  return useQuery(
+    () => pipelineId ? fetchGHLOpportunities(pipelineId) : Promise.resolve([]),
+    [],
+    [pipelineId]
+  );
+}
+
+// ─── BOT GOVERNANCE ──────────────────────────────────────────
+
+import type { EditorBot, AIRun } from "@/lib/ai-runs";
+import { fetchEditorBots, fetchAIRuns } from "@/lib/supabase-data";
+
+export function useEditorBots(): UseQueryResult<EditorBot[]> {
+  return useQuery(fetchEditorBots, []);
+}
+
+export function useAIRuns(docInstanceId?: string): UseQueryResult<AIRun[]> {
+  return useQuery(() => fetchAIRuns(docInstanceId), [], [docInstanceId]);
+}
+
+
+
+

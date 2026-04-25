@@ -614,15 +614,70 @@ export function updateRenewalDecision(workspaceId: string, decision: RenewalDeci
   return true;
 }
 
-export function overrideGate(evaluationId: string, gateKey: string, reason: string, userId: string, userName: string): boolean {
+export function overrideGate(
+  evaluationId: string,
+  gateKey: string,
+  reason: string,
+  userId: string,
+  userName: string,
+  userRole?: string
+): { success: boolean; error?: string } {
   const evaluation = renewalGateEvaluations.find(e => e.id === evaluationId);
-  if (!evaluation) return false;
+  if (!evaluation) return { success: false, error: "Gate evaluation not found" };
+
   const gate = evaluation.gates.find(g => g.gateKey === gateKey);
-  if (!gate || !gate.overridable) return false;
+  if (!gate) return { success: false, error: "Gate not found in evaluation" };
+
+  // Non-overridable gates cannot be overridden
+  if (!gate.overridable) {
+    return { success: false, error: `Gate "${gate.gateName}" is non-overridable` };
+  }
+
+  // Cannot override a gate that already passed
+  if (gate.result === "pass") {
+    return { success: false, error: "Gate already passed — no override needed" };
+  }
+
+  // Already overridden
+  if (gate.overridden) {
+    return { success: false, error: "Gate has already been overridden" };
+  }
+
+  // Validate reason (minimum 10 characters)
+  if (!reason || reason.trim().length < 10) {
+    return { success: false, error: "Override reason is required and must be at least 10 characters" };
+  }
+
+  // Self-approval prevention: workspace owner cannot override their own renewal gates
+  const workspace = renewalWorkspaces.find(w => w.id === evaluation.workspaceId);
+  if (workspace && workspace.ownerUserId === userId) {
+    return { success: false, error: "Cannot override gates on your own renewal workspace. A different authorized user must approve." };
+  }
+
+  // RBAC: validate role against allowed override roles for this gate
+  // Allowed roles per gate (aligned with commercial-integrity.ts overrideRoleConfigs)
+  const gateRoleMap: Record<string, string[]> = {
+    ecr_gate: ["director", "ceo_cfo", "admin"],
+    margin_gate: ["director", "ceo_cfo", "admin"],
+    scope_drift_gate: ["regional_sales_head", "director", "ceo_cfo", "admin"],
+    ops_feasibility_gate: ["regional_ops_head", "director", "ceo_cfo", "admin"],
+    contract_timing_gate: ["regional_sales_head", "director", "ceo_cfo", "admin"],
+  };
+
+  const allowedRoles = gateRoleMap[gateKey] || ["director", "ceo_cfo", "admin"];
+  if (userRole && !allowedRoles.includes(userRole)) {
+    return {
+      success: false,
+      error: `Role "${userRole}" is not authorized to override gate "${gate.gateName}". Required: ${allowedRoles.join(", ")}`,
+    };
+  }
+
+  // Apply override
   gate.overridden = true;
-  gate.overrideReason = reason;
+  gate.overrideReason = reason.trim();
   gate.overrideBy = userName;
   gate.overrideAt = new Date().toISOString();
+
   addRenewalAuditEntry({
     entityType: "renewal_gate",
     entityId: evaluationId,
@@ -630,7 +685,8 @@ export function overrideGate(evaluationId: string, gateKey: string, reason: stri
     userId,
     userName,
     timestamp: new Date().toISOString(),
-    details: `Gate "${gate.gateName}" overridden: ${reason}`,
+    details: `Gate "${gate.gateName}" overridden by ${userName} (${userRole || "unknown role"}): ${reason.trim()}`,
   });
-  return true;
+
+  return { success: true };
 }

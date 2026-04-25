@@ -9,6 +9,7 @@
  */
 
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import DOMPurify from "dompurify";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -88,8 +89,15 @@ export default function BlockAIPanel({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Available bots for this doc type
-  const availableBots = useMemo(() => getBlockBots(docType), [docType]);
+  // Available bots for this doc type (async — reads from Supabase)
+  const [availableBots, setAvailableBots] = useState<EditorBot[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getBlockBots(docType).then(bots => {
+      if (!cancelled) setAvailableBots(bots);
+    });
+    return () => { cancelled = true; };
+  }, [docType]);
 
   // Auto-select first bot
   useEffect(() => {
@@ -108,9 +116,15 @@ export default function BlockAIPanel({
     setDraftChunkCount(0);
   }, [block?.id]);
 
-  const selectedBot = useMemo(() =>
-    selectedBotId ? getEditorBotById(selectedBotId) : null
-  , [selectedBotId]);
+  const [selectedBot, setSelectedBot] = useState<EditorBot | null>(null);
+  useEffect(() => {
+    if (!selectedBotId) { setSelectedBot(null); return; }
+    let cancelled = false;
+    getEditorBotById(selectedBotId).then(bot => {
+      if (!cancelled) setSelectedBot(bot);
+    });
+    return () => { cancelled = true; };
+  }, [selectedBotId]);
 
   const blockDef = block ? getBlockByKey(block.block_key) : null;
 
@@ -379,7 +393,7 @@ export default function BlockAIPanel({
                 <div className="p-2 rounded border border-gray-100 bg-gray-50">
                   <div className="text-[10px] font-medium text-gray-500 mb-1">Current Block Text</div>
                   <div className="text-[10px] text-gray-600 max-h-[80px] overflow-auto prose prose-xs"
-                    dangerouslySetInnerHTML={{ __html: block.content || "<em>Empty block</em>" }} />
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(block.content || "<em>Empty block</em>") }} />
                 </div>
                 <div className="p-2 rounded border border-gray-100 bg-gray-50">
                   <div className="text-[10px] font-medium text-gray-500 mb-1">Document Metadata</div>
@@ -425,7 +439,7 @@ export default function BlockAIPanel({
               </div>
               <div className="p-3">
                 <div className="prose prose-xs max-w-none text-amber-900/80 max-h-[200px] overflow-auto"
-                  dangerouslySetInnerHTML={{ __html: draftContent }} />
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(draftContent) }} />
               </div>
               <div className="flex items-center gap-1.5 px-3 py-2 border-t border-amber-200 bg-amber-50">
                 <Button size="sm" onClick={handleApply}

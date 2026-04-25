@@ -15,14 +15,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import {
   Calculator, TrendingUp, BarChart3, Shield, Award,
-  ChevronDown, ChevronUp, Clock, User, FileText, History
+  ChevronDown, ChevronUp, Clock, User, FileText, History, Loader2
 } from 'lucide-react';
 import {
-  mockScores, mockSnapshots, mockMetrics, mockRuleSets,
-  computeEcrScore, ecrCustomerNames, getGradeBg, getGradeColor,
-  mockInputValues,
+  computeEcrScore, getGradeBg, getGradeColor,
   type EcrScore, type EcrScoreBreakdown, type Grade
 } from '@/lib/ecr';
+import {
+  useEcrScores, useEcrSnapshots, useEcrRuleSets, useEcrMetrics,
+  useEcrRuleWeights, useEcrInputValues,
+} from '@/hooks/useSupabase';
 
 const gradeDescriptions: Record<Grade, string> = {
   A: 'Premium customer — high profitability, low risk, strategic value',
@@ -32,11 +34,32 @@ const gradeDescriptions: Record<Grade, string> = {
 };
 
 export default function EcrScoring() {
-  const [scores] = useState<EcrScore[]>(mockScores);
   const [selectedCustomer, setSelectedCustomer] = useState<string>('all');
   const [expandedScoreId, setExpandedScoreId] = useState<string | null>(null);
 
-  const customerIds = Object.keys(ecrCustomerNames);
+  // Live Supabase data
+  const { data: scores, loading: scoresLoading } = useEcrScores();
+  const { data: snapshots } = useEcrSnapshots();
+  const { data: ruleSets } = useEcrRuleSets();
+  const { data: metrics } = useEcrMetrics();
+  const { data: ruleWeights } = useEcrRuleWeights();
+  const { data: inputValues } = useEcrInputValues();
+
+  // Build customer IDs and name lookup from scores
+  const customerIds = useMemo(() => {
+    const ids = new Set<string>();
+    scores.forEach(s => ids.add(s.customerId));
+    return Array.from(ids);
+  }, [scores]);
+
+  const customerNames = useMemo(() => {
+    const names: Record<string, string> = {};
+    for (const id of customerIds) {
+      const raw = id.replace('cust-', '').replace(/-/g, ' ');
+      names[id] = raw.charAt(0).toUpperCase() + raw.slice(1);
+    }
+    return names;
+  }, [customerIds]);
 
   const filteredScores = useMemo(() => {
     let result = [...scores];
@@ -68,12 +91,20 @@ export default function EcrScoring() {
   }, [scores]);
 
   const getBreakdown = (score: EcrScore): EcrScoreBreakdown[] => {
-    const result = computeEcrScore(score.snapshotId, score.ruleSetId, mockMetrics, undefined, mockInputValues);
+    const result = computeEcrScore(score.snapshotId, score.ruleSetId, metrics, ruleWeights, inputValues);
     return result.breakdown;
   };
 
-  const getSnapshot = (snapshotId: string) => mockSnapshots.find(s => s.id === snapshotId);
-  const getRuleSet = (ruleSetId: string) => mockRuleSets.find(rs => rs.id === ruleSetId);
+  const getSnapshot = (snapshotId: string) => snapshots.find(s => s.id === snapshotId);
+  const getRuleSet = (ruleSetId: string) => ruleSets.find(rs => rs.id === ruleSetId);
+
+  if (scoresLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -131,7 +162,7 @@ export default function EcrScoring() {
               <SelectContent>
                 <SelectItem value="all">All Customers</SelectItem>
                 {customerIds.map(id => (
-                  <SelectItem key={id} value={id}>{ecrCustomerNames[id]}</SelectItem>
+                  <SelectItem key={id} value={id}>{customerNames[id] || id}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -157,7 +188,7 @@ export default function EcrScoring() {
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <h3 className="font-semibold text-slate-900">{ecrCustomerNames[score.customerId] || score.customerId}</h3>
+                            <h3 className="font-semibold text-slate-900">{customerNames[score.customerId] || score.customerId}</h3>
                             <span className="text-lg font-bold text-slate-700">{score.totalScore.toFixed(1)}</span>
                           </div>
                           <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5">
@@ -250,7 +281,7 @@ export default function EcrScoring() {
                       {index + 1}
                     </div>
                     <div className="flex-1">
-                      <h4 className="font-semibold text-slate-900">{ecrCustomerNames[score.customerId]}</h4>
+                      <h4 className="font-semibold text-slate-900">{customerNames[score.customerId] || score.customerId}</h4>
                       <p className="text-xs text-slate-400">Latest: {new Date(score.computedAt).toLocaleDateString()}</p>
                     </div>
                     <div className="text-right">

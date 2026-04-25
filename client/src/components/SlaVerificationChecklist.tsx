@@ -53,7 +53,8 @@ export function SlaVerificationChecklistComponent({
       }
       setChecklist(existing);
       onCompletionChange?.(isChecklistComplete(existing));
-    } catch {
+    } catch (err) {
+      console.warn('[SlaChecklist] loadChecklist fallback:', err);
       // Fallback to local default
       const fallback = createDefaultChecklist(workspace.id);
       setChecklist(fallback);
@@ -105,7 +106,8 @@ export function SlaVerificationChecklistComponent({
     setSaving(true);
     try {
       await upsertSlaChecklist(updatedChecklist);
-    } catch {
+    } catch (err) {
+      console.warn('[SlaChecklist] save fallback:', err);
       toast.error("Failed to save checklist update");
     } finally {
       setSaving(false);

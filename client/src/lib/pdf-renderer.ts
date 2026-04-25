@@ -14,6 +14,16 @@ import {
   formatSARPdf, formatDatePdf, generateReferenceNumber,
   HALA_BRANDING,
 } from "./pdf-engine";
+import DOMPurify from "dompurify";
+
+// 4A: Sanitize editor HTML before injection into PDFs
+function sanitizeEditorHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['p','br','strong','b','em','i','u','ul','ol','li','h1','h2','h3','h4','h5','h6','table','thead','tbody','tr','th','td','blockquote','a','span','div','img','hr','sub','sup'],
+    ALLOWED_ATTR: ['href','src','alt','class','style','dir','colspan','rowspan'],
+    FORBID_TAGS: ['script','iframe','object','embed','form','input','textarea','select','button'],
+  });
+}
 
 // ============================================================
 // MAIN RENDER FUNCTION
@@ -899,7 +909,7 @@ function renderIntroduction(ctx: PDFRenderContext, section: any, data: PDFSectio
   <div class="doc-section">
     <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>
     
-    ${customContent ? `<div class="editor-content">${customContent}</div>` : `
+    ${customContent ? `<div class="editor-content">${sanitizeEditorHtml(customContent)}</div>` : `
     <p class="section-text">
       HALA SCS is a leading supply chain solution provider with over 20 years of extensive experience in Saudi Arabia. We are pioneers in four main verticals (petrochemical, healthcare, FMCG / F&B, Industrial) where we successfully help our clients mitigate their supply chain risk, optimize the cost, and sustain their logistics.
     </p>`}
@@ -908,7 +918,7 @@ function renderIntroduction(ctx: PDFRenderContext, section: any, data: PDFSectio
     <div class="ar-block">
       <span class="ar-block-label">الترجمة العربية</span>
       <h2 class="section-heading">${escapeHtml(section.title_ar)}</h2>
-      ${customContentAr ? `<div class="editor-content">${customContentAr}</div>` : `
+      ${customContentAr ? `<div class="editor-content">${sanitizeEditorHtml(customContentAr)}</div>` : `
       <p class="section-text">
         هلا لخدمات الإمدادات المساندة هي شركة رائدة في حلول سلسلة الإمداد مع أكثر من 20 عاماً من الخبرة الواسعة في المملكة العربية السعودية.
       </p>`}
@@ -923,7 +933,7 @@ function renderScopeOfWork(ctx: PDFRenderContext, section: any, data: PDFSection
   <div class="doc-section">
     <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>
     
-    ${data?.content_html ? `<div class="editor-content">${data.content_html}</div>` : `
+    ${data?.content_html ? `<div class="editor-content">${sanitizeEditorHtml(data.content_html)}</div>` : `
     <ol class="lettered-list">
       <li>Dedicated storage space in the designated warehouse facility.</li>
       <li>Temperature controlled storage as per agreed specifications.</li>
@@ -938,7 +948,7 @@ function renderScopeOfWork(ctx: PDFRenderContext, section: any, data: PDFSection
     <div class="ar-block">
       <span class="ar-block-label">الترجمة العربية</span>
       <h2 class="section-heading">${escapeHtml(section.title_ar)}</h2>
-      ${data?.content_html_ar ? `<div class="editor-content">${data.content_html_ar}</div>` : `
+      ${data?.content_html_ar ? `<div class="editor-content">${sanitizeEditorHtml(data.content_html_ar)}</div>` : `
       <ol class="lettered-list">
         <li>مساحة تخزين مخصصة في المستودع المحدد.</li>
         <li>تخزين بدرجة حرارة متحكم بها حسب المواصفات المتفق عليها.</li>
@@ -989,7 +999,7 @@ function renderPricingTable(ctx: PDFRenderContext, section: any, data: PDFSectio
       </tbody>
     </table>
     
-    ${data?.content_html && (!data?.pricing_rows || data.pricing_rows.length === 0) ? `<div class="editor-content" style="margin-top: 8px;">${data.content_html}</div>` : ""}
+    ${data?.content_html && (!data?.pricing_rows || data.pricing_rows.length === 0) ? `<div class="editor-content" style="margin-top: 8px;">${sanitizeEditorHtml(data.content_html)}</div>` : ""}
     
     ${isDual ? `
     <div class="ar-block">
@@ -1098,7 +1108,7 @@ function renderTerms(ctx: PDFRenderContext, section: any, data: PDFSectionData |
       </li>`).join('')}
     </ol>`;
   } else if (rawHtml) {
-    enTermsContent = `<div class="editor-content">${rawHtml}</div>`;
+    enTermsContent = `<div class="editor-content">${sanitizeEditorHtml(rawHtml)}</div>`;
     arTermsContent = ``;
   } else {
     enTermsContent = `
@@ -1250,13 +1260,13 @@ function renderCustomContent(ctx: PDFRenderContext, section: any, data: PDFSecti
   ${data?.content_html ? `
   <div class="doc-section">
     <h2 class="section-heading">${escapeHtml(section.title_en)}</h2>
-    <div class="editor-content">${data.content_html}</div>
+    <div class="editor-content">${sanitizeEditorHtml(data.content_html)}</div>
     
     ${isDual && data?.content_html_ar ? `
     <div class="ar-block">
       <span class="ar-block-label">\u0627\u0644\u062a\u0631\u062c\u0645\u0629 \u0627\u0644\u0639\u0631\u0628\u064a\u0629</span>
       <h2 class="section-heading">${escapeHtml(section.title_ar || section.title_en)}</h2>
-      <div class="editor-content">${data.content_html_ar}</div>
+      <div class="editor-content">${sanitizeEditorHtml(data.content_html_ar)}</div>
     </div>` : ''}
   </div>` : ''}`;
 }

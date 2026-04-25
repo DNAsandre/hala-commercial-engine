@@ -70,8 +70,8 @@ export function useCRMSyncStatus(workspaceId: string) {
         const broader = allEvents.filter(e => e.entity_id === workspaceId);
         setLatestEvent(broader.length > 0 ? broader[0] : null);
       }
-    } catch {
-      // fallback
+    } catch (err) {
+      console.warn('[CRMSyncBadge] loadStatus fallback:', err);
     } finally {
       setLoading(false);
     }
@@ -95,7 +95,7 @@ export default function CRMSyncBadge({ workspaceId, workspaceTitle, variant = "b
         if (wsEvents.length > 0) {
           setLatestEvent(wsEvents[0]);
         }
-      } catch { /* fallback */ }
+      } catch (err) { console.warn('[CRMSyncBadge] mount load fallback:', err); }
       setLoaded(true);
     })();
   });
@@ -115,7 +115,8 @@ export default function CRMSyncBadge({ workspaceId, workspaceTitle, variant = "b
           description: `${events.length} sync event(s) created for ${events.map(e => e.connection_id.replace("crm-conn-", "").toUpperCase()).join(", ")}`,
         });
       }
-    } catch {
+    } catch (err) {
+      console.warn('[CRMSyncBadge] handleSyncNow fallback:', err);
       toast.error("Failed to trigger CRM sync");
     } finally {
       setSyncing(false);

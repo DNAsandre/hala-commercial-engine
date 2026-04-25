@@ -428,7 +428,8 @@ function parsePricingFromHtml(html: string): PricingRow[] {
         rate: rate || monthly,
       });
     }
-  } catch {
+  } catch (err) {
+    console.warn('[OutputStudio] parsePricingFromHtml fallback:', err);
     // If parsing fails, return empty to fall back to sample data
   }
   return rows;
@@ -552,7 +553,8 @@ export default function OutputStudio() {
           missing: summary.missingTokens.map(t => t.key),
           status: summary.missingCount === 0 ? "healthy" : summary.missingCount <= 2 ? "warning" : "error",
         });
-      } catch {
+      } catch (err) {
+        console.warn('[OutputStudio] tokenHealth resolution fallback:', err);
         if (!cancelled) {
           setTokenHealth({ total: 0, resolved: 0, missing: [], status: "healthy" });
         }
@@ -638,7 +640,7 @@ export default function OutputStudio() {
 
         if (html) {
           const compiledId = `cd-${crypto.randomUUID()}`;
-          syncCompiledDocCreate({
+          void syncCompiledDocCreate({
             id: compiledId,
             doc_instance_id: docInstanceId || docInstance.id,
             doc_instance_version_id: currentVersion.id,
@@ -658,7 +660,8 @@ export default function OutputStudio() {
         } else {
           toast.error("Compilation returned empty output");
         }
-      } catch {
+      } catch (err) {
+        console.warn('[OutputStudio] compileFinalPDF fallback:', err);
         toast.error("Compilation failed — unexpected error");
       }
       setIsCompiling(false);

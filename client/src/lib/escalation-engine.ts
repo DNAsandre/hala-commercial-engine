@@ -20,7 +20,19 @@ import { DELTA_THRESHOLDS } from "./sla-integrity";
 
 export type EscalationSeverity = "red" | "amber";
 export type EscalationStatus = "open" | "acknowledged" | "resolved";
-export type TriggerType = "margin_breach" | "delta_breach" | "stage_override" | "score_red" | "renewal_risk" | "crm_sync_failed";
+/** Legacy + extended trigger types. New triggers added in escalation-triggers.ts */
+export type TriggerType =
+  // Legacy (commercial workspace)
+  | "margin_breach" | "delta_breach" | "stage_override" | "score_red" | "renewal_risk" | "crm_sync_failed"
+  // Extended (global exception engine)
+  | "contract_expired" | "contract_expiring"
+  | "payment_bad" | "payment_dso"
+  | "missing_document"
+  | "renewal_stalled" | "renewal_expired"
+  | "crm_ongoing"
+  | "notes_red_flag"
+  | "stalled_workspace"
+  | "customer_grade_drop";
 export type TaskStatus = "open" | "in_progress" | "done";
 
 export interface EscalationRule {
@@ -302,7 +314,7 @@ export async function fetchTasksByEscalation(escalationId: string): Promise<Esca
 // EVENT CREATION (Core)
 // ============================================================
 
-interface CreateEscalationParams {
+export interface CreateEscalationParams {
   entityType: string;
   entityId: string;
   workspaceId: string | null;
@@ -313,6 +325,9 @@ interface CreateEscalationParams {
   metadata?: Record<string, any>;
   taskTitle?: string;
   taskDescription?: string;
+  /** Dynamic routing: if provided, overrides COMMERCIAL_DIRECTOR default */
+  assignedToId?: string;
+  assignedToName?: string;
 }
 
 /**
@@ -335,8 +350,8 @@ export async function createEscalation(params: CreateEscalationParams): Promise<
     trigger_type: params.triggerType,
     trigger_reason: params.triggerReason,
     status: "open",
-    assigned_to: COMMERCIAL_DIRECTOR.id,
-    assigned_to_name: COMMERCIAL_DIRECTOR.name,
+    assigned_to: params.assignedToId || COMMERCIAL_DIRECTOR.id,
+    assigned_to_name: params.assignedToName || COMMERCIAL_DIRECTOR.name,
     triggered_by: user.id,
     triggered_by_name: user.name,
     metadata: params.metadata || null,
@@ -356,8 +371,8 @@ export async function createEscalation(params: CreateEscalationParams): Promise<
       escalation_id: eventId,
       title: params.taskTitle,
       description: params.taskDescription || null,
-      assigned_to: COMMERCIAL_DIRECTOR.id,
-      assigned_to_name: COMMERCIAL_DIRECTOR.name,
+      assigned_to: params.assignedToId || COMMERCIAL_DIRECTOR.id,
+      assigned_to_name: params.assignedToName || COMMERCIAL_DIRECTOR.name,
       due_date: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days from now
       status: "open",
       created_at: now,
@@ -383,7 +398,7 @@ export async function createEscalation(params: CreateEscalationParams): Promise<
       ruleId: params.ruleId,
       severity: params.severity,
       triggerType: params.triggerType,
-      assignedTo: COMMERCIAL_DIRECTOR.name,
+      assignedTo: params.assignedToName || COMMERCIAL_DIRECTOR.name,
     },
   });
 
@@ -829,13 +844,26 @@ export async function seedEscalationEvents(): Promise<void> {
 // ============================================================
 
 export function getTriggerTypeLabel(type: TriggerType): string {
-  const labels: Record<TriggerType, string> = {
+  const labels: Partial<Record<TriggerType, string>> = {
+    // Legacy
     margin_breach: "Margin Breach",
     delta_breach: "SLA/P&L Delta Breach",
     stage_override: "Stage Override",
     score_red: "Customer Score Red",
     renewal_risk: "Renewal Risk",
     crm_sync_failed: "CRM Sync Failed",
+    // Extended
+    contract_expired: "Contract Expired",
+    contract_expiring: "Contract Expiring",
+    payment_bad: "Bad Payer",
+    payment_dso: "High DSO",
+    missing_document: "Missing Document",
+    renewal_stalled: "Renewal Stalled",
+    renewal_expired: "Renewal Expired",
+    crm_ongoing: "CRM Stage Mismatch",
+    notes_red_flag: "Notes Red Flag",
+    stalled_workspace: "Stalled Workspace",
+    customer_grade_drop: "Customer Grade Drop",
   };
   return labels[type] || type;
 }

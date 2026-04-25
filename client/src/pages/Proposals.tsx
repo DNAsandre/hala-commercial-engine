@@ -83,8 +83,8 @@ export default function Proposals() {
       logApproval("proposal", proposalId, "approved", `Proposal "${title}" approved`, {});
       // Persist approval to Supabase
       const user = getCurrentUser();
-      syncProposalUpdate(proposalId, { state: "commercial_approved" });
-      syncApprovalCreate({
+      void syncProposalUpdate(proposalId, { state: "commercial_approved" });
+      void syncApprovalCreate({
         id: `a-${crypto.randomUUID()}`,
         entityType: "proposal",
         entityId: proposalId,
@@ -110,8 +110,8 @@ export default function Proposals() {
     }, () => {
       logAction("proposal", proposalId, "proposal_crm_exported", `Proposal "${title}" exported to CRM`);
       // Persist CRM export status to Supabase
-      syncProposalUpdate(proposalId, { state: "sent" });
-      syncAuditEntry({
+      void syncProposalUpdate(proposalId, { state: "sent" });
+      void syncAuditEntry({
         id: `audit-crm-${crypto.randomUUID()}`,
         entityType: "proposal",
         entityId: proposalId,
@@ -277,7 +277,8 @@ export default function Proposals() {
                             workspaceId: p.workspaceId,
                             existingInstanceId: instance.id,
                           });
-                        } catch {
+                        } catch (err) {
+                          console.warn('[Proposals] resolveOrCreateDocInstance fallback:', err);
                           setEditingProposal({
                             customerName,
                             customerId: customer?.id || "",

@@ -8,7 +8,7 @@
 
 import { getCurrentUser } from "./auth-state";
 import { supabase } from "./supabase";
-import { handleSupabaseError } from "@/lib/supabase-error";
+import { handleSupabaseError, setFetchError, clearFetchError } from "@/lib/supabase-error";
 import { optimisticUpdate } from "@/lib/optimistic-lock";
 import type {
   User, Customer, Workspace, Quote, Proposal, ApprovalRecord,
@@ -346,10 +346,38 @@ function auditToRow(a: Partial<AuditEntry>): Record<string, any> {
 // FETCH FUNCTIONS (Read)
 // ============================================================
 
+/**
+ * Centralized fetch wrapper that:
+ *  1. Calls handleSupabaseError (console + ring buffer + optional toast)
+ *  2. Records error in fetchErrorState so components can distinguish
+ *     "empty data" from "failed fetch"
+ *  3. Clears fetchErrorState on success (for retry flows)
+ *  4. Returns [] on error to maintain backward compatibility
+ *
+ * Usage:
+ *   return safeFetchList('fetchCustomers', data, error, row => mapCustomer(row));
+ */
+function safeFetchList<TRow, TResult>(
+  operation: string,
+  data: TRow[] | null,
+  error: any,
+  mapper?: (row: TRow) => TResult,
+  options?: { silent?: boolean }
+): TResult[] {
+  if (error) {
+    handleSupabaseError(operation, error, { silent: options?.silent ?? false });
+    setFetchError(operation, error);
+    return [];
+  }
+  // Success — clear any previous error state for this operation
+  clearFetchError(operation);
+  const rows = data || [];
+  return mapper ? rows.map(mapper) : rows as unknown as TResult[];
+}
+
 export async function fetchUsers(): Promise<User[]> {
   const { data, error } = await supabase.from("users").select("*");
-  if (error) { handleSupabaseError('fetchUsers', error, { silent: true }); return []; }
-  return data || [];
+  return safeFetchList('fetchUsers', data, error, undefined, { silent: true });
 }
 
 export async function fetchCurrentUser(): Promise<User> {
@@ -362,8 +390,7 @@ export async function fetchCurrentUser(): Promise<User> {
 
 export async function fetchCustomers(): Promise<Customer[]> {
   const { data, error } = await supabase.from("customers").select("*").order("name");
-  if (error) { handleSupabaseError('fetchCustomers', error, { silent: true }); return []; }
-  return (data || []).map(mapCustomer);
+  return safeFetchList('fetchCustomers', data, error, mapCustomer, { silent: true });
 }
 
 export async function fetchCustomerById(id: string): Promise<Customer | null> {
@@ -374,8 +401,7 @@ export async function fetchCustomerById(id: string): Promise<Customer | null> {
 
 export async function fetchWorkspaces(): Promise<Workspace[]> {
   const { data, error } = await supabase.from("workspaces").select("*").order("updated_at", { ascending: false });
-  if (error) { handleSupabaseError('fetchWorkspaces', error, { silent: true }); return []; }
-  return (data || []).map(mapWorkspace);
+  return safeFetchList('fetchWorkspaces', data, error, mapWorkspace, { silent: true });
 }
 
 export async function fetchWorkspaceById(id: string): Promise<Workspace | null> {
@@ -386,56 +412,47 @@ export async function fetchWorkspaceById(id: string): Promise<Workspace | null> 
 
 export async function fetchWorkspacesByCustomer(customerId: string): Promise<Workspace[]> {
   const { data, error } = await supabase.from("workspaces").select("*").eq("customer_id", customerId);
-  if (error) { handleSupabaseError('fetchWorkspacesByCustomer', error, { silent: true }); return []; }
-  return (data || []).map(mapWorkspace);
+  return safeFetchList('fetchWorkspacesByCustomer', data, error, mapWorkspace, { silent: true });
 }
 
 export async function fetchQuotes(): Promise<Quote[]> {
   const { data, error } = await supabase.from("quotes").select("*").order("created_at", { ascending: false });
-  if (error) { handleSupabaseError('fetchQuotes', error, { silent: true }); return []; }
-  return (data || []).map(mapQuote);
+  return safeFetchList('fetchQuotes', data, error, mapQuote, { silent: true });
 }
 
 export async function fetchQuotesByWorkspace(workspaceId: string): Promise<Quote[]> {
   const { data, error } = await supabase.from("quotes").select("*").eq("workspace_id", workspaceId);
-  if (error) return [];
-  return (data || []).map(mapQuote);
+  return safeFetchList('fetchQuotesByWorkspace', data, error, mapQuote);
 }
 
 export async function fetchProposals(): Promise<Proposal[]> {
   const { data, error } = await supabase.from("proposals").select("*").order("created_at", { ascending: false });
-  if (error) { handleSupabaseError('fetchProposals', error, { silent: true }); return []; }
-  return (data || []).map(mapProposal);
+  return safeFetchList('fetchProposals', data, error, mapProposal, { silent: true });
 }
 
 export async function fetchProposalsByWorkspace(workspaceId: string): Promise<Proposal[]> {
   const { data, error } = await supabase.from("proposals").select("*").eq("workspace_id", workspaceId);
-  if (error) return [];
-  return (data || []).map(mapProposal);
+  return safeFetchList('fetchProposalsByWorkspace', data, error, mapProposal);
 }
 
 export async function fetchApprovalRecords(): Promise<ApprovalRecord[]> {
   const { data, error } = await supabase.from("approval_records").select("*").order("timestamp", { ascending: false });
-  if (error) { handleSupabaseError('fetchApprovalRecords', error, { silent: true }); return []; }
-  return (data || []).map(mapApprovalRecord);
+  return safeFetchList('fetchApprovalRecords', data, error, mapApprovalRecord, { silent: true });
 }
 
 export async function fetchSignals(): Promise<Signal[]> {
   const { data, error } = await supabase.from("signals").select("*").order("created_at", { ascending: false });
-  if (error) { handleSupabaseError('fetchSignals', error, { silent: true }); return []; }
-  return (data || []).map(mapSignal);
+  return safeFetchList('fetchSignals', data, error, mapSignal, { silent: true });
 }
 
 export async function fetchPolicyGates(): Promise<PolicyGate[]> {
   const { data, error } = await supabase.from("policy_gates").select("*");
-  if (error) { handleSupabaseError('fetchPolicyGates', error, { silent: true }); return []; }
-  return (data || []).map(mapPolicyGate);
+  return safeFetchList('fetchPolicyGates', data, error, mapPolicyGate, { silent: true });
 }
 
 export async function fetchPnLModels(): Promise<PnLModel[]> {
   const { data, error } = await supabase.from("pnl_models").select("*");
-  if (error) return [];
-  return (data || []).map(mapPnLModel);
+  return safeFetchList('fetchPnLModels', data, error, mapPnLModel);
 }
 
 export async function fetchPnLByWorkspace(workspaceId: string): Promise<PnLModel | null> {
@@ -448,20 +465,17 @@ export async function fetchHandoverTasks(workspaceId?: string): Promise<Handover
   let query = supabase.from("handover_tasks").select("*");
   if (workspaceId) query = query.eq("workspace_id", workspaceId);
   const { data, error } = await query;
-  if (error) return [];
-  return (data || []).map(mapHandoverTask);
+  return safeFetchList('fetchHandoverTasks', data, error, mapHandoverTask);
 }
 
 export async function fetchCRMSyncEvents(): Promise<CRMSyncEvent[]> {
   const { data, error } = await supabase.from("crm_sync_events").select("*").order("timestamp", { ascending: false });
-  if (error) return [];
-  return (data || []).map(mapCRMSyncEvent);
+  return safeFetchList('fetchCRMSyncEvents', data, error, mapCRMSyncEvent);
 }
 
 export async function fetchAuditLog(): Promise<AuditEntry[]> {
   const { data, error } = await supabase.from("audit_log").select("*").order("timestamp", { ascending: false });
-  if (error) return [];
-  return (data || []).map(mapAuditEntry);
+  return safeFetchList('fetchAuditLog', data, error, mapAuditEntry);
 }
 
 // ============================================================
@@ -692,7 +706,8 @@ export async function fetchContactsByCustomer(customerId: string): Promise<Custo
     .select("*")
     .eq("customer_id", customerId)
     .order("is_primary", { ascending: false });
-  if (error) { handleSupabaseError('fetchContactsByCustomer', error, { silent: true }); return []; }
+  if (error) { handleSupabaseError('fetchContactsByCustomer', error, { silent: true }); setFetchError('fetchContactsByCustomer', error); return []; }
+  clearFetchError('fetchContactsByCustomer');
   return (data || []).map(mapCustomerContact);
 }
 
@@ -743,3 +758,674 @@ export async function setPrimaryContact(contactId: string, customerId: string): 
   if (error) { handleSupabaseError('setPrimaryContact', error, { silent: true }); return false; }
   return true;
 }
+
+// ============================================================
+// TENDERS — Supabase data layer
+// DB schema uses: phase (=status), owner (=assignedOwner),
+//                 workspace_id (=linkedWorkspaceId)
+// ============================================================
+
+import type { Tender } from "./tender-engine";
+
+function mapTender(row: any): Tender {
+  return {
+    id:                  row.id,
+    linkedWorkspaceId:   row.workspace_id ?? null,
+    customerId:          row.customer_id ?? "",
+    customerName:        row.customer_name ?? "",
+    title:               row.title ?? "",
+    submissionDeadline:  row.submission_deadline
+                           ? String(row.submission_deadline).slice(0, 10)
+                           : "",
+    estimatedValue:      Number(row.estimated_value) || 0,
+    targetGpPercent:     Number(row.target_gp_percent) || 0,
+    probabilityPercent:  Number(row.probability_percent) || 0,
+    assignedOwner:       row.owner ?? "",
+    assignedTeamMembers: Array.isArray(row.assigned_team_members)
+                           ? row.assigned_team_members
+                           : [],
+    status:              (row.phase ?? "identified") as Tender["status"],
+    source:              (row.source ?? "Direct") as Tender["source"],
+    region:              (row.region ?? "East") as Tender["region"],
+    notes:               row.notes ?? "",
+    daysInStatus:        Number(row.days_in_status) || 0,
+    crmSynced:           Boolean(row.crm_synced),
+    createdAt:           row.created_at
+                           ? String(row.created_at).slice(0, 10)
+                           : new Date().toISOString().slice(0, 10),
+    updatedAt:           row.updated_at
+                           ? String(row.updated_at).slice(0, 10)
+                           : new Date().toISOString().slice(0, 10),
+  };
+}
+
+export async function fetchTenders(): Promise<Tender[]> {
+  const { data, error } = await supabase
+    .from("tenders")
+    .select("*")
+    .order("created_at", { ascending: false });
+  return safeFetchList('fetchTenders', data, error, mapTender, { silent: true });
+}
+
+export async function fetchTenderById(id: string): Promise<Tender | null> {
+  const { data, error } = await supabase
+    .from("tenders").select("*").eq("id", id).maybeSingle();
+  if (error) { handleSupabaseError("fetchTenderById", error, { silent: true }); return null; }
+  return data ? mapTender(data) : null;
+}
+
+export async function fetchTendersByCustomer(customerId: string): Promise<Tender[]> {
+  const { data, error } = await supabase
+    .from("tenders").select("*").eq("customer_id", customerId);
+  return safeFetchList('fetchTendersByCustomer', data, error, mapTender, { silent: true });
+}
+
+export async function upsertTender(tender: Tender): Promise<void> {
+  const row = {
+    id:                    tender.id,
+    reference:             tender.id.toUpperCase(),
+    title:                 tender.title,
+    customer_id:           tender.customerId,
+    customer_name:         tender.customerName,
+    region:                tender.region,
+    phase:                 tender.status,
+    submission_deadline:   tender.submissionDeadline || null,
+    estimated_value:       tender.estimatedValue,
+    owner:                 tender.assignedOwner,
+    notes:                 tender.notes,
+    workspace_id:          tender.linkedWorkspaceId ?? null,
+    target_gp_percent:     tender.targetGpPercent,
+    probability_percent:   tender.probabilityPercent,
+    assigned_team_members: tender.assignedTeamMembers,
+    source:                tender.source,
+    days_in_status:        tender.daysInStatus,
+    crm_synced:            tender.crmSynced ?? false,
+    updated_at:            new Date().toISOString(),
+  };
+  const { error } = await supabase.from("tenders").upsert(row, { onConflict: "id" });
+  if (error) handleSupabaseError("upsertTender", error, {});
+}
+
+// ============================================================
+// RENEWAL WORKSPACES — Supabase data layer
+// ============================================================
+
+import type { RenewalWorkspace, ContractBaseline } from "./renewal-engine";
+
+function mapRenewalWorkspace(row: any): RenewalWorkspace {
+  return {
+    id:               row.id,
+    customerId:       row.customer_id,
+    customerName:     row.customer_name,
+    baselineId:       row.baseline_id,
+    renewalCycleName: row.renewal_cycle_name,
+    targetStartDate:  row.target_start_date
+                        ? String(row.target_start_date).slice(0, 10)
+                        : "",
+    targetEndDate:    row.target_end_date
+                        ? String(row.target_end_date).slice(0, 10)
+                        : "",
+    status:           (row.status ?? "draft") as RenewalWorkspace["status"],
+    renewalDecision:  (row.renewal_decision ?? "pending") as RenewalWorkspace["renewalDecision"],
+    ownerUserId:      row.owner_user_id ?? "",
+    ownerName:        row.owner_name ?? "",
+    createdAt:        row.created_at
+                        ? String(row.created_at).slice(0, 10)
+                        : new Date().toISOString().slice(0, 10),
+    updatedAt:        row.updated_at
+                        ? String(row.updated_at).slice(0, 10)
+                        : new Date().toISOString().slice(0, 10),
+  };
+}
+
+export async function fetchRenewalWorkspaces(): Promise<RenewalWorkspace[]> {
+  const { data, error } = await supabase
+    .from("renewal_workspaces")
+    .select("*")
+    .order("created_at", { ascending: false });
+  return safeFetchList('fetchRenewalWorkspaces', data, error, mapRenewalWorkspace, { silent: true });
+}
+
+export async function upsertRenewalWorkspace(rw: RenewalWorkspace): Promise<void> {
+  const row = {
+    id:                 rw.id,
+    customer_id:        rw.customerId,
+    customer_name:      rw.customerName,
+    baseline_id:        rw.baselineId,
+    renewal_cycle_name: rw.renewalCycleName,
+    target_start_date:  rw.targetStartDate || null,
+    target_end_date:    rw.targetEndDate || null,
+    status:             rw.status,
+    renewal_decision:   rw.renewalDecision,
+    owner_user_id:      rw.ownerUserId,
+    owner_name:         rw.ownerName,
+    updated_at:         new Date().toISOString(),
+  };
+  const { error } = await supabase
+    .from("renewal_workspaces").upsert(row, { onConflict: "id" });
+  if (error) handleSupabaseError("upsertRenewalWorkspace", error, {});
+}
+
+export async function fetchContractBaselines(): Promise<ContractBaseline[]> {
+  const { data, error } = await supabase
+    .from("contract_baselines")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) { handleSupabaseError("fetchContractBaselines", error, { silent: true }); setFetchError('fetchContractBaselines', error); return []; }
+  clearFetchError('fetchContractBaselines');
+  return (data ?? []).map((row: any): ContractBaseline => ({
+    id:                row.id,
+    customerId:        row.customer_id,
+    customerName:      row.customer_name,
+    opportunityId:     row.opportunity_id ?? null,
+    baselineName:      row.baseline_name,
+    baselineStartDate: row.baseline_start_date
+                         ? String(row.baseline_start_date).slice(0, 10)
+                         : "",
+    baselineEndDate:   row.baseline_end_date
+                         ? String(row.baseline_end_date).slice(0, 10)
+                         : "",
+    status:            (row.status ?? "active") as ContractBaseline["status"],
+    proposalVersionId: row.proposal_version_id ?? null,
+    slaVersionId:      row.sla_version_id ?? null,
+    pricingSnapshot:   row.pricing_snapshot ?? {},
+    createdAt:         row.created_at
+                         ? String(row.created_at).slice(0, 10)
+                         : new Date().toISOString().slice(0, 10),
+    createdBy:         row.created_by ?? "",
+  }));
+}
+
+// ============================================================
+// ECR — Supabase data layer
+// ============================================================
+
+import type {
+  EcrMetric, EcrRuleSet, EcrRuleWeight, EcrInputSnapshot,
+  EcrInputValue, EcrScore, EcrScoreBreakdown, EcrAuditTrailEntry,
+  Grade,
+} from "./ecr";
+
+function mapEcrMetric(row: any): EcrMetric {
+  return {
+    id: row.id,
+    metricKey: row.metric_key,
+    displayName: row.display_name,
+    description: row.description ?? "",
+    unit: row.unit,
+    minValue: Number(row.min_value),
+    maxValue: Number(row.max_value),
+    defaultWeight: Number(row.default_weight),
+    defaultSourceMode: row.default_source_mode,
+    active: row.active ?? true,
+    createdAt: row.created_at ?? "",
+    updatedAt: row.updated_at ?? "",
+  };
+}
+
+function mapEcrRuleSet(row: any): EcrRuleSet {
+  return {
+    id: row.id,
+    versionNumber: row.version_number,
+    name: row.name,
+    description: row.description ?? "",
+    status: row.status,
+    createdBy: row.created_by ?? "",
+    createdAt: row.created_at ?? "",
+  };
+}
+
+function mapEcrRuleWeight(row: any): EcrRuleWeight {
+  return {
+    id: row.id,
+    ruleSetId: row.rule_set_id,
+    metricId: row.metric_id,
+    weight: Number(row.weight),
+    createdAt: row.created_at ?? "",
+  };
+}
+
+function mapEcrSnapshot(row: any): EcrInputSnapshot {
+  return {
+    id: row.id,
+    customerId: row.customer_id,
+    periodStart: row.period_start ? String(row.period_start).slice(0, 10) : "",
+    periodEnd: row.period_end ? String(row.period_end).slice(0, 10) : "",
+    createdBy: row.created_by ?? "",
+    createdAt: row.created_at ?? "",
+  };
+}
+
+function mapEcrInputValue(row: any): EcrInputValue {
+  return {
+    id: row.id,
+    snapshotId: row.snapshot_id,
+    metricId: row.metric_id,
+    value: Number(row.value),
+    sourceMode: row.source_mode,
+    sourceReference: row.source_reference ?? "",
+    capturedBy: row.captured_by ?? "",
+    capturedAt: row.captured_at ?? "",
+  };
+}
+
+function mapEcrScore(row: any): EcrScore {
+  return {
+    id: row.id,
+    customerId: row.customer_id,
+    snapshotId: row.snapshot_id,
+    ruleSetId: row.rule_set_id,
+    totalScore: Number(row.total_score),
+    grade: row.grade as Grade,
+    confidenceScore: Number(row.confidence_score),
+    computedAt: row.computed_at ?? "",
+    computedBySystem: row.computed_by_system ?? true,
+  };
+}
+
+function mapEcrAuditTrail(row: any): EcrAuditTrailEntry {
+  return {
+    id: row.id,
+    customerId: row.customer_id,
+    previousGrade: row.previous_grade ?? null,
+    newGrade: row.new_grade,
+    reason: row.reason ?? "",
+    timestamp: row.timestamp ?? "",
+  };
+}
+
+// ── ECR Fetchers ─────────────────────────────────────────────
+
+export async function fetchEcrMetrics(): Promise<EcrMetric[]> {
+  const { data, error } = await supabase
+    .from("ecr_metrics").select("*").order("display_name");
+  return safeFetchList('fetchEcrMetrics', data, error, mapEcrMetric, { silent: true });
+}
+
+export async function fetchEcrRuleSets(): Promise<EcrRuleSet[]> {
+  const { data, error } = await supabase
+    .from("ecr_rule_sets").select("*").order("version_number", { ascending: false });
+  return safeFetchList('fetchEcrRuleSets', data, error, mapEcrRuleSet, { silent: true });
+}
+
+export async function fetchActiveEcrRuleSet(): Promise<EcrRuleSet | null> {
+  const { data, error } = await supabase
+    .from("ecr_rule_sets").select("*").eq("status", "active").limit(1).single();
+  if (error) { handleSupabaseError("fetchActiveEcrRuleSet", error, { silent: true }); return null; }
+  return data ? mapEcrRuleSet(data) : null;
+}
+
+export async function fetchEcrRuleWeights(ruleSetId?: string): Promise<EcrRuleWeight[]> {
+  let query = supabase.from("ecr_rule_weights").select("*");
+  if (ruleSetId) query = query.eq("rule_set_id", ruleSetId);
+  const { data, error } = await query;
+  return safeFetchList('fetchEcrRuleWeights', data, error, mapEcrRuleWeight, { silent: true });
+}
+
+export async function fetchEcrSnapshots(customerId?: string): Promise<EcrInputSnapshot[]> {
+  let query = supabase.from("ecr_input_snapshots").select("*").order("period_end", { ascending: false });
+  if (customerId) query = query.eq("customer_id", customerId);
+  const { data, error } = await query;
+  return safeFetchList('fetchEcrSnapshots', data, error, mapEcrSnapshot, { silent: true });
+}
+
+export async function fetchEcrInputValues(snapshotId?: string): Promise<EcrInputValue[]> {
+  let query = supabase.from("ecr_input_values").select("*");
+  if (snapshotId) query = query.eq("snapshot_id", snapshotId);
+  const { data, error } = await query;
+  return safeFetchList('fetchEcrInputValues', data, error, mapEcrInputValue, { silent: true });
+}
+
+export async function fetchEcrScores(customerId?: string): Promise<EcrScore[]> {
+  let query = supabase.from("ecr_scores").select("*").order("computed_at", { ascending: false });
+  if (customerId) query = query.eq("customer_id", customerId);
+  const { data, error } = await query;
+  return safeFetchList('fetchEcrScores', data, error, mapEcrScore, { silent: true });
+}
+
+export async function fetchEcrAuditTrail(customerId?: string): Promise<EcrAuditTrailEntry[]> {
+  let query = supabase.from("ecr_audit_trail").select("*").order("timestamp", { ascending: false });
+  if (customerId) query = query.eq("customer_id", customerId);
+  const { data, error } = await query;
+  return safeFetchList('fetchEcrAuditTrail', data, error, mapEcrAuditTrail, { silent: true });
+}
+
+// ============================================================
+// DOCUMENT COMPOSER — Supabase data layer
+// ============================================================
+
+import type {
+  DocBlock, BrandingProfile, DocTemplate, TemplateVersion,
+  DocInstance, DocInstanceVersion, CompiledDocument, VaultAsset,
+  BlockFamily, BlockEditorMode, BlockPermissions, BlockSchema,
+  LayoutConfig, RecipeBlock, InstanceBlock, Bindings,
+  FooterFormat, DocType, TemplateStatus, DocInstanceStatus,
+  LinkedEntityType, CompileStatus, VaultAssetStatus,
+} from "./document-composer";
+
+function mapDocBlock(row: any): DocBlock {
+  return {
+    id: row.id,
+    block_key: row.block_key,
+    family: row.family,
+    display_name: row.display_name,
+    editor_mode: row.editor_mode,
+    permissions: row.permissions ?? {},
+    schema: row.schema ?? {},
+    render_key: row.render_key,
+    default_content: row.default_content ?? "",
+    description: row.description ?? "",
+    created_at: row.created_at ?? "",
+  };
+}
+
+function mapBrandingProfile(row: any): BrandingProfile {
+  return {
+    id: row.id,
+    name: row.name,
+    primary_color: row.primary_color,
+    secondary_color: row.secondary_color,
+    accent_color: row.accent_color,
+    font_family: row.font_family,
+    font_heading: row.font_heading,
+    logo_url: row.logo_url ?? "",
+    cover_hero_urls: row.cover_hero_urls ?? [],
+    footer_format: row.footer_format ?? {},
+    watermark_url: row.watermark_url ?? null,
+    header_style: row.header_style ?? "full",
+    created_at: row.created_at ?? "",
+    updated_at: row.updated_at ?? "",
+  };
+}
+
+function mapTemplateVersion(row: any): TemplateVersion {
+  return {
+    id: row.id,
+    template_id: row.template_id,
+    version_number: row.version_number,
+    recipe: row.recipe ?? [],
+    layout: row.layout ?? {},
+    published_at: row.published_at ?? null,
+    created_by: row.created_by ?? "",
+    created_at: row.created_at ?? "",
+  };
+}
+
+function mapDocTemplate(row: any, versions: TemplateVersion[]): DocTemplate {
+  return {
+    id: row.id,
+    name: row.name,
+    doc_type: row.doc_type,
+    status: row.status,
+    default_branding_profile_id: row.default_branding_profile_id ?? "",
+    default_locale: row.default_locale ?? "en",
+    description: row.description ?? "",
+    versions,
+    created_by: row.created_by ?? "",
+    created_at: row.created_at ?? "",
+    updated_at: row.updated_at ?? "",
+  };
+}
+
+function mapInstanceVersion(row: any): DocInstanceVersion {
+  return {
+    id: row.id,
+    doc_instance_id: row.doc_instance_id,
+    version_number: row.version_number,
+    blocks: row.blocks ?? [],
+    bindings: row.bindings ?? {},
+    created_by: row.created_by ?? "",
+    created_at: row.created_at ?? "",
+  };
+}
+
+function mapDocInstance(row: any, versions: DocInstanceVersion[]): DocInstance {
+  return {
+    id: row.id,
+    doc_type: row.doc_type,
+    template_version_id: row.template_version_id ?? "",
+    status: row.status,
+    linked_entity_type: row.linked_entity_type,
+    linked_entity_id: row.linked_entity_id,
+    customer_id: row.customer_id ?? "",
+    customer_name: row.customer_name ?? "",
+    workspace_id: row.workspace_id ?? null,
+    workspace_name: row.workspace_name ?? null,
+    current_version_id: row.current_version_id ?? "",
+    versions,
+    created_by: row.created_by ?? "",
+    created_at: row.created_at ?? "",
+    updated_at: row.updated_at ?? "",
+  };
+}
+
+function mapCompiledDocument(row: any): CompiledDocument {
+  return {
+    id: row.id,
+    doc_instance_version_id: row.doc_instance_version_id,
+    output_type: row.output_type ?? "pdf",
+    file_asset_id: row.file_asset_id ?? "",
+    checksum: row.checksum ?? "",
+    compiled_at: row.compiled_at ?? "",
+    compiled_by: row.compiled_by ?? "",
+    status: row.status,
+    error_text: row.error_text ?? null,
+    branding_profile_id: row.branding_profile_id ?? "",
+    doc_instance_id: row.doc_instance_id ?? "",
+    title: row.title ?? "",
+  };
+}
+
+function mapVaultAsset(row: any): VaultAsset {
+  return {
+    id: row.id,
+    doc_instance_id: row.doc_instance_id,
+    doc_instance_version_id: row.doc_instance_version_id,
+    compiled_document_id: row.compiled_document_id,
+    title: row.title,
+    doc_type: row.doc_type,
+    customer_id: row.customer_id ?? "",
+    customer_name: row.customer_name ?? "",
+    workspace_id: row.workspace_id ?? null,
+    workspace_name: row.workspace_name ?? null,
+    status: row.status,
+    branding_profile_id: row.branding_profile_id ?? "",
+    file_url: row.file_url ?? "",
+    checksum: row.checksum ?? "",
+    created_by: row.created_by ?? "",
+    created_at: row.created_at ?? "",
+    sent_to_crm: row.sent_to_crm ?? false,
+    crm_export_status: row.crm_export_status ?? null,
+    crm_export_at: row.crm_export_at ?? null,
+  };
+}
+
+// ── Document Fetchers ────────────────────────────────────────
+
+export async function fetchDocBlocks(): Promise<DocBlock[]> {
+  const { data, error } = await supabase.from("doc_blocks").select("*").order("block_key");
+  return safeFetchList('fetchDocBlocks', data, error, mapDocBlock, { silent: true });
+}
+
+export async function fetchDocBrandingProfiles(): Promise<BrandingProfile[]> {
+  const { data, error } = await supabase.from("doc_branding_profiles").select("*").order("name");
+  return safeFetchList('fetchDocBrandingProfiles', data, error, mapBrandingProfile, { silent: true });
+}
+
+export async function fetchDocTemplates(): Promise<DocTemplate[]> {
+  const { data: tplRows, error: tplErr } = await supabase.from("doc_templates").select("*").order("name");
+  if (tplErr) { handleSupabaseError("fetchDocTemplates", tplErr, { silent: true }); setFetchError('fetchDocTemplates', tplErr); return []; }
+  clearFetchError('fetchDocTemplates');
+  const { data: verRows, error: verErr } = await supabase.from("doc_template_versions").select("*").order("version_number");
+  if (verErr) { handleSupabaseError("fetchDocTemplateVersions", verErr, { silent: true }); }
+  const versions = (verRows ?? []).map(mapTemplateVersion);
+  return (tplRows ?? []).map((row: any) =>
+    mapDocTemplate(row, versions.filter(v => v.template_id === row.id))
+  );
+}
+
+export async function fetchDocInstances(): Promise<DocInstance[]> {
+  const { data: instRows, error: instErr } = await supabase.from("doc_instances").select("*").order("updated_at", { ascending: false });
+  if (instErr) { handleSupabaseError("fetchDocInstances", instErr, { silent: true }); setFetchError('fetchDocInstances', instErr); return []; }
+  clearFetchError('fetchDocInstances');
+  const { data: verRows, error: verErr } = await supabase.from("doc_instance_versions").select("*").order("version_number");
+  if (verErr) { handleSupabaseError("fetchDocInstanceVersions", verErr, { silent: true }); }
+  const versions = (verRows ?? []).map(mapInstanceVersion);
+  return (instRows ?? []).map((row: any) =>
+    mapDocInstance(row, versions.filter(v => v.doc_instance_id === row.id))
+  );
+}
+
+export async function fetchDocCompiledOutputs(): Promise<CompiledDocument[]> {
+  const { data, error } = await supabase.from("doc_compiled_outputs").select("*").order("compiled_at", { ascending: false });
+  return safeFetchList('fetchDocCompiledOutputs', data, error, mapCompiledDocument, { silent: true });
+}
+
+export async function fetchDocVaultAssets(): Promise<VaultAsset[]> {
+  const { data, error } = await supabase.from("doc_vault_assets").select("*").order("created_at", { ascending: false });
+  return safeFetchList('fetchDocVaultAssets', data, error, mapVaultAsset, { silent: true });
+}
+
+// ============================================================
+// BOT GOVERNANCE — Supabase data layer
+// ============================================================
+
+import type { EditorBot, AIRun, AIRunStatus } from "./ai-runs";
+
+function mapEditorBot(row: any): EditorBot {
+  return {
+    id: row.id,
+    name: row.name,
+    bot_type: row.bot_type,
+    provider: row.provider,
+    model: row.model,
+    system_prompt: row.system_prompt,
+    knowledge_base_refs: row.knowledge_base_refs ?? [],
+    allowed_doc_types: row.allowed_doc_types ?? [],
+    allowed_block_types: row.allowed_block_types ?? null,
+    enabled: row.enabled ?? true,
+    description: row.description ?? "",
+    icon: row.icon ?? "Bot",
+  };
+}
+
+function mapAIRun(row: any): AIRun {
+  return {
+    id: row.id,
+    doc_instance_id: row.doc_instance_id,
+    workspace_id: row.workspace_id ?? null,
+    bot_id: row.bot_id,
+    bot_name: row.bot_name,
+    bot_type: row.bot_type,
+    target_scope: row.target_scope,
+    target_block_ids: row.target_block_ids ?? [],
+    input_prompt: row.input_prompt ?? "",
+    input_transcript_ref: row.input_transcript_ref ?? null,
+    output_text: row.output_text ?? "",
+    status: row.status,
+    provider: row.provider,
+    model: row.model,
+    run_mode: row.run_mode ?? null,
+    created_by: row.created_by ?? "",
+    created_at: row.created_at ?? "",
+    applied_at: row.applied_at ?? null,
+  };
+}
+
+// ── Bot Fetchers ─────────────────────────────────────────────
+
+export async function fetchEditorBots(): Promise<EditorBot[]> {
+  const { data, error } = await supabase.from("editor_bots").select("*").order("name");
+  return safeFetchList('fetchEditorBots', data, error, mapEditorBot, { silent: true });
+}
+
+export async function createEditorBot(bot: Omit<EditorBot, "id"> & { id?: string }): Promise<EditorBot | null> {
+  const row: Record<string, any> = {
+    id: bot.id || `ebot-${crypto.randomUUID().substring(0, 8)}`,
+    name: bot.name,
+    bot_type: bot.bot_type,
+    provider: bot.provider,
+    model: bot.model,
+    system_prompt: bot.system_prompt,
+    knowledge_base_refs: bot.knowledge_base_refs,
+    allowed_doc_types: bot.allowed_doc_types,
+    allowed_block_types: bot.allowed_block_types,
+    enabled: bot.enabled,
+    description: bot.description,
+    icon: bot.icon,
+  };
+  const { data, error } = await supabase.from("editor_bots").insert(row).select().single();
+  if (error) { handleSupabaseError("createEditorBot", error, { silent: true }); return null; }
+  return mapEditorBot(data);
+}
+
+export async function updateEditorBot(botId: string, updates: Partial<EditorBot>): Promise<EditorBot | null> {
+  const row: Record<string, any> = { updated_at: new Date().toISOString() };
+  if (updates.name !== undefined) row.name = updates.name;
+  if (updates.bot_type !== undefined) row.bot_type = updates.bot_type;
+  if (updates.provider !== undefined) row.provider = updates.provider;
+  if (updates.model !== undefined) row.model = updates.model;
+  if (updates.system_prompt !== undefined) row.system_prompt = updates.system_prompt;
+  if (updates.knowledge_base_refs !== undefined) row.knowledge_base_refs = updates.knowledge_base_refs;
+  if (updates.allowed_doc_types !== undefined) row.allowed_doc_types = updates.allowed_doc_types;
+  if (updates.allowed_block_types !== undefined) row.allowed_block_types = updates.allowed_block_types;
+  if (updates.enabled !== undefined) row.enabled = updates.enabled;
+  if (updates.description !== undefined) row.description = updates.description;
+  if (updates.icon !== undefined) row.icon = updates.icon;
+
+  const { data, error } = await supabase.from("editor_bots").update(row).eq("id", botId).select().single();
+  if (error) { handleSupabaseError("updateEditorBot", error, { silent: true }); return null; }
+  return mapEditorBot(data);
+}
+
+export async function deleteEditorBot(botId: string): Promise<boolean> {
+  const { error } = await supabase.from("editor_bots").delete().eq("id", botId);
+  if (error) { handleSupabaseError("deleteEditorBot", error, { silent: true }); return false; }
+  return true;
+}
+
+// ── AI Run Fetchers ──────────────────────────────────────────
+
+export async function fetchAIRuns(docInstanceId?: string): Promise<AIRun[]> {
+  let query = supabase.from("ai_runs").select("*").order("created_at", { ascending: false });
+  if (docInstanceId) query = query.eq("doc_instance_id", docInstanceId);
+  const { data, error } = await query;
+  return safeFetchList('fetchAIRuns', data, error, mapAIRun, { silent: true });
+}
+
+export async function insertAIRun(run: AIRun): Promise<AIRun | null> {
+  const row: Record<string, any> = {
+    id: run.id,
+    doc_instance_id: run.doc_instance_id,
+    workspace_id: run.workspace_id,
+    bot_id: run.bot_id,
+    bot_name: run.bot_name,
+    bot_type: run.bot_type,
+    target_scope: run.target_scope,
+    target_block_ids: run.target_block_ids,
+    input_prompt: run.input_prompt,
+    input_transcript_ref: run.input_transcript_ref,
+    output_text: run.output_text,
+    status: run.status,
+    provider: run.provider,
+    model: run.model,
+    run_mode: run.run_mode,
+    created_by: run.created_by,
+    created_at: run.created_at,
+    applied_at: run.applied_at,
+  };
+  const { data, error } = await supabase.from("ai_runs").insert(row).select().single();
+  if (error) { handleSupabaseError("insertAIRun", error, { silent: true }); return null; }
+  return mapAIRun(data);
+}
+
+export async function updateAIRunStatus(runId: string, status: AIRunStatus, appliedAt?: string): Promise<boolean> {
+  const row: Record<string, any> = { status };
+  if (appliedAt) row.applied_at = appliedAt;
+  const { error } = await supabase.from("ai_runs").update(row).eq("id", runId);
+  if (error) { handleSupabaseError("updateAIRunStatus", error, { silent: true }); return false; }
+  return true;
+}
+
+
+

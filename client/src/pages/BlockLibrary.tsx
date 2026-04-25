@@ -6,6 +6,7 @@ import { Link } from "wouter";
  */
 
 import { useState, useMemo } from "react";
+import DOMPurify from "dompurify";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ import {
   blockLibrary, BLOCK_FAMILY_CONFIG, EDITOR_MODE_CONFIG,
   type DocBlock, type BlockFamily
 } from "@/lib/document-composer";
+import { useDocBlocks } from "@/hooks/useSupabase";
 import { navigationV1 } from "@/components/DashboardLayout";
 
 export default function BlockLibraryPage() {
@@ -28,13 +30,17 @@ export default function BlockLibraryPage() {
   const [filterFamily, setFilterFamily] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // Live Supabase data
+  const { data: liveBlocks, error: blkError } = useDocBlocks();
+  const blocks = blkError ? blockLibrary : liveBlocks;
+
   const filtered = useMemo(() => {
-    return blockLibrary.filter(b => {
+    return blocks.filter(b => {
       if (search && !b.display_name.toLowerCase().includes(search.toLowerCase()) && !b.block_key.toLowerCase().includes(search.toLowerCase())) return false;
       if (filterFamily !== "all" && b.family !== filterFamily) return false;
       return true;
     });
-  }, [search, filterFamily]);
+  }, [blocks, search, filterFamily]);
 
   // Group by family for display
   const grouped = useMemo(() => {
@@ -47,10 +53,10 @@ export default function BlockLibraryPage() {
   }, [filtered]);
 
   // Metrics
-  const totalBlocks = blockLibrary.length;
-  const editableCount = blockLibrary.filter(b => b.permissions.editable_in_draft).length;
-  const readonlyCount = blockLibrary.filter(b => b.editor_mode === "readonly").length;
-  const aiAllowedCount = blockLibrary.filter(b => b.permissions.ai_allowed).length;
+  const totalBlocks = blocks.length;
+  const editableCount = blocks.filter(b => b.permissions.editable_in_draft).length;
+  const readonlyCount = blocks.filter(b => b.editor_mode === "readonly").length;
+  const aiAllowedCount = blocks.filter(b => b.permissions.ai_allowed).length;
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
@@ -238,7 +244,7 @@ export default function BlockLibraryPage() {
                             <div>
                               <h4 className="text-xs font-semibold text-[#1B2A4A] uppercase tracking-wider mb-2">Default Content Preview</h4>
                               <div className="p-3 bg-white rounded border border-gray-100 max-h-48 overflow-y-auto">
-                                <div className="text-xs text-gray-600 prose prose-xs" dangerouslySetInnerHTML={{ __html: block.default_content }} />
+                                <div className="text-xs text-gray-600 prose prose-xs" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(block.default_content) }} />
                               </div>
                             </div>
                           </div>

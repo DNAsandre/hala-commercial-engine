@@ -1,33 +1,78 @@
-import express from "express";
-import { createServer } from "http";
-import path from "path";
-import { fileURLToPath } from "url";
+/**
+ * Hala Commercial Engine — Backend API Server
+ * 
+ * Sprint 1: Foundation server skeleton.
+ * 
+ * This server sits between the frontend and Supabase,
+ * providing a secure authority for mutations, validation,
+ * and audit logging. It does NOT replace the frontend's
+ * direct Supabase reads yet — that migration happens later.
+ * 
+ * NO gates, locks, or enforcement logic.
+ */
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import express from 'express';
+import cors from 'cors';
 
-async function startServer() {
-  const app = express();
-  const server = createServer(app);
+import { customerRoutes } from './routes/customers.js';
+import { workspaceRoutes } from './routes/workspaces.js';
+import { escalationRoutes } from './routes/escalations.js';
+import { dashboardRoutes } from './routes/dashboard.js';
+import { quoteRoutes } from './routes/quotes.js';
+import { proposalRoutes } from './routes/proposals.js';
+import { slaRoutes } from './routes/slas.js';
+import { documentRoutes } from './routes/documents.js';
 
-  // Serve static files from dist/public in production
-  const staticPath =
-    process.env.NODE_ENV === "production"
-      ? path.resolve(__dirname, "public")
-      : path.resolve(__dirname, "..", "dist", "public");
+const app = express();
+const PORT = parseInt(process.env.PORT || '3001', 10);
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
 
-  app.use(express.static(staticPath));
+// ─── Middleware ───────────────────────────────────────────
+app.use(cors({
+  origin: [FRONTEND_ORIGIN, 'http://localhost:5173'],
+  credentials: true,
+}));
+app.use(express.json({ limit: '2mb' }));
 
-  // Handle client-side routing - serve index.html for all routes
-  app.get("*", (_req, res) => {
-    res.sendFile(path.join(staticPath, "index.html"));
+// ─── Health Check ────────────────────────────────────────
+app.get('/api/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'hala-commercial-engine-api',
+    timestamp: new Date().toISOString(),
   });
+});
 
-  const port = process.env.PORT || 3000;
+// ─── API Routes ──────────────────────────────────────────
+app.use('/api/customers', customerRoutes);
+app.use('/api/workspaces', workspaceRoutes);
+app.use('/api/escalations', escalationRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api', quoteRoutes);
+app.use('/api', proposalRoutes);
+app.use('/api', slaRoutes);
+app.use('/api', documentRoutes);
 
-  server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+// ─── Global Error Handler ────────────────────────────────
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[API ERROR]', err.message || err);
+  const status = err.status || 500;
+  res.status(status).json({
+    error: status === 500 ? 'Internal server error' : err.message,
+    code: err.code || 'UNKNOWN_ERROR',
   });
-}
+});
 
-startServer().catch(console.error);
+// ─── 404 Catch ───────────────────────────────────────────
+app.use((_req, res) => {
+  res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+});
+
+// ─── Start ───────────────────────────────────────────────
+app.listen(PORT, () => {
+  console.log(`\n  🚀 Hala API Server running on http://localhost:${PORT}`);
+  console.log(`  📋 Health: http://localhost:${PORT}/api/health`);
+  console.log(`  🔗 CORS origin: ${FRONTEND_ORIGIN}\n`);
+});
+
+export default app;

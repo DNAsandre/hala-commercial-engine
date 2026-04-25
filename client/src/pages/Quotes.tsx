@@ -22,7 +22,8 @@ import DocumentComposer, { type ComposerDocument } from "@/components/DocumentCo
 import OverrideDialog from "@/components/OverrideDialog";
 import { useGateCheck, useAuditLog } from "@/hooks/useGovernance";
 import { navigationV1 } from "@/components/DashboardLayout";
-import { syncQuoteUpdate, syncApprovalCreate, syncAuditEntry } from "@/lib/supabase-sync";
+import { syncApprovalCreate } from "@/lib/supabase-sync";
+import { api } from "@/lib/api-client";
 import { getCurrentUser } from "@/lib/auth-state";
 
 const stateColors: Record<string, string> = {
@@ -71,31 +72,36 @@ export default function Quotes() {
     });
   };
 
-  // Governance-enforced approve
+  // Governance-enforced approve — 2C: resolve workspaceId from quote's parent workspace
   const handleApproveQuote = (quoteId: string, gpPercent: number, palletVolume: number) => {
+    // Resolve workspace from quote
+    const quote = quotes.find(q => q.id === quoteId);
+    const resolvedWsId = quote?.workspaceId || "";
     checkGate("pg1", {
       entityType: "quote",
       entityId: quoteId,
-      workspaceId: "",
+      workspaceId: resolvedWsId,
       details: `Approving quote — GP% ${gpPercent.toFixed(1)}%, ${palletVolume} pallets`,
       contextData: { gpPercent, palletVolume, action: "approve_quote" },
     }, () => {
-      logApproval("quote", quoteId, "approved", `Quote ${quoteId} approved — GP% ${gpPercent.toFixed(1)}%`, { gpPercent, palletVolume });
-      // Persist approval to Supabase
       const user = getCurrentUser();
-      syncQuoteUpdate(quoteId, { state: "approved" });
-      syncApprovalCreate({
-        id: `a-${crypto.randomUUID()}`,
-        entityType: "quote",
-        entityId: quoteId,
-        workspaceId: "",
-        approverRole: user.role,
-        approverName: user.name,
-        decision: "approved",
-        reason: `GP% ${gpPercent.toFixed(1)}%, ${palletVolume} pallets`,
-        isOverride: false,
+      void api.quotes.approve(quoteId).then(() => {
+        logApproval("quote", quoteId, "approved", `Quote ${quoteId} approved — GP% ${gpPercent.toFixed(1)}%`, { gpPercent, palletVolume });
+        void syncApprovalCreate({
+          id: `a-${crypto.randomUUID()}`,
+          entityType: "quote",
+          entityId: quoteId,
+          workspaceId: resolvedWsId,
+          approverRole: user.role,
+          approverName: user.name,
+          decision: "approved",
+          reason: `GP% ${gpPercent.toFixed(1)}%, ${palletVolume} pallets`,
+          isOverride: false,
+        });
+        toast.success("Quote approved", { description: `GP% ${gpPercent.toFixed(1)}% — logged to audit trail` });
+      }).catch((e: any) => {
+        toast.error(e.message || "Approval failed");
       });
-      toast.success("Quote approved", { description: `GP% ${gpPercent.toFixed(1)}% — logged to audit trail` });
     });
   };
 
@@ -133,8 +139,9 @@ export default function Quotes() {
     <div className="p-6 max-w-[1400px] mx-auto">
       {/* Legacy Banner */}
       {navigationV1 && (
-        <div className="mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 flex items-center gap-2">
-          <span className="text-xs text-amber-800">This page is legacy. Please access documents via <a href="/workspaces" className="underline font-semibold hover:text-amber-900">Workspace</a>.</span>
+        <div className="mb-4 p-3 rounded-lg border border-amber-300 bg-amber-50 flex items-center gap-2">
+          <AlertTriangle size={14} className="text-amber-600 shrink-0" />
+          <span className="text-xs text-amber-800">This page is read-only legacy. To create or edit quotes, use <a href="/workspaces" className="underline font-semibold hover:text-amber-900">Workspaces</a>.</span>
         </div>
       )}
       {/* Override Dialog */}
@@ -224,7 +231,7 @@ export default function Quotes() {
                     )}
                   </div>
                   <div className="flex items-center gap-1">
-                    {q.state === "draft" && (
+                    {q.state === "submitted" && (
                       <Button variant="ghost" size="sm" className="h-7 text-xs text-emerald-700 hover:bg-emerald-50"
                         onClick={() => handleApproveQuote(q.id, q.gpPercent, q.palletVolume)}>
                         <CheckCircle size={12} className="mr-1" /> Approve
@@ -250,7 +257,8 @@ export default function Quotes() {
                             workspaceId: q.workspaceId,
                             existingInstanceId: instance.id,
                           });
-                        } catch {
+                        } catch (err) {
+                          console.warn('[Quotes] resolveOrCreateDocInstance fallback:', err);
                           setEditingQuote({
                             customerName,
                             customerId: customer?.id || "",

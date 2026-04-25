@@ -109,6 +109,8 @@ export default function RenewalDetail() {
   const handleOverride = () => {
     if (!overrideModal || !overrideReason.trim()) return;
 
+    const currentUser = getCurrentUser();
+
     // Use the new commercial override system
     const result = createCommercialOverride({
       gateKey: overrideModal.gate.gateKey,
@@ -119,9 +121,9 @@ export default function RenewalDetail() {
       rule_set_version_id: gateEval?.ruleSetVersionId || null,
       ecr_rule_version_id: gateEval?.ruleSetVersionId || null,
       previous_result: overrideModal.gate.result,
-      userId: getCurrentUser().id,
-      userName: getCurrentUser().name,
-      userRole: "director",
+      userId: currentUser.id,
+      userName: currentUser.name,
+      userRole: currentUser.role as import("@/lib/store").UserRole,
       reason: overrideReason,
     });
 
@@ -131,7 +133,19 @@ export default function RenewalDetail() {
     }
 
     // Also update the gate evaluation for display
-    overrideGate(overrideModal.evalId, overrideModal.gate.gateKey, overrideReason, getCurrentUser().id, getCurrentUser().name);
+    const gateResult = overrideGate(
+      overrideModal.evalId,
+      overrideModal.gate.gateKey,
+      overrideReason,
+      currentUser.id,
+      currentUser.name,
+      currentUser.role
+    );
+
+    if (!gateResult.success) {
+      toast.error(gateResult.error || "Gate override failed");
+      return;
+    }
 
     if (result.requires_second_approval) {
       toast.warning("Override created — pending second approval", {

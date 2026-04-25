@@ -52,7 +52,9 @@ function CRMSyncEmbed() {
   const [crmLoading, setCrmLoading] = useState(true);
 
   useEffect(() => {
-    fetchConnections().then((c) => { setCrmConns(c); setCrmLoading(false); });
+    let cancelled = false;
+    fetchConnections().then((c) => { if (!cancelled) { setCrmConns(c); setCrmLoading(false); } });
+    return () => { cancelled = true; };
   }, []);
 
   if (crmLoading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin" /></div>;
@@ -96,7 +98,9 @@ function KnowledgebaseEmbed() {
   const [kbLoading, setKBLoading] = useState(true);
 
   useEffect(() => {
-    fetchCollections().then((c) => { setKBCollections(c); setKBLoading(false); });
+    let cancelled = false;
+    fetchCollections().then((c) => { if (!cancelled) { setKBCollections(c); setKBLoading(false); } });
+    return () => { cancelled = true; };
   }, []);
 
   if (kbLoading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin" /></div>;
@@ -147,7 +151,9 @@ function AIProvidersEmbed() {
   const [testingId, setTestingId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchAIProviders(true).then((p) => { setProviders(p); setLoading(false); });
+    let cancelled = false;
+    fetchAIProviders(true).then((p) => { if (!cancelled) { setProviders(p); setLoading(false); } });
+    return () => { cancelled = true; };
   }, []);
 
   const handleToggle = async (id: string, enabled: boolean) => {

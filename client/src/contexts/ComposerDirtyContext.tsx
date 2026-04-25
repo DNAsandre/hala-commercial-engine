@@ -102,7 +102,8 @@ export function ComposerDirtyProvider({ children }: { children: React.ReactNode 
         executePending();
       }
       // If save failed, keep modal open
-    } catch {
+    } catch (err) {
+      console.warn('[ComposerDirty] save fallback:', err);
       setIsSaving(false);
     }
   }, [executePending]);

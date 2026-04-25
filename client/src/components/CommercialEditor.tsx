@@ -7,6 +7,7 @@
  */
 
 import { useState, useCallback, useEffect, useMemo } from "react";
+import DOMPurify from "dompurify";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -357,7 +358,7 @@ function SectionEditor({
                   </Button>
                 </div>
               </div>
-              <div className="prose prose-sm max-w-none text-amber-900/80" dangerouslySetInnerHTML={{ __html: aiStaging }} />
+              <div className="prose prose-sm max-w-none text-amber-900/80" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(aiStaging) }} />
             </div>
           )}
 
@@ -374,7 +375,7 @@ function SectionEditor({
           {/* Structure Mode — Show content preview */}
           {mode === "structure" && (
             <div className="px-4 py-3 text-sm text-gray-500 italic">
-              <div className="prose prose-sm max-w-none opacity-60" dangerouslySetInnerHTML={{ __html: section.content.substring(0, 200) + "..." }} />
+              <div className="prose prose-sm max-w-none opacity-60" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(section.content.substring(0, 200) + "...") }} />
             </div>
           )}
         </div>

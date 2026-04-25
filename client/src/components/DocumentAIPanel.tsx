@@ -10,6 +10,7 @@
  */
 
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import DOMPurify from "dompurify";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -90,8 +91,15 @@ export default function DocumentAIPanel({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Available bots
-  const availableBots = useMemo(() => getDocumentBots(docType), [docType]);
+  // Available bots (async — reads from Supabase)
+  const [availableBots, setAvailableBots] = useState<EditorBot[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getDocumentBots(docType).then(bots => {
+      if (!cancelled) setAvailableBots(bots);
+    });
+    return () => { cancelled = true; };
+  }, [docType]);
 
   // Auto-select first bot
   useEffect(() => {
@@ -100,9 +108,15 @@ export default function DocumentAIPanel({
     }
   }, [availableBots, selectedBotId]);
 
-  const selectedBot = useMemo(() =>
-    selectedBotId ? getEditorBotById(selectedBotId) : null
-  , [selectedBotId]);
+  const [selectedBot, setSelectedBot] = useState<EditorBot | null>(null);
+  useEffect(() => {
+    if (!selectedBotId) { setSelectedBot(null); return; }
+    let cancelled = false;
+    getEditorBotById(selectedBotId).then(bot => {
+      if (!cancelled) setSelectedBot(bot);
+    });
+    return () => { cancelled = true; };
+  }, [selectedBotId]);
 
   const selectedCount = suggestions.filter(s => s.selected).length;
 
@@ -465,7 +479,7 @@ export default function DocumentAIPanel({
                         <div className="rounded border border-gray-200 bg-white p-2">
                           <div className="text-[9px] font-semibold text-gray-400 uppercase mb-1">Current</div>
                           <div className="text-[10px] text-gray-600 max-h-[60px] overflow-auto prose prose-xs"
-                            dangerouslySetInnerHTML={{ __html: suggestion.original_text || "<em>Empty</em>" }} />
+                            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(suggestion.original_text || "<em>Empty</em>") }} />
                         </div>
                         {/* Suggested */}
                         <div className="rounded border-2 border-dashed border-violet-200 bg-violet-50/50 p-2">
@@ -474,7 +488,7 @@ export default function DocumentAIPanel({
                             <span className="text-[9px] font-semibold text-violet-600 uppercase">AI Suggestion</span>
                           </div>
                           <div className="text-[10px] text-violet-900/80 max-h-[80px] overflow-auto prose prose-xs"
-                            dangerouslySetInnerHTML={{ __html: suggestion.suggested_text }} />
+                            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(suggestion.suggested_text) }} />
                           {/* Per-block citations */}
                           {suggestion.citations && suggestion.citations.length > 0 && (
                             <div className="mt-1.5 pt-1.5 border-t border-violet-200">

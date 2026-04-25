@@ -6,6 +6,7 @@ import { Link } from "wouter";
  */
 
 import { useState, useMemo } from "react";
+import DOMPurify from "dompurify";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -146,7 +147,7 @@ function BlockDetailPanel({ block, onClose }: { block: DocBlock; onClose: () => 
         <div>
           <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2 block">Default Content</label>
           <div className="bg-gray-50 rounded-lg border border-gray-200 p-3 prose prose-sm max-w-none text-xs"
-            dangerouslySetInnerHTML={{ __html: block.default_content.substring(0, 300) + (block.default_content.length > 300 ? "..." : "") }} />
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(block.default_content.substring(0, 300) + (block.default_content.length > 300 ? "..." : "")) }} />
         </div>
       </div>
     </div>

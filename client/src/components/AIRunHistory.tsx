@@ -6,7 +6,7 @@
  * Compact timeline view with status badges, bot info, and expandable output
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   History,
   ChevronDown,
@@ -55,7 +55,15 @@ function truncateHtml(html: string, maxLen: number = 120): string {
 export default function AIRunHistory({ docInstanceId, onReapply }: AIRunHistoryProps) {
   const [expanded, setExpanded] = useState(true);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
-  const runs = getAIRunsForDocument(docInstanceId);
+  const [runs, setRuns] = useState<AIRun[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAIRunsForDocument(docInstanceId).then(r => {
+      if (!cancelled) setRuns(r);
+    });
+    return () => { cancelled = true; };
+  }, [docInstanceId]);
 
   if (runs.length === 0) {
     return (

@@ -426,8 +426,8 @@ export async function fetchCollections(): Promise<KBCollection[]> {
         chunk_count: row.kb_chunks?.[0]?.count || 0,
       }));
     }
-  } catch {
-    // Fall through to cache
+  } catch (err) {
+    console.warn('[KB] fetchCollections Supabase fallback:', err);
   }
 
   return collectionsCache!;
@@ -463,8 +463,8 @@ export async function createCollection(params: {
       created_by: collection.created_by,
       created_at: collection.created_at,
     });
-  } catch {
-    // Continue with in-memory
+  } catch (err) {
+    console.warn('[KB] createCollection Supabase fallback:', err);
   }
 
   collectionsCache!.unshift(collection);
@@ -477,7 +477,7 @@ export async function createCollection(params: {
     userId: user.id,
     userName: user.name,
     details: `Created KB collection: ${params.name}`,
-  }).catch(() => {});
+  }).catch((err) => { console.warn('[KB] createCollection audit fallback:', err); });
 
   return collection;
 }
@@ -487,8 +487,8 @@ export async function deleteCollection(collectionId: string): Promise<boolean> {
 
   try {
     await supabase.from("kb_collections").delete().eq("id", collectionId);
-  } catch {
-    // Continue with in-memory
+  } catch (err) {
+    console.warn('[KB] deleteCollection Supabase fallback:', err);
   }
 
   collectionsCache = collectionsCache!.filter(c => c.id !== collectionId);
@@ -504,7 +504,7 @@ export async function deleteCollection(collectionId: string): Promise<boolean> {
     userId: user.id,
     userName: user.name,
     details: `Deleted KB collection: ${collectionId}`,
-  }).catch(() => {});
+  }).catch((err) => { console.warn('[KB] deleteCollection audit fallback:', err); });
 
   return true;
 }
@@ -527,8 +527,8 @@ export async function fetchDocuments(collectionId: string): Promise<KBDocument[]
     if (!error && data && data.length > 0) {
       return data.map(mapDocRow);
     }
-  } catch {
-    // Fall through
+  } catch (err) {
+    console.warn('[KB] fetchDocuments Supabase fallback:', err);
   }
 
   return (documentsCache.get(collectionId) || []).filter(d => !d.is_deleted);
@@ -618,8 +618,8 @@ export async function addDocument(params: {
         }))
       );
     }
-  } catch {
-    // Continue with in-memory
+  } catch (err) {
+    console.warn('[KB] addDocument Supabase fallback:', err);
   }
 
   // Update caches
@@ -644,7 +644,7 @@ export async function addDocument(params: {
     userId: user.id,
     userName: user.name,
     details: `Added KB document: ${params.title} (${kbChunks.length} chunks) to collection ${params.collectionId}`,
-  }).catch(() => {});
+  }).catch((err) => { console.warn('[KB] addDocument audit fallback:', err); });
 
   return { document: doc, chunks: kbChunks };
 }
@@ -654,8 +654,8 @@ export async function softDeleteDocument(docId: string, collectionId: string): P
 
   try {
     await supabase.from("kb_documents").update({ is_deleted: true }).eq("id", docId);
-  } catch {
-    // Continue
+  } catch (err) {
+    console.warn('[KB] softDeleteDocument Supabase fallback:', err);
   }
 
   const docs = documentsCache.get(collectionId) || [];
@@ -694,8 +694,8 @@ export async function fetchBotKBLinks(botId: string): Promise<BotKBLink[]> {
         collection_name: row.kb_collections?.name,
       }));
     }
-  } catch {
-    // Fall through
+  } catch (err) {
+    console.warn('[KB] fetchBotKBLinks Supabase fallback:', err);
   }
 
   return botKBLinksCache.get(botId) || [];
@@ -717,8 +717,8 @@ export async function linkBotToCollection(botId: string, collectionId: string, p
       collection_id: collectionId,
       priority,
     });
-  } catch {
-    // Continue
+  } catch (err) {
+    console.warn('[KB] linkBotToCollection Supabase fallback:', err);
   }
 
   const existing = botKBLinksCache.get(botId) || [];
@@ -731,8 +731,8 @@ export async function linkBotToCollection(botId: string, collectionId: string, p
 export async function unlinkBotFromCollection(botId: string, collectionId: string): Promise<boolean> {
   try {
     await supabase.from("bot_kb_links").delete().eq("bot_id", botId).eq("collection_id", collectionId);
-  } catch {
-    // Continue
+  } catch (err) {
+    console.warn('[KB] unlinkBotFromCollection Supabase fallback:', err);
   }
 
   const existing = botKBLinksCache.get(botId) || [];
@@ -743,8 +743,8 @@ export async function unlinkBotFromCollection(botId: string, collectionId: strin
 export async function updateBotKBPriority(botId: string, collectionId: string, priority: number): Promise<void> {
   try {
     await supabase.from("bot_kb_links").update({ priority }).eq("bot_id", botId).eq("collection_id", collectionId);
-  } catch {
-    // Continue
+  } catch (err) {
+    console.warn('[KB] updateBotKBPriority Supabase fallback:', err);
   }
 
   const existing = botKBLinksCache.get(botId) || [];
@@ -971,8 +971,8 @@ export async function fetchChunksForDocument(docId: string): Promise<KBChunk[]> 
     if (!error && data) {
       return data;
     }
-  } catch {
-    // Fall through
+  } catch (err) {
+    console.warn('[KB] fetchChunksForDocument Supabase fallback:', err);
   }
 
   // Search all caches
