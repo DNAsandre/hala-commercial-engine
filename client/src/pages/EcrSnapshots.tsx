@@ -20,19 +20,34 @@ import {
   Database, Upload, Shield, Eye, Pencil, Check, X
 } from 'lucide-react';
 import {
-  mockSnapshots, mockInputValues, mockMetrics, mockScores,
   ecrCustomerNames, getSourceModeLabel, getSourceModeColor,
-  computeEcrScore, getGradeBg,
+  computeEcrScore, getGradeBg, getActiveRuleSet,
   type EcrInputSnapshot, type EcrInputValue, type SourceMode
 } from '@/lib/ecr';
+import { useEcrMetrics, useEcrSnapshots, useEcrInputValues, useEcrRuleWeights } from '@/hooks/useSupabase';
+import { getCurrentUser } from '@/lib/auth-state';
+import { Loader2 as Spinner } from 'lucide-react';
 
 export default function EcrSnapshots() {
-  const [snapshots, setSnapshots] = useState<EcrInputSnapshot[]>(mockSnapshots);
-  const [inputValues, setInputValues] = useState<EcrInputValue[]>(mockInputValues);
+  const { data: liveMetrics, loading: metricsLoading } = useEcrMetrics();
+  const { data: liveSnapshots, loading: snapshotsLoading } = useEcrSnapshots();
+  const { data: liveInputValues, loading: valuesLoading } = useEcrInputValues();
+  const { data: liveRuleWeights, loading: weightsLoading } = useEcrRuleWeights();
+
+  const [snapshots, setSnapshots] = useState<EcrInputSnapshot[]>([]);
+  const [inputValues, setInputValues] = useState<EcrInputValue[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingSnapshotId, setEditingSnapshotId] = useState<string | null>(null);
   const [customerFilter, setCustomerFilter] = useState<string>('all');
+  const [initialized, setInitialized] = useState(false);
+
+  // Sync live data into local state
+  if (!initialized && !snapshotsLoading && !valuesLoading) {
+    setSnapshots(liveSnapshots);
+    setInputValues(liveInputValues);
+    setInitialized(true);
+  }
 
   // Create snapshot form
   const [newCustomerId, setNewCustomerId] = useState('cust-sabic');
@@ -42,8 +57,13 @@ export default function EcrSnapshots() {
   // Editing values
   const [editValues, setEditValues] = useState<Record<string, number>>({});
 
-  const activeMetrics = mockMetrics.filter(m => m.active);
+  const loading = metricsLoading || snapshotsLoading || valuesLoading || weightsLoading;
+  const activeMetrics = liveMetrics.filter(m => m.active);
   const customerIds = Object.keys(ecrCustomerNames);
+
+  if (loading) {
+    return <div className="flex items-center justify-center min-h-[50vh]"><Spinner className="w-8 h-8 animate-spin text-slate-400" /></div>;
+  }
 
   const filteredSnapshots = useMemo(() => {
     let result = [...snapshots];
@@ -54,12 +74,20 @@ export default function EcrSnapshots() {
   }, [snapshots, customerFilter]);
 
   const handleCreateSnapshot = () => {
+    if (!newPeriodStart || !newPeriodEnd) {
+      toast.error('Period start and end dates are required');
+      return;
+    }
+    if (new Date(newPeriodEnd) <= new Date(newPeriodStart)) {
+      toast.error('Period end must be after period start');
+      return;
+    }
     const newSnapshot: EcrInputSnapshot = {
       id: `snap-${crypto.randomUUID()}`,
       customerId: newCustomerId,
       periodStart: newPeriodStart,
       periodEnd: newPeriodEnd,
-      createdBy: 'Amin Al-Rashid',
+      createdBy: getCurrentUser().name,
       createdAt: new Date().toISOString(),
     };
     setSnapshots(prev => [...prev, newSnapshot]);
@@ -85,14 +113,14 @@ export default function EcrSnapshots() {
   };
 
   const handleSaveValues = (snapshotId: string) => {
-    const newValues: EcrInputValue[] = activeMetrics.map((m, i) => ({
+    const newValues: EcrInputValue[] = activeMetrics.map((m) => ({
       id: `iv-${crypto.randomUUID()}`,
       snapshotId,
       metricId: m.id,
-      value: editValues[m.id] ?? 0,
+      value: Math.min(m.maxValue, Math.max(m.minValue, editValues[m.id] ?? m.minValue)),
       sourceMode: 'manual' as SourceMode,
       sourceReference: 'Manual entry',
-      capturedBy: 'Amin Al-Rashid',
+      capturedBy: getCurrentUser().name,
       capturedAt: new Date().toISOString(),
     }));
     // Remove old values for this snapshot and add new ones
@@ -111,7 +139,9 @@ export default function EcrSnapshots() {
   const getSnapshotScore = (snapshotId: string) => {
     const vals = inputValues.filter(v => v.snapshotId === snapshotId);
     if (vals.length === 0) return null;
-    return computeEcrScore(snapshotId, 'rs-2', mockMetrics, undefined, inputValues);
+    const activeRS = getActiveRuleSet();
+    if (!activeRS) return null;
+    return computeEcrScore(snapshotId, activeRS.id, liveMetrics, liveRuleWeights, inputValues);
   };
 
   return (

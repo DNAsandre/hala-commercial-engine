@@ -376,10 +376,11 @@ export default function Portfolio() {
 
   const atRisk = summary.protectCount + summary.monitorCount;
 
-  if (loading) {
+  if (loading && customers.length === 0) {
     return (
-      <div className="flex items-center justify-center h-96">
+      <div className="flex flex-col items-center justify-center h-96 gap-3">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        <p className="text-xs text-muted-foreground">Loading portfolio…</p>
       </div>
     );
   }

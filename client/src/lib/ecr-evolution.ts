@@ -74,8 +74,8 @@ mockRuleSets.forEach((rs) => {
   });
 });
 
-// Enable evolution on the active rule set (rs-2) for demo
-const activeControls = evolutionControlsMap.get("rs-2");
+// Enable evolution on the active rule set (rs-4) for demo
+const activeControls = evolutionControlsMap.get("rs-4");
 if (activeControls) {
   activeControls.evolution_enabled = true;
   activeControls.missing_metric_mode = "graceful_reweight";
@@ -165,6 +165,7 @@ export interface EvolutionScoreResult {
  */
 function normalizeValue(metric: EcrMetric, rawValue: number): number {
   const { minValue, maxValue, unit, metricKey } = metric;
+  if (maxValue === minValue) return 0;
   const inverseMetrics = ["dso_days", "dispute_rate"];
   const isInverse = inverseMetrics.includes(metricKey);
 
@@ -434,9 +435,9 @@ export interface EcrRuleUpgradeEvent {
   requested_by: string;
   requested_by_role: UserRole;
   requested_at: string;
-  approved_by: string | null;
-  approved_by_role: UserRole | null;
-  approved_at: string | null;
+  reviewed_by: string | null;
+  reviewed_by_role: UserRole | null;
+  reviewed_at: string | null;
   reason: string;
   approval_reason: string | null;
   rejection_reason: string | null;
@@ -568,6 +569,14 @@ export function requestUpgrade(params: {
     return { success: false, error: "Cannot upgrade to the same rule set" };
   }
 
+  // Prevent duplicate pending requests for the same context
+  const existingPending = ecrUpgradeEvents.find(
+    e => e.context_id === params.context_id && e.status === "requested"
+  );
+  if (existingPending) {
+    return { success: false, error: "A pending upgrade request already exists for this context. Cancel or resolve it before submitting a new one." };
+  }
+
   // Get current score
   const currentScore = mockScores.find(
     (s) => s.customerId === params.customer_id && s.ruleSetId === params.from_rule_set_id
@@ -608,9 +617,9 @@ export function requestUpgrade(params: {
     requested_by: params.userName,
     requested_by_role: params.userRole,
     requested_at: new Date().toISOString(),
-    approved_by: null,
-    approved_by_role: null,
-    approved_at: null,
+    reviewed_by: null,
+    reviewed_by_role: null,
+    reviewed_at: null,
     reason: params.reason.trim(),
     approval_reason: null,
     rejection_reason: null,
@@ -706,9 +715,9 @@ export function approveUpgrade(
 
   // Update event
   event.status = "approved";
-  event.approved_by = userName;
-  event.approved_by_role = userRole;
-  event.approved_at = new Date().toISOString();
+  event.reviewed_by = userName;
+  event.reviewed_by_role = userRole;
+  event.reviewed_at = new Date().toISOString();
   event.approval_reason = approvalReason;
   event.to_ecr_score_id = newScore.id;
   event.impact_summary.to_score = result.total_score!;
@@ -725,7 +734,7 @@ export function approveUpgrade(
     entityId: event.context_id,
     userId,
     userName,
-    timestamp: event.approved_at,
+    timestamp: event.reviewed_at,
     details: `ECR upgrade APPROVED: ${event.from_rule_set_name} → ${event.to_rule_set_name} for ${event.customer_name}. Score: ${event.impact_summary.from_score} → ${result.total_score}`,
     metadata: { upgradeEventId, newScoreId: newScore.id, approvalReason },
   });
@@ -756,9 +765,9 @@ export function rejectUpgrade(
   }
 
   event.status = "rejected";
-  event.approved_by = userName;
-  event.approved_by_role = userRole;
-  event.approved_at = new Date().toISOString();
+  event.reviewed_by = userName;
+  event.reviewed_by_role = userRole;
+  event.reviewed_at = new Date().toISOString();
   event.rejection_reason = rejectionReason.trim();
 
   // Audit log
@@ -770,7 +779,7 @@ export function rejectUpgrade(
     entityId: event.context_id,
     userId,
     userName,
-    timestamp: event.approved_at,
+    timestamp: event.reviewed_at,
     details: `ECR upgrade REJECTED: ${event.from_rule_set_name} → ${event.to_rule_set_name} for ${event.customer_name}. Reason: ${rejectionReason}`,
     metadata: { upgradeEventId, rejectionReason },
   });
@@ -882,9 +891,9 @@ ecrUpgradeEvents.push({
   requested_by: "Ra'ed Al-Harbi",
   requested_by_role: "regional_sales_head",
   requested_at: "2025-03-15T10:00:00Z",
-  approved_by: "Mohammed Al-Qahtani",
-  approved_by_role: "director",
-  approved_at: "2025-03-15T14:30:00Z",
+  reviewed_by: "Mohammed Al-Qahtani",
+  reviewed_by_role: "director",
+  reviewed_at: "2025-03-15T14:30:00Z",
   reason: "New rule set v2 better reflects current commercial priorities with increased GP% weighting.",
   approval_reason: "Approved — v2 alignment with strategic direction confirmed.",
   rejection_reason: null,
@@ -904,7 +913,7 @@ ecrUpgradeEvents.push({
   },
 });
 
-// Seed one pending upgrade request for Ma'aden
+// Seed one pending upgrade request for Ma'aden (rs-2 → rs-4 active)
 ecrUpgradeEvents.push({
   id: "eue-2",
   context_type: "renewal",
@@ -913,23 +922,23 @@ ecrUpgradeEvents.push({
   customer_name: "Ma'aden",
   from_rule_set_id: "rs-2",
   from_rule_set_name: "ECR Standard v2",
-  to_rule_set_id: "rs-2",
-  to_rule_set_name: "ECR Standard v2",
+  to_rule_set_id: "rs-4",
+  to_rule_set_name: "ECR Value-Ops-Fin Structure (40/30/30)",
   from_ecr_score_id: "score-snap-3",
   to_ecr_score_id: null,
   requested_by: "Ra'ed Al-Harbi",
   requested_by_role: "regional_sales_head",
   requested_at: "2026-02-10T09:00:00Z",
-  approved_by: null,
-  approved_by_role: null,
-  approved_at: null,
-  reason: "Re-score Ma'aden with latest snapshot data under current v2 rule set to get updated ECR grade for renewal negotiation.",
+  reviewed_by: null,
+  reviewed_by_role: null,
+  reviewed_at: null,
+  reason: "Upgrade Ma'aden to active rule set v4 (40/30/30) for updated ECR grade ahead of renewal negotiation.",
   approval_reason: null,
   rejection_reason: null,
   status: "requested",
   rule_set_locked_snapshot: {
     from: { id: "rs-2", name: "ECR Standard v2", version: 2, weights: { gp_percent: 25, revenue_growth: 15, dso_days: 15, contract_tenure: 10, sla_compliance: 10, volume_utilization: 10, dispute_rate: 10, strategic_value: 5 } },
-    to: { id: "rs-2", name: "ECR Standard v2", version: 2, weights: { gp_percent: 25, revenue_growth: 15, dso_days: 15, contract_tenure: 10, sla_compliance: 10, volume_utilization: 10, dispute_rate: 10, strategic_value: 5 } },
+    to: { id: "rs-4", name: "ECR Value-Ops-Fin Structure (40/30/30)", version: 4, weights: { revenue_growth: 25, contract_tenure: 10, strategic_value: 5, sla_compliance: 10, volume_utilization: 10, dispute_rate: 10, gp_percent: 15, dso_days: 15 } },
   },
   impact_summary: {
     from_score: 51.2,

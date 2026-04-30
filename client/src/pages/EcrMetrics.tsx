@@ -22,11 +22,14 @@ import {
   User, Link2, Hash, Percent, Clock, BarChart3, Shield, Info
 } from 'lucide-react';
 import {
-  mockMetrics, mockMetricMappings, mockConnectors, mockRuleWeights,
-  getSourceModeLabel, getSourceModeColor, getActiveRuleSet,
+  getSourceModeLabel, getSourceModeColor, getActiveRuleSet, getRuleSetWeights,
   type EcrMetric, type SourceMode, type MetricUnit
 } from '@/lib/ecr';
+import {
+  useEcrMetrics, useEcrRuleWeights,
+} from '@/hooks/useSupabase';
 import { getEvolutionControls } from '@/lib/ecr-evolution';
+import { Loader2 as Spinner } from 'lucide-react';
 
 const unitIcons: Record<MetricUnit, React.ReactNode> = {
   '%': <Percent className="w-3.5 h-3.5" />,
@@ -36,11 +39,27 @@ const unitIcons: Record<MetricUnit, React.ReactNode> = {
 };
 
 export default function EcrMetrics() {
-  const [metrics, setMetrics] = useState<EcrMetric[]>(mockMetrics);
+  const { data: liveMetrics, loading: metricsLoading } = useEcrMetrics();
+  const { data: liveRuleWeights, loading: weightsLoading } = useEcrRuleWeights();
+  const [metrics, setMetrics] = useState<EcrMetric[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showInactive, setShowInactive] = useState(false);
   const [editingMetric, setEditingMetric] = useState<EcrMetric | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [initialized, setInitialized] = useState(false);
+
+  // Sync live data into local state for editing
+  useState(() => {
+    if (!initialized && liveMetrics.length > 0) {
+      setMetrics(liveMetrics);
+      setInitialized(true);
+    }
+  });
+  // Also update when live data arrives
+  if (!initialized && !metricsLoading && liveMetrics.length > 0) {
+    setMetrics(liveMetrics);
+    setInitialized(true);
+  }
 
   // New metric form state
   const [formKey, setFormKey] = useState('');
@@ -64,7 +83,14 @@ export default function EcrMetrics() {
   }, [metrics, searchQuery, showInactive]);
 
   const activeCount = metrics.filter(m => m.active).length;
-  const totalWeight = metrics.filter(m => m.active).reduce((sum, m) => sum + m.defaultWeight, 0);
+  const activeRS = getActiveRuleSet();
+  const totalWeight = activeRS
+    ? getRuleSetWeights(activeRS.id).reduce((sum, w) => sum + w.weight, 0)
+    : metrics.filter(m => m.active).reduce((sum, m) => sum + m.defaultWeight, 0);
+
+  if (metricsLoading || weightsLoading) {
+    return <div className="flex items-center justify-center min-h-[50vh]"><Spinner className="w-8 h-8 animate-spin text-slate-400" /></div>;
+  }
 
   const handleToggleActive = (id: string) => {
     setMetrics(prev => prev.map(m =>
@@ -78,8 +104,16 @@ export default function EcrMetrics() {
       toast.error('Metric key and display name are required');
       return;
     }
+    if (!/^[a-z][a-z0-9_]*$/.test(formKey)) {
+      toast.error('Metric key must be lowercase snake_case (e.g. gp_percent)');
+      return;
+    }
     if (metrics.some(m => m.metricKey === formKey)) {
       toast.error('Metric key already exists');
+      return;
+    }
+    if (formMin >= formMax) {
+      toast.error('Max value must be greater than min value');
       return;
     }
     const newMetric: EcrMetric = {
@@ -104,6 +138,10 @@ export default function EcrMetrics() {
 
   const handleEditMetric = () => {
     if (!editingMetric) return;
+    if (editingMetric.minValue >= editingMetric.maxValue) {
+      toast.error('Max value must be greater than min value');
+      return;
+    }
     setMetrics(prev => prev.map(m =>
       m.id === editingMetric.id ? { ...editingMetric, updatedAt: new Date().toISOString() } : m
     ));
@@ -122,13 +160,9 @@ export default function EcrMetrics() {
     setFormSource('manual');
   };
 
-  const getMappings = (metricId: string) => {
-    return mockMetricMappings
-      .filter(mm => mm.metricId === metricId)
-      .map(mm => {
-        const connector = mockConnectors.find(c => c.id === mm.connectorId);
-        return { ...mm, connectorName: connector?.name || 'Unknown', connectorType: connector?.type || 'custom' };
-      });
+  const getMappings = (_metricId: string) => {
+    // Connector mappings not yet in DB — return empty for now
+    return [] as { id: string; connectorName: string; connectorType: string; externalFieldName: string }[];
   };
 
   return (
@@ -174,7 +208,7 @@ export default function EcrMetrics() {
         <Card>
           <CardContent className="py-3">
             <p className="text-xs text-slate-500 uppercase tracking-wider">Connector Mappings</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{mockMetricMappings.length}</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">0</p>
           </CardContent>
         </Card>
       </div>
@@ -227,7 +261,7 @@ export default function EcrMetrics() {
                     <div className="flex items-center gap-4 mt-3 ml-9">
                       {(() => {
                         const activeRS = getActiveRuleSet();
-                        const isRequired = activeRS ? mockRuleWeights.some(w => w.ruleSetId === activeRS.id && w.metricId === metric.id && w.weight > 0) : false;
+                        const isRequired = activeRS ? liveRuleWeights.some(w => w.ruleSetId === activeRS.id && w.metricId === metric.id && w.weight > 0) : false;
                         const evoControls = activeRS ? getEvolutionControls(activeRS.id) : null;
                         const hasDefaultConfig = evoControls?.missing_metric_mode === 'default_value';
                         return (

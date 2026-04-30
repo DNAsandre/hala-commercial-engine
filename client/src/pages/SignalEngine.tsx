@@ -6,7 +6,7 @@ import { ArrowLeft } from "lucide-react";
  * Sections: Signal Rules, Active Signals, Escalation Matrix, Explainability
  * All signals are advisory — human must acknowledge and decide.
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -20,12 +20,12 @@ import { toast } from 'sonner';
 import {
   AlertTriangle, Bell, Activity, TrendingUp, TrendingDown, BarChart3,
   Clock, CheckCircle2, XCircle, Eye, Shield, Zap, Filter, ArrowUp,
-  ArrowDown, Minus, AlertOctagon, Radio, ChevronRight, Info, Plus, Settings
+  ArrowDown, Minus, AlertOctagon, Radio, ChevronRight, Info, Plus, Settings, Loader2
 } from 'lucide-react';
 import {
-  mockSignalRules, mockSignalEvents, mockBots,
   type SignalRule, type SignalEvent
 } from '@/lib/bot-governance';
+import { api } from '@/lib/api-client';
 
 const severityConfig = {
   fyi: { color: 'bg-blue-100 text-blue-800 border-blue-200', icon: Info, label: 'FYI' },
@@ -43,11 +43,60 @@ const metricConfig: Record<string, { icon: typeof TrendingUp; color: string }> =
   error_rate_spike: { icon: Zap, color: 'text-red-500' },
 };
 
+// Map DB snake_case to component camelCase
+function mapRule(r: any): SignalRule {
+  return {
+    id: r.id, botId: r.bot_id || r.botId, name: r.name, type: r.type,
+    metric: r.metric, threshold: r.threshold, trendDirection: r.trend_direction ?? r.trendDirection ?? null,
+    timeRangeHours: r.time_range_hours ?? r.timeRangeHours ?? 24,
+    severity: r.severity, notifyRoles: r.notify_roles || r.notifyRoles || [],
+    enabled: r.enabled, description: r.description, condition: r.condition,
+    timeWindow: r.time_window || r.timeWindow || '24h',
+    cooldownMinutes: r.cooldown_minutes ?? r.cooldownMinutes ?? 60,
+  };
+}
+
+function mapEvent(e: any): SignalEvent {
+  return {
+    id: e.id, ruleId: e.rule_id || e.ruleId, botId: e.bot_id || e.botId,
+    timestamp: e.triggered_at || e.timestamp, severity: e.severity, metric: e.metric,
+    thresholdTriggered: e.threshold_triggered || e.thresholdTriggered || '',
+    timeRangeAnalyzed: e.time_range_analyzed || e.timeRangeAnalyzed || '',
+    message: e.message, acknowledged: e.acknowledged,
+    acknowledgedBy: e.acknowledged_by || e.acknowledgedBy || null,
+    acknowledgedAt: e.acknowledged_at || e.acknowledgedAt || null,
+    explainability: e.explainability, suggestedAction: e.suggested_action || e.suggestedAction || '',
+  };
+}
+
 export default function SignalEngine() {
-  const [rules, setRules] = useState([...mockSignalRules]);
-  const [events, setEvents] = useState([...mockSignalEvents]);
+  const [rules, setRules] = useState<SignalRule[]>([]);
+  const [events, setEvents] = useState<SignalEvent[]>([]);
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [, setRefresh] = useState(0);
+  const [showAddRule, setShowAddRule] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [bots, setBots] = useState<any[]>([]);
+  const [newRule, setNewRule] = useState({ name: '', metric: 'gp_drop', type: 'threshold' as const, threshold: 15, severity: 'needs_review' as const, description: '' });
+
+  // Load from API
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const [rulesRes, eventsRes, botsRes] = await Promise.all([
+          api.botGovernance.listSignalRules(),
+          api.botGovernance.listSignalEvents(),
+          api.botGovernance.listBots(),
+        ]);
+        if (!mounted) return;
+        setRules((rulesRes.data || []).map(mapRule));
+        setEvents((eventsRes.data || []).map(mapEvent));
+        setBots(botsRes.data || []);
+      } catch { /* empty state is honest */ }
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   const activeEvents = events.filter(e => !e.acknowledged);
   const escalateCount = activeEvents.filter(e => e.severity === 'escalate').length;
@@ -59,18 +108,71 @@ export default function SignalEngine() {
     return true;
   });
 
-  const handleAcknowledge = (eventId: string) => {
+  const handleAcknowledge = async (eventId: string) => {
     setEvents(prev => prev.map(e =>
       e.id === eventId ? { ...e, acknowledged: true, acknowledgedBy: 'Amin Al-Rashid', acknowledgedAt: new Date().toISOString() } : e
     ));
-    toast.success('Signal acknowledged');
+    try {
+      await api.botGovernance.acknowledgeSignal(eventId);
+      toast.success('Signal acknowledged');
+    } catch {
+      // Rollback
+      setEvents(prev => prev.map(e =>
+        e.id === eventId ? { ...e, acknowledged: false, acknowledgedBy: null, acknowledgedAt: null } : e
+      ));
+      toast.error('Failed to acknowledge signal — reverted');
+    }
   };
 
-  const handleToggleRule = (ruleId: string) => {
+  const handleToggleRule = async (ruleId: string) => {
+    const rule = rules.find(r => r.id === ruleId);
+    const newEnabled = rule ? !rule.enabled : true;
     setRules(prev => prev.map(r =>
-      r.id === ruleId ? { ...r, enabled: !r.enabled } : r
+      r.id === ruleId ? { ...r, enabled: newEnabled } : r
     ));
-    toast.success('Rule updated');
+    try {
+      await api.botGovernance.updateSignalRule(ruleId, { enabled: newEnabled });
+      toast.success(`Rule ${newEnabled ? 'enabled' : 'disabled'}`);
+    } catch {
+      // Rollback
+      setRules(prev => prev.map(r =>
+        r.id === ruleId ? { ...r, enabled: !newEnabled } : r
+      ));
+      toast.error('Failed to update rule — reverted');
+    }
+  };
+
+  const handleAddRule = async () => {
+    if (!newRule.name.trim()) { toast.error('Rule name is required'); return; }
+    if (!newRule.description.trim()) { toast.error('Description is required'); return; }
+    const rulePayload = {
+      bot_id: bots[0]?.id || 'bot-monitor',
+      name: newRule.name.trim(),
+      type: newRule.type,
+      metric: newRule.metric,
+      threshold: newRule.threshold,
+      severity: newRule.severity,
+      description: newRule.description.trim(),
+      condition: `${newRule.metric} ${newRule.type === 'threshold' ? '>' : 'trend'} ${newRule.threshold}`,
+      enabled: true,
+      notify_roles: ['commercial_director', 'admin'],
+      time_window: '24h',
+      cooldown_minutes: 60,
+    };
+    try {
+      const { data } = await api.botGovernance.createSignalRule(rulePayload);
+      if (data) {
+        setRules(prev => [mapRule(data), ...prev]);
+      } else {
+        setRules(prev => [{ id: `rule-${Date.now()}`, botId: rulePayload.bot_id, name: rulePayload.name, type: rulePayload.type as any, metric: rulePayload.metric, threshold: rulePayload.threshold, trendDirection: null, timeRangeHours: 24, severity: rulePayload.severity, notifyRoles: rulePayload.notify_roles, enabled: true, description: rulePayload.description, condition: rulePayload.condition, timeWindow: '24h', cooldownMinutes: 60 }, ...prev]);
+      }
+      toast.success(`Rule "${newRule.name}" created`);
+    } catch {
+      setRules(prev => [{ id: `rule-${Date.now()}`, botId: rulePayload.bot_id, name: rulePayload.name, type: rulePayload.type as any, metric: rulePayload.metric, threshold: rulePayload.threshold, trendDirection: null, timeRangeHours: 24, severity: rulePayload.severity, notifyRoles: rulePayload.notify_roles, enabled: true, description: rulePayload.description, condition: rulePayload.condition, timeWindow: '24h', cooldownMinutes: 60 }, ...prev]);
+      toast.success(`Rule "${newRule.name}" created (local only)`);
+    }
+    setNewRule({ name: '', metric: 'gp_drop', type: 'threshold', threshold: 15, severity: 'needs_review', description: '' });
+    setShowAddRule(false);
   };
 
   return (
@@ -85,7 +187,30 @@ export default function SignalEngine() {
         </Link>
       </div>
       <h1 className="text-2xl font-bold font-serif text-slate-900">Signal Engine</h1>
-        <p className="text-sm text-slate-500 mt-1">Monitor bots generate signals. Humans review and decide. No auto-action.</p>
+        <div className="flex items-center justify-between mt-1">
+          <p className="text-sm text-slate-500">Monitor bots generate signals. Humans review and decide. No auto-action.</p>
+          <Button
+            size="sm"
+            className="text-xs h-7 bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5"
+            disabled={scanning}
+            onClick={async () => {
+              setScanning(true);
+              toast.info('Scanning business data...');
+              try {
+                const res = await api.botGovernance.runSignalScanner();
+                if (res.data) {
+                  toast.success(`Scan complete — ${res.data.scanned} rules evaluated, ${res.data.triggered} signals triggered`);
+                  // Refresh events
+                  const eventsRes = await api.botGovernance.listSignalEvents();
+                  if (eventsRes.data?.length) setEvents(eventsRes.data.map(mapEvent));
+                }
+              } catch { toast.error('Signal scan failed'); }
+              finally { setScanning(false); }
+            }}
+          >
+            {scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Radio className="w-3.5 h-3.5" />} {scanning ? 'Scanning...' : 'Scan Now'}
+          </Button>
+        </div>
       </div>
 
       {/* Signal Summary */}
@@ -169,7 +294,7 @@ export default function SignalEngine() {
             {filteredEvents.map(event => {
               const config = severityConfig[event.severity];
               const Icon = config.icon;
-              const bot = mockBots.find(b => b.id === event.botId);
+              const bot = bots.find((b: any) => b.id === event.botId);
               const rule = rules.find(r => r.id === event.ruleId);
               return (
                 <Card key={event.id} className={`${!event.acknowledged ? 'border-l-4' : 'opacity-70'} ${event.severity === 'escalate' ? 'border-l-red-500' : event.severity === 'needs_review' ? 'border-l-amber-500' : 'border-l-blue-400'}`}>
@@ -238,10 +363,72 @@ export default function SignalEngine() {
         <TabsContent value="rules" className="space-y-4">
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm text-slate-500">Configure which metrics trigger signals and at what thresholds.</p>
-            <Button variant="outline" size="sm" onClick={() => toast.info('Add custom rule (feature coming soon)')}>
-              <Plus className="w-3 h-3 mr-1" /> Add Rule
+            <Button variant="outline" size="sm" onClick={() => setShowAddRule(!showAddRule)}>
+              <Plus className="w-3 h-3 mr-1" /> {showAddRule ? 'Cancel' : 'Add Rule'}
             </Button>
           </div>
+
+          {showAddRule && (
+            <Card className="border-2 border-dashed border-blue-200 bg-blue-50/30">
+              <CardContent className="py-4 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">Rule Name</Label>
+                    <Input placeholder="e.g., GP Drop Alert" value={newRule.name} onChange={e => setNewRule(prev => ({ ...prev, name: e.target.value }))} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Metric</Label>
+                    <Select value={newRule.metric} onValueChange={v => setNewRule(prev => ({ ...prev, metric: v }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="gp_drop">GP Drop</SelectItem>
+                        <SelectItem value="dso_spike">DSO Spike</SelectItem>
+                        <SelectItem value="volume_anomaly">Volume Anomaly</SelectItem>
+                        <SelectItem value="cost_overrun">Cost Overrun</SelectItem>
+                        <SelectItem value="sla_breach">SLA Breach</SelectItem>
+                        <SelectItem value="approval_delay">Approval Delay</SelectItem>
+                        <SelectItem value="error_rate_spike">Error Rate Spike</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Type</Label>
+                    <Select value={newRule.type} onValueChange={(v: any) => setNewRule(prev => ({ ...prev, type: v }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="threshold">Threshold</SelectItem>
+                        <SelectItem value="trend">Trend</SelectItem>
+                        <SelectItem value="anomaly">Anomaly</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Threshold</Label>
+                    <Input type="number" value={newRule.threshold} onChange={e => setNewRule(prev => ({ ...prev, threshold: Number(e.target.value) }))} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Severity</Label>
+                    <Select value={newRule.severity} onValueChange={(v: any) => setNewRule(prev => ({ ...prev, severity: v }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="fyi">FYI</SelectItem>
+                        <SelectItem value="needs_review">Needs Review</SelectItem>
+                        <SelectItem value="escalate">Escalate</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Description</Label>
+                    <Input placeholder="What does this rule monitor?" value={newRule.description} onChange={e => setNewRule(prev => ({ ...prev, description: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => setShowAddRule(false)}>Cancel</Button>
+                  <Button size="sm" className="bg-[#1B2A4A]" onClick={handleAddRule}>Create Rule</Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
           <div className="space-y-3">
             {rules.map(rule => {
               const mc = metricConfig[rule.metric] || { icon: Activity, color: 'text-slate-500' };

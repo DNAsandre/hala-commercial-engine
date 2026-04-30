@@ -25,6 +25,8 @@ import {
   ecrUpgradeEvents, approveUpgrade, rejectUpgrade,
   type EcrRuleUpgradeEvent, type UpgradeStatus
 } from '@/lib/ecr-evolution';
+import { getCurrentUser } from '@/lib/auth-state';
+import type { UserRole } from '@/lib/store';
 import { mockRuleSets } from '@/lib/ecr';
 
 const statusConfig: Record<UpgradeStatus, { label: string; color: string; icon: React.ReactNode }> = {
@@ -76,15 +78,16 @@ export default function EcrUpgrades() {
       return;
     }
 
+    const actor = getCurrentUser();
     if (reviewAction === 'approve') {
-      const result = approveUpgrade(reviewModal.id, 'user-cfo', 'Khalid Al-Mansour', 'ceo_cfo', reviewReason);
+      const result = approveUpgrade(reviewModal.id, actor.id, actor.name, actor.role as UserRole, reviewReason);
       if (result.success) {
         toast.success('Upgrade approved', { description: `ECR upgrade for ${reviewModal.customer_name} approved.` });
       } else {
         toast.error(result.error || 'Failed to approve');
       }
     } else {
-      const result = rejectUpgrade(reviewModal.id, 'user-cfo', 'Khalid Al-Mansour', 'ceo_cfo', reviewReason);
+      const result = rejectUpgrade(reviewModal.id, actor.id, actor.name, actor.role as UserRole, reviewReason);
       if (result.success) {
         toast.success('Upgrade rejected', { description: `ECR upgrade for ${reviewModal.customer_name} rejected.` });
       } else {
@@ -165,7 +168,6 @@ export default function EcrUpgrades() {
             <SelectItem value="requested">Pending</SelectItem>
             <SelectItem value="approved">Approved</SelectItem>
             <SelectItem value="rejected">Rejected</SelectItem>
-            <SelectItem value="applied">Applied</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -250,9 +252,9 @@ export default function EcrUpgrades() {
                         <span className="flex items-center gap-1">
                           <Calendar className="w-3 h-3" /> {new Date(event.requested_at).toLocaleString()}
                         </span>
-                        {event.approved_by && (
+                        {event.reviewed_by && (
                           <span className="flex items-center gap-1">
-                            <Eye className="w-3 h-3" /> Reviewed by {event.approved_by}
+                            <Eye className="w-3 h-3" /> Reviewed by {event.reviewed_by}
                           </span>
                         )}
                       </div>

@@ -86,6 +86,7 @@ import {
   type UnifiedDocument, type DocumentCategory,
 } from "@/lib/document-vault";
 import { DocumentViewer, UploadDialog } from "@/components/DocumentViewer";
+import { LifecycleLight, getLightState } from "@/components/LifecycleLight";
 
 // ─── MILESTONE STRIP ───────────────────────────────────────
 
@@ -140,21 +141,14 @@ function MilestoneStrip({
                   }
                 `}
               >
-                {/* Dot */}
-                <div className={`w-2 h-2 rounded-full mb-1.5 ${
-                  isCurrent ? "bg-white" :
-                  isPast ? "bg-emerald-500" :
-                  isSuggested ? "bg-primary/60" :
-                  "bg-muted-foreground/20"
-                }`} />
+                {/* 3D LED Light */}
+                <LifecycleLight state={getLightState(i, currentIdx, isTerminal)} size={12} className="mb-1.5" />
                 <span className={`text-[10px] font-medium whitespace-nowrap leading-none ${
                   isCurrent ? "text-white font-semibold" : ""
                 }`}>
                   {getTenderMilestoneShortLabel(m)}
                 </span>
-                {isSuggested && (
-                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-primary animate-pulse" />
-                )}
+
               </button>
 
               {/* Connector */}
@@ -716,6 +710,17 @@ export default function Tenders() {
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
+      {/* Prototype Data Banner */}
+      <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-3">
+        <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+        <div>
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Placeholder data — not live</p>
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+            This module is currently displaying sample data. Real tender records will appear here once the data integration sprint is complete.
+          </p>
+        </div>
+      </div>
+
       {/* Page Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

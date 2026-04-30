@@ -1018,6 +1018,7 @@ function mapEcrScore(row: any): EcrScore {
     totalScore: Number(row.total_score),
     grade: row.grade as Grade,
     confidenceScore: Number(row.confidence_score),
+    breakdown: row.breakdown ?? null,
     computedAt: row.computed_at ?? "",
     computedBySystem: row.computed_by_system ?? true,
   };

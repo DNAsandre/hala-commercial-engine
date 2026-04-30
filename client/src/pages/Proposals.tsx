@@ -6,6 +6,7 @@
  */
 
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { BookOpen, Plus, ArrowLeft, Edit, Download, Send, Search, Filter, Shield, CheckCircle, XCircle, Clock, AlertTriangle, Eye } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +43,7 @@ const stateIcons: Record<string, typeof CheckCircle> = {
 };
 
 export default function Proposals() {
+  const [, navigate] = useLocation();
   const { data: proposals, loading: propLoading } = useProposals();
   const { data: workspaces, loading: wsLoading } = useWorkspaces();
   const { data: customers, loading: custLoading } = useCustomers();
@@ -251,6 +253,10 @@ export default function Proposals() {
                     )}
                   </div>
                   <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-700 hover:bg-blue-50"
+                      onClick={() => navigate(`/proposals/${p.id}`)}>
+                      <Eye size={12} className="mr-1" /> View Detail
+                    </Button>
                     {p.state === "draft" && (
                       <Button variant="ghost" size="sm" className="h-7 text-xs text-emerald-700 hover:bg-emerald-50"
                         onClick={() => handleApproveProposal(p.id, p.title)}>

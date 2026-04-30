@@ -21,9 +21,10 @@ import {
   XCircle, Settings, Database, ArrowRight, Eye, Lock
 } from 'lucide-react';
 import {
-  mockConnectors, mockMetricMappings, mockMetrics,
   type EcrConnector, type EcrMetricMapping, type ConnectorType, type ConnectorStatus
 } from '@/lib/ecr';
+import { useEcrMetrics } from '@/hooks/useSupabase';
+import { Loader2 as Spinner } from 'lucide-react';
 
 const connectorTypeConfig: Record<ConnectorType, { label: string; color: string; icon: string }> = {
   finance: { label: 'Finance', color: 'bg-emerald-100 text-emerald-700', icon: '💰' },
@@ -34,8 +35,10 @@ const connectorTypeConfig: Record<ConnectorType, { label: string; color: string;
 };
 
 export default function EcrConnectors() {
-  const [connectors, setConnectors] = useState<EcrConnector[]>(mockConnectors);
-  const [mappings, setMappings] = useState<EcrMetricMapping[]>(mockMetricMappings);
+  const { data: liveMetrics, loading: metricsLoading } = useEcrMetrics();
+  // Connectors don't have a DB table yet — start empty instead of mock
+  const [connectors, setConnectors] = useState<EcrConnector[]>([]);
+  const [mappings, setMappings] = useState<EcrMetricMapping[]>([]);
   const [showRegisterDialog, setShowRegisterDialog] = useState(false);
   const [selectedConnector, setSelectedConnector] = useState<string | null>(null);
 
@@ -45,7 +48,11 @@ export default function EcrConnectors() {
   const [newHost, setNewHost] = useState('');
   const [newPort, setNewPort] = useState('443');
 
-  const activeMetrics = mockMetrics.filter(m => m.active);
+  const activeMetrics = liveMetrics.filter(m => m.active);
+
+  if (metricsLoading) {
+    return <div className="flex items-center justify-center min-h-[50vh]"><Spinner className="w-8 h-8 animate-spin text-slate-400" /></div>;
+  }
 
   const handleToggleConnector = (id: string) => {
     setConnectors(prev => prev.map(c =>
@@ -79,7 +86,7 @@ export default function EcrConnectors() {
     return mappings
       .filter(mm => mm.connectorId === connectorId)
       .map(mm => {
-        const metric = mockMetrics.find(m => m.id === mm.metricId);
+        const metric = liveMetrics.find(m => m.id === mm.metricId);
         return { ...mm, metricName: metric?.displayName || 'Unknown', metricKey: metric?.metricKey || '' };
       });
   };

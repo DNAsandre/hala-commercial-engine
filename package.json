@@ -16,6 +16,7 @@
     "check": "tsc --noEmit",
     "typecheck:server": "tsc --project server/tsconfig.json --noEmit",
     "policy:storage": "node scripts/policy-storage.mjs",
+    "seed:docs": "tsx server/scripts/seed-documents.ts",
     "format": "prettier --write ."
   },
   "dependencies": {

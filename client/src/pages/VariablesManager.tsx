@@ -199,7 +199,7 @@ export default function VariablesManager() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-serif font-bold text-[#1B2A4A]">Variables Manager</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Manage semantic variables, token definitions, and resolution sets</p>
+          <p className="text-sm text-gray-500 mt-0.5">Manage custom document variables and value resolution sets</p>
         </div>
         <Button onClick={openCreate} className="bg-[#1B2A4A] hover:bg-[#2A3F6A]">
           <Plus className="w-4 h-4 mr-1.5" /> New Variable

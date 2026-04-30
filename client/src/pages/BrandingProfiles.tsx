@@ -20,10 +20,11 @@ import {
 , ArrowLeft } from "lucide-react";
 import { brandingProfiles, type BrandingProfile, type FooterFormat } from "@/lib/document-composer";
 import { useDocBrandingProfiles } from "@/hooks/useSupabase";
+import { api } from "@/lib/api-client";
 
 export default function BrandingProfilesPage() {
   // Live Supabase data
-  const { data: liveBranding, error: brnError } = useDocBrandingProfiles();
+  const { data: liveBranding, error: brnError, refetch: refetchBranding } = useDocBrandingProfiles();
   const profiles = brnError ? brandingProfiles : liveBranding;
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -42,11 +43,33 @@ export default function BrandingProfilesPage() {
     show_ref: true, show_date: true, show_completed_by: true, show_page_numbers: true, custom_text: ""
   });
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!formName.trim()) { toast.error("Profile name is required"); return; }
-    toast.success(`Branding profile "${formName}" created`);
-    setShowCreateDialog(false);
-    resetForm();
+    const payload = {
+      name: formName.trim(),
+      primary_color: formPrimary,
+      secondary_color: formSecondary,
+      accent_color: formAccent,
+      font_family: formFont,
+      font_heading: formHeadingFont,
+      header_style: formHeaderStyle,
+      footer_format: formFooter,
+    };
+    try {
+      if (editingProfile) {
+        await api.branding.update(editingProfile.id, payload);
+        toast.success(`Branding profile "${formName}" updated`);
+      } else {
+        await api.branding.create(payload);
+        toast.success(`Branding profile "${formName}" created`);
+      }
+      await refetchBranding();
+      setShowCreateDialog(false);
+      setEditingProfile(null);
+      resetForm();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save branding profile");
+    }
   };
 
   const resetForm = () => {

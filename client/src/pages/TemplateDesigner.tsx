@@ -1,4 +1,3 @@
-import { getCurrentUser } from "@/lib/auth-state";
 import { useState, useMemo, useCallback } from "react";
 import { useRoute, useLocation } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,6 +17,8 @@ import {
   getLatestTemplateVersion,
 } from "@/lib/document-composer";
 import { variableDefinitions, NAMESPACE_CONFIG, type VariableDefinition } from "@/lib/semantic-variables";
+import { useDocTemplates, useDocBlocks, useDocBrandingProfiles } from "@/hooks/useSupabase";
+import { api } from "@/lib/api-client";
 
 // ============================================================
 // TEMPLATE DESIGNER
@@ -43,9 +44,9 @@ interface LayoutConfig {
   annexure_mode: boolean;
 }
 
-interface TokenSetConfig {
+interface VariableSetConfig {
   allowed_namespaces: string[];
-  required_tokens: string[];
+  required_variables: string[];
 }
 
 export default function TemplateDesigner() {
@@ -53,10 +54,20 @@ export default function TemplateDesigner() {
   const [, navigate] = useLocation();
   const templateId = params?.templateId || "";
 
-  // Find template
+  // Load live templates from Supabase; fall back to seed data for unmirgated templates
+  const { data: liveTemplates, refetch: refetchTemplates } = useDocTemplates();
+  const { data: liveBlocks } = useDocBlocks();
+  const { data: liveBranding } = useDocBrandingProfiles();
+
+  const activeBlocks = liveBlocks.length > 0 ? liveBlocks : blockLibrary;
+  const activeBranding = liveBranding.length > 0 ? liveBranding : brandingProfiles;
+
+  // Find template — prefer live DB data, fall back to seed
   const template = useMemo<DocTemplate | undefined>(
-    () => docTemplates.find((t: DocTemplate) => t.id === templateId),
-    [templateId]
+    () =>
+      liveTemplates.find((t: DocTemplate) => t.id === templateId) ||
+      docTemplates.find((t: DocTemplate) => t.id === templateId),
+    [liveTemplates, templateId]
   );
 
   const latestVersion = useMemo<TemplateVersion | null>(
@@ -68,7 +79,7 @@ export default function TemplateDesigner() {
   const [blocks, setBlocks] = useState<DesignerBlock[]>(() => {
     if (!latestVersion) return [];
     return latestVersion.recipe.map((r: RecipeBlock, idx: number) => {
-      const schema = blockLibrary.find((s: DocBlock) => s.block_key === r.block_key);
+      const schema = activeBlocks.find((s: DocBlock) => s.block_key === r.block_key);
       return {
         block_key: r.block_key,
         display_name: schema?.display_name || r.block_key,
@@ -89,24 +100,24 @@ export default function TemplateDesigner() {
     annexure_mode: false,
   });
 
-  const [tokenSet, setTokenSet] = useState<TokenSetConfig>({
+  const [variableSet, setVariableSet] = useState<VariableSetConfig>({
     allowed_namespaces: ["company", "customer", "pricing", "legal"],
-    required_tokens: [],
+    required_variables: [],
   });
 
   const [selectedBrandingId, setSelectedBrandingId] = useState(template?.default_branding_profile_id || "bp-001");
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _latestVersion = latestVersion;
   const [showAddBlock, setShowAddBlock] = useState(false);
-  const [activeTab, setActiveTab] = useState<"blocks" | "layout" | "tokens" | "branding">("blocks");
+  const [activeTab, setActiveTab] = useState<"blocks" | "layout" | "variables" | "branding">("blocks");
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [layoutExpanded, setLayoutExpanded] = useState(true);
 
   // Available blocks not yet in recipe
   const availableBlocks = useMemo(() => {
     const usedKeys = blocks.map(b => b.block_key);
-    return blockLibrary.filter((s: DocBlock) => !usedKeys.includes(s.block_key));
-  }, [blocks]);
+    return activeBlocks.filter((s: DocBlock) => !usedKeys.includes(s.block_key));
+  }, [blocks, activeBlocks]);
 
   // Namespace list
   const namespaces = useMemo(() => Object.keys(NAMESPACE_CONFIG), []);
@@ -162,7 +173,7 @@ export default function TemplateDesigner() {
 
   // Toggle namespace
   const toggleNamespace = useCallback((ns: string) => {
-    setTokenSet(prev => ({
+    setVariableSet(prev => ({
       ...prev,
       allowed_namespaces: prev.allowed_namespaces.includes(ns)
         ? prev.allowed_namespaces.filter(n => n !== ns)
@@ -170,48 +181,45 @@ export default function TemplateDesigner() {
     }));
   }, []);
 
-  // Toggle required token
-  const toggleRequiredToken = useCallback((key: string) => {
-    setTokenSet(prev => ({
+  // Toggle required variable
+  const toggleRequiredVariable = useCallback((key: string) => {
+    setVariableSet(prev => ({
       ...prev,
-      required_tokens: prev.required_tokens.includes(key)
-        ? prev.required_tokens.filter(k => k !== key)
-        : [...prev.required_tokens, key],
+      required_variables: prev.required_variables.includes(key)
+        ? prev.required_variables.filter(k => k !== key)
+        : [...prev.required_variables, key],
     }));
   }, []);
 
-  // Save template
-  const handleSave = useCallback(() => {
+  // Save template — creates a new version in Supabase
+  const handleSave = useCallback(async () => {
     if (!template) return;
-    // Create new version on the template
-    const newVersion: TemplateVersion = {
-      id: `tv-${crypto.randomUUID()}`,
-      template_id: template.id,
-      version_number: (latestVersion?.version_number || 0) + 1,
-      recipe: blocks.map((b, idx) => ({
-        block_key: b.block_key,
-        order: idx,
-        required: b.status === "required",
-        default_content_override: null,
-        config_override: {},
-      })),
-      layout: latestVersion?.layout || {
-        cover_page: layout.cover_enabled,
-        cover_style: layout.cover_hero_slot ? "hero_image" : "minimal",
-        section_spacing: layout.spacing_preset === "relaxed" ? "spacious" : layout.spacing_preset,
-        page_break_between_sections: layout.page_break_between_blocks,
-        annexure_section: layout.annexure_mode,
-        toc_auto: false,
-      },
-      published_at: null,
-      created_by: getCurrentUser().name,
-      created_at: new Date().toISOString(),
+    const recipe = blocks.map((b, idx) => ({
+      block_key: b.block_key,
+      order: idx,
+      required: b.status === "required",
+      default_content_override: null,
+      config_override: {},
+    }));
+    const layoutPayload = latestVersion?.layout || {
+      cover_page: layout.cover_enabled,
+      cover_style: layout.cover_hero_slot ? "hero_image" : "minimal",
+      section_spacing: layout.spacing_preset === "relaxed" ? "spacious" : layout.spacing_preset,
+      page_break_between_sections: layout.page_break_between_blocks,
+      annexure_section: layout.annexure_mode,
+      toc_auto: false,
     };
-    template.versions.push(newVersion);
-    template.default_branding_profile_id = selectedBrandingId;
-    template.updated_at = new Date().toISOString();
-    toast.success(`Template saved as v${newVersion.version_number}`);
-  }, [template, blocks, selectedBrandingId]);
+    try {
+      await api.templates.addVersion(template.id, recipe, layoutPayload);
+      if (selectedBrandingId !== template.default_branding_profile_id) {
+        await api.templates.update(template.id, { default_branding_profile_id: selectedBrandingId });
+      }
+      await refetchTemplates();
+      toast.success("Template version saved");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save template");
+    }
+  }, [template, blocks, selectedBrandingId, latestVersion, layout, refetchTemplates]);
 
   // Not found
   if (!template) {
@@ -265,7 +273,7 @@ export default function TemplateDesigner() {
       {/* Tab Bar */}
       <div className="border-b border-gray-200 bg-white px-4">
         <div className="flex gap-0">
-          {(["blocks", "layout", "tokens", "branding"] as const).map(tab => (
+          {(["blocks", "layout", "variables", "branding"] as const).map(tab => (
             <button
               key={tab}
               className={`px-4 py-2.5 text-xs font-medium border-b-2 transition-colors capitalize ${
@@ -277,7 +285,7 @@ export default function TemplateDesigner() {
             >
               {tab === "blocks" && <Layers size={12} className="inline mr-1.5" />}
               {tab === "layout" && <Settings size={12} className="inline mr-1.5" />}
-              {tab === "tokens" && <Hash size={12} className="inline mr-1.5" />}
+              {tab === "variables" && <Hash size={12} className="inline mr-1.5" />}
               {tab === "branding" && <Palette size={12} className="inline mr-1.5" />}
               {tab}
             </button>
@@ -456,13 +464,13 @@ export default function TemplateDesigner() {
             </div>
           )}
 
-          {/* TOKENS TAB */}
-          {activeTab === "tokens" && (
+          {/* VARIABLES TAB */}
+          {activeTab === "variables" && (
             <div className="space-y-4">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-lg font-semibold text-[#1B2A4A]">Token Set Configuration</h2>
-                  <p className="text-xs text-gray-500 mt-0.5">Choose allowed token namespaces and mark required tokens for this template.</p>
+                  <h2 className="text-lg font-semibold text-[#1B2A4A]">Variable Configuration</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">Choose allowed variable namespaces and mark required variables for this template.</p>
                 </div>
               </div>
 
@@ -473,7 +481,7 @@ export default function TemplateDesigner() {
                   <div className="flex flex-wrap gap-2">
                     {namespaces.map(ns => {
                       const cfg = NAMESPACE_CONFIG[ns];
-                      const isActive = tokenSet.allowed_namespaces.includes(ns);
+                      const isActive = variableSet.allowed_namespaces.includes(ns);
                       return (
                         <button
                           key={ns}
@@ -492,7 +500,7 @@ export default function TemplateDesigner() {
               </Card>
 
               {/* Variables per namespace */}
-              {tokenSet.allowed_namespaces.map(ns => {
+              {variableSet.allowed_namespaces.map(ns => {
                 const vars = variablesByNamespace[ns] || [];
                 const cfg = NAMESPACE_CONFIG[ns];
                 return (
@@ -507,14 +515,14 @@ export default function TemplateDesigner() {
                       ) : (
                         <div className="space-y-1">
                           {vars.map(v => {
-                            const isRequired = tokenSet.required_tokens.includes(v.key);
+                            const isRequired = variableSet.required_variables.includes(v.key);
                             return (
                               <div key={v.key} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50">
                                 <button
                                   className={`w-4 h-4 rounded border flex items-center justify-center ${
                                     isRequired ? "bg-[#1B2A4A] border-[#1B2A4A]" : "border-gray-300"
                                   }`}
-                                  onClick={() => toggleRequiredToken(v.key)}
+                                  onClick={() => toggleRequiredVariable(v.key)}
                                 >
                                   {isRequired && <Check size={10} className="text-white" />}
                                 </button>
@@ -541,7 +549,7 @@ export default function TemplateDesigner() {
             <div className="space-y-4">
               <h2 className="text-lg font-semibold text-[#1B2A4A] mb-4">Default Branding Profile</h2>
               <div className="grid grid-cols-2 gap-4">
-                {brandingProfiles.map(bp => {
+                {activeBranding.map(bp => {
                   const isSelected = selectedBrandingId === bp.id;
                   return (
                     <Card

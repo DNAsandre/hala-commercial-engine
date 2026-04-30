@@ -1,15 +1,43 @@
 import { Link } from "wouter";
-import { RefreshCw, ArrowDownLeft, ArrowUpRight, CheckCircle, Clock , ArrowLeft } from "lucide-react";
+import { RefreshCw, ArrowDownLeft, ArrowUpRight, CheckCircle, XCircle, Clock, ArrowLeft, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useCRMSyncEvents } from "@/hooks/useSupabase";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { useState, useEffect } from "react";
+import { fetchConnections, type CRMConnection } from "@/lib/crm-sync-engine";
+
+function formatTimeAgo(dateStr: string | null): string {
+  if (!dateStr) return "Never";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
 
 export default function CRMSync() {
   const { data: crmSyncEvents, loading } = useCRMSyncEvents();
+  const [connections, setConnections] = useState<CRMConnection[]>([]);
+
+  useEffect(() => {
+    fetchConnections().then(setConnections).catch(() => {});
+  }, []);
+
   if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
+
+  const activeConns = connections.filter(c => c.enabled);
+  const latestSync = activeConns.filter(c => c.last_sync_at).sort((a, b) => new Date(b.last_sync_at!).getTime() - new Date(a.last_sync_at!).getTime())[0];
+  const allConnected = activeConns.length > 0 && activeConns.every(c => c.health_status === "connected");
+  const hasFailure = activeConns.some(c => c.health_status === "disconnected");
+  const syncStatusText = activeConns.length === 0 ? "No connections" : allConnected ? "Connected" : hasFailure ? "Error" : "Degraded";
+  const syncStatusIcon = allConnected ? CheckCircle : hasFailure ? XCircle : AlertTriangle;
+
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
       <div className="mb-4">
@@ -20,14 +48,18 @@ export default function CRMSync() {
         </Link>
       </div>
       <div className="flex items-center justify-between mb-6">
-        <div><h1 className="text-2xl font-serif font-bold">CRM Sync</h1><p className="text-sm text-muted-foreground mt-0.5">Zoho CRM Integration — Mock Mode</p></div>
+        <div><h1 className="text-2xl font-serif font-bold">CRM Sync</h1><p className="text-sm text-muted-foreground mt-0.5">Zoho CRM Integration — {activeConns.length} connection(s)</p></div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => toast("Manual sync triggered", { description: "Polling Zoho CRM for updates..." })}><RefreshCw className="w-4 h-4 mr-1.5" />Sync Now</Button>
           <Button variant="outline" onClick={() => toast("CRM configuration", { description: "Connect Zoho credentials in Settings > Integrations" })}>Configure</Button>
         </div>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        {[{ l: "Last Sync", v: "2 min ago", icon: Clock }, { l: "Sync Status", v: "Connected (Mock)", icon: CheckCircle }, { l: "Events Today", v: String(crmSyncEvents.length), icon: RefreshCw }].map(s => (
+        {[
+          { l: "Last Sync", v: latestSync ? formatTimeAgo(latestSync.last_sync_at) : "Never", icon: Clock },
+          { l: "Sync Status", v: syncStatusText, icon: syncStatusIcon },
+          { l: "Events Today", v: String(crmSyncEvents.length), icon: RefreshCw },
+        ].map(s => (
           <Card key={s.l} className="border border-border shadow-none"><CardContent className="p-4 flex items-center gap-3">
             <s.icon className="w-5 h-5 text-muted-foreground" />
             <div><p className="text-[10px] text-muted-foreground uppercase">{s.l}</p><p className="text-sm font-semibold mt-0.5">{s.v}</p></div>

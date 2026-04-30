@@ -18,7 +18,7 @@ import {
   Calculator, Layers, Plug, AlertTriangle, Loader2
 } from 'lucide-react';
 import {
-  getGradeBg, getGradeColor,
+  getGradeBg, getGradeColor, ecrCustomerNames,
   type Grade, type EcrScore,
 } from '@/lib/ecr';
 import {
@@ -47,14 +47,10 @@ export default function EcrDashboard() {
     return Array.from(ids);
   }, [scores, snapshots]);
 
-  // Build customer name lookup from scores (customerId -> display name)
-  // We derive names from the customerId pattern (e.g. "cust-sabic" → "SABIC")
   const customerNames = useMemo(() => {
     const names: Record<string, string> = {};
     for (const id of customerIds) {
-      // Derive a readable name from the customer ID
-      const raw = id.replace('cust-', '').replace(/-/g, ' ');
-      names[id] = raw.charAt(0).toUpperCase() + raw.slice(1);
+      names[id] = ecrCustomerNames[id] ?? id.replace('cust-', '').replace(/-/g, ' ');
     }
     return names;
   }, [customerIds]);
@@ -305,7 +301,7 @@ export default function EcrDashboard() {
                   </div>
                   <div className="flex-1">
                     <h3 className="font-semibold text-slate-900">Connectors</h3>
-                    <p className="text-xs text-slate-500">0 registered, 0 enabled (planned)</p>
+                    <p className="text-xs text-slate-500">Phase 1 — manual data entry only</p>
                   </div>
                   <ArrowRight className="w-4 h-4 text-slate-400" />
                 </div>

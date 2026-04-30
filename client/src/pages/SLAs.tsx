@@ -6,8 +6,9 @@
  * Design: Swiss Precision — deep navy, IBM Plex Sans
  */
 
-import { useState } from "react";
-import { FileSignature, Plus, ArrowLeft, Edit, Download, Search, Filter, Shield, AlertTriangle, CheckCircle, Clock, XCircle, BarChart3, Calendar } from "lucide-react";
+import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
+import { FileSignature, Plus, ArrowLeft, Edit, Download, Search, Filter, Shield, AlertTriangle, CheckCircle, Clock, XCircle, BarChart3, Calendar, Eye, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,8 +20,9 @@ import DocumentComposer, { type ComposerDocument } from "@/components/DocumentCo
 import OverrideDialog from "@/components/OverrideDialog";
 import { useGateCheck, useAuditLog } from "@/hooks/useGovernance";
 import { navigationV1 } from "@/components/DashboardLayout";
+import { api } from "@/lib/api-client";
 
-interface SLARecord {
+export interface SLARecord {
   id: string;
   customerName: string;
   customerId: string;
@@ -34,61 +36,46 @@ interface SLARecord {
   nextReview: string;
 }
 
-const mockSLAs: SLARecord[] = [
-  {
-    id: "sla1", customerName: "SABIC", customerId: "c1", title: "SABIC Jubail Warehousing SLA",
-    status: "active", version: 2, effectiveDate: "2024-06-01", expiryDate: "2026-05-31",
-    kpis: [
-      { name: "Receiving Accuracy", target: "99.5%", actual: "99.7%", status: "met" },
-      { name: "Order Accuracy", target: "99.8%", actual: "99.6%", status: "warning" },
-      { name: "On-Time Dispatch", target: "98%", actual: "97.2%", status: "warning" },
-      { name: "Inventory Accuracy", target: "99.9%", actual: "99.95%", status: "met" },
-      { name: "Damage Rate", target: "<0.1%", actual: "0.05%", status: "met" },
-    ],
-    lastReview: "2025-01-15", nextReview: "2025-04-15",
-  },
-  {
-    id: "sla2", customerName: "Almarai", customerId: "c2", title: "Almarai Cold Chain SLA — Eastern Region",
-    status: "active", version: 3, effectiveDate: "2024-01-01", expiryDate: "2025-12-31",
-    kpis: [
-      { name: "Receiving Accuracy", target: "99.5%", actual: "99.8%", status: "met" },
-      { name: "Order Accuracy", target: "99.8%", actual: "99.9%", status: "met" },
-      { name: "On-Time Dispatch", target: "98%", actual: "98.5%", status: "met" },
-      { name: "Temperature Compliance", target: "100%", actual: "99.8%", status: "warning" },
-    ],
-    lastReview: "2025-01-20", nextReview: "2025-04-20",
-  },
-  {
-    id: "sla3", customerName: "Maaden", customerId: "c3", title: "Maaden Distribution SLA",
-    status: "draft", version: 1, effectiveDate: "2025-03-01", expiryDate: "2027-02-28",
-    kpis: [
-      { name: "Receiving Accuracy", target: "99.5%", actual: "-", status: "pending" },
-      { name: "Order Accuracy", target: "99.8%", actual: "-", status: "pending" },
-      { name: "On-Time Dispatch", target: "98%", actual: "-", status: "pending" },
-    ],
-    lastReview: "-", nextReview: "2025-06-01",
-  },
-  {
-    id: "sla4", customerName: "NADEC", customerId: "c4", title: "NADEC Warehousing SLA",
-    status: "under_review", version: 2, effectiveDate: "2023-07-01", expiryDate: "2025-06-30",
-    kpis: [
-      { name: "Receiving Accuracy", target: "99.5%", actual: "98.9%", status: "breach" },
-      { name: "Order Accuracy", target: "99.8%", actual: "99.5%", status: "warning" },
-      { name: "On-Time Dispatch", target: "98%", actual: "96.1%", status: "breach" },
-      { name: "Inventory Accuracy", target: "99.9%", actual: "99.7%", status: "warning" },
-    ],
-    lastReview: "2025-02-01", nextReview: "2025-05-01",
-  },
-  {
-    id: "sla5", customerName: "Aramco", customerId: "c5", title: "Aramco Logistics SLA",
-    status: "expired", version: 1, effectiveDate: "2023-01-01", expiryDate: "2024-12-31",
-    kpis: [
-      { name: "Receiving Accuracy", target: "99.5%", actual: "99.6%", status: "met" },
-      { name: "Order Accuracy", target: "99.8%", actual: "99.8%", status: "met" },
-    ],
-    lastReview: "2024-10-15", nextReview: "-",
-  },
-];
+// Legacy export kept for type compatibility
+export const mockSLAs: SLARecord[] = [];
+
+/** Map a DB SLA row into the frontend SLARecord shape */
+function mapDbSla(row: any, customerName?: string): SLARecord {
+  const kpiRows: any[] = Array.isArray(row.kpi_rows) ? row.kpi_rows : [];
+  const kpis = kpiRows.map((k: any) => ({
+    name: k.name || '',
+    target: k.target || '',
+    actual: k.actual || '-',
+    status: (k.status || computeKPIStatusRaw(k.target, k.actual || '-')) as any,
+  }));
+  return {
+    id: row.id,
+    customerName: customerName || row.customer_name || row.customer_id || '',
+    customerId: row.customer_id || '',
+    title: row.title || row.sla_number || '',
+    status: row.status === 'approved' ? 'active' : (row.status === 'superseded' ? 'expired' : row.status) as any,
+    version: row.version_number || 1,
+    effectiveDate: row.effective_date || '-',
+    expiryDate: row.review_date || '-',
+    kpis,
+    lastReview: '-',
+    nextReview: row.review_date || '-',
+  };
+}
+
+function computeKPIStatusRaw(target: string, actual: string): string {
+  if (!actual || actual === '-') return 'pending';
+  const tMatch = target.match(/([\d.]+)%/);
+  const aMatch = actual.match(/([\d.]+)%/);
+  if (tMatch && aMatch) {
+    const t = parseFloat(tMatch[1]);
+    const a = parseFloat(aMatch[1]);
+    if (a >= t) return 'met';
+    if (a >= t - 1.0) return 'warning';
+    return 'breach';
+  }
+  return 'met';
+}
 
 const statusConfig: Record<string, { color: string; icon: typeof CheckCircle; label: string }> = {
   active: { color: "bg-emerald-100 text-emerald-700", icon: CheckCircle, label: "Active" },
@@ -130,13 +117,36 @@ function computeKPIStatus(target: string, actual: string): "met" | "warning" | "
 }
 
 export default function SLAs() {
+  const [, navigate] = useLocation();
   const { data: customers } = useCustomers();
   const [editingSLA, setEditingSLA] = useState<{ customerName: string; customerId: string; slaId: string; existingInstanceId?: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const { checkGate, lastEvaluation, showOverrideDialog, executeOverride, cancelOverride } = useGateCheck();
   const { logAction, logApproval } = useAuditLog();
+  const [slaRecords, setSlaRecords] = useState<SLARecord[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filteredSLAs = mockSLAs.filter(s =>
+  // Fetch all SLAs via global endpoint
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await api.slas.listAll();
+        const rows = res?.data || res || [];
+        if (Array.isArray(rows) && !cancelled) {
+          setSlaRecords(rows.map(row => {
+            const cust = customers.find(c => c.id === row.customer_id);
+            return mapDbSla(row, cust?.name);
+          }));
+        }
+      } catch { /* fallback: empty */ }
+      if (!cancelled) setLoading(false);
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [customers]);
+
+  const filteredSLAs = slaRecords.filter(s =>
     s.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
     s.title.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -194,10 +204,14 @@ export default function SLAs() {
   }
 
   // Summary stats
-  const activeSLAs = mockSLAs.filter(s => s.status === "active").length;
-  const breachCount = mockSLAs.flatMap(s => s.kpis).filter(k => k.status === "breach").length;
-  const warningCount = mockSLAs.flatMap(s => s.kpis).filter(k => k.status === "warning").length;
-  const upcomingReviews = mockSLAs.filter(s => s.nextReview !== "-" && new Date(s.nextReview) <= new Date("2025-05-01")).length;
+  const activeSLAs = slaRecords.filter(s => s.status === "active").length;
+  const breachCount = slaRecords.flatMap(s => s.kpis).filter(k => k.status === "breach").length;
+  const warningCount = slaRecords.flatMap(s => s.kpis).filter(k => k.status === "warning").length;
+  const upcomingReviews = slaRecords.filter(s => s.nextReview !== "-" && new Date(s.nextReview) <= new Date(Date.now() + 90 * 86400000)).length;
+
+  if (loading) {
+    return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
+  }
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
@@ -220,7 +234,7 @@ export default function SLAs() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-serif font-bold text-[#1B2A4A]">Service Level Agreements</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{mockSLAs.length} SLAs across all customers</p>
+          <p className="text-sm text-gray-500 mt-0.5">{slaRecords.length} SLAs across all customers</p>
         </div>
         <Button onClick={handleNewSLA} className="bg-[#1B2A4A] hover:bg-[#2A3F6A]">
           <Plus className="w-4 h-4 mr-1.5" /> New SLA
@@ -292,6 +306,10 @@ export default function SLAs() {
                     )}
                   </div>
                   <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-700 hover:bg-blue-50"
+                      onClick={() => navigate(`/slas/${sla.id}`)}>
+                      <Eye size={12} className="mr-1" /> View Detail
+                    </Button>
                     {sla.status === "draft" && (
                       <Button variant="ghost" size="sm" className="h-7 text-xs text-emerald-700 hover:bg-emerald-50"
                         onClick={() => handleActivateSLA(sla)}>

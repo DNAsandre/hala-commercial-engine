@@ -242,6 +242,17 @@ export default function Documents() {
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
+      {/* Prototype Data Banner */}
+      <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-3">
+        <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+        <div>
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Legacy shell — placeholder data only</p>
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+            This page displays sample documents and is not connected to the live document pipeline. Use the Document Composer inside a workspace to generate real outputs.
+          </p>
+        </div>
+      </div>
+
       {/* Legacy Banner */}
       {navigationV1 && (
         <div className="mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 flex items-center gap-2">

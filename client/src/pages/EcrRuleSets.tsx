@@ -26,13 +26,15 @@ import {
   Dna, Info
 } from 'lucide-react';
 import {
-  mockRuleSets, mockRuleWeights, mockMetrics,
+  mockMetrics,
   type EcrRuleSet, type EcrRuleWeight, type RuleSetStatus
 } from '@/lib/ecr';
 import {
-  getEvolutionControls, updateEvolutionControls,
-  type MissingMetricMode, type DefaultValueStrategy
+  type MissingMetricMode, type DefaultValueStrategy, type EvolutionControls
 } from '@/lib/ecr-evolution';
+import { getCurrentUser } from '@/lib/auth-state';
+import { api } from '@/lib/api-client';
+import { useEffect } from 'react';
 
 const statusConfig: Record<RuleSetStatus, { label: string; color: string; icon: React.ReactNode }> = {
   active: { label: 'Active', color: 'bg-emerald-100 text-emerald-700 border-emerald-200', icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
@@ -42,60 +44,96 @@ const statusConfig: Record<RuleSetStatus, { label: string; color: string; icon: 
 };
 
 export default function EcrRuleSets() {
-  const [ruleSets, setRuleSets] = useState<EcrRuleSet[]>(mockRuleSets);
-  const [weights, setWeights] = useState<EcrRuleWeight[]>(mockRuleWeights);
-  const [expandedId, setExpandedId] = useState<string | null>('rs-2');
+  const [ruleSets, setRuleSets] = useState<(EcrRuleSet & { evolutionControls?: EvolutionControls })[]>([]);
+  const [weights, setWeights] = useState<EcrRuleWeight[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
-  // Force re-render when evolution controls change
-  const [evoVersion, setEvoVersion] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
 
   const activeMetrics = mockMetrics.filter(m => m.active);
 
-  const handleCreateRuleSet = () => {
+  const fetchRuleSets = async () => {
+    try {
+      const res = await api.ecr.getRuleSets();
+      setRuleSets(res.data.ruleSets);
+      setWeights(res.data.weights);
+      
+      // Auto-expand active rule set on first load if nothing expanded
+      if (!expandedId) {
+        const active = res.data.ruleSets.find((rs: EcrRuleSet) => rs.status === 'active');
+        if (active) setExpandedId(active.id);
+      }
+    } catch (e) {
+      toast.error('Failed to load rule sets');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRuleSets();
+  }, []);
+
+  const handleCreateRuleSet = async () => {
     if (!newName) {
       toast.error('Rule set name is required');
       return;
     }
     const maxVersion = Math.max(...ruleSets.map(rs => rs.versionNumber), 0);
-    const newRuleSet: EcrRuleSet = {
+    const newRuleSet = {
       id: `rs-${crypto.randomUUID()}`,
       versionNumber: maxVersion + 1,
       name: newName,
       description: newDesc,
-      status: 'draft',
-      createdBy: 'Amin Al-Rashid',
+      status: 'draft' as RuleSetStatus,
+      createdBy: getCurrentUser().name,
       createdAt: new Date().toISOString(),
+      evolutionControls: {
+        evolution_enabled: false,
+        missing_metric_mode: "strict" as MissingMetricMode,
+        missing_metric_default_strategy: "neutral" as DefaultValueStrategy,
+        missing_metric_confidence_penalty_per_metric: 0.05,
+        min_confidence_to_display_grade: 0.5,
+        manual_upgrade_required: true,
+      }
     };
-    const newWeights: EcrRuleWeight[] = activeMetrics.map((m, i) => ({
+    
+    const newWeights: any[] = activeMetrics.map(m => ({
       id: `rw-new-${crypto.randomUUID()}`,
       ruleSetId: newRuleSet.id,
       metricId: m.id,
       weight: m.defaultWeight,
-      createdAt: new Date().toISOString(),
     }));
-    setRuleSets(prev => [...prev, newRuleSet]);
-    setWeights(prev => [...prev, ...newWeights]);
-    setShowCreateDialog(false);
-    setNewName('');
-    setNewDesc('');
-    setExpandedId(newRuleSet.id);
-    toast.success(`Rule set v${newRuleSet.versionNumber} created`);
+
+    try {
+      await api.ecr.createRuleSet(newRuleSet, newWeights);
+      toast.success(`Rule set v${newRuleSet.versionNumber} created`);
+      setShowCreateDialog(false);
+      setNewName('');
+      setNewDesc('');
+      await fetchRuleSets();
+      setExpandedId(newRuleSet.id);
+    } catch (e) {
+      toast.error('Failed to create rule set');
+    }
   };
 
-  const handleActivate = (id: string) => {
+  const handleActivate = async (id: string) => {
     const ruleSetWeights = weights.filter(w => w.ruleSetId === id);
     const total = ruleSetWeights.reduce((sum, w) => sum + w.weight, 0);
-    if (total !== 100) {
+    if (Math.abs(total - 100) > 0.01) {
       toast.error(`Cannot activate: weights total ${total}%, must be exactly 100%`);
       return;
     }
-    setRuleSets(prev => prev.map(rs => ({
-      ...rs,
-      status: rs.id === id ? 'active' : (rs.status === 'active' ? 'archived' : rs.status),
-    })));
-    toast.success('Rule set activated. Previous active set archived.');
+    try {
+      await api.ecr.updateRuleSet(id, { status: 'active' });
+      toast.success('Rule set activated. Previous active set archived.');
+      await fetchRuleSets();
+    } catch (e) {
+      toast.error('Failed to activate rule set');
+    }
   };
 
   const handleWeightChange = (ruleSetId: string, metricId: string, newWeight: number) => {
@@ -108,12 +146,39 @@ export default function EcrRuleSets() {
     ));
   };
 
-  const handleEvolutionUpdate = (ruleSetId: string, field: string, value: unknown) => {
-    const updates: Record<string, unknown> = { [field]: value };
-    updateEvolutionControls(ruleSetId, updates as any, 'user-admin', 'Amin Al-Rashid');
-    setEvoVersion(v => v + 1);
-    toast.success('Evolution controls updated');
+  // Sync weights to DB when done adjusting
+  const saveWeights = async (ruleSetId: string) => {
+    try {
+      const rsWeights = weights.filter(w => w.ruleSetId === ruleSetId);
+      await api.ecr.updateWeights(ruleSetId, rsWeights);
+      toast.success('Weights saved');
+    } catch (e) {
+      toast.error('Failed to save weights');
+    }
   };
+
+  const handleEvolutionUpdate = async (ruleSetId: string, field: string, value: unknown) => {
+    const rs = ruleSets.find(r => r.id === ruleSetId);
+    if (!rs || !rs.evolutionControls) return;
+
+    const updatedControls = { ...rs.evolutionControls, [field]: value };
+    
+    // Optimistic update
+    setRuleSets(prev => prev.map(r => r.id === ruleSetId ? { ...r, evolutionControls: updatedControls as any } : r));
+
+    try {
+      await api.ecr.updateRuleSet(ruleSetId, { evolutionControls: updatedControls });
+      toast.success('Evolution controls updated');
+    } catch (e) {
+      toast.error('Failed to update evolution controls');
+      // Revert on failure
+      fetchRuleSets();
+    }
+  };
+
+  if (isLoading) {
+    return <div className="p-10 text-center text-slate-500">Loading ECR Rule Sets...</div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -167,7 +232,14 @@ export default function EcrRuleSets() {
           const totalW = rsWeights.reduce((sum, w) => sum + w.weight, 0);
           const isValid = totalW === 100;
           const status = statusConfig[rs.status];
-          const evoControls = getEvolutionControls(rs.id);
+          const evoControls = rs.evolutionControls || {
+            evolution_enabled: false,
+            missing_metric_mode: "strict" as MissingMetricMode,
+            missing_metric_default_strategy: "neutral" as DefaultValueStrategy,
+            missing_metric_confidence_penalty_per_metric: 0.05,
+            min_confidence_to_display_grade: 0.5,
+            manual_upgrade_required: true,
+          };
 
           return (
             <Card key={rs.id} className={`${rs.status === 'archived' ? 'opacity-70' : ''} transition-shadow hover:shadow-sm`}>
@@ -267,7 +339,7 @@ export default function EcrRuleSets() {
                                   value={weight}
                                   onChange={e => handleWeightChange(rs.id, metric.id, Number(e.target.value))}
                                   min={0}
-                                  max={100}
+                                  max={50}
                                   className="w-20 text-right text-sm h-8"
                                 />
                               )}
@@ -407,14 +479,23 @@ export default function EcrRuleSets() {
                         {rs.status === 'draft' && 'Adjust weights and activate when ready.'}
                       </div>
                       {rs.status === 'draft' && (
-                        <Button
-                          onClick={() => handleActivate(rs.id)}
-                          disabled={!isValid}
-                          className={isValid ? '' : 'opacity-50'}
-                        >
-                          <CheckCircle2 className="w-4 h-4 mr-2" />
-                          Activate Rule Set
-                        </Button>
+                        <div className="flex items-center gap-3">
+                          <Button
+                            variant="outline"
+                            onClick={() => saveWeights(rs.id)}
+                            className="bg-white"
+                          >
+                            Save Weights
+                          </Button>
+                          <Button
+                            onClick={() => handleActivate(rs.id)}
+                            disabled={!isValid}
+                            className={isValid ? '' : 'opacity-50'}
+                          >
+                            <CheckCircle2 className="w-4 h-4 mr-2" />
+                            Activate Rule Set
+                          </Button>
+                        </div>
                       )}
                     </div>
                   </div>

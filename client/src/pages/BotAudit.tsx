@@ -6,7 +6,7 @@ import { ArrowLeft } from "lucide-react";
  * Full invocation log with gate checks, cost tracking, and export capability.
  * Every bot action is logged, traceable, and exportable.
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -20,18 +20,63 @@ import {
   Cpu, Database, User, ChevronDown, ChevronUp, BarChart3, Zap
 } from 'lucide-react';
 import {
-  mockInvocations, mockBots, mockProviders, mockBotVersions,
   type BotInvocation
 } from '@/lib/bot-governance';
+import { api } from '@/lib/api-client';
+
+// Map DB snake_case to component camelCase
+function mapInvocation(row: any): BotInvocation {
+  return {
+    id: row.id,
+    botId: row.bot_id || row.botId,
+    botVersionId: row.bot_version_id || row.botVersionId || '',
+    userId: row.user_id || row.userId,
+    userRole: row.user_role || row.userRole,
+    timestamp: row.invoked_at || row.timestamp,
+    context: row.context,
+    contextType: row.context_type || row.contextType || 'workspace',
+    inputPayloadHash: row.input_payload_hash || row.inputPayloadHash || '',
+    knowledgeSourcesUsed: row.knowledge_sources_used || row.knowledgeSourcesUsed || [],
+    connectorCallsMade: row.connector_calls_made || row.connectorCallsMade || [],
+    output: row.output,
+    accepted: row.accepted,
+    edited: row.edited ?? false,
+    cost: row.cost ?? 0,
+    latencyMs: row.latency_ms ?? row.latencyMs ?? 0,
+    gateChecks: row.gate_checks || row.gateChecks || { globalKillSwitch: false, providerEnabled: true, botEnabled: true, connectorsEnabled: true, rbacPassed: true },
+  };
+}
 
 export default function BotAudit() {
+  const [invocations, setInvocations] = useState<BotInvocation[]>([]);
+  const [bots, setBots] = useState<any[]>([]);
+  const [providers, setProviders] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [botFilter, setBotFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // Load from API
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const [invRes, botsRes, provRes] = await Promise.all([
+          api.botGovernance.listInvocations(),
+          api.botGovernance.listBots(),
+          api.botGovernance.listProviders(),
+        ]);
+        if (!mounted) return;
+        setInvocations((invRes.data || []).map(mapInvocation));
+        setBots(botsRes.data || []);
+        setProviders(provRes.data || []);
+      } catch { /* empty state */ }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
   const filteredInvocations = useMemo(() => {
-    return mockInvocations.filter(inv => {
+    return invocations.filter(inv => {
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
         if (!inv.context.toLowerCase().includes(q) && !inv.id.toLowerCase().includes(q) && !inv.output.toLowerCase().includes(q)) return false;
@@ -43,17 +88,17 @@ export default function BotAudit() {
       if (statusFilter === 'blocked' && !inv.output.startsWith('BLOCKED')) return false;
       return true;
     });
-  }, [searchQuery, botFilter, statusFilter]);
+  }, [searchQuery, botFilter, statusFilter, invocations]);
 
-  const totalCost = mockInvocations.reduce((sum, i) => sum + i.cost, 0);
-  const avgLatency = mockInvocations.length > 0 ? mockInvocations.reduce((sum, i) => sum + i.latencyMs, 0) / mockInvocations.length : 0;
-  const acceptRate = mockInvocations.filter(i => i.accepted === true).length;
-  const editRate = mockInvocations.filter(i => i.edited).length;
+  const totalCost = invocations.reduce((sum, i) => sum + i.cost, 0);
+  const avgLatency = invocations.length > 0 ? invocations.reduce((sum, i) => sum + i.latencyMs, 0) / invocations.length : 0;
+  const acceptRate = invocations.filter(i => i.accepted === true).length;
+  const editRate = invocations.filter(i => i.edited).length;
 
   const handleExport = () => {
     const csvHeader = 'ID,Bot,Version,User,Role,Timestamp,Context,Type,Cost,Latency(ms),Accepted,Edited,Kill Switch,Provider,Bot Enabled,Connectors,RBAC\n';
-    const csvRows = mockInvocations.map(inv => {
-      const bot = mockBots.find(b => b.id === inv.botId);
+    const csvRows = invocations.map(inv => {
+      const bot = bots.find((b: any) => b.id === inv.botId || b.id === (inv as any).bot_id);
       return [
         inv.id,
         bot?.name || inv.botId,
@@ -110,7 +155,7 @@ export default function BotAudit() {
         <Card>
           <CardContent className="py-3">
             <p className="text-xs text-slate-500 uppercase tracking-wider">Total Invocations</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{mockInvocations.length}</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{invocations.length}</p>
           </CardContent>
         </Card>
         <Card>
@@ -149,7 +194,7 @@ export default function BotAudit() {
           <SelectTrigger className="w-48"><SelectValue placeholder="Filter by bot" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Bots</SelectItem>
-            {mockBots.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+            {bots.map((b: any) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -167,9 +212,8 @@ export default function BotAudit() {
       {/* Invocation Log */}
       <div className="space-y-2">
         {filteredInvocations.map(inv => {
-          const bot = mockBots.find(b => b.id === inv.botId);
-          const provider = bot ? mockProviders.find(p => p.id === bot.providerId) : null;
-          const version = mockBotVersions.find(v => v.id === inv.botVersionId);
+          const bot = bots.find((b: any) => b.id === inv.botId || b.id === (inv as any).bot_id);
+          const provider = bot ? providers.find((p: any) => p.id === (bot.provider_id || bot.providerId)) : null;
           const isBlocked = inv.output.startsWith('BLOCKED');
           const isExpanded = expandedId === inv.id;
 

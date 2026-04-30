@@ -1,11 +1,11 @@
 import { Link } from "wouter";
 /*
  * Block Builder — Admin page for creating and managing custom document blocks
- * Allows defining new block types with family, editor mode, variable slots, and permissions
+ * Sprint 3: Now persists blocks to Supabase via /api/blocks.
  * Design: White cards, subtle borders, enterprise SaaS aesthetic matching AdminGovernance
  */
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import DOMPurify from "dompurify";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -22,13 +22,15 @@ import {
   Sparkles, Trash2, GripVertical, Settings2, X,
   BookOpen, FileCheck, FileSignature, Variable,
   ChevronRight, Code, LayoutTemplate, Wrench,
-  AlertTriangle, CheckCircle2, Copy
-, ArrowLeft } from "lucide-react";
+  AlertTriangle, CheckCircle2, Copy, Loader2,
+  ArrowLeft } from "lucide-react";
 import {
   type DocBlock, type BlockFamily, type BlockEditorMode,
   blockLibrary, BLOCK_FAMILY_CONFIG, EDITOR_MODE_CONFIG,
   getBlockByKey, getBlocksByFamily,
 } from "@/lib/document-composer";
+import { useDocBlocks } from "@/hooks/useSupabase";
+import { blocksApi } from "@/lib/api-blocks";
 
 // ============================================================
 // BLOCK DETAIL PANEL
@@ -125,14 +127,7 @@ function BlockDetailPanel({ block, onClose }: { block: DocBlock; onClose: () => 
                 {block.permissions.ai_allowed ? "Yes" : "No"}
               </Badge>
             </div>
-            <div className="mb-4">
-        <Link href="/admin-panel">
-          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
-            <ArrowLeft className="w-3.5 h-3.5" /> Back to Admin
-          </Button>
-        </Link>
-      </div>
-      <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center justify-between text-xs">
               <span className="text-gray-600 flex items-center gap-1.5"><Trash2 size={11} /> Editable in Draft</span>
               <Badge variant="outline" className={`text-[10px] ${block.permissions.editable_in_draft ? "text-emerald-700 bg-emerald-50" : "text-gray-500"}`}>
                 {block.permissions.editable_in_draft ? "Yes" : "No"}
@@ -158,35 +153,57 @@ function BlockDetailPanel({ block, onClose }: { block: DocBlock; onClose: () => 
 // CREATE BLOCK DIALOG
 // ============================================================
 
-function CreateBlockDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [displayName, setDisplayName] = useState("");
-  const [blockKey, setBlockKey] = useState("");
-  const [description, setDescription] = useState("");
-  const [family, setFamily] = useState<BlockFamily>("commercial");
-  const [editorMode, setEditorMode] = useState<BlockEditorMode>("wysiwyg");
-  const [variableSlots, setVariableSlots] = useState("");
-  const [lockable, setLockable] = useState(true);
-  const [aiAllowed, setAiAllowed] = useState(true);
+function CreateBlockDialog({ open, onClose, onCreated, editBlock }: { open: boolean; onClose: () => void; onCreated: () => void; editBlock?: DocBlock | null }) {
+  const [displayName, setDisplayName] = useState(editBlock?.display_name ?? "");
+  const [blockKey, setBlockKey] = useState(editBlock?.block_key ?? "");
+  const [description, setDescription] = useState(editBlock?.description ?? "");
+  const [family, setFamily] = useState<BlockFamily>(editBlock?.family ?? "commercial");
+  const [editorMode, setEditorMode] = useState<BlockEditorMode>(editBlock?.editor_mode ?? "wysiwyg");
+  const [variableSlots, setVariableSlots] = useState(editBlock?.schema?.variable_slots?.join(", ") ?? "");
+  const [lockable, setLockable] = useState(editBlock?.permissions?.lockable ?? true);
+  const [aiAllowed, setAiAllowed] = useState(editBlock?.permissions?.ai_allowed ?? true);
   const [deletable, setDeletable] = useState(true);
-  const [defaultContent, setDefaultContent] = useState("<p>Block content goes here...</p>");
+  const [defaultContent, setDefaultContent] = useState(editBlock?.default_content ?? "<p>Block content goes here...</p>");
+  const [saving, setSaving] = useState(false);
 
-  const handleCreate = () => {
+  const isEdit = !!editBlock;
+
+  const handleCreate = async () => {
     if (!displayName.trim() || !blockKey.trim()) {
       toast.error("Display name and block key are required");
       return;
     }
-    if (getBlockByKey(blockKey)) {
-      toast.error("Block key already exists");
-      return;
+    setSaving(true);
+    try {
+      const slots = variableSlots.split(",").map(s => s.trim()).filter(Boolean);
+      const payload = {
+        display_name: displayName.trim(),
+        family,
+        editor_mode: editorMode,
+        description: description.trim(),
+        default_content: defaultContent,
+        permissions: { editable_in_draft: true, editable_in_canon: false, ai_allowed: aiAllowed, lockable },
+        schema: { variable_slots: slots, config: {} },
+      };
+      if (isEdit) {
+        await blocksApi.update(editBlock.id, payload);
+        toast.success(`Block "${displayName}" updated`);
+      } else {
+        await blocksApi.create({ ...payload, block_key: blockKey.trim() });
+        toast.success(`Block "${displayName}" created`);
+      }
+      onCreated();
+      onClose();
+      // Reset form
+      setDisplayName(""); setBlockKey(""); setDescription("");
+      setFamily("commercial"); setEditorMode("wysiwyg");
+      setVariableSlots(""); setLockable(true); setAiAllowed(true); setDeletable(true);
+      setDefaultContent("<p>Block content goes here...</p>");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save block");
+    } finally {
+      setSaving(false);
     }
-    // In production this would persist to backend
-    toast.success(`Block "${displayName}" created — available in Block Library`);
-    onClose();
-    // Reset form
-    setDisplayName(""); setBlockKey(""); setDescription("");
-    setFamily("commercial"); setEditorMode("wysiwyg");
-    setVariableSlots(""); setLockable(true); setAiAllowed(true); setDeletable(true);
-    setDefaultContent("<p>Block content goes here...</p>");
   };
 
   // Auto-generate block key from display name
@@ -300,8 +317,9 @@ function CreateBlockDialog({ open, onClose }: { open: boolean; onClose: () => vo
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose} className="text-xs">Cancel</Button>
-          <Button size="sm" onClick={handleCreate} className="bg-[#1B2A4A] hover:bg-[#2A3F6A] text-xs">
-            <Plus size={12} className="mr-1" /> Create Block
+          <Button size="sm" onClick={handleCreate} disabled={saving} className="bg-[#1B2A4A] hover:bg-[#2A3F6A] text-xs">
+            {saving ? <Loader2 size={12} className="animate-spin mr-1" /> : <Plus size={12} className="mr-1" />}
+            {isEdit ? "Save Changes" : "Create Block"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -318,9 +336,14 @@ export default function BlockBuilder() {
   const [filterFamily, setFilterFamily] = useState<string>("all");
   const [selectedBlock, setSelectedBlock] = useState<DocBlock | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [editBlock, setEditBlock] = useState<DocBlock | null>(null);
+
+  // Live DB data with in-memory fallback
+  const { data: liveBlocks, loading: blocksLoading, error: blocksError, refetch: refetchBlocks } = useDocBlocks();
+  const blocks: DocBlock[] = blocksError ? blockLibrary : (liveBlocks.length > 0 ? liveBlocks : blockLibrary);
 
   const filtered = useMemo(() => {
-    return blockLibrary.filter(b => {
+    return blocks.filter(b => {
       if (search) {
         const s = search.toLowerCase();
         if (!b.display_name.toLowerCase().includes(s) && !b.block_key.toLowerCase().includes(s) && !b.description.toLowerCase().includes(s)) return false;
@@ -328,7 +351,7 @@ export default function BlockBuilder() {
       if (filterFamily !== "all" && b.family !== filterFamily) return false;
       return true;
     });
-  }, [search, filterFamily]);
+  }, [blocks, search, filterFamily]);
 
   const grouped = useMemo(() => {
     const groups: Record<string, DocBlock[]> = {};
@@ -339,21 +362,41 @@ export default function BlockBuilder() {
     return groups;
   }, [filtered]);
 
+  const handleDeleteBlock = useCallback(async (block: DocBlock) => {
+    if (!confirm(`Delete block "${block.display_name}"? This cannot be undone.`)) return;
+    try {
+      await blocksApi.delete(block.id);
+      toast.success(`Block "${block.display_name}" deleted`);
+      setSelectedBlock(null);
+      refetchBlocks();
+    } catch (err: any) {
+      toast.error(err.message || "Delete failed");
+    }
+  }, [refetchBlocks]);
+
   // Stats
-  const totalBlocks = blockLibrary.length;
+  const totalBlocks = blocks.length;
   const familyCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    blockLibrary.forEach(b => { counts[b.family] = (counts[b.family] || 0) + 1; });
+    blocks.forEach(b => { counts[b.family] = (counts[b.family] || 0) + 1; });
     return counts;
-  }, []);
-  const aiEnabledCount = blockLibrary.filter(b => b.permissions.ai_allowed).length;
-  const readonlyCount = blockLibrary.filter(b => b.editor_mode === "readonly").length;
+  }, [blocks]);
+  const aiEnabledCount = blocks.filter(b => b.permissions.ai_allowed).length;
+  const readonlyCount = blocks.filter(b => b.editor_mode === "readonly").length;
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <div className="p-6 max-w-[1400px] mx-auto w-full flex-1 overflow-y-auto">
+          {/* Back to Admin */}
+          <div className="mb-4">
+            <Link href="/admin-panel">
+              <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to Admin
+              </Button>
+            </Link>
+          </div>
           {/* Header */}
           <div className="mb-6">
             <h1 className="text-2xl font-bold text-[#1B2A4A] font-serif">Block Builder</h1>
@@ -510,8 +553,13 @@ export default function BlockBuilder() {
         <BlockDetailPanel block={selectedBlock} onClose={() => setSelectedBlock(null)} />
       )}
 
-      {/* Create Dialog */}
-      <CreateBlockDialog open={showCreate} onClose={() => setShowCreate(false)} />
+      {/* Create / Edit Dialog */}
+      <CreateBlockDialog
+        open={showCreate || !!editBlock}
+        onClose={() => { setShowCreate(false); setEditBlock(null); }}
+        onCreated={refetchBlocks}
+        editBlock={editBlock}
+      />
     </div>
   );
 }

@@ -174,4 +174,14 @@
     font-family: 'IBM Plex Mono', monospace;
     font-variant-numeric: tabular-nums;
   }
+
+  /* 3D LED Flicker — lifecycle tracker current stage */
+  @keyframes ledFlicker {
+    0%, 100% { opacity: 1; filter: brightness(1); }
+    15% { opacity: 0.92; filter: brightness(0.95); }
+    30% { opacity: 1; filter: brightness(1.1); }
+    50% { opacity: 0.88; filter: brightness(0.9); }
+    65% { opacity: 1; filter: brightness(1.15); }
+    80% { opacity: 0.94; filter: brightness(1); }
+  }
 }

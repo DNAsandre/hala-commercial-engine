@@ -3,12 +3,13 @@
  * Design: Swiss Precision — deep navy, IBM Plex Sans
  * Implements all 9 compliance points with full configuration UI
  */
-import { useState } from "react";
-import { Shield, Lock, Bot, GitBranch, Settings, Activity, AlertTriangle, CheckCircle, XCircle, Eye, EyeOff, ChevronDown, ChevronRight, History, Zap, Server, Users, RefreshCw, DollarSign, ExternalLink } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Shield, Lock, Bot, GitBranch, Settings, Activity, AlertTriangle, CheckCircle, XCircle, Eye, EyeOff, ChevronDown, ChevronRight, History, Zap, Server, Users, RefreshCw, DollarSign, ExternalLink, ArrowLeft } from "lucide-react";
 import { Link } from "wouter";
 import { navigationV1 } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -28,6 +29,7 @@ import {
 } from "@/lib/governance";
 import { type GateMode } from "@/lib/store";
 import { useCurrentUser } from "@/hooks/useSupabase";
+import { api } from "@/lib/api-client";
 
 /* ── Compliance Dashboard ── */
 function ComplianceDashboard() {
@@ -185,12 +187,32 @@ function AIRestrictionsPanel() {
   const [killSwitch, setKillSwitch] = useState(aiBotConfig.globalKillSwitch);
   const [moduleAccess, setModuleAccess] = useState({ ...aiBotConfig.moduleAccess });
 
-  const toggleKillSwitch = () => {
+  // Load settings from API on mount
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await api.botGovernance.getSettings();
+        if (!mounted || !res.data) return;
+        setKillSwitch(res.data.global_kill_switch ?? aiBotConfig.globalKillSwitch);
+      } catch { /* keep in-memory defaults */ }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  const toggleKillSwitch = async () => {
     const newVal = !killSwitch;
     setKillSwitch(newVal);
     aiBotConfig.globalKillSwitch = newVal;
     logAdminChange("ai_config", "global_kill_switch", newVal ? "kill_switch_activated" : "kill_switch_deactivated", currentUser.id, currentUser.name, `AI Global Kill Switch ${newVal ? "ACTIVATED" : "DEACTIVATED"}`, { newState: newVal });
     toast[newVal ? "warning" : "success"](newVal ? "AI Kill Switch ACTIVATED — All AI disabled" : "AI Kill Switch deactivated — AI active within restrictions");
+    try {
+      await api.botGovernance.updateSettings({
+        global_kill_switch: newVal,
+        kill_switch_activated_by: newVal ? currentUser.name : null,
+        kill_switch_activated_at: newVal ? new Date().toISOString() : null,
+      });
+    } catch { /* fallback — already updated local state */ }
   };
 
   const toggleModule = (key: string) => {
@@ -660,6 +682,13 @@ function RolesPanel() {
 export default function AdminGovernance() {
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
+      <div className="mb-4">
+        <Link href="/admin-panel">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Admin
+          </Button>
+        </Link>
+      </div>
       <div className="mb-6">
         <h1 className="text-2xl font-serif font-bold">Governance Console</h1>
         <p className="text-sm text-muted-foreground mt-0.5">

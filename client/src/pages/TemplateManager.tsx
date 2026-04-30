@@ -29,6 +29,7 @@ import {
 import {
   useDocTemplates, useDocBlocks, useDocBrandingProfiles,
 } from "@/hooks/useSupabase";
+import { api } from "@/lib/api-client";
 import { navigationV1 } from "@/components/DashboardLayout";
 
 const DOC_TYPE_ICONS: Record<string, typeof FileText> = {
@@ -48,7 +49,7 @@ export default function TemplateManager() {
   const [newDescription, setNewDescription] = useState("");
 
   // Live Supabase data
-  const { data: liveTemplates, loading: tplLoading, error: tplError } = useDocTemplates();
+  const { data: liveTemplates, loading: tplLoading, error: tplError, refetch: refetchTemplates } = useDocTemplates();
   const { data: liveBlocks, error: blkError } = useDocBlocks();
   const { data: liveBranding, error: brnError } = useDocBrandingProfiles();
 
@@ -74,11 +75,23 @@ export default function TemplateManager() {
   const draftCount = templates.filter(t => t.status === "draft").length;
   const totalVersions = templates.reduce((sum, t) => sum + t.versions.length, 0);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!newName.trim()) { toast.error("Template name is required"); return; }
-    toast.success(`Template "${newName}" created as draft`);
-    setShowCreateDialog(false);
-    setNewName(""); setNewDescription("");
+    try {
+      await api.templates.create({
+        name: newName.trim(),
+        doc_type: newDocType,
+        description: newDescription.trim(),
+        default_branding_profile_id: newBrandingId || null,
+        default_locale: "en",
+      });
+      await refetchTemplates();
+      toast.success(`Template "${newName}" created`);
+      setShowCreateDialog(false);
+      setNewName(""); setNewDescription("");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to create template");
+    }
   };
 
   return (
@@ -195,7 +208,18 @@ export default function TemplateManager() {
                       <Settings2 size={12} className="mr-1" /> Design
                     </Button>
                     {template.status === "draft" && (
-                      <Button variant="outline" size="sm" className="text-xs h-7" onClick={(e) => { e.stopPropagation(); toast.success(`Template "${template.name}" published`); }}>
+                      <Button variant="outline" size="sm" className="text-xs h-7" onClick={async (e) => {
+                        e.stopPropagation();
+                        const latestVer = getLatestTemplateVersion(template);
+                        if (!latestVer) { toast.error("No version to publish"); return; }
+                        try {
+                          await api.templates.publishVersion(template.id, latestVer.id);
+                          await refetchTemplates();
+                          toast.success(`Template "${template.name}" published`);
+                        } catch (err: any) {
+                          toast.error(err.message || "Failed to publish template");
+                        }
+                      }}>
                         <Send size={12} className="mr-1" /> Publish
                       </Button>
                     )}
@@ -260,7 +284,15 @@ export default function TemplateManager() {
                           <Button variant="outline" size="sm" className="text-xs" onClick={() => toast.info("Feature coming soon")}>
                             <Eye size={12} className="mr-1" /> Preview
                           </Button>
-                          <Button variant="outline" size="sm" className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => toast.info("Feature coming soon")}>
+                          <Button variant="outline" size="sm" className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50" onClick={async () => {
+                            try {
+                              await api.templates.update(template.id, { status: "archived" });
+                              await refetchTemplates();
+                              toast.success(`Template "${template.name}" archived`);
+                            } catch (err: any) {
+                              toast.error(err.message || "Failed to archive template");
+                            }
+                          }}>
                             <Archive size={12} className="mr-1" /> Archive
                           </Button>
                         </div>
@@ -308,7 +340,7 @@ export default function TemplateManager() {
               <Select value={newBrandingId} onValueChange={setNewBrandingId}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {brandingProfiles.map(bp => (
+                  {branding.map(bp => (
                     <SelectItem key={bp.id} value={bp.id}>{bp.name}</SelectItem>
                   ))}
                 </SelectContent>

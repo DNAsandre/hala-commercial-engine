@@ -25,6 +25,8 @@ import {
   estimateUpgradeImpact, requestUpgrade,
   type UpgradeContextType
 } from '@/lib/ecr-evolution';
+import { getCurrentUser } from '@/lib/auth-state';
+import type { UserRole } from '@/lib/store';
 
 interface EcrUpgradeModalProps {
   open: boolean;
@@ -72,6 +74,7 @@ export default function EcrUpgradeModal({
     }
 
     setSubmitting(true);
+    const actor = getCurrentUser();
     const result = requestUpgrade({
       context_type: contextType,
       context_id: contextId,
@@ -80,9 +83,9 @@ export default function EcrUpgradeModal({
       from_rule_set_id: currentRuleSetId,
       to_rule_set_id: targetRuleSet.id,
       reason,
-      userId: 'user-admin',
-      userName: 'Amin Al-Rashid',
-      userRole: 'admin',
+      userId: actor.id,
+      userName: actor.name,
+      userRole: actor.role as UserRole,
     });
 
     setSubmitting(false);

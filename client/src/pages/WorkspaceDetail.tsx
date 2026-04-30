@@ -59,6 +59,7 @@ import { SlaVerificationChecklistComponent } from "@/components/SlaVerificationC
 import { SlaVsPnlDeltaBanner } from "@/components/SlaVsPnlDeltaBanner";
 import { WorkspaceEscalationsTab } from "@/components/WorkspaceEscalationsTab";
 import { WorkspaceRiskSignalsTab } from "@/components/WorkspaceRiskSignalsTab";
+import { LifecycleLight, getLightState } from "@/components/LifecycleLight";
 import CRMSyncBadge from "@/components/CRMSyncBadge";
 import WorkspaceQuoteSection from "@/components/WorkspaceQuoteSection";
 import WorkspaceProposalSection from "@/components/WorkspaceProposalSection";
@@ -806,21 +807,14 @@ export default function WorkspaceDetail() {
                               }
                             `}
                           >
-                            {/* Dot */}
-                            <div className={`w-2 h-2 rounded-full mb-1.5 ${
-                              isCurrent ? "bg-white" :
-                              isPast ? "bg-emerald-500" :
-                              isSuggested ? "bg-primary/60" :
-                              "bg-muted-foreground/20"
-                            }`} />
+                            {/* 3D LED Light */}
+                            <LifecycleLight state={getLightState(i, currentIdx, isTerminal)} size={12} className="mb-1.5" />
                             <span className={`text-[10px] font-medium whitespace-nowrap leading-none ${
                               isCurrent ? "text-white font-semibold" : ""
                             }`}>
                               {m.label}
                             </span>
-                            {isSuggested && (
-                              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-primary animate-pulse" />
-                            )}
+
                           </button>
 
                           {/* Connector */}

@@ -30,6 +30,18 @@ interface UseQueryResult<T> {
   refetch: () => void;
 }
 
+/**
+ * Wraps a promise with a timeout — rejects if not resolved in `ms`.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
 function useQuery<T>(fetcher: () => Promise<T>, defaultValue: T, deps: any[] = []): UseQueryResult<T> {
   const [data, setData] = useState<T>(defaultValue);
   const [loading, setLoading] = useState(true);
@@ -40,12 +52,13 @@ function useQuery<T>(fetcher: () => Promise<T>, defaultValue: T, deps: any[] = [
     setLoading(true);
     setError(null);
     try {
-      const result = await fetcher();
+      const result = await withTimeout(fetcher(), 8000);
       if (mountedRef.current) {
         setData(result);
       }
     } catch (err: any) {
       if (mountedRef.current) {
+        console.warn("[useQuery] fetch failed:", err.message);
         setError(err.message || "Failed to fetch data");
       }
     } finally {

@@ -45,6 +45,8 @@ import {
   type AIProvider,
   type AIProviderName,
 } from "@/lib/ai-client";
+import { api } from "@/lib/api-client";
+import { fetchEditorBots } from "@/lib/supabase-data";
 
 /* ─── AI Providers Embed (inline in Admin tab) ─── */
 function CRMSyncEmbed() {
@@ -160,8 +162,9 @@ function AIProvidersEmbed() {
     setProviders((ps) => ps.map((p) => (p.id === id ? { ...p, enabled } : p)));
     const result = await updateAIProvider(id, { enabled });
     if (!result) {
-      fetchAIProviders(true).then(setProviders);
-      toast.error("Failed to update provider");
+      // Rollback single item instead of refetching entire list
+      setProviders((ps) => ps.map((p) => (p.id === id ? { ...p, enabled: !enabled } : p)));
+      toast.error("Failed to update provider — reverted");
       return;
     }
     toast.success(`Provider ${enabled ? "enabled" : "disabled"}`);
@@ -243,48 +246,431 @@ function AIProvidersEmbed() {
   );
 }
 
-const systemModules = [
-  { name: "CRM Sync Engine", status: "active", lastSync: "2 min ago", icon: RefreshCw, color: "text-emerald-600 bg-emerald-50" },
-  { name: "PDF Compiler", status: "active", lastSync: "Ready", icon: HardDrive, color: "text-blue-600 bg-blue-50" },
-  { name: "Approval Engine", status: "active", lastSync: "Running", icon: Shield, color: "text-violet-600 bg-violet-50" },
-  { name: "Audit Logger", status: "active", lastSync: "Recording", icon: Database, color: "text-amber-600 bg-amber-50" },
-  { name: "AI Authoring", status: "active", lastSync: "Available", icon: Server, color: "text-pink-600 bg-pink-50" },
-  { name: "Notification Service", status: "inactive", lastSync: "Disabled", icon: Bell, color: "text-gray-400 bg-gray-50" },
+/* ─── Settings Tab — Fully Persistent ─── */
+const SETTINGS_DEFAULTS = {
+  org_name: 'Hala Supply Chain Solutions',
+  default_currency: 'SAR',
+  default_region: 'East',
+  fiscal_year_start: 'jan',
+  logo_url: 'https://halascs.com/logo.png',
+  pdf_footer: 'Hala Supply Chain Solutions — Confidential',
+  primary_color: '#1B2A4A',
+  accent_color: '#2563EB',
+  feature_ai_authoring: true,
+  feature_auto_crm_sync: true,
+  feature_email_notifications: false,
+  feature_audit_export: true,
+  feature_dark_mode: false,
+};
+
+function SettingsTabContent() {
+  const [s, setS] = useState({ ...SETTINGS_DEFAULTS });
+  const [saved, setSaved] = useState({ ...SETTINGS_DEFAULTS });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.systemSettings.get().then(res => {
+      if (cancelled) return;
+      if (res.data?.settings) {
+        const merged = { ...SETTINGS_DEFAULTS, ...res.data.settings };
+        setS(merged);
+        setSaved(merged);
+      }
+      setLoading(false);
+    }).catch(() => setLoading(false));
+    return () => { cancelled = true; };
+  }, []);
+
+  const isDirty = JSON.stringify(s) !== JSON.stringify(saved);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api.systemSettings.update(s);
+      setSaved({ ...s });
+      toast.success("Settings saved");
+    } catch {
+      toast.error("Failed to save settings");
+    }
+    setSaving(false);
+  };
+
+  const handleReset = () => {
+    setS({ ...saved });
+    toast("Settings reverted to last saved state");
+  };
+
+  const upd = (key: string, val: any) => setS(prev => ({ ...prev, [key]: val }));
+
+  if (loading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+
+  return (
+    <>
+      <Card className="border border-border shadow-none">
+        <CardHeader className="pb-3"><CardTitle className="text-base font-serif">General Settings</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Organization Name</Label>
+              <Input value={s.org_name} onChange={e => upd('org_name', e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Default Currency</Label>
+              <Select value={s.default_currency} onValueChange={v => upd('default_currency', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="SAR">SAR — Saudi Riyal</SelectItem>
+                  <SelectItem value="USD">USD — US Dollar</SelectItem>
+                  <SelectItem value="AED">AED — UAE Dirham</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Default Region</Label>
+              <Select value={s.default_region} onValueChange={v => upd('default_region', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="East">Eastern Province</SelectItem>
+                  <SelectItem value="Central">Central Province</SelectItem>
+                  <SelectItem value="West">Western Province</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Fiscal Year Start</Label>
+              <Select value={s.fiscal_year_start} onValueChange={v => upd('fiscal_year_start', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="jan">January</SelectItem>
+                  <SelectItem value="apr">April</SelectItem>
+                  <SelectItem value="jul">July</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <Separator />
+          <div className="space-y-3">
+            <h4 className="text-xs font-semibold uppercase text-muted-foreground">Feature Flags</h4>
+            <div className="flex items-center justify-between">
+              <div><span className="text-sm">AI Authoring</span><p className="text-xs text-muted-foreground">Enable AI draft generation in the Commercial Editor</p></div>
+              <Switch checked={s.feature_ai_authoring} onCheckedChange={v => upd('feature_ai_authoring', v)} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div><span className="text-sm">Auto CRM Sync</span><p className="text-xs text-muted-foreground">Automatically sync deals from Zoho CRM every 5 minutes</p></div>
+              <Switch checked={s.feature_auto_crm_sync} onCheckedChange={v => upd('feature_auto_crm_sync', v)} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div><span className="text-sm">Email Notifications</span><p className="text-xs text-muted-foreground">Send email alerts for approvals and escalations</p></div>
+              <Switch checked={s.feature_email_notifications} onCheckedChange={v => upd('feature_email_notifications', v)} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div><span className="text-sm">Audit Trail Export</span><p className="text-xs text-muted-foreground">Allow exporting audit trail as CSV/PDF</p></div>
+              <Switch checked={s.feature_audit_export} onCheckedChange={v => upd('feature_audit_export', v)} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div><span className="text-sm">Navigation v1</span><p className="text-xs text-muted-foreground">Simplified sidebar — Workspace-centric navigation (currently {navigationV1 ? "ON" : "OFF"})</p></div>
+              <Switch checked={navigationV1} onCheckedChange={() => toast("Feature flag change requires code deployment")} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div><span className="text-sm">Dark Mode</span><p className="text-xs text-muted-foreground">Enable dark theme option for users</p></div>
+              <Switch checked={s.feature_dark_mode} onCheckedChange={v => upd('feature_dark_mode', v)} />
+            </div>
+          </div>
+          <Separator />
+          <div className="space-y-3">
+            <h4 className="text-xs font-semibold uppercase text-muted-foreground">Document Branding</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Company Logo URL</Label>
+                <Input value={s.logo_url} onChange={e => upd('logo_url', e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">PDF Footer Text</Label>
+                <Input value={s.pdf_footer} onChange={e => upd('pdf_footer', e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Primary Brand Color</Label>
+                <div className="flex items-center gap-2">
+                  <input type="color" value={s.primary_color} onChange={e => upd('primary_color', e.target.value)} className="w-8 h-8 rounded-md border border-border cursor-pointer p-0" />
+                  <Input value={s.primary_color} onChange={e => upd('primary_color', e.target.value)} className="font-mono text-xs" />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Accent Color</Label>
+                <div className="flex items-center gap-2">
+                  <input type="color" value={s.accent_color} onChange={e => upd('accent_color', e.target.value)} className="w-8 h-8 rounded-md border border-border cursor-pointer p-0" />
+                  <Input value={s.accent_color} onChange={e => upd('accent_color', e.target.value)} className="font-mono text-xs" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="flex items-center justify-end gap-2">
+        {isDirty && <span className="text-xs text-amber-600 mr-2">● Unsaved changes</span>}
+        <Button variant="outline" onClick={handleReset} disabled={!isDirty}>Reset</Button>
+        <Button onClick={handleSave} disabled={!isDirty || saving}>
+          {saving ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1" />}
+          Save Settings
+        </Button>
+      </div>
+    </>
+  );
+}
+
+function EditorBotsEmbed() {
+  const [total, setTotal] = useState(0);
+  const [blockCount, setBlockCount] = useState(0);
+  const [docCount, setDocCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchEditorBots().then(bots => {
+      if (cancelled) return;
+      setTotal(bots.length);
+      setBlockCount(bots.filter(b => b.bot_type === 'block').length);
+      setDocCount(bots.filter(b => b.bot_type === 'document').length);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+
+  return (
+    <>
+      <div className="grid grid-cols-3 gap-3">
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-2xl font-bold text-[#1B2A4A]">{total}</div>
+            <div className="text-xs text-muted-foreground">Total Editor Bots</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-2xl font-bold text-blue-600">{blockCount}</div>
+            <div className="text-xs text-muted-foreground">Block Bots</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-2xl font-bold text-purple-600">{docCount}</div>
+            <div className="text-xs text-muted-foreground">Document Bots</div>
+          </CardContent>
+        </Card>
+      </div>
+      <p className="text-xs text-muted-foreground">Use the full page to create, edit, test, and manage editor bots with system prompts, provider configuration, and document type permissions.</p>
+    </>
+  );
+}
+
+/* ─── System Module metadata (icons, colors) — static ─── */
+const moduleMetadata: Record<string, { icon: React.ElementType; color: string; hint?: string }> = {
+  "CRM Sync Engine": { icon: RefreshCw, color: "text-emerald-600 bg-emerald-50" },
+  "PDF Compiler": { icon: HardDrive, color: "text-blue-600 bg-blue-50" },
+  "Escalation Engine": { icon: Shield, color: "text-violet-600 bg-violet-50" },
+  "Audit Logger": { icon: Database, color: "text-amber-600 bg-amber-50" },
+  "AI Authoring": { icon: Brain, color: "text-pink-600 bg-pink-50" },
+  "Notification Service": { icon: Bell, color: "text-gray-400 bg-gray-50", hint: "Requires SMTP configuration in Integrations" },
+};
+
+const defaultModules = [
+  { name: "CRM Sync Engine", status: "active", lastActivity: "Checking..." },
+  { name: "PDF Compiler", status: "active", lastActivity: "Checking..." },
+  { name: "Escalation Engine", status: "active", lastActivity: "Checking..." },
+  { name: "Audit Logger", status: "active", lastActivity: "Checking..." },
+  { name: "AI Authoring", status: "active", lastActivity: "Checking..." },
+  { name: "Notification Service", status: "inactive", lastActivity: "Disabled" },
 ];
 
-const integrations = [
-  { name: "Zoho CRM", status: "mock", description: "Deal sync, contact sync, stage updates", apiKey: "Not configured", icon: Link2 },
-  { name: "Zoho Books", status: "planned", description: "Invoice generation, payment tracking", apiKey: "Not configured", icon: Building2 },
-  { name: "WMS (Blue Yonder)", status: "planned", description: "Inventory data, space utilization", apiKey: "Not configured", icon: Database },
-  { name: "Email (SMTP)", status: "planned", description: "Notification emails, document sharing", apiKey: "Not configured", icon: Mail },
-  { name: "Supabase", status: "active", description: "Cloud database — connected", apiKey: "Connected", icon: Globe },
-];
+function SystemModulesTab() {
+  const [modules, setModules] = useState(defaultModules);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.systemHealth.get()
+      .then((res: any) => {
+        if (cancelled) return;
+        const mods = res?.modules || res?.data?.modules;
+        if (mods) setModules(mods);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        {modules.map(mod => {
+          const meta = moduleMetadata[mod.name] || { icon: Server, color: "text-gray-500 bg-gray-50" };
+          const Icon = meta.icon;
+          const isActive = mod.status === "active";
+          const isDegraded = mod.status === "degraded";
+          return (
+            <Card key={mod.name} className="border border-border shadow-none">
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${meta.color}`}>
+                    <Icon className="w-5 h-5" />
+                  </div>
+                  <Badge variant="outline" className={`text-[10px] ${
+                    isDegraded ? "bg-amber-50 text-amber-700" :
+                    isActive ? "bg-emerald-50 text-emerald-700" : "bg-gray-50 text-gray-500"
+                  }`}>
+                    {mod.status}
+                  </Badge>
+                </div>
+                <h3 className="text-sm font-semibold mb-0.5">{mod.name}</h3>
+                <p className="text-xs text-muted-foreground">{loading ? "Checking..." : mod.lastActivity}</p>
+                <div className="flex items-center gap-2 mt-3">
+                  <div className={`w-2 h-2 rounded-full ${
+                    isDegraded ? "bg-amber-500" :
+                    isActive ? "bg-emerald-500" : "bg-gray-300"
+                  }`} />
+                  <span className="text-[10px] text-muted-foreground">
+                    {isDegraded ? "Degraded" : isActive ? "Running" : "Offline"}
+                  </span>
+                </div>
+                {meta.hint && mod.status === "inactive" && (
+                  <p className="text-[10px] text-muted-foreground/70 mt-2 italic">{meta.hint}</p>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+      <p className="text-xs text-muted-foreground">System module status is managed at the infrastructure level. Contact your DevOps team to enable or disable modules.</p>
+    </div>
+  );
+}
+
+/* ─── Integration metadata (icons only — status comes from API) ─── */
+const integrationIcons: Record<string, React.ElementType> = {
+  "Zoho CRM": Link2,
+  "Zoho Books": Building2,
+  "WMS (Blue Yonder)": Database,
+  "Email (SMTP)": Mail,
+  "Supabase": Globe,
+};
+
+function IntegrationsTab() {
+  const [integrations, setIntegrations] = useState<Array<{ name: string; status: string; description: string; connectionInfo: string }>>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.systemHealth.integrations()
+      .then((res: any) => {
+        if (cancelled) return;
+        const ints = res?.integrations || res?.data?.integrations;
+        if (ints) setIntegrations(ints);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+
+  return (
+    <div className="space-y-3">
+      {integrations.map(int => {
+        const Icon = integrationIcons[int.name] || Globe;
+        return (
+          <Card key={int.name} className="border border-border shadow-none">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                  <Icon className="w-6 h-6 text-muted-foreground" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-sm font-semibold">{int.name}</span>
+                    <Badge variant="outline" className={`text-[10px] ${
+                      int.status === "demo" ? "bg-amber-50 text-amber-700" :
+                      int.status === "active" ? "bg-emerald-50 text-emerald-700" :
+                      int.status === "error" ? "bg-red-50 text-red-700" :
+                      "bg-gray-50 text-gray-500"
+                    }`}>
+                      {int.status === "demo" ? "Demo Mode" : int.status}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{int.description}</p>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <Key className="w-3 h-3 text-muted-foreground" />
+                    <span className="text-[10px] text-muted-foreground font-mono">{int.connectionInfo}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {int.status === "active" ? (
+                    <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700">✓ Connected</Badge>
+                  ) : int.status === "demo" ? (
+                    <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => toast.info(`To activate ${int.name}, provide API credentials in the integration settings.`, { description: 'Contact admin@halascs.com for API keys.' })}>
+                      <Settings className="w-3.5 h-3.5 mr-1" /> Configure
+                    </Button>
+                  ) : int.status === "error" ? (
+                    <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700">✗ Error</Badge>
+                  ) : (
+                    <Button variant="outline" size="sm" className="text-xs h-8" disabled>
+                      <Settings className="w-3.5 h-3.5 mr-1" /> Coming Soon
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
+
+      <Card className="border-2 border-dashed border-border shadow-none">
+        <CardContent className="p-6 text-center">
+          <Plus className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" />
+          <p className="text-sm text-muted-foreground">Add Custom Integration</p>
+          <p className="text-xs text-muted-foreground/60 mt-0.5">Connect any REST API with custom credentials</p>
+          <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => toast("Custom integration setup coming soon")}>
+            Configure
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
 
 /* ─── Document System links ─── */
 const docSystemLinks = [
-  { path: "/template-manager", label: "Templates", desc: "Manage document templates for quotes, proposals, and SLAs", icon: Layers, count: "12 templates" },
-  { path: "/variables", label: "Variables", desc: "Define and manage custom variables used in document tokens", icon: Variable, count: "48 variables" },
-  { path: "/block-library", label: "Block Library", desc: "Reusable content blocks shared across templates", icon: BookOpen, count: "24 blocks" },
+  { path: "/template-manager", label: "Templates", desc: "Manage document templates for quotes, proposals, and SLAs", icon: Layers, count: "Manage" },
+  { path: "/variables", label: "Variables", desc: "Define and manage custom variables used in document tokens", icon: Variable, count: "Manage" },
+  { path: "/block-library", label: "Block Library", desc: "Reusable content blocks shared across templates", icon: BookOpen, count: "Manage" },
   { path: "/block-builder", label: "Block Builder", desc: "Visual block editor for creating new content blocks", icon: Blocks, count: "Builder" },
-  { path: "/branding-profiles", label: "Branding", desc: "Brand profiles controlling colors, fonts, and logos on documents", icon: Palette, count: "3 profiles" },
+  { path: "/branding-profiles", label: "Branding", desc: "Brand profiles controlling colors, fonts, and logos on documents", icon: Palette, count: "Manage" },
   { path: "/documents", label: "Document Vault", desc: "Central vault for all compiled documents, PDFs, and output files", icon: FileText, count: "Vault" },
 ];
 
 /* ─── Automation links ─── */
 const automationLinks = [
-  { path: "/bot-registry", label: "Bot Governance", desc: "Manage AI bots, permissions, and authority boundaries", icon: Bot, count: "5 bots" },
+  { path: "/bot-registry", label: "Bot Governance", desc: "Manage AI bots, permissions, and authority boundaries", icon: Bot, count: "Manage" },
   { path: "/bot-builder", label: "Bot Builder", desc: "Visual builder for creating and configuring AI bots", icon: Wrench, count: "Builder" },
-  { path: "/signal-engine", label: "Signal Engine", desc: "Configure automated signals, alerts, and escalation triggers", icon: Radio, count: "12 signals" },
+  { path: "/signal-engine", label: "Signal Engine", desc: "Configure automated signals, alerts, and escalation triggers", icon: Radio, count: "Manage" },
   { path: "/bot-audit", label: "Bot Audit", desc: "Review all bot actions, decisions, and override attempts", icon: Activity, count: "Audit log" },
   { path: "/crm-sync", label: "CRM Sync", desc: "Manage CRM synchronization, field mapping, and sync status", icon: Link2, count: "Sync" },
 ];
 
 /* ─── ECR links ─── */
 const ecrLinks = [
-  { path: "/ecr", label: "ECR Dashboard", desc: "Customer rating overview with risk scores and trends", icon: BarChart3, count: "11 customers" },
-  { path: "/ecr-rule-sets", label: "Rule Sets", desc: "Configure scoring rules for customer evaluation", icon: Layers, count: "4 rule sets" },
+  { path: "/ecr", label: "ECR Dashboard", desc: "Customer rating overview with risk scores and trends", icon: BarChart3, count: "Dashboard" },
+  { path: "/ecr-rule-sets", label: "Rule Sets", desc: "Configure scoring rules for customer evaluation", icon: Layers, count: "Manage" },
   { path: "/ecr-scoring", label: "Scoring", desc: "View and manage individual customer scores", icon: Star, count: "Scores" },
-  { path: "/ecr-connectors", label: "Connectors", desc: "Data source connectors for external rating inputs", icon: Link2, count: "3 connectors" },
+  { path: "/ecr-connectors", label: "Connectors", desc: "Data source connectors for external rating inputs", icon: Link2, count: "Manage" },
   { path: "/ecr-metrics", label: "Metrics", desc: "ECR performance metrics and analytics", icon: Database, count: "Metrics" },
   { path: "/ecr-snapshots", label: "Snapshots", desc: "Point-in-time ECR snapshots for audit and comparison", icon: Database, count: "Snapshots" },
   { path: "/ecr-upgrades", label: "Upgrades", desc: "Customer grade upgrade requests and approval workflow", icon: Star, count: "Upgrades" },
@@ -381,6 +767,12 @@ function EditUserModal({ user, onClose, onSaved }: { user: any; onClose: () => v
     }
   };
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
+
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <Card className="w-full max-w-lg shadow-xl" onClick={e => e.stopPropagation()}>
@@ -449,8 +841,12 @@ function ResetPasswordModal({ user, onClose }: { user: any; onClose: () => void 
   const [saving, setSaving] = useState(false);
 
   const handleReset = async () => {
-    if (password.length < 6) {
-      toast.error("Password must be at least 6 characters");
+    if (password.length < 8) {
+      toast.error("Password must be at least 8 characters");
+      return;
+    }
+    if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+      toast.error("Password must include uppercase, lowercase, and a number");
       return;
     }
     setSaving(true);
@@ -463,6 +859,12 @@ function ResetPasswordModal({ user, onClose }: { user: any; onClose: () => void 
       toast.error("Failed to reset password", { description: result.error });
     }
   };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -519,6 +921,7 @@ export default function AdminPanel() {
   const { appUser } = useAuth();
   const [userSearch, setUserSearch] = useState("");
   const [showAddUser, setShowAddUser] = useState(false);
+  const [userPage, setUserPage] = useState(1);
   const [editingUser, setEditingUser] = useState<any>(null);
   const [resetPasswordUser, setResetPasswordUser] = useState<any>(null);
 
@@ -539,8 +942,16 @@ export default function AdminPanel() {
       toast.error("Name and email are required");
       return;
     }
-    if (newUserPassword.length < 6) {
-      toast.error("Password must be at least 6 characters");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newUserEmail.trim())) {
+      toast.error("Please enter a valid email address");
+      return;
+    }
+    if (newUserPassword.length < 8) {
+      toast.error("Password must be at least 8 characters");
+      return;
+    }
+    if (!/[A-Z]/.test(newUserPassword) || !/[a-z]/.test(newUserPassword) || !/[0-9]/.test(newUserPassword)) {
+      toast.error("Password must include uppercase, lowercase, and a number");
       return;
     }
     setAddingUser(true);
@@ -575,6 +986,7 @@ export default function AdminPanel() {
       toast.error("You cannot deactivate your own account");
       return;
     }
+    if (!confirm(`Are you sure you want to deactivate ${user.name}? They will no longer be able to sign in.`)) return;
     const result = await adminDeactivateUser(user.auth_id, user.id);
     if (result.success) {
       toast.success("User deactivated", { description: `${user.name} can no longer sign in` });
@@ -612,7 +1024,7 @@ export default function AdminPanel() {
       </div>
 
       <Tabs defaultValue={navigationV1 ? "doc-system" : "users"}>
-        <TabsList className="flex-wrap h-auto gap-1">
+        <TabsList className="flex flex-wrap h-auto gap-1 overflow-x-auto">
           {navigationV1 && (
             <>
               <TabsTrigger value="doc-system"><FileText className="w-3.5 h-3.5 mr-1.5" />Document System</TabsTrigger>
@@ -689,7 +1101,7 @@ export default function AdminPanel() {
               <Input
                 placeholder="Search users..."
                 value={userSearch}
-                onChange={e => setUserSearch(e.target.value)}
+                onChange={e => { setUserSearch(e.target.value); setUserPage(1); }}
                 className="pl-9 h-9"
               />
             </div>
@@ -769,7 +1181,15 @@ export default function AdminPanel() {
                   </div>
                 </div>
                 <div className="flex justify-end gap-2 mt-4">
-                  <Button variant="outline" size="sm" onClick={() => setShowAddUser(false)}>Cancel</Button>
+                  <Button variant="outline" size="sm" onClick={() => {
+                    setShowAddUser(false);
+                    setNewUserName("");
+                    setNewUserEmail("");
+                    setNewUserRole("salesman");
+                    setNewUserDepartment("Sales");
+                    setNewUserRegion("East");
+                    setNewUserPassword("Hala2026!");
+                  }}>Cancel</Button>
                   <Button size="sm" onClick={handleAddUser} disabled={addingUser}>
                     {addingUser ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1" />}
                     Create User
@@ -794,7 +1214,7 @@ export default function AdminPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredUsers.map((user: any) => {
+                  {filteredUsers.slice((userPage - 1) * 10, userPage * 10).map((user: any) => {
                     const isInactive = user.status === "inactive";
                     return (
                       <tr key={user.id} className={`border-b border-border last:border-0 hover:bg-muted/30 transition-colors ${isInactive ? "opacity-50" : ""}`}>
@@ -854,6 +1274,15 @@ export default function AdminPanel() {
                   No users match your search.
                 </div>
               )}
+              {filteredUsers.length > 10 && (
+                <div className="flex items-center justify-between px-4 py-3 border-t border-border">
+                  <span className="text-xs text-muted-foreground">Showing {Math.min((userPage - 1) * 10 + 1, filteredUsers.length)}–{Math.min(userPage * 10, filteredUsers.length)} of {filteredUsers.length}</span>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={userPage === 1} onClick={() => setUserPage(p => p - 1)}>Previous</Button>
+                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={userPage * 10 >= filteredUsers.length} onClick={() => setUserPage(p => p + 1)}>Next</Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -866,200 +1295,17 @@ export default function AdminPanel() {
 
         {/* ─── System Modules Tab ─── */}
         <TabsContent value="system" className="space-y-4">
-          <div className="grid grid-cols-3 gap-3">
-            {systemModules.map(mod => {
-              const Icon = mod.icon;
-              return (
-                <Card key={mod.name} className="border border-border shadow-none">
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between mb-3">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${mod.color}`}>
-                        <Icon className="w-5 h-5" />
-                      </div>
-                      <Badge variant="outline" className={`text-[10px] ${mod.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-gray-50 text-gray-500"}`}>
-                        {mod.status}
-                      </Badge>
-                    </div>
-                    <h3 className="text-sm font-semibold mb-0.5">{mod.name}</h3>
-                    <p className="text-xs text-muted-foreground">{mod.lastSync}</p>
-                    <div className="flex items-center gap-2 mt-3">
-                      <Switch checked={mod.status === "active"} onCheckedChange={() => toast(`${mod.name} toggle requires system restart`)} />
-                      <span className="text-[10px] text-muted-foreground">{mod.status === "active" ? "Enabled" : "Disabled"}</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+          <SystemModulesTab />
         </TabsContent>
 
         {/* ─── Integrations Tab ─── */}
         <TabsContent value="integrations" className="space-y-3">
-          {integrations.map(int => {
-            const Icon = int.icon;
-            return (
-              <Card key={int.name} className="border border-border shadow-none">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center shrink-0">
-                      <Icon className="w-6 h-6 text-muted-foreground" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-sm font-semibold">{int.name}</span>
-                        <Badge variant="outline" className={`text-[10px] ${
-                          int.status === "mock" ? "bg-amber-50 text-amber-700" :
-                          int.status === "active" ? "bg-emerald-50 text-emerald-700" :
-                          "bg-gray-50 text-gray-500"
-                        }`}>
-                          {int.status === "mock" ? "Mock Mode" : int.status}
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-muted-foreground">{int.description}</p>
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <Key className="w-3 h-3 text-muted-foreground" />
-                        <span className="text-[10px] text-muted-foreground font-mono">{int.apiKey}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => toast(`Configure ${int.name} API credentials`)}>
-                        <Settings className="w-3.5 h-3.5 mr-1" /> Configure
-                      </Button>
-                      {int.status === "mock" && (
-                        <Button size="sm" className="text-xs h-8" onClick={() => toast("Provide Zoho API credentials to activate live sync")}>
-                          Activate
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-
-          <Card className="border-2 border-dashed border-border shadow-none">
-            <CardContent className="p-6 text-center">
-              <Plus className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">Add Custom Integration</p>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">Connect any REST API with custom credentials</p>
-              <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => toast("Custom integration setup coming soon")}>
-                Configure
-              </Button>
-            </CardContent>
-          </Card>
+          <IntegrationsTab />
         </TabsContent>
 
-        {/* ─── Settings Tab ─── */}
+        {/* ─── Settings Tab — Persistent ─── */}
         <TabsContent value="settings" className="space-y-4">
-          <Card className="border border-border shadow-none">
-            <CardHeader className="pb-3"><CardTitle className="text-base font-serif">General Settings</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold">Organization Name</Label>
-                  <Input defaultValue="Hala Supply Chain Solutions" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold">Default Currency</Label>
-                  <Select defaultValue="SAR">
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="SAR">SAR — Saudi Riyal</SelectItem>
-                      <SelectItem value="USD">USD — US Dollar</SelectItem>
-                      <SelectItem value="AED">AED — UAE Dirham</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold">Default Region</Label>
-                  <Select defaultValue="East">
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="East">Eastern Province</SelectItem>
-                      <SelectItem value="Central">Central Province</SelectItem>
-                      <SelectItem value="West">Western Province</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold">Fiscal Year Start</Label>
-                  <Select defaultValue="jan">
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="jan">January</SelectItem>
-                      <SelectItem value="apr">April</SelectItem>
-                      <SelectItem value="jul">July</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <Separator />
-              <div className="space-y-3">
-                <h4 className="text-xs font-semibold uppercase text-muted-foreground">Feature Flags</h4>
-                <div className="flex items-center justify-between">
-                  <div><span className="text-sm">AI Authoring</span><p className="text-xs text-muted-foreground">Enable AI draft generation in the Commercial Editor</p></div>
-                  <Switch defaultChecked />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div><span className="text-sm">Auto CRM Sync</span><p className="text-xs text-muted-foreground">Automatically sync deals from Zoho CRM every 5 minutes</p></div>
-                  <Switch defaultChecked />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div><span className="text-sm">Email Notifications</span><p className="text-xs text-muted-foreground">Send email alerts for approvals and escalations</p></div>
-                  <Switch />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div><span className="text-sm">Audit Trail Export</span><p className="text-xs text-muted-foreground">Allow exporting audit trail as CSV/PDF</p></div>
-                  <Switch defaultChecked />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div><span className="text-sm">Navigation v1</span><p className="text-xs text-muted-foreground">Simplified sidebar — Workspace-centric navigation (currently {navigationV1 ? "ON" : "OFF"})</p></div>
-                  <Switch checked={navigationV1} onCheckedChange={() => toast("Feature flag change requires code deployment")} />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div><span className="text-sm">Dark Mode</span><p className="text-xs text-muted-foreground">Enable dark theme option for users</p></div>
-                  <Switch />
-                </div>
-              </div>
-              <Separator />
-              <div className="space-y-3">
-                <h4 className="text-xs font-semibold uppercase text-muted-foreground">Document Branding</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold">Company Logo URL</Label>
-                    <Input defaultValue="https://halascs.com/logo.png" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold">PDF Footer Text</Label>
-                    <Input defaultValue="Hala Supply Chain Solutions — Confidential" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold">Primary Brand Color</Label>
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-md bg-[#1B2A4A] border border-border" />
-                      <Input defaultValue="#1B2A4A" className="font-mono text-xs" />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold">Accent Color</Label>
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-md bg-[#2563EB] border border-border" />
-                      <Input defaultValue="#2563EB" className="font-mono text-xs" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <div className="flex justify-end gap-2">
-            <Button variant="outline">Reset to Defaults</Button>
-            <Button onClick={() => toast.success("Settings saved")}>Save Settings</Button>
-          </div>
+          <SettingsTabContent />
         </TabsContent>
 
         {/* ─── AI Providers Tab ─── */}
@@ -1095,27 +1341,7 @@ export default function AdminPanel() {
               </Button>
             </Link>
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            <Card>
-              <CardContent className="p-4">
-                <div className="text-2xl font-bold text-[#1B2A4A]">8</div>
-                <div className="text-xs text-muted-foreground">Total Editor Bots</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="text-2xl font-bold text-blue-600">4</div>
-                <div className="text-xs text-muted-foreground">Block Bots</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="text-2xl font-bold text-purple-600">4</div>
-                <div className="text-xs text-muted-foreground">Document Bots</div>
-              </CardContent>
-            </Card>
-          </div>
-          <p className="text-xs text-muted-foreground">Use the full page to create, edit, test, and manage editor bots with system prompts, provider configuration, and document type permissions.</p>
+          <EditorBotsEmbed />
         </TabsContent>
 
         <TabsContent value="knowledgebase" className="space-y-4">

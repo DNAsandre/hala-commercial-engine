@@ -60,6 +60,7 @@ import {
   Printer,
   LayoutList,
   Handshake,
+  Sparkles,
 } from "lucide-react";
 import { getRoleLabel } from "@/lib/store";
 import { useSignals } from "@/hooks/useSupabase";
@@ -68,6 +69,8 @@ import { fetchOpenEscalationCount } from "@/lib/escalation-engine";
 import { useAuth } from "@/contexts/AuthContext";
 import { useComposerDirty } from "@/contexts/ComposerDirtyContext";
 import UnsavedChangesModal from "@/components/UnsavedChangesModal";
+import BotAssistPanel from "@/components/BotAssistPanel";
+import GlobalCRMSyncIndicator from "@/components/GlobalCRMSyncIndicator";
 import { cn } from "@/lib/utils";
 
 // ============================================================
@@ -129,6 +132,8 @@ const simplifiedNavItems: NavItem[] = [
     children: [
       { path: "/tenders", label: "Tenders", icon: Gavel, group: "core" },
       { path: "/commercial", label: "Commercial", icon: Handshake, group: "core" },
+      { path: "/proposals", label: "Proposals", icon: FileCheck, group: "core" },
+      { path: "/slas", label: "SLAs", icon: FileSignature, group: "core" },
       { path: "/renewals", label: "Renewals", icon: RotateCcw, group: "core" },
     ],
   },
@@ -166,6 +171,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [location, navigate] = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [opsExpanded, setOpsExpanded] = useState(true); // Commercial Ops children expanded
+  const [showAssistPanel, setShowAssistPanel] = useState(false);
   const { appUser: currentUser, signOut } = useAuth();
   const baseUser = currentUser || { id: "u1", name: "Loading...", email: "", role: "admin", region: "East" };
 
@@ -409,15 +415,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 type="text"
                 placeholder="Search workspaces, customers, deals..."
                 className="pl-9 pr-4 py-1.5 text-sm bg-muted rounded-md border-0 w-72 focus:outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/60"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const q = (e.target as HTMLInputElement).value.trim();
+                    if (q) navigate(`/customers?q=${encodeURIComponent(q)}`);
+                  }
+                }}
               />
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>CRM Sync: <span className="text-foreground font-medium">2 min ago</span></span>
-            </div>
-            <button className="relative p-1.5 rounded-md hover:bg-muted transition-colors">
+            <GlobalCRMSyncIndicator />
+            <button
+              className="relative p-1.5 rounded-md hover:bg-muted transition-colors"
+              onClick={() => navigate('/escalations')}
+              title="View escalations"
+            >
               <Bell className="w-4.5 h-4.5 text-muted-foreground" />
               {totalBadge > 0 && (
                 <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">
@@ -442,6 +455,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         onLeaveWithoutSaving={discardAndNavigate}
         onCancel={closeModal}
       />
+
+      {/* AI Assist Panel */}
+      <BotAssistPanel
+        open={showAssistPanel}
+        onClose={() => setShowAssistPanel(false)}
+      />
+
+      {/* Floating AI Assist Button (FAB) */}
+      {!showAssistPanel && (
+        <button
+          onClick={() => setShowAssistPanel(true)}
+          className="fixed bottom-6 right-6 z-30 w-12 h-12 rounded-full bg-gradient-to-br from-violet-600 to-indigo-700 text-white shadow-lg shadow-violet-500/30 hover:shadow-xl hover:shadow-violet-500/40 hover:scale-105 transition-all duration-200 flex items-center justify-center group"
+          title="AI Assistant"
+        >
+          <Sparkles size={20} className="group-hover:rotate-12 transition-transform" />
+        </button>
+      )}
     </div>
   );
 }

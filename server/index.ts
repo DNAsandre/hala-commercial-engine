@@ -22,6 +22,15 @@ import { quoteRoutes } from './routes/quotes.js';
 import { proposalRoutes } from './routes/proposals.js';
 import { slaRoutes } from './routes/slas.js';
 import { documentRoutes } from './routes/documents.js';
+import { templateRoutes } from './routes/templates.js';
+import { brandingRoutes } from './routes/branding.js';
+import { blockRoutes } from './routes/blocks.js';
+import { docInstanceRoutes } from './routes/doc-instances.js';
+import { botGovernanceRoutes } from './routes/bot-governance.js';
+import { systemSettingsRoutes } from './routes/system-settings.js';
+import { systemHealthRoutes } from './routes/system-health.js';
+import { handoversRouter } from './routes/handovers.js';
+import { ecrRulesRouter } from './routes/ecr-rules.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -29,7 +38,16 @@ const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
 
 // ─── Middleware ───────────────────────────────────────────
 app.use(cors({
-  origin: [FRONTEND_ORIGIN, 'http://localhost:5173'],
+  origin: (origin, callback) => {
+    // Allow any localhost origin for development
+    if (!origin || /^https?:\/\/localhost(:\d+)?$/.test(origin)) {
+      callback(null, true);
+    } else if (origin === FRONTEND_ORIGIN) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
 }));
 app.use(express.json({ limit: '2mb' }));
@@ -52,6 +70,15 @@ app.use('/api', quoteRoutes);
 app.use('/api', proposalRoutes);
 app.use('/api', slaRoutes);
 app.use('/api', documentRoutes);
+app.use('/api', templateRoutes);
+app.use('/api', brandingRoutes);
+app.use('/api', blockRoutes);
+app.use('/api', docInstanceRoutes);
+app.use('/api', botGovernanceRoutes);
+app.use('/api', systemSettingsRoutes);
+app.use('/api', systemHealthRoutes);
+app.use('/api/handovers', handoversRouter);
+app.use('/api/ecr', ecrRulesRouter);
 
 // ─── Global Error Handler ────────────────────────────────
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

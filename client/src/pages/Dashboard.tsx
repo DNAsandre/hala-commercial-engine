@@ -394,10 +394,13 @@ export default function Dashboard() {
     }).slice(0, 6);
   }, [filteredCustomers]);
 
-  if (loading) {
+  const hasAnyData = workspaces.length > 0 || customers.length > 0;
+
+  if (loading && !hasAnyData) {
     return (
-      <div className="flex items-center justify-center h-96">
+      <div className="flex flex-col items-center justify-center h-96 gap-3">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        <p className="text-xs text-muted-foreground">Loading dashboard…</p>
       </div>
     );
   }

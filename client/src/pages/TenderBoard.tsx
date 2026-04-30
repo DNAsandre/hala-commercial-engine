@@ -218,6 +218,17 @@ export default function TenderBoard() {
 
   return (
     <div className="p-4 h-[calc(100vh-4rem)] flex flex-col">
+      {/* Prototype Data Banner */}
+      <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-3 shrink-0">
+        <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+        <div>
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Placeholder data — not live</p>
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+            This board is currently displaying sample data. Real tender records will appear here once the data integration sprint is complete.
+          </p>
+        </div>
+      </div>
+
       {/* Header */}
       <div className="mb-4">
         <Link href="/tenders">

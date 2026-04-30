@@ -20,6 +20,16 @@ function genSlaNumber(wsId: string, ver: number) {
   return `SLA-${wsId.replace(/[^a-zA-Z0-9]/g, '').substring(0, 6).toUpperCase()}-V${ver}`;
 }
 
+// ─── GET /api/slas (all SLAs across workspaces) ───────────
+slaRoutes.get('/slas', async (_req, res, next) => {
+  try {
+    const { data, error } = await supabaseAdmin.from('slas').select('*')
+      .order('updated_at', { ascending: false }).limit(200);
+    if (error) throw { status: 500, message: error.message, code: 'DB_ERROR' };
+    res.json({ data: data || [], count: data?.length || 0 });
+  } catch (err) { next(err); }
+});
+
 // ─── GET /api/workspaces/:workspaceId/slas ────────────────
 slaRoutes.get('/workspaces/:workspaceId/slas', async (req, res, next) => {
   try {

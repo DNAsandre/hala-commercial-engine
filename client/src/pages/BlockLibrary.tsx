@@ -1,7 +1,7 @@
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 /*
  * Block Library — Admin page for browsing/managing document block types
- * Grouped by family, shows permissions, editor mode, and render key
+ * Sprint 3: Loads from DB, adds New Block and Edit actions.
  * Design: White cards, subtle borders, matching enterprise SaaS aesthetic
  */
 
@@ -16,8 +16,8 @@ import { toast } from "sonner";
 import {
   Blocks, Search, Shield, ShieldAlert, ShieldCheck, Bot,
   Lock, Unlock, Eye, Pencil, FileCode, ChevronDown, ChevronRight,
-  Code2, Layers, GripVertical
-, ArrowLeft } from "lucide-react";
+  Code2, Layers, GripVertical, Plus,
+  ArrowLeft } from "lucide-react";
 import {
   blockLibrary, BLOCK_FAMILY_CONFIG, EDITOR_MODE_CONFIG,
   type DocBlock, type BlockFamily
@@ -29,10 +29,11 @@ export default function BlockLibraryPage() {
   const [search, setSearch] = useState("");
   const [filterFamily, setFilterFamily] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [, navigate] = useLocation();
 
   // Live Supabase data
   const { data: liveBlocks, error: blkError } = useDocBlocks();
-  const blocks = blkError ? blockLibrary : liveBlocks;
+  const blocks = blkError ? blockLibrary : (liveBlocks.length > 0 ? liveBlocks : blockLibrary);
 
   const filtered = useMemo(() => {
     return blocks.filter(b => {
@@ -79,6 +80,9 @@ export default function BlockLibraryPage() {
           <h1 className="text-2xl font-bold text-[#1B2A4A] font-serif">Block Library</h1>
           <p className="text-sm text-gray-500 mt-1">Document composition blocks — drag into templates to build document recipes</p>
         </div>
+        <Button size="sm" onClick={() => navigate("/admin/block-builder")} className="bg-[#1B2A4A] hover:bg-[#2A3F6A] text-xs">
+          <Plus size={14} className="mr-1" /> New Block
+        </Button>
       </div>
 
       {/* Metrics Strip */}

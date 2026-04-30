@@ -22,6 +22,7 @@ interface PdfRenderInput {
   generatedDate: string;
   sections: PdfSection[];
   footer?: string;
+  primaryColor?: string;
 }
 
 const NAVY = '#1B2A4A';
@@ -31,6 +32,7 @@ const LIGHT = '#F3F4F6';
 export async function generatePdfBuffer(input: PdfRenderInput): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     try {
+      const headerColor = input.primaryColor || NAVY;
       const doc = new PDFDocument({ size: 'A4', margin: 50, info: { Title: input.title, Author: 'Hala Commercial Engine', Creator: 'Hala PDF Generator' } });
       const chunks: Buffer[] = [];
       doc.on('data', (c: Buffer) => chunks.push(c));
@@ -38,7 +40,7 @@ export async function generatePdfBuffer(input: PdfRenderInput): Promise<Buffer> 
       doc.on('error', reject);
 
       // ─── Header ────────────────────────────────────
-      doc.rect(0, 0, doc.page.width, 80).fill(NAVY);
+      doc.rect(0, 0, doc.page.width, 80).fill(headerColor);
       doc.fontSize(18).fillColor('#FFFFFF').text(input.title, 50, 25, { width: doc.page.width - 100 });
       if (input.subtitle) doc.fontSize(9).fillColor('#CBD5E1').text(input.subtitle, 50, 50);
       doc.fontSize(8).fillColor('#CBD5E1').text(input.documentNumber, doc.page.width - 200, 25, { width: 150, align: 'right' });
@@ -53,12 +55,12 @@ export async function generatePdfBuffer(input: PdfRenderInput): Promise<Buffer> 
 
         switch (section.type) {
           case 'heading':
-            doc.moveDown(0.5).fontSize(13).fillColor(NAVY).text(section.text || '', { underline: false });
-            doc.moveTo(50, doc.y + 2).lineTo(doc.page.width - 50, doc.y + 2).strokeColor(NAVY).lineWidth(0.5).stroke();
+            doc.moveDown(0.5).fontSize(13).fillColor(headerColor).text(section.text || '', { underline: false });
+            doc.moveTo(50, doc.y + 2).lineTo(doc.page.width - 50, doc.y + 2).strokeColor(headerColor).lineWidth(0.5).stroke();
             doc.moveDown(0.4);
             break;
           case 'subheading':
-            doc.moveDown(0.3).fontSize(10).fillColor(NAVY).text(section.text || '');
+            doc.moveDown(0.3).fontSize(10).fillColor(headerColor).text(section.text || '');
             doc.moveDown(0.2);
             break;
           case 'text':
@@ -70,7 +72,7 @@ export async function generatePdfBuffer(input: PdfRenderInput): Promise<Buffer> 
             doc.moveDown(0.15);
             break;
           case 'badge':
-            doc.fontSize(8).fillColor(NAVY).text(`● ${section.text || ''}`, { lineGap: 2 });
+            doc.fontSize(8).fillColor(headerColor).text(`● ${section.text || ''}`, { lineGap: 2 });
             doc.moveDown(0.2);
             break;
           case 'spacer':
@@ -88,7 +90,7 @@ export async function generatePdfBuffer(input: PdfRenderInput): Promise<Buffer> 
               // Header row
               doc.rect(50, doc.y, doc.page.width - 100, 18).fill(LIGHT);
               let hx = 50;
-              for (const col of cols) { doc.fontSize(7).fillColor(NAVY).text(col, hx + 4, doc.y + 4, { width: colW - 8 }); hx += colW; }
+              for (const col of cols) { doc.fontSize(7).fillColor(headerColor).text(col, hx + 4, doc.y + 4, { width: colW - 8 }); hx += colW; }
               doc.y += 20;
               // Data rows
               for (const row of section.rows) {

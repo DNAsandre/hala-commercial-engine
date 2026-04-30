@@ -97,6 +97,7 @@ import VersionHistoryPanel from "@/components/VersionHistoryPanel";
 import BlockAIPanel from "@/components/BlockAIPanel";
 import DocumentAIPanel from "@/components/DocumentAIPanel";
 import AIRunHistory from "@/components/AIRunHistory";
+import BlockQuickActions from "@/components/BlockQuickActions";
 
 // ============================================================
 // TYPES
@@ -1940,24 +1941,39 @@ export default function DocumentComposer({
                       onOpenLibrary={() => openLibraryForInsert(document.blocks[idx - 1].id)}
                     />
                   )}
-                  <BlockEditor
-                    block={block}
-                    mode={mode}
-                    isActive={activeBlockId === block.id}
-                    onActivate={(editor) => handleBlockActivate(block.id, editor)}
-                    onContentChange={(content) => updateBlockContent(block.id, content)}
-                    onLock={() => lockBlock(block.id)}
-                    onDelete={() => removeBlock(block.id)}
-                    onAIGenerate={() => handleAIGenerate(block.id)}
-                    aiStaging={aiStagingMap[block.id] || null}
-                    onAcceptAI={() => handleAcceptAI(block.id)}
-                    onRejectAI={() => handleRejectAI(block.id)}
-                    onMoveUp={() => moveBlock(block.id, "up")}
-                    onMoveDown={() => moveBlock(block.id, "down")}
-                    isFirst={idx === 0}
-                    isLast={idx === document.blocks.length - 1}
-                    blockRef={(el) => { blockRefs.current[block.id] = el; }}
-                  />
+                  <div className="group relative">
+                    <BlockQuickActions
+                      blockId={block.id}
+                      blockContent={block.content}
+                      isLocked={block.is_locked}
+                      isCanon={mode === "canon"}
+                      onApply={(blockId, content) => {
+                        setDocumentDirty(prev => ({
+                          ...prev, updated_at: new Date().toISOString(),
+                          blocks: prev.blocks.map(b => b.id === blockId ? { ...b, content, is_ai_generated: true } : b),
+                        }));
+                      }}
+                      visible={mode === "draft"}
+                    />
+                    <BlockEditor
+                      block={block}
+                      mode={mode}
+                      isActive={activeBlockId === block.id}
+                      onActivate={(editor) => handleBlockActivate(block.id, editor)}
+                      onContentChange={(content) => updateBlockContent(block.id, content)}
+                      onLock={() => lockBlock(block.id)}
+                      onDelete={() => removeBlock(block.id)}
+                      onAIGenerate={() => handleAIGenerate(block.id)}
+                      aiStaging={aiStagingMap[block.id] || null}
+                      onAcceptAI={() => handleAcceptAI(block.id)}
+                      onRejectAI={() => handleRejectAI(block.id)}
+                      onMoveUp={() => moveBlock(block.id, "up")}
+                      onMoveDown={() => moveBlock(block.id, "down")}
+                      isFirst={idx === 0}
+                      isLast={idx === document.blocks.length - 1}
+                      blockRef={(el) => { blockRefs.current[block.id] = el; }}
+                    />
+                  </div>
                 </div>
               ))}
 

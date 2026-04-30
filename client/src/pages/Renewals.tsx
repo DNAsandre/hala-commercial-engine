@@ -66,6 +66,7 @@ import {
 } from "@/lib/renewal-engine";
 import { getEcrScoreByCustomerName } from "@/lib/ecr";
 import { useLocation } from "wouter";
+import { LifecycleLight, getLightState } from "@/components/LifecycleLight";
 
 // ─── RENEWAL MILESTONES (ECR-derived, not sales pipeline) ────────
 
@@ -215,57 +216,73 @@ function getStageLabelColor(stage: string): string {
 function MilestoneStrip({ current }: { current: RenewalStage }) {
   const currentIdx = STRIP_STAGES.indexOf(current as typeof STRIP_STAGES[number]);
   const isOutcome = current === "outcome";
+  const suggestedIdx = isOutcome ? -1 : currentIdx + 1;
 
   return (
     <div>
-      <div className="flex items-center gap-0 overflow-x-auto pb-1">
+      {/* Strip — button nodes with connectors (matching Commercial / Tender exactly) */}
+      <div className="flex items-center gap-0 overflow-x-auto pb-1 scrollbar-thin">
         {STRIP_STAGES.map((s, i) => {
-          const isCurrent = s === current;
+          const isCurrent = s === current && !isOutcome;
           const isPast = !isOutcome && i < currentIdx;
-          const isFuture = !isCurrent && !isPast;
+          const isSuggested = i === suggestedIdx;
           const label = RENEWAL_STAGES.find(rs => rs.value === s)?.label || s;
 
           return (
-            <div key={s} className="flex items-center">
-              {i > 0 && (
-                <div className={`w-6 h-px mx-0.5 ${isPast ? "bg-emerald-400" : isCurrent ? "bg-[var(--color-hala-navy)]" : "bg-muted-foreground/20"}`} />
-              )}
-              <div className="flex flex-col items-center gap-1">
-                <div
-                  className={`w-3 h-3 rounded-full border-2 transition-all ${
-                    isCurrent
-                      ? "bg-[var(--color-hala-navy)] border-[var(--color-hala-navy)] scale-125"
-                      : isPast
-                      ? "bg-emerald-500 border-emerald-500"
-                      : "bg-background border-muted-foreground/30"
-                  }`}
-                />
-                <span className={`text-[9px] font-medium whitespace-nowrap ${
-                  isCurrent ? "text-foreground font-bold" : isPast ? "text-muted-foreground" : "text-muted-foreground/50"
+            <div key={s} className="flex items-center shrink-0">
+              {/* Step node */}
+              <div
+                className={`
+                  relative flex flex-col items-center px-3 py-2 rounded-lg transition-all
+                  ${isCurrent
+                    ? "bg-[var(--color-hala-navy)] text-white shadow-md"
+                    : isPast
+                      ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
+                      : isSuggested
+                        ? "border border-dashed border-primary/50 text-primary"
+                        : "text-muted-foreground/50"
+                  }
+                `}
+              >
+                {/* 3D LED Light */}
+                <LifecycleLight state={getLightState(i, currentIdx, isOutcome)} size={12} className="mb-1.5" />
+                <span className={`text-[10px] font-medium whitespace-nowrap leading-none ${
+                  isCurrent ? "text-white font-semibold" : ""
                 }`}>
                   {label}
                 </span>
+
               </div>
+
+              {/* Connector */}
+              {i < STRIP_STAGES.length - 1 && (
+                <div className={`h-px w-4 shrink-0 ${
+                  i < currentIdx ? "bg-emerald-400" : "bg-muted-foreground/15"
+                }`} />
+              )}
             </div>
           );
         })}
-        {/* Terminal: Outcome */}
-        <div className="flex items-center ml-3">
-          <div className={`w-3 h-3 rounded-full border-2 transition-all ${
-            isOutcome ? "bg-green-500 border-green-500 scale-125" : "bg-background border-muted-foreground/30"
-          }`} />
-          <span className={`text-[9px] font-medium ml-1 ${isOutcome ? "text-green-700 font-bold" : "text-muted-foreground/50"}`}>
+
+        {/* Terminal state — separated */}
+        <div className="ml-3 flex items-center gap-1">
+          <div className="h-4 w-px bg-border mx-1" />
+          <div className={`px-2.5 py-1.5 rounded-lg text-[10px] font-medium transition-all ${
+            isOutcome
+              ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300"
+              : "text-muted-foreground/40"
+          }`}>
             Outcome
-          </span>
+          </div>
         </div>
       </div>
 
-      {/* Suggested next + tracker label */}
-      <p className="text-[10px] text-muted-foreground mt-2">
-        Renewal lifecycle tracker — ECR-driven decision stages.{" "}
-        {!isOutcome && currentIdx < STRIP_STAGES.length - 1 && (
-          <span>
-            Suggested next: <strong>{RENEWAL_STAGES.find(rs => rs.value === STRIP_STAGES[currentIdx + 1])?.label}</strong>
+      {/* Helper microcopy */}
+      <p className="text-[10px] text-muted-foreground/60 mt-1.5 italic">
+        Renewal lifecycle tracker — ECR-driven decision stages.
+        {!isOutcome && suggestedIdx >= 0 && suggestedIdx < STRIP_STAGES.length && (
+          <span className="ml-1 text-primary/70 not-italic">
+            Suggested next: <strong>{RENEWAL_STAGES.find(rs => rs.value === STRIP_STAGES[suggestedIdx])?.label}</strong>
           </span>
         )}
       </p>
@@ -496,6 +513,17 @@ export default function Renewals() {
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
+      {/* Prototype Data Banner */}
+      <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-3">
+        <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+        <div>
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Placeholder data — not live</p>
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+            This module is currently displaying sample data. Real renewal records will appear here once the data integration sprint is complete.
+          </p>
+        </div>
+      </div>
+
       {/* Page Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

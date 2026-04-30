@@ -197,6 +197,7 @@ export const api = {
   },
 
   slas: {
+    listAll: () => request<any[]>(`/api/slas`),
     listByWorkspace: (workspaceId: string) =>
       request<any[]>(`/api/workspaces/${workspaceId}/slas`),
     get: (id: string) => request<any>(`/api/slas/${id}`),
@@ -223,6 +224,80 @@ export const api = {
       request<any>(`/api/workspaces/${workspaceId}/contract-status`, { method: 'PATCH', body: JSON.stringify(data) }),
   },
 
+  templates: {
+    list: () => request<any[]>('/api/templates'),
+    create: (data: {
+      name: string;
+      doc_type: string;
+      description?: string;
+      default_branding_profile_id?: string | null;
+      default_locale?: string;
+    }) => request<any>('/api/templates', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: Record<string, any>) =>
+      request<any>(`/api/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    addVersion: (id: string, recipe: any[], layout: Record<string, any>) =>
+      request<any>(`/api/templates/${id}/versions`, {
+        method: 'POST',
+        body: JSON.stringify({ recipe, layout }),
+      }),
+    publishVersion: (templateId: string, versionId: string) =>
+      request<any>(`/api/templates/${templateId}/versions/${versionId}/publish`, { method: 'PUT' }),
+  },
+
+  branding: {
+    list: () => request<any[]>('/api/branding'),
+    create: (data: Record<string, any>) =>
+      request<any>('/api/branding', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: Record<string, any>) =>
+      request<any>(`/api/branding/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<any>(`/api/branding/${id}`, { method: 'DELETE' }),
+  },
+
+  blocks: {
+    list: () => request<any[]>('/api/blocks'),
+  },
+
+  docInstances: {
+    list: (filters?: { workspace_id?: string; customer_id?: string; doc_type?: string }) => {
+      const params = new URLSearchParams();
+      if (filters?.workspace_id) params.set('workspace_id', filters.workspace_id);
+      if (filters?.customer_id) params.set('customer_id', filters.customer_id);
+      if (filters?.doc_type) params.set('doc_type', filters.doc_type);
+      const qs = params.toString();
+      return request<any[]>(`/api/doc-instances${qs ? `?${qs}` : ''}`);
+    },
+    get: (id: string) => request<any>(`/api/doc-instances/${id}`),
+    create: (data: {
+      doc_type: string;
+      template_version_id?: string | null;
+      customer_id?: string | null;
+      customer_name?: string;
+      workspace_id?: string | null;
+      workspace_name?: string | null;
+      title?: string;
+      branding_profile_id?: string | null;
+      linked_entity_type?: string | null;
+      linked_entity_id?: string | null;
+      initial_blocks?: any[];
+    }) => request<any>('/api/doc-instances', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: { title?: string; status?: string; branding_profile_id?: string | null }) =>
+      request<any>(`/api/doc-instances/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    saveVersion: (id: string, blocks: any[], bindings?: Record<string, any>) =>
+      request<any>(`/api/doc-instances/${id}/versions`, {
+        method: 'POST',
+        body: JSON.stringify({ blocks, bindings: bindings ?? {} }),
+      }),
+    compile: (id: string, opts?: {
+      branding_profile_id?: string | null;
+      title?: string;
+      variables?: Record<string, string>;
+    }) => request<any>(`/api/doc-instances/${id}/compile`, {
+      method: 'POST',
+      body: JSON.stringify(opts ?? {}),
+    }),
+  },
+
   documents: {
     listByWorkspace: (workspaceId: string, filters?: Record<string, string>) => {
       const qs = filters ? '?' + new URLSearchParams(filters).toString() : '';
@@ -243,5 +318,107 @@ export const api = {
       request<any>(`/api/documents/download/${id}`),
     updateStatus: (id: string, status: string) =>
       request<any>(`/api/documents/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  },
+
+  // ─── Bot Governance ────────────────────────────────────────
+  botGovernance: {
+    // Bots
+    listBots: () => request<any[]>('/api/bots'),
+    getBot: (id: string) => request<any>(`/api/bots/${id}`),
+    createBot: (data: Record<string, any>) =>
+      request<any>('/api/bots', { method: 'POST', body: JSON.stringify(data) }),
+    updateBot: (id: string, data: Record<string, any>) =>
+      request<any>(`/api/bots/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deleteBot: (id: string) =>
+      request<any>(`/api/bots/${id}`, { method: 'DELETE' }),
+
+    // Versions
+    listVersions: (botId: string) => request<any[]>(`/api/bots/${botId}/versions`),
+    createVersion: (botId: string, data: Record<string, any>) =>
+      request<any>(`/api/bots/${botId}/versions`, { method: 'POST', body: JSON.stringify(data) }),
+
+    // Providers
+    listProviders: () => request<any[]>('/api/bot-providers'),
+    updateProvider: (id: string, data: { enabled: boolean }) =>
+      request<any>(`/api/bot-providers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    checkAllHealth: () =>
+      request<any[]>('/api/bot-providers/health-check', { method: 'POST' }),
+    checkProviderHealth: (id: string) =>
+      request<any>(`/api/bot-providers/${id}/health-check`, { method: 'POST' }),
+
+    // Connectors
+    listConnectors: () => request<any[]>('/api/bot-connectors'),
+    updateConnector: (id: string, data: { enabled: boolean }) =>
+      request<any>(`/api/bot-connectors/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+    // Signal Rules
+    listSignalRules: () => request<any[]>('/api/signal-rules'),
+    createSignalRule: (data: Record<string, any>) =>
+      request<any>('/api/signal-rules', { method: 'POST', body: JSON.stringify(data) }),
+    updateSignalRule: (id: string, data: Record<string, any>) =>
+      request<any>(`/api/signal-rules/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+    // Signal Events
+    listSignalEvents: (filters?: { severity?: string; acknowledged?: string }) => {
+      const params = new URLSearchParams();
+      if (filters?.severity) params.set('severity', filters.severity);
+      if (filters?.acknowledged) params.set('acknowledged', filters.acknowledged);
+      const qs = params.toString();
+      return request<any[]>(`/api/signal-events${qs ? `?${qs}` : ''}`);
+    },
+    acknowledgeSignal: (id: string) =>
+      request<any>(`/api/signal-events/${id}/acknowledge`, { method: 'PATCH' }),
+
+    // Invocations
+    listInvocations: (botId?: string) => {
+      const qs = botId && botId !== 'all' ? `?bot_id=${botId}` : '';
+      return request<any[]>(`/api/bot-invocations${qs}`);
+    },
+
+    // Settings
+    getSettings: () => request<any>('/api/bot-settings'),
+    updateSettings: (data: Record<string, any>) =>
+      request<any>('/api/bot-settings', { method: 'PUT', body: JSON.stringify(data) }),
+
+    // Invocations — server-side execution
+    invoke: (botId: string, data: { context: string; context_type: string; input_payload?: string }) =>
+      request<any>(`/api/bots/${botId}/invoke`, { method: 'POST', body: JSON.stringify(data) }),
+
+    // Signal Scanner — S3-06
+    runSignalScanner: () =>
+      request<any>('/api/signal-scanner/run', { method: 'POST' }),
+
+    // Block Quick Actions — S3-07
+    quickAction: (data: { action: string; content: string; context_type?: string }) =>
+      request<any>('/api/bots/quick-action', { method: 'POST', body: JSON.stringify(data) }),
+  },
+
+  // System Settings
+  systemSettings: {
+    get: () => request<any>('/api/system-settings'),
+    update: (settings: Record<string, any>) =>
+      request<any>('/api/system-settings', { method: 'PUT', body: JSON.stringify(settings) }),
+  },
+
+  // System Health
+  systemHealth: {
+    get: () => request<{ modules: Array<{ name: string; status: string; lastActivity: string; details?: string }> }>('/api/system-health'),
+    integrations: () => request<{ integrations: Array<{ name: string; status: string; description: string; connectionInfo: string }> }>('/api/integration-status'),
+  },
+
+  // Handovers
+  handovers: {
+    list: () => request<any[]>('/api/handovers'),
+    get: (id: string) => request<any>(`/api/handovers/${id}`),
+    create: (data: Record<string, any>) => request<any>('/api/handovers', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: Record<string, any>) => request<any>(`/api/handovers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  },
+
+  // ECR Rules
+  ecr: {
+    getRuleSets: () => request<{ ruleSets: any[], weights: any[] }>('/api/ecr/rule-sets'),
+    createRuleSet: (ruleSet: any, weights: any[]) => request<any>('/api/ecr/rule-sets', { method: 'POST', body: JSON.stringify({ ruleSet, weights }) }),
+    updateRuleSet: (id: string, payload: any) => request<any>(`/api/ecr/rule-sets/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+    updateWeights: (id: string, weights: any[]) => request<any>(`/api/ecr/rule-sets/${id}/weights`, { method: 'PUT', body: JSON.stringify({ weights }) }),
   },
 };

@@ -18,7 +18,7 @@ import {
   ChevronDown, ChevronUp, Clock, User, FileText, History, Loader2
 } from 'lucide-react';
 import {
-  computeEcrScore, getGradeBg, getGradeColor,
+  computeEcrScore, getGradeBg, getGradeColor, ecrCustomerNames,
   type EcrScore, type EcrScoreBreakdown, type Grade
 } from '@/lib/ecr';
 import {
@@ -55,8 +55,7 @@ export default function EcrScoring() {
   const customerNames = useMemo(() => {
     const names: Record<string, string> = {};
     for (const id of customerIds) {
-      const raw = id.replace('cust-', '').replace(/-/g, ' ');
-      names[id] = raw.charAt(0).toUpperCase() + raw.slice(1);
+      names[id] = ecrCustomerNames[id] ?? id.replace('cust-', '').replace(/-/g, ' ');
     }
     return names;
   }, [customerIds]);
@@ -91,8 +90,8 @@ export default function EcrScoring() {
   }, [scores]);
 
   const getBreakdown = (score: EcrScore): EcrScoreBreakdown[] => {
-    const result = computeEcrScore(score.snapshotId, score.ruleSetId, metrics, ruleWeights, inputValues);
-    return result.breakdown;
+    if (score.breakdown && score.breakdown.length > 0) return score.breakdown;
+    return computeEcrScore(score.snapshotId, score.ruleSetId, metrics, ruleWeights, inputValues).breakdown;
   };
 
   const getSnapshot = (snapshotId: string) => snapshots.find(s => s.id === snapshotId);
@@ -124,7 +123,7 @@ export default function EcrScoring() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-6 gap-4">
         <Card>
           <CardContent className="py-3">
             <p className="text-xs text-slate-500 uppercase tracking-wider">Total Scores</p>
@@ -144,7 +143,7 @@ export default function EcrScoring() {
               <p className={`text-2xl font-bold mt-1 ${getGradeColor(g)}`}>{gradeDistribution[g] || 0}</p>
             </CardContent>
           </Card>
-        )).slice(0, 3)}
+        ))}
       </div>
 
       <Tabs defaultValue="scores">

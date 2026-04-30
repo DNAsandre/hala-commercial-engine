@@ -22,7 +22,9 @@ const WorkspaceDetail = React.lazy(() => import("./pages/WorkspaceDetail"));
 const CustomerDetail = React.lazy(() => import("./pages/CustomerDetail"));
 const Quotes = React.lazy(() => import("./pages/Quotes"));
 const Proposals = React.lazy(() => import("./pages/Proposals"));
+const ProposalDetail = React.lazy(() => import("./pages/ProposalDetail"));
 const SLAs = React.lazy(() => import("./pages/SLAs"));
+const SlaDetail = React.lazy(() => import("./pages/SlaDetail"));
 const Approvals = React.lazy(() => import("./pages/Approvals"));
 const PnLCalculator = React.lazy(() => import("./pages/PnLCalculator"));
 const CRMSync = React.lazy(() => import("./pages/CRMSync"));
@@ -67,6 +69,7 @@ const KnowledgebaseManager = React.lazy(() => import("./pages/KnowledgebaseManag
 const CRMSyncConsole = React.lazy(() => import("./pages/CRMSyncConsole"));
 const PDFStudio = React.lazy(() => import("./pages/PDFStudio"));
 const DocumentVault = React.lazy(() => import("./pages/DocumentVault"));
+const DocumentComposer = React.lazy(() => import("./pages/DocumentComposer"));
 
 /**
  * Admin-only routes: require "admin" role.
@@ -108,11 +111,13 @@ function AppRouter() {
       <Route path="/customers/:id">{() => <LazyPage><CustomerDetail /></LazyPage>}</Route>
       <Route path="/quotes">{() => <LazyPage><Quotes /></LazyPage>}</Route>
       <Route path="/proposals">{() => <LazyPage><Proposals /></LazyPage>}</Route>
+      <Route path="/proposals/:id">{() => <LazyPage><ProposalDetail /></LazyPage>}</Route>
       <Route path="/slas">{() => <LazyPage><SLAs /></LazyPage>}</Route>
+      <Route path="/slas/:id">{() => <LazyPage><SlaDetail /></LazyPage>}</Route>
       <Route path="/approvals">{() => <LazyPage><Approvals /></LazyPage>}</Route>
       <Route path="/pnl">{() => <LazyPage><PnLCalculator /></LazyPage>}</Route>
       <Route path="/crm-sync">{() => <LazyPage><CRMSync /></LazyPage>}</Route>
-      <Route path="/documents">{() => <LazyPage><Documents /></LazyPage>}</Route>
+      <Route path="/documents">{() => <Redirect to="/document-vault" />}</Route>
       <Route path="/tenders">{() => <LazyPage><Tenders /></LazyPage>}</Route>
       <Route path="/commercial">{() => <LazyPage><Commercial /></LazyPage>}</Route>
       <Route path="/tenders-overview">{() => <LazyPage><TendersOverview /></LazyPage>}</Route>
@@ -126,6 +131,8 @@ function AppRouter() {
       <Route path="/ecr">{() => <LazyPage><EcrDashboard /></LazyPage>}</Route>
       <Route path="/ecr-scoring">{() => <LazyPage><EcrScoring /></LazyPage>}</Route>
       <Route path="/composer/:docInstanceId/view">{() => <LazyPage><OutputStudio /></LazyPage>}</Route>
+      <Route path="/workspaces/:workspaceId/compose/:docType">{() => <LazyPage><DocumentComposer /></LazyPage>}</Route>
+      <Route path="/compose/:docInstanceId/edit">{() => <LazyPage><DocumentComposer /></LazyPage>}</Route>
       <Route path="/escalations">{() => <LazyPage><GlobalEscalations /></LazyPage>}</Route>
       <Route path="/pdf-studio">{() => <LazyPage><PDFStudio /></LazyPage>}</Route>
       <Route path="/document-vault">{() => <LazyPage><DocumentVault /></LazyPage>}</Route>

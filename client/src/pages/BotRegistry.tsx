@@ -6,7 +6,7 @@ import { ArrowLeft } from "lucide-react";
  * Sections: Global Controls, Bot List, Provider Status, Connector Status
  * All controls are explicit, configurable, auditable, reversible.
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -23,11 +23,11 @@ import {
   Copy, Archive, Upload, ChevronRight, AlertOctagon, Bot as BotIcon
 } from 'lucide-react';
 import {
-  mockBots, mockProviders, mockConnectors, mockGlobalSettings, mockSignalEvents,
   toggleGlobalKillSwitch, toggleBotStatus, toggleProviderEnabled, toggleConnectorEnabled,
-  getActiveSignalCount, getTotalBotCost, HARD_ACTION_DENY_LIST,
+  getTotalBotCost, HARD_ACTION_DENY_LIST,
   type Bot as BotType, type BotStatus
 } from '@/lib/bot-governance';
+import { api } from '@/lib/api-client';
 
 const statusColors: Record<string, string> = {
   active: 'bg-emerald-100 text-emerald-800 border-emerald-200',
@@ -42,18 +42,81 @@ const providerStatusColors: Record<string, string> = {
   offline: 'text-red-500',
 };
 
+// Map DB snake_case to component camelCase
+function mapBot(row: any): BotType {
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    status: row.status,
+    purpose: row.purpose,
+    domainsAllowed: row.domains_allowed || row.domainsAllowed || [],
+    regionsAllowed: row.regions_allowed || row.regionsAllowed || [],
+    rolesAllowed: row.roles_allowed || row.rolesAllowed || [],
+    currentVersionId: row.current_version_id || row.currentVersionId || '',
+    providerId: row.provider_id || row.providerId || '',
+    model: row.model,
+    rateLimit: row.rate_limit ?? row.rateLimit ?? 20,
+    costCap: row.cost_cap ?? row.costCap ?? 10,
+    timeout: row.timeout_sec ?? row.timeout ?? 30,
+    createdAt: row.created_at || row.createdAt || '',
+    updatedAt: row.updated_at || row.updatedAt || '',
+    lastRunAt: row.last_run_at || row.lastRunAt || null,
+    errorRate: row.error_rate ?? row.errorRate ?? 0,
+    costUsage: row.cost_usage ?? row.costUsage ?? 0,
+    totalInvocations: row.total_invocations ?? row.totalInvocations ?? 0,
+  };
+}
+
 export default function BotRegistry() {
   const [, navigate] = useLocation();
-  const [killSwitch, setKillSwitch] = useState(mockGlobalSettings.globalKillSwitch);
-  const [bots, setBots] = useState([...mockBots]);
-  const [providers, setProviders] = useState([...mockProviders]);
-  const [connectors, setConnectors] = useState([...mockConnectors]);
+  const [killSwitch, setKillSwitch] = useState(false);
+  const [bots, setBots] = useState<BotType[]>([]);
+  const [providers, setProviders] = useState<any[]>([]);
+  const [connectors, setConnectors] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [, setRefresh] = useState(0);
+  const [signalEvents, setSignalEvents] = useState<any[]>([]);
 
-  const handleKillSwitch = (active: boolean) => {
+  // Load from API on mount
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const [botsRes, provRes, connRes, settRes, eventsRes] = await Promise.all([
+          api.botGovernance.listBots(),
+          api.botGovernance.listProviders(),
+          api.botGovernance.listConnectors(),
+          api.botGovernance.getSettings(),
+          api.botGovernance.listSignalEvents(),
+        ]);
+        if (!mounted) return;
+        setBots((botsRes.data || []).map(mapBot));
+        setProviders((provRes.data || []).map((p: any) => ({
+          id: p.id, name: p.name, enabled: p.enabled, apiEndpoint: p.api_endpoint || '', models: p.models || [],
+          costPerToken: p.cost_per_token ?? 0, maxRatePerMinute: p.max_rate_per_minute ?? 30,
+          status: p.status || 'offline', lastHealthCheck: p.last_health_check || '',
+        })));
+        setConnectors((connRes.data || []).map((c: any) => ({
+          id: c.id, type: c.type, name: c.name, enabled: c.enabled, accessMode: c.access_mode || 'read_only',
+          endpoint: c.endpoint || '', status: c.status || 'disconnected', lastSyncAt: c.last_sync_at || '',
+        })));
+        if (settRes.data) setKillSwitch(settRes.data.global_kill_switch ?? false);
+        setSignalEvents((eventsRes.data || []).map((e: any) => ({
+          id: e.id, ruleId: e.rule_id || '', botId: e.bot_id, severity: e.severity, metric: e.metric,
+          thresholdTriggered: e.threshold_triggered || '', timeRangeAnalyzed: e.time_range_analyzed || '',
+          message: e.message, timestamp: e.triggered_at || e.created_at,
+          acknowledged: e.acknowledged, acknowledgedBy: e.acknowledged_by || null,
+          acknowledgedAt: e.acknowledged_at || null,
+          explainability: e.explainability || '', suggestedAction: e.suggested_action || '',
+        })));
+      } catch { /* empty state is honest */ }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  const handleKillSwitch = async (active: boolean) => {
     if (active) {
       if (!confirm('⚠️ ACTIVATING GLOBAL KILL SWITCH\n\nThis will immediately disable ALL bot invocations across the entire system.\n\nNo bot can run until this is deactivated.\n\nAre you sure?')) return;
     }
@@ -62,29 +125,58 @@ export default function BotRegistry() {
     toast[active ? 'error' : 'success'](
       active ? 'Global Kill Switch ACTIVATED — All bots disabled' : 'Global Kill Switch deactivated — Bots can now run'
     );
+    try {
+      await api.botGovernance.updateSettings({
+        global_kill_switch: active,
+        kill_switch_activated_by: active ? 'Amin Al-Rashid' : null,
+        kill_switch_activated_at: active ? new Date().toISOString() : null,
+      });
+    } catch { /* API not available — in-memory already updated */ }
   };
 
-  const handleBotToggle = (botId: string, currentStatus: BotStatus) => {
+  const handleBotToggle = async (botId: string, currentStatus: BotStatus) => {
     const newStatus: BotStatus = currentStatus === 'active' ? 'disabled' : 'active';
     toggleBotStatus(botId, newStatus);
     setBots(prev => prev.map(b => b.id === botId ? { ...b, status: newStatus, updatedAt: new Date().toISOString() } : b));
-    toast.success(`Bot ${newStatus === 'active' ? 'enabled' : 'disabled'}`);
+    try {
+      await api.botGovernance.updateBot(botId, { status: newStatus });
+      toast.success(`Bot ${newStatus === 'active' ? 'enabled' : 'disabled'}`);
+    } catch {
+      // Rollback optimistic update
+      toggleBotStatus(botId, currentStatus);
+      setBots(prev => prev.map(b => b.id === botId ? { ...b, status: currentStatus } : b));
+      toast.error(`Failed to ${newStatus === 'active' ? 'enable' : 'disable'} bot — reverted`);
+    }
   };
 
-  const handleProviderToggle = (providerId: string, enabled: boolean) => {
+  const handleProviderToggle = async (providerId: string, enabled: boolean) => {
     if (!enabled) {
       const affectedBots = bots.filter(b => b.providerId === providerId && b.status === 'active');
       if (affectedBots.length > 0 && !confirm(`Disabling this provider will prevent ${affectedBots.length} active bot(s) from running. Continue?`)) return;
     }
     toggleProviderEnabled(providerId, enabled);
     setProviders(prev => prev.map(p => p.id === providerId ? { ...p, enabled } : p));
-    toast.success(`Provider ${enabled ? 'enabled' : 'disabled'}`);
+    try {
+      await api.botGovernance.updateProvider(providerId, { enabled });
+      toast.success(`Provider ${enabled ? 'enabled' : 'disabled'}`);
+    } catch {
+      toggleProviderEnabled(providerId, !enabled);
+      setProviders(prev => prev.map(p => p.id === providerId ? { ...p, enabled: !enabled } : p));
+      toast.error(`Failed to update provider — reverted`);
+    }
   };
 
-  const handleConnectorToggle = (connectorId: string, enabled: boolean) => {
+  const handleConnectorToggle = async (connectorId: string, enabled: boolean) => {
     toggleConnectorEnabled(connectorId, enabled);
     setConnectors(prev => prev.map(c => c.id === connectorId ? { ...c, enabled } : c));
-    toast.success(`Connector ${enabled ? 'enabled' : 'disabled'}`);
+    try {
+      await api.botGovernance.updateConnector(connectorId, { enabled });
+      toast.success(`Connector ${enabled ? 'enabled' : 'disabled'}`);
+    } catch {
+      toggleConnectorEnabled(connectorId, !enabled);
+      setConnectors(prev => prev.map(c => c.id === connectorId ? { ...c, enabled: !enabled } : c));
+      toast.error(`Failed to update connector — reverted`);
+    }
   };
 
   const filteredBots = bots.filter(b => {
@@ -95,7 +187,7 @@ export default function BotRegistry() {
   });
 
   const activeCount = bots.filter(b => b.status === 'active').length;
-  const signalCount = getActiveSignalCount();
+  const signalCount = signalEvents.filter(e => !e.acknowledged).length;
   const totalCost = getTotalBotCost();
 
   return (
@@ -136,7 +228,7 @@ export default function BotRegistry() {
                 <h3 className="font-semibold text-lg">Global Bot Kill Switch</h3>
                 <p className="text-sm text-slate-500">
                   {killSwitch
-                    ? `ACTIVE — All bot invocations blocked. Activated by ${mockGlobalSettings.killSwitchActivatedBy || 'system'}`
+                    ? `ACTIVE — All bot invocations blocked.`
                     : 'Inactive — Bots can run according to their individual permissions'}
                 </p>
               </div>
@@ -187,7 +279,7 @@ export default function BotRegistry() {
               <div>
                 <p className="text-xs text-slate-500 uppercase tracking-wider">Total Cost (USD)</p>
                 <p className="text-2xl font-bold text-slate-900 mt-1">${totalCost.toFixed(2)}</p>
-                <p className="text-xs text-slate-400">Cap: ${mockGlobalSettings.maxDailyCostUsd}/day</p>
+                <p className="text-xs text-slate-400">Cap: $50/day</p>
               </div>
               <DollarSign className="w-8 h-8 text-[#1B2A4A] opacity-40" />
             </div>
@@ -286,12 +378,49 @@ export default function BotRegistry() {
                         <Button variant="outline" size="sm" onClick={() => navigate(`/bot-builder?id=${bot.id}`)}>
                           <Pencil className="w-3 h-3 mr-1" /> Edit
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => toast.info('Bot cloned (feature coming soon)')}>
+                        <Button variant="ghost" size="sm" onClick={async () => {
+                          try {
+                            const { data: cloned } = await api.botGovernance.createBot({
+                              name: `${bot.name} (Copy)`,
+                              type: bot.type,
+                              purpose: bot.purpose,
+                              domains_allowed: bot.domainsAllowed,
+                              regions_allowed: bot.regionsAllowed,
+                              roles_allowed: bot.rolesAllowed,
+                              provider_id: bot.providerId,
+                              model: bot.model,
+                              rate_limit: bot.rateLimit,
+                              cost_cap: bot.costCap,
+                              timeout_sec: bot.timeout,
+                            });
+                            if (cloned) {
+                              setBots(prev => [{ ...bot, id: cloned.id, name: `${bot.name} (Copy)`, status: 'draft' as const }, ...prev]);
+                              toast.success(`Bot "${bot.name}" cloned as draft`);
+                            }
+                          } catch {
+                            setBots(prev => [{ ...bot, id: `clone-${Date.now()}`, name: `${bot.name} (Copy)`, status: 'draft' as const }, ...prev]);
+                            toast.success(`Bot "${bot.name}" cloned (local only)`);
+                          }
+                        }}>
                           <Copy className="w-3 h-3" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => toast.info('Bot archived (feature coming soon)')}>
+                        <Button variant="ghost" size="sm" onClick={async () => {
+                          setBots(prev => prev.map(b => b.id === bot.id ? { ...b, status: 'archived' as const } : b));
+                          toast.success(`Bot "${bot.name}" archived`);
+                          try { await api.botGovernance.updateBot(bot.id, { status: 'archived' }); } catch { /* fallback */ }
+                        }} disabled={bot.status === 'archived'}>
                           <Archive className="w-3 h-3" />
                         </Button>
+                        {(bot.status === 'draft' || bot.status === 'disabled') && (
+                          <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700" onClick={async () => {
+                            if (!confirm(`Delete bot "${bot.name}"? This cannot be undone.`)) return;
+                            setBots(prev => prev.filter(b => b.id !== bot.id));
+                            toast.success(`Bot "${bot.name}" deleted`);
+                            try { await api.botGovernance.deleteBot(bot.id); } catch { /* fallback */ }
+                          }}>
+                            <XCircle className="w-3 h-3" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -389,7 +518,7 @@ export default function BotRegistry() {
 
         {/* Signal Events Tab */}
         <TabsContent value="signals" className="space-y-4">
-          {mockSignalEvents.map(event => (
+          {signalEvents.map(event => (
             <Card key={event.id} className={`${!event.acknowledged ? 'border-l-4' : ''} ${event.severity === 'escalate' ? 'border-l-red-500' : event.severity === 'needs_review' ? 'border-l-amber-500' : 'border-l-blue-400'}`}>
               <CardContent className="py-4">
                 <div className="flex items-start justify-between">
@@ -410,12 +539,15 @@ export default function BotRegistry() {
                     </div>
                   </div>
                   {!event.acknowledged && (
-                    <Button variant="outline" size="sm" onClick={() => {
-                      event.acknowledged = true;
-                      event.acknowledgedBy = 'Amin Al-Rashid';
-                      event.acknowledgedAt = new Date().toISOString();
-                      setRefresh(r => r + 1);
-                      toast.success('Signal acknowledged');
+                    <Button variant="outline" size="sm" onClick={async () => {
+                      setSignalEvents(prev => prev.map(e => e.id === event.id ? { ...e, acknowledged: true, acknowledgedBy: 'Amin Al-Rashid', acknowledgedAt: new Date().toISOString() } : e));
+                      try {
+                        await api.botGovernance.acknowledgeSignal(event.id);
+                        toast.success('Signal acknowledged');
+                      } catch {
+                        setSignalEvents(prev => prev.map(e => e.id === event.id ? { ...e, acknowledged: false, acknowledgedBy: null, acknowledgedAt: null } : e));
+                        toast.error('Failed to acknowledge — reverted');
+                      }
                     }}>
                       Acknowledge
                     </Button>

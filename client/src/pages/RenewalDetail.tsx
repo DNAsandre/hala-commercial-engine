@@ -36,7 +36,7 @@ import {
   type RenewalDecision,
   type GateCheckResult,
 } from "@/lib/renewal-engine";
-import { getEcrScoreByCustomerName, getGradeColor } from "@/lib/ecr";
+import { getEcrScoreByCustomerName, getGradeColor, getActiveRuleSet } from "@/lib/ecr";
 import {
   validateCommercialIntegrity,
   validateSupersessionIntegrity,
@@ -858,7 +858,7 @@ export default function RenewalDetail() {
         contextId={workspace.id}
         customerId={workspace.customerId}
         customerName={workspace.customerName}
-        currentRuleSetId={ecr?.ruleSetId || 'rs-2'}
+        currentRuleSetId={ecr?.ruleSetId || getActiveRuleSet()?.id || ''}
         onUpgradeRequested={() => forceUpdate()}
       />
 

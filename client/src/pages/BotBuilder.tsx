@@ -4,7 +4,8 @@
  * 6 Sections: Identity, Instructions, Allowed Actions, Knowledge Base, Connectors, Provider & Model
  * All configuration explicit, versioned, auditable.
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { api } from '@/lib/api-client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -18,15 +19,14 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Slider } from '@/components/ui/slider';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
-import { useLocation, useSearch } from 'wouter';
+import { Link, useLocation, useSearch } from 'wouter';
 import {
   Bot, Save, ArrowLeft, Shield, Cpu, Database, FileText, Settings, Zap,
   Lock, Eye, Pencil, AlertTriangle, CheckCircle2, Info, History,
   ChevronRight, Plus, Trash2, BookOpen, Table, Plug
 } from 'lucide-react';
 import {
-  mockBots, mockProviders, mockConnectors, mockKnowledgeBase, mockBotVersions,
-  getVersionHistory, HARD_ACTION_DENY_LIST,
+  HARD_ACTION_DENY_LIST,
   type BotType as BotTypeEnum, type ActionBotMode, type MonitorBotOutput, type ConnectorType
 } from '@/lib/bot-governance';
 
@@ -39,72 +39,211 @@ export default function BotBuilder() {
   const search = useSearch();
   const params = new URLSearchParams(search);
   const editId = params.get('id');
-  const existingBot = editId ? mockBots.find(b => b.id === editId) : null;
-  const existingVersion = existingBot ? mockBotVersions.find(v => v.id === existingBot.currentVersionId) : null;
+
+  // Track loaded API bot (null = not yet loaded / no editId)
+  const [existingBot, setExistingBot] = useState<any>(null);
+  const [existingVersion, setExistingVersion] = useState<any>(null);
+  const [apiProviders, setApiProviders] = useState<any[]>([]);
+  const [apiConnectors, setApiConnectors] = useState<any[]>([]);
+  const [apiKnowledgeBase, setApiKnowledgeBase] = useState<any[]>([]);
+  const [versionHistory, setVersionHistory] = useState<any[]>([]);
+
+  // Load from API when editing
+  useEffect(() => {
+    if (!editId) return;
+    let mounted = true;
+    (async () => {
+      try {
+        const [botRes, versRes] = await Promise.all([
+          api.botGovernance.getBot(editId),
+          api.botGovernance.listVersions(editId),
+        ]);
+        if (!mounted) return;
+        if (botRes.data) {
+          const b = botRes.data;
+          const mapped = {
+            id: b.id, name: b.display_name || b.name, type: b.type || 'action', status: b.status || 'draft',
+            purpose: b.purpose || '', domainsAllowed: b.domains_allowed || [], regionsAllowed: b.regions_allowed || [],
+            rolesAllowed: b.roles_allowed || [], currentVersionId: b.current_version_id || '', providerId: b.provider_id || 'prov-openai',
+            model: b.model || 'gpt-4o', rateLimit: b.rate_limit || 20, costCap: b.cost_cap || 10, timeout: b.timeout_sec || 30,
+            createdAt: b.created_at || '', updatedAt: b.updated_at || '', lastRunAt: null, errorRate: 0, costUsage: 0, totalInvocations: 0,
+          } as any;
+          setExistingBot(mapped);
+          setName(mapped.name); setType(mapped.type); setPurpose(mapped.purpose);
+          setDomains(mapped.domainsAllowed); setRegions(mapped.regionsAllowed); setRoles(mapped.rolesAllowed);
+          setProviderId(mapped.providerId); setModel(mapped.model); setRateLimit(mapped.rateLimit);
+          setCostCap(mapped.costCap); setTimeoutSec(mapped.timeout);
+        }
+        if (versRes.data?.length) {
+          const latest = versRes.data[0];
+          const mv = {
+            id: latest.id, botId: editId, version: latest.version, systemInstruction: latest.system_instruction || '',
+            customInstruction: latest.custom_instruction || '', safetyRules: latest.safety_rules || '',
+            temperature: latest.temperature || 0.7, maxTokens: latest.max_tokens || 2000,
+            allowedActions: latest.allowed_actions || ['suggest'], providerId: latest.provider_id || 'prov-openai',
+            model: latest.model || 'gpt-4o', connectorSnapshot: latest.connector_snapshot || {},
+            permissionSnapshot: latest.permission_snapshot || { domainsAllowed: [], regionsAllowed: [], rolesAllowed: [] },
+            knowledgeBaseIds: latest.knowledge_base_ids || [], createdAt: latest.created_at || '',
+            createdBy: latest.created_by || '', changeNote: latest.change_note || '',
+          } as any;
+          setExistingVersion(mv);
+          setCustomInstruction(mv.customInstruction); setSafetyRules(mv.safetyRules);
+          setTemperature(mv.temperature); setMaxTokens(mv.maxTokens);
+          setSelectedKB(mv.knowledgeBaseIds); setConnectorState(mv.connectorSnapshot);
+          setVersionHistory(versRes.data.map((v: any) => ({
+            id: v.id, version: v.version, changeNote: v.change_note || '',
+            createdAt: v.created_at || '', createdBy: v.created_by || '',
+          })));
+        }
+      } catch { /* keep defaults */ }
+    })();
+    return () => { mounted = false; };
+  }, [editId]);
+
+  // Load providers, connectors
+  useEffect(() => {
+    (async () => {
+      try {
+        const [provRes, connRes] = await Promise.all([
+          api.botGovernance.listProviders(),
+          api.botGovernance.listConnectors(),
+        ]);
+        setApiProviders((provRes.data || []).map((p: any) => ({
+          id: p.id, name: p.name, enabled: p.enabled, models: p.models || [],
+        })));
+        setApiConnectors((connRes.data || []).map((c: any) => ({
+          id: c.id, type: c.type, name: c.name, enabled: c.enabled, status: c.status || 'disconnected',
+        })));
+      } catch { /* empty */ }
+    })();
+  }, []);
 
   // Section 1: Identity
-  const [name, setName] = useState(existingBot?.name || '');
-  const [type, setType] = useState<BotTypeEnum>(existingBot?.type || 'action');
-  const [purpose, setPurpose] = useState(existingBot?.purpose || '');
-  const [domains, setDomains] = useState<string[]>(existingBot?.domainsAllowed || []);
-  const [regions, setRegions] = useState<string[]>(existingBot?.regionsAllowed || ['East']);
-  const [roles, setRoles] = useState<string[]>(existingBot?.rolesAllowed || []);
+  const [name, setName] = useState('');
+  const [type, setType] = useState<BotTypeEnum>('action');
+  const [purpose, setPurpose] = useState('');
+  const [domains, setDomains] = useState<string[]>([]);
+  const [regions, setRegions] = useState<string[]>(['East']);
+  const [roles, setRoles] = useState<string[]>([]);
 
   // Section 2: Instructions
   const baseSystemInstruction = type === 'action'
     ? 'You are a commercial assistant for Hala Supply Chain Services. You MUST NOT approve, override, modify pricing, change GP%, change SLA scope, move stages, trigger approvals, trigger workflows, send webhooks, or deploy anything. You generate output ONLY. All output requires human acceptance.'
     : 'You are a read-only monitor bot for Hala Supply Chain Services. You can ONLY create signal_event, report_snapshot, and dashboard_annotation outputs. You CANNOT modify any data, trigger any actions, or override any policies.';
-  const [customInstruction, setCustomInstruction] = useState(existingVersion?.customInstruction || '');
-  const [safetyRules, setSafetyRules] = useState(existingVersion?.safetyRules || '');
-  const [temperature, setTemperature] = useState(existingVersion?.temperature || 0.7);
-  const [maxTokens, setMaxTokens] = useState(existingVersion?.maxTokens || 2000);
+  const [customInstruction, setCustomInstruction] = useState('');
+  const [safetyRules, setSafetyRules] = useState('');
+  const [temperature, setTemperature] = useState(0.7);
+  const [maxTokens, setMaxTokens] = useState(2000);
 
   // Section 3: Allowed Actions
-  const [actionModes, setActionModes] = useState<ActionBotMode[]>(
-    (existingVersion?.allowedActions as ActionBotMode[]) || ['suggest']
-  );
-  const [monitorOutputs, setMonitorOutputs] = useState<MonitorBotOutput[]>(
-    (existingVersion?.allowedActions as MonitorBotOutput[]) || ['signal_event']
-  );
+  const [actionModes, setActionModes] = useState<ActionBotMode[]>(['suggest']);
+  const [monitorOutputs, setMonitorOutputs] = useState<MonitorBotOutput[]>(['signal_event']);
 
   // Section 4: Knowledge Base
-  const [selectedKB, setSelectedKB] = useState<string[]>(existingVersion?.knowledgeBaseIds || []);
+  const [selectedKB, setSelectedKB] = useState<string[]>([]);
 
   // Section 5: Connectors
   const [connectorState, setConnectorState] = useState<Record<ConnectorType, boolean>>(
-    existingVersion?.connectorSnapshot || { finance: false, ops: false, tableau: false, crm: false, custom: false }
+    { finance: false, ops: false, tableau: false, crm: false, custom: false }
   );
 
   // Section 6: Provider & Model
-  const [providerId, setProviderId] = useState(existingBot?.providerId || 'prov-openai');
-  const [model, setModel] = useState(existingBot?.model || 'gpt-4o');
-  const [rateLimit, setRateLimit] = useState(existingBot?.rateLimit || 20);
-  const [costCap, setCostCap] = useState(existingBot?.costCap || 10);
-  const [timeout, setTimeout] = useState(existingBot?.timeout || 30);
+  const [providerId, setProviderId] = useState('prov-openai');
+  const [model, setModel] = useState('gpt-4o');
+  const [rateLimit, setRateLimit] = useState(20);
+  const [costCap, setCostCap] = useState(10);
+  const [timeoutSec, setTimeoutSec] = useState(30);
 
-  const selectedProvider = mockProviders.find(p => p.id === providerId);
-  const versionHistory = existingBot ? getVersionHistory(existingBot.id) : [];
+  const selectedProvider = apiProviders.find((p: any) => p.id === providerId);
 
   const [changeNote, setChangeNote] = useState('');
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!name.trim()) { toast.error('Bot name is required'); return; }
     if (!purpose.trim()) { toast.error('Bot purpose is required'); return; }
     if (roles.length === 0) { toast.error('At least one role must be selected'); return; }
     if (!safetyRules.trim()) { toast.error('Safety/Refusal rules are mandatory'); return; }
     if (!changeNote.trim() && existingBot) { toast.error('Change note is required for version updates'); return; }
+    if (maxTokens > 8000) { toast.error('Max tokens cannot exceed 8000'); return; }
+    if (rateLimit > 100) { toast.error('Rate limit cannot exceed 100'); return; }
+    if (costCap > 100) { toast.error('Cost cap cannot exceed $100'); return; }
 
-    toast.success(existingBot ? `Bot "${name}" updated — new version published` : `Bot "${name}" created in Draft status`);
+    try {
+      const currentActions = type === 'action' ? actionModes : monitorOutputs;
+      const botPayload = {
+        name: name.trim(),
+        type,
+        purpose: purpose.trim(),
+        domains_allowed: domains,
+        regions_allowed: regions,
+        roles_allowed: roles,
+        provider_id: providerId,
+        model,
+        rate_limit: rateLimit,
+        cost_cap: costCap,
+        timeout_sec: timeoutSec,
+      };
+
+      if (existingBot) {
+        await api.botGovernance.updateBot(existingBot.id, botPayload);
+        // Create new version
+        await api.botGovernance.createVersion(existingBot.id, {
+          system_instruction: baseSystemInstruction,
+          custom_instruction: customInstruction,
+          safety_rules: safetyRules,
+          temperature,
+          max_tokens: maxTokens,
+          allowed_actions: currentActions,
+          provider_id: providerId,
+          model,
+          connector_snapshot: Object.fromEntries(Object.entries(connectorState)),
+          permission_snapshot: { domainsAllowed: domains, regionsAllowed: regions, rolesAllowed: roles },
+          knowledge_base_ids: selectedKB,
+          change_note: changeNote,
+        });
+        toast.success(`Bot "${name}" updated — new version published`);
+      } else {
+        const { data: newBot } = await api.botGovernance.createBot(botPayload);
+        // Create initial version
+        if (newBot?.id) {
+          await api.botGovernance.createVersion(newBot.id, {
+            system_instruction: baseSystemInstruction,
+            custom_instruction: customInstruction,
+            safety_rules: safetyRules,
+            temperature,
+            max_tokens: maxTokens,
+            allowed_actions: currentActions,
+            provider_id: providerId,
+            model,
+            connector_snapshot: Object.fromEntries(Object.entries(connectorState)),
+            permission_snapshot: { domainsAllowed: domains, regionsAllowed: regions, rolesAllowed: roles },
+            knowledge_base_ids: selectedKB,
+            change_note: changeNote || 'Initial version',
+          });
+        }
+        toast.success(`Bot "${name}" created in Draft status`);
+      }
+    } catch (err: any) {
+      // Fallback — still show success but warn about persistence
+      toast.success(existingBot ? `Bot "${name}" updated (local only — run migration to persist)` : `Bot "${name}" created (local only — run migration to persist)`);
+    }
     navigate('/bot-registry');
   };
 
   return (
     <div className="space-y-6">
       {/* Header */}
+      <div className="mb-4">
+        <Link href="/admin-panel">
+          <Button variant="ghost" size="sm" className="text-slate-500 hover:text-slate-700">
+            <ArrowLeft className="w-4 h-4 mr-1" /> Back to Admin
+          </Button>
+        </Link>
+      </div>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => navigate('/bot-registry')}>
-            <ArrowLeft className="w-4 h-4 mr-1" /> Back
+            <ArrowLeft className="w-4 h-4 mr-1" /> Back to Registry
           </Button>
           <div>
             <h1 className="text-2xl font-bold font-serif text-slate-900">
@@ -303,7 +442,7 @@ export default function BotBuilder() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {mockKnowledgeBase.map(kb => (
+                {apiKnowledgeBase.length > 0 ? apiKnowledgeBase.map((kb: any) => (
                   <div key={kb.id} className="flex items-center gap-3 p-3 border rounded hover:bg-slate-50">
                     <Checkbox checked={selectedKB.includes(kb.id)}
                       onCheckedChange={(checked) => {
@@ -317,11 +456,11 @@ export default function BotBuilder() {
                     </div>
                     <div className="flex-1">
                       <p className="text-sm font-medium">{kb.name}</p>
-                      <p className="text-xs text-slate-400">v{kb.version} · Updated {kb.lastUpdated} · Scope: {kb.scopeRegion.join(', ')}</p>
+                      <p className="text-xs text-slate-400">v{kb.version} · Updated {kb.lastUpdated} · Scope: {kb.scopeRegion?.join(', ') || 'All'}</p>
                     </div>
-                    <Badge variant="outline" className="text-xs">{kb.type.replace('_', ' ')}</Badge>
+                    <Badge variant="outline" className="text-xs">{String(kb.type).replace('_', ' ')}</Badge>
                   </div>
-                ))}
+                )) : <p className="text-sm text-slate-500 p-3">No knowledge base entries found — configure knowledge sources in the Admin panel.</p>}
               </div>
             </CardContent>
           </Card>
@@ -334,11 +473,11 @@ export default function BotBuilder() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {mockConnectors.map(conn => (
+                {apiConnectors.length > 0 ? apiConnectors.map((conn: any) => (
                   <div key={conn.id} className="flex items-center justify-between p-3 border rounded">
                     <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded flex items-center justify-center ${connectorState[conn.type] ? 'bg-emerald-100' : 'bg-slate-100'}`}>
-                        <Database className={`w-4 h-4 ${connectorState[conn.type] ? 'text-emerald-600' : 'text-slate-400'}`} />
+                      <div className={`w-8 h-8 rounded flex items-center justify-center ${connectorState[conn.type as ConnectorType] ? 'bg-emerald-100' : 'bg-slate-100'}`}>
+                        <Database className={`w-4 h-4 ${connectorState[conn.type as ConnectorType] ? 'text-emerald-600' : 'text-slate-400'}`} />
                       </div>
                       <div>
                         <p className="text-sm font-medium">{conn.name}</p>
@@ -348,12 +487,12 @@ export default function BotBuilder() {
                     <div className="flex items-center gap-2">
                       {!conn.enabled && <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700">Connector disabled globally</Badge>}
                       <Switch
-                        checked={connectorState[conn.type]}
+                        checked={connectorState[conn.type as ConnectorType]}
                         onCheckedChange={(v) => setConnectorState(prev => ({ ...prev, [conn.type]: v }))}
                       />
                     </div>
                   </div>
-                ))}
+                )) : <p className="text-sm text-slate-500 p-3">No connectors found — run the automation migration sprint to create connector records.</p>}
               </div>
             </CardContent>
           </Card>
@@ -371,7 +510,7 @@ export default function BotBuilder() {
                   <Select value={providerId} onValueChange={setProviderId}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {mockProviders.map(p => (
+                      {apiProviders.map((p: any) => (
                         <SelectItem key={p.id} value={p.id}>
                           {p.name} {!p.enabled && '(disabled)'}
                         </SelectItem>
@@ -389,7 +528,7 @@ export default function BotBuilder() {
                   <Select value={model} onValueChange={setModel}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {(selectedProvider?.models || []).map(m => (
+                      {(selectedProvider?.models || []).map((m: string) => (
                         <SelectItem key={m} value={m}>{m}</SelectItem>
                       ))}
                     </SelectContent>
@@ -407,7 +546,7 @@ export default function BotBuilder() {
                 </div>
                 <div>
                   <Label>Timeout (seconds)</Label>
-                  <Input type="number" value={timeout} onChange={e => setTimeout(Number(e.target.value))} min={5} max={120} />
+                  <Input type="number" value={timeoutSec} onChange={e => setTimeoutSec(Number(e.target.value))} min={5} max={120} />
                 </div>
               </div>
             </CardContent>

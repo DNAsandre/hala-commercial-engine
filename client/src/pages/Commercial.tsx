@@ -53,6 +53,7 @@ import { Loader2 } from "lucide-react";
 import { WorkspaceRiskSignalsTab } from "@/components/WorkspaceRiskSignalsTab";
 import { useLocation } from "wouter";
 import CreateWorkspaceDialog from "@/components/CreateWorkspaceDialog";
+import { LifecycleLight, getLightState } from "@/components/LifecycleLight";
 
 // ─── MILESTONE STRIP ────────────────────────────────────────
 
@@ -81,11 +82,7 @@ function LifecycleStrip({ current }: { current: string }) {
                     : "text-muted-foreground/50"
                 }
               `}>
-                <div className={`w-2 h-2 rounded-full mb-1.5 ${
-                  isCurrent ? "bg-white" :
-                  isPast ? "bg-emerald-500" :
-                  "bg-muted-foreground/20"
-                }`} />
+                <LifecycleLight state={getLightState(i, currentIdx, isTerminal)} size={12} className="mb-1.5" />
                 <span className={`text-[10px] font-medium whitespace-nowrap leading-none ${isCurrent ? "text-white font-semibold" : ""}`}>
                   {s.label}
                 </span>
@@ -292,7 +289,7 @@ function WorkspaceListCard({
 // ─── MAIN COMPONENT ─────────────────────────────────────────
 
 export default function Commercial() {
-  const { data: allWorkspaces, loading: wsLoading, refetch } = useWorkspaces();
+  const { data: allWorkspaces, loading: wsLoading, error: wsError, refetch } = useWorkspaces();
   const { data: customerList } = useCustomers();
   const [, navigate] = useLocation();
 
@@ -367,10 +364,23 @@ export default function Commercial() {
 
   const hasFilters = filterCompany !== "all" || filterSearch || filterOwner !== "all" || filterRegion !== "all" || filterStage !== "all";
 
-  if (wsLoading) {
+  if (wsLoading && !allWorkspaces?.length) {
     return (
-      <div className="flex items-center justify-center py-24">
+      <div className="flex flex-col items-center justify-center py-24 gap-3">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <p className="text-xs text-muted-foreground">Loading workspaces…</p>
+      </div>
+    );
+  }
+
+  if (wsError && !allWorkspaces?.length) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-3">
+        <p className="text-sm text-muted-foreground">Failed to load workspaces</p>
+        <p className="text-xs text-muted-foreground/60">{wsError}</p>
+        <button onClick={refetch} className="text-xs text-primary hover:underline mt-1">
+          Retry
+        </button>
       </div>
     );
   }

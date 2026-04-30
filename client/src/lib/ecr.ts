@@ -74,6 +74,7 @@ export interface EcrScore {
   totalScore: number;
   grade: Grade;
   confidenceScore: number;
+  breakdown?: EcrScoreBreakdown[] | null;
   computedAt: string;
   computedBySystem: boolean;
 }
@@ -360,6 +361,8 @@ export const mockMetricMappings: EcrMetricMapping[] = [
 function normalizeValue(metric: EcrMetric, rawValue: number): number {
   const { minValue, maxValue, unit, metricKey } = metric;
 
+  if (maxValue === minValue) return 0;
+
   // Inverse metrics: lower is better (DSO, dispute rate)
   const inverseMetrics = ['dso_days', 'dispute_rate'];
   const isInverse = inverseMetrics.includes(metricKey);
@@ -582,17 +585,17 @@ export const ecrCustomerNames: Record<string, string> = {
 // Reverse lookup: store customer name → ECR customer ID
 // Handles partial matches (e.g. "Nestlé KSA" matches "Nestlé")
 export function getEcrCustomerIdByName(storeName: string): string | undefined {
-  // Direct match first
+  // Exact match
   for (const [ecrId, ecrName] of Object.entries(ecrCustomerNames)) {
-    if (ecrName === storeName || storeName.startsWith(ecrName) || ecrName.startsWith(storeName)) {
-      return ecrId;
-    }
+    if (ecrName === storeName) return ecrId;
   }
-  // Fuzzy: check if the store name contains the ECR name or vice-versa
+  // Store name starts with ECR name (e.g. "Almarai Company" → "Almarai")
   for (const [ecrId, ecrName] of Object.entries(ecrCustomerNames)) {
-    if (storeName.toLowerCase().includes(ecrName.toLowerCase()) || ecrName.toLowerCase().includes(storeName.toLowerCase())) {
-      return ecrId;
-    }
+    if (storeName.startsWith(ecrName)) return ecrId;
+  }
+  // Store name contains ECR name (case-insensitive) — one-direction only, no reverse
+  for (const [ecrId, ecrName] of Object.entries(ecrCustomerNames)) {
+    if (storeName.toLowerCase().includes(ecrName.toLowerCase())) return ecrId;
   }
   return undefined;
 }
@@ -635,13 +638,14 @@ export function calculateECR(customerId: string): EcrScore | undefined {
   );
 
   return {
-    id: `dynamic-score-${Date.now()}`,
+    id: `dynamic-score-${latestSnapshot.id}-${activeRuleSet.id}`,
     customerId,
     snapshotId: latestSnapshot.id,
     ruleSetId: activeRuleSet.id,
     totalScore,
     grade,
     confidenceScore,
+    breakdown,
     computedAt: new Date().toISOString(),
     computedBySystem: true,
   };

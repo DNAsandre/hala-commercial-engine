@@ -154,8 +154,8 @@ const SEED_CONNECTIONS: CRMConnection[] = [
     base_url: "https://www.zohoapis.com/crm/v2",
     enabled: true,
     auth_method: "oauth2",
-    last_sync_at: new Date(Date.now() - 900000).toISOString(), // 15 min ago
-    health_status: "connected",
+    last_sync_at: null,
+    health_status: "configuring",
     sync_interval_minutes: 15,
     created_at: "2025-06-01T00:00:00Z",
     updated_at: new Date().toISOString(),
