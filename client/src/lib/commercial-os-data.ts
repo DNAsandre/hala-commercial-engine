@@ -587,6 +587,7 @@ export interface StageProbability {
   probabilityPct: number;
   sourceType: string;
   truthStatus: string;
+  confidenceTier: number;
   governanceOwner: string;
   sourceLineage: string;
   notes: string;
@@ -601,6 +602,8 @@ export interface DashboardThreshold {
   unit: string;
   category: string;
   sourceType: string;
+  truthStatus: string;
+  confidenceTier: number;
   governanceOwner: string;
   notes: string;
   active: boolean;
@@ -633,6 +636,7 @@ function mapStageProbability(row: any): StageProbability {
     probabilityPct: num(row.probability_pct),
     sourceType: text(row.source_type),
     truthStatus: text(row.truth_status) || 'assumption',
+    confidenceTier: num(row.confidence_tier) || 4,
     governanceOwner: text(row.governance_owner),
     sourceLineage: text(row.source_lineage),
     notes: text(row.notes),
@@ -649,6 +653,8 @@ function mapDashboardThreshold(row: any): DashboardThreshold {
     unit: text(row.unit),
     category: text(row.category),
     sourceType: text(row.source_type),
+    truthStatus: text(row.truth_status) || 'assumption',
+    confidenceTier: num(row.confidence_tier) || 4,
     governanceOwner: text(row.governance_owner),
     notes: text(row.notes),
     active: row.active ?? true,
