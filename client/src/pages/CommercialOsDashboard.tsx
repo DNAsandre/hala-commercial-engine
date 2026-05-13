@@ -487,24 +487,29 @@ export default function CommercialOsDashboard() {
 
         {!loading && !error && data.dashboardMetrics.length === 0 ? (
           <EmptySourceState label="Commercial OS dashboard metrics" />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {cards.map(({ definition, metric, truth }) => (
-              <MetricCard
-                key={definition.label}
-                label={definition.label}
-                value={metric ? fmt(metric.metricValue) : "--"}
-                helper={
-                  truth
-                    ? `${formulaStatus(truth).label}: ${formulaStatus(truth).helper}`
-                    : metric
-                      ? `${metric.sourceSheet || "Source"}${metric.sourceRow ? ` row ${metric.sourceRow}` : ""}`
-                      : "Metric not present in batch"
-                }
-              />
-            ))}
-          </div>
-        )}
+        ) : !loading && !error ? (
+          <details className="group">
+            <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground">
+              ▸ Detailed Metric Values ({data.dashboardMetrics.length} metrics)
+            </summary>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {cards.map(({ definition, metric, truth }) => (
+                <MetricCard
+                  key={definition.label}
+                  label={definition.label}
+                  value={metric ? fmt(metric.metricValue) : "--"}
+                  helper={
+                    truth
+                      ? `${formulaStatus(truth).label}: ${formulaStatus(truth).helper}`
+                      : metric
+                        ? `${metric.sourceSheet || "Source"}${metric.sourceRow ? ` row ${metric.sourceRow}` : ""}`
+                        : "Metric not present in batch"
+                  }
+                />
+              ))}
+            </div>
+          </details>
+        ) : null}
 
         {/* GP-001: GP Confidence Panel */}
         {!loading && !error && data.opportunities.length > 0 && (() => {
