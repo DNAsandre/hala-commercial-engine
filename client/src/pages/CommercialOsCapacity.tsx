@@ -1,14 +1,18 @@
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Shield, ShieldAlert, ShieldCheck, Eye } from "lucide-react";
 import {
   CommercialOsShell,
   DataTable,
   EmptySourceState,
   ErrorState,
   LoadingState,
+  MetricCard,
   SourceCell,
 } from "@/components/commercial-os/CommercialOsShell";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCommercialOsData } from "@/hooks/useCommercialOsData";
+import { computeCapacityRiskSummary, type CapacityRiskStatus } from "@/lib/commercial-os-data";
 
 function fmt(value: number) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value || 0);
@@ -21,17 +25,26 @@ function fmtDate(value: string) {
   return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" }).format(date);
 }
 
-function capacityStatus(utilizationPct: number, shortfallCapacity: number, remaining: number) {
-  if (shortfallCapacity > 0 || remaining < 0) {
-    return { label: "Constrained", className: "border-red-300 bg-red-50 text-red-700" };
+function riskBadge(status: CapacityRiskStatus) {
+  const config: Record<CapacityRiskStatus, { label: string; className: string }> = {
+    overcommitted: { label: "Overcommitted", className: "border-red-300 bg-red-50 text-red-700" },
+    constrained: { label: "Constrained", className: "border-orange-300 bg-orange-50 text-orange-700" },
+    high_utilization: { label: "High Utilization", className: "border-amber-300 bg-amber-50 text-amber-700" },
+    watch: { label: "Watch", className: "border-blue-200 bg-blue-50 text-blue-700" },
+    available: { label: "Available", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
+  };
+  const cfg = config[status] || config.available;
+  return <Badge variant="outline" className={cfg.className}>{cfg.label}</Badge>;
+}
+
+function riskIcon(status: CapacityRiskStatus) {
+  switch (status) {
+    case 'overcommitted': return <ShieldAlert className="h-4 w-4 text-red-600" />;
+    case 'constrained': return <ShieldAlert className="h-4 w-4 text-orange-600" />;
+    case 'high_utilization': return <AlertTriangle className="h-4 w-4 text-amber-600" />;
+    case 'watch': return <Eye className="h-4 w-4 text-blue-600" />;
+    default: return <ShieldCheck className="h-4 w-4 text-emerald-600" />;
   }
-  if (utilizationPct > 90) {
-    return { label: "High Utilization", className: "border-amber-300 bg-amber-50 text-amber-700" };
-  }
-  if (utilizationPct > 75) {
-    return { label: "Watch", className: "border-blue-200 bg-blue-50 text-blue-700" };
-  }
-  return { label: "Available", className: "border-emerald-200 bg-emerald-50 text-emerald-700" };
 }
 
 export default function CommercialOsCapacity() {
@@ -47,6 +60,10 @@ export default function CommercialOsCapacity() {
       .values()
   );
 
+  const riskSummary = !loading && !error && rows.length > 0
+    ? computeCapacityRiskSummary(rows, data.dashboardThresholds)
+    : null;
+
   return (
     <CommercialOsShell
       title="Warehouse Capacity"
@@ -54,6 +71,140 @@ export default function CommercialOsCapacity() {
     >
       <div className="space-y-4">
         {loading ? <LoadingState label="capacity snapshots" /> : error ? <ErrorState error={error} /> : null}
+
+        {/* CAP-002: Capacity Risk Intelligence */}
+        {riskSummary && (
+          <Card className="shadow-none border-slate-200">
+            <CardContent className="p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-blue-600" />
+                  <p className="text-sm font-semibold text-foreground">Capacity Risk Intelligence</p>
+                  <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">CAP-002</Badge>
+                </div>
+                <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">
+                  Read-only capacity intelligence · Thresholds sourced from Assumption Registry · Capacity risks require operations confirmation
+                </Badge>
+              </div>
+
+              {/* Risk Summary Cards */}
+              <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <MetricCard
+                  label="Total Warehouses"
+                  value={String(riskSummary.totalWarehouses)}
+                  helper={`${riskSummary.available} available, ${riskSummary.watch} watch`}
+                />
+                <MetricCard
+                  label="Available"
+                  value={String(riskSummary.available)}
+                  helper="Within acceptable utilization"
+                />
+                <MetricCard
+                  label="Watch / High Util"
+                  value={`${riskSummary.watch} / ${riskSummary.highUtilization}`}
+                  helper="75–90% / 90%+ utilization"
+                />
+                <MetricCard
+                  label="Constrained / Overcommitted"
+                  value={`${riskSummary.constrained} / ${riskSummary.overcommitted}`}
+                  helper={riskSummary.constrained + riskSummary.overcommitted > 0 ? "Operations review required" : "No constraints detected"}
+                />
+                <MetricCard
+                  label="Total Shortfall"
+                  value={fmt(riskSummary.totalShortfall)}
+                  helper={riskSummary.totalShortfall > 0 ? "Pallets short across all warehouses" : "No shortfall detected"}
+                />
+              </div>
+
+              {/* Capacity Totals */}
+              <div className="mb-4 grid gap-3 sm:grid-cols-3">
+                <MetricCard label="Total Sellable" value={fmt(riskSummary.totalSellable)} helper="Sum of sellable capacity" />
+                <MetricCard label="Total Committed" value={fmt(riskSummary.totalCommitted)} helper="Sum of committed capacity" />
+                <MetricCard label="Remaining Capacity" value={fmt(riskSummary.totalRemaining)} helper="Sellable - Committed" />
+              </div>
+
+              {/* Risk Table with Commercial Impact */}
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Warehouse Risk Assessment</p>
+              <div className="overflow-x-auto rounded border">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b bg-slate-50 text-left">
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Warehouse</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Region</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Risk</th>
+                      <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Utilization</th>
+                      <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Sellable</th>
+                      <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Committed</th>
+                      <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Remaining</th>
+                      <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Shortfall</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Risk Reason</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Commercial Implication</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {riskSummary.warehouses.map((w) => (
+                      <tr
+                        key={w.warehouseLabel}
+                        className={`border-b last:border-0 ${
+                          w.riskStatus === 'overcommitted' ? 'bg-red-50/40' :
+                          w.riskStatus === 'constrained' ? 'bg-orange-50/30' :
+                          w.riskStatus === 'high_utilization' ? 'bg-amber-50/20' : ''
+                        }`}
+                      >
+                        <td className="px-2 py-1.5 font-medium">
+                          <div className="flex items-center gap-1.5">
+                            {riskIcon(w.riskStatus)}
+                            {w.warehouseLabel}
+                          </div>
+                        </td>
+                        <td className="px-2 py-1.5">{w.region || "--"}</td>
+                        <td className="px-2 py-1.5">{riskBadge(w.riskStatus)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono">{w.utilizationPct.toFixed(1)}%</td>
+                        <td className="px-2 py-1.5 text-right font-mono">{fmt(w.sellableCapacity)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono">{fmt(w.committedCapacity)}</td>
+                        <td className={`px-2 py-1.5 text-right font-mono ${w.remainingCapacity < 0 ? 'text-red-700 font-semibold' : ''}`}>
+                          {fmt(w.remainingCapacity)}
+                        </td>
+                        <td className="px-2 py-1.5 text-right">
+                          {w.shortfallCapacity > 0 ? (
+                            <span className="font-mono font-semibold text-red-700">{fmt(w.shortfallCapacity)}</span>
+                          ) : (
+                            <span className="text-muted-foreground">0</span>
+                          )}
+                        </td>
+                        <td className="max-w-48 px-2 py-1.5 text-[11px] text-muted-foreground">{w.riskReason}</td>
+                        <td className="max-w-56 px-2 py-1.5">
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger>
+                                <span className={`text-[11px] ${
+                                  w.riskStatus === 'available' ? 'text-emerald-700' :
+                                  w.riskStatus === 'watch' ? 'text-blue-700' :
+                                  'text-amber-800 font-medium'
+                                }`}>
+                                  {w.riskStatus === 'overcommitted' ? '🔴 Subcontracting risk' :
+                                   w.riskStatus === 'constrained' ? '🟠 Capacity constraint' :
+                                   w.riskStatus === 'high_utilization' ? '🟡 Warehouse review required' :
+                                   w.riskStatus === 'watch' ? '🔵 Monitor closely' :
+                                   '🟢 Normal operations'}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="left" className="max-w-sm text-xs">
+                                {w.commercialImplication}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Existing Capacity Table */}
         {!loading && !error && rows.length === 0 ? (
           <EmptySourceState label="Warehouse capacity" />
         ) : (
@@ -77,12 +228,15 @@ export default function CommercialOsCapacity() {
               const remaining = row.sellableCapacity - row.committedCapacity;
               const highUtilization = row.utilizationPct > 90;
               const hasShortfall = row.shortfallCapacity > 0;
-              const status = capacityStatus(row.utilizationPct, row.shortfallCapacity, remaining);
+              const risk = riskSummary?.warehouses.find(w => w.warehouseLabel === row.warehouseLabel);
+              const status = risk
+                ? { label: riskBadge(risk.riskStatus), direct: true }
+                : { label: "Available", direct: false };
               return (
                 <tr key={row.id} className={highUtilization || hasShortfall ? "bg-amber-50/40" : undefined}>
                   <td className="px-3 py-3 font-medium">{row.warehouseLabel || row.warehouseName || "--"}</td>
                   <td className="px-3 py-3">
-                    <Badge variant="outline" className={status.className}>{status.label}</Badge>
+                    {status.direct ? status.label : riskBadge('available')}
                   </td>
                   <td className="px-3 py-3">{row.region || "--"}</td>
                   <td className="px-3 py-3">{fmt(row.totalCapacity)}</td>

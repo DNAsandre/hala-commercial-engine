@@ -370,6 +370,111 @@ export function computeGpSummary(opportunities: CommercialOpportunity[]): GpSumm
   };
 }
 
+// ─── CAP-002: Capacity Risk Intelligence (Read-Only) ─────────
+
+export type CapacityRiskStatus = 'available' | 'watch' | 'high_utilization' | 'constrained' | 'overcommitted';
+
+export interface WarehouseRisk {
+  warehouseLabel: string;
+  region: string;
+  totalCapacity: number;
+  occupiedCapacity: number;
+  utilizationPct: number;
+  sellableCapacity: number;
+  committedCapacity: number;
+  shortfallCapacity: number;
+  remainingCapacity: number;
+  riskStatus: CapacityRiskStatus;
+  riskReason: string;
+  commercialImplication: string;
+}
+
+export interface CapacityRiskSummary {
+  totalWarehouses: number;
+  available: number;
+  watch: number;
+  highUtilization: number;
+  constrained: number;
+  overcommitted: number;
+  totalShortfall: number;
+  totalSellable: number;
+  totalCommitted: number;
+  totalRemaining: number;
+  warehouses: WarehouseRisk[];
+}
+
+export function classifyWarehouseRisk(
+  snap: WarehouseCapacitySnapshot,
+  highThreshold = 90,
+  watchThreshold = 75,
+): WarehouseRisk {
+  const remaining = snap.sellableCapacity - snap.committedCapacity;
+
+  let riskStatus: CapacityRiskStatus = 'available';
+  let riskReason = 'Utilization within acceptable range. Capacity available.';
+  let commercialImplication = 'Normal operations — new deals can be accommodated.';
+
+  if (snap.committedCapacity > snap.sellableCapacity) {
+    riskStatus = 'overcommitted';
+    riskReason = `Committed (${snap.committedCapacity.toLocaleString()}) exceeds sellable (${snap.sellableCapacity.toLocaleString()}).`;
+    commercialImplication = 'Subcontracting risk — warehouse cannot fulfill committed volumes. Operations review required.';
+  } else if (snap.shortfallCapacity > 0) {
+    riskStatus = 'constrained';
+    riskReason = `Shortfall of ${snap.shortfallCapacity.toLocaleString()} pallets detected.`;
+    commercialImplication = 'Capacity constraint — new commitments risk breaking SLA. Promise risk for pipeline deals targeting this warehouse.';
+  } else if (snap.utilizationPct >= highThreshold) {
+    riskStatus = 'high_utilization';
+    riskReason = `Utilization at ${snap.utilizationPct.toFixed(1)}% (>= ${highThreshold}% threshold).`;
+    commercialImplication = 'High utilization — limited headroom for new deals. Warehouse review required before new commitments.';
+  } else if (snap.utilizationPct >= watchThreshold) {
+    riskStatus = 'watch';
+    riskReason = `Utilization at ${snap.utilizationPct.toFixed(1)}% (>= ${watchThreshold}% watch threshold).`;
+    commercialImplication = 'Approaching capacity threshold — monitor closely. No immediate risk.';
+  }
+
+  return {
+    warehouseLabel: snap.warehouseLabel,
+    region: snap.region,
+    totalCapacity: snap.totalCapacity,
+    occupiedCapacity: snap.occupiedCapacity,
+    utilizationPct: snap.utilizationPct,
+    sellableCapacity: snap.sellableCapacity,
+    committedCapacity: snap.committedCapacity,
+    shortfallCapacity: snap.shortfallCapacity,
+    remainingCapacity: remaining,
+    riskStatus,
+    riskReason,
+    commercialImplication,
+  };
+}
+
+export function computeCapacityRiskSummary(
+  snapshots: WarehouseCapacitySnapshot[],
+  thresholds?: DashboardThreshold[],
+): CapacityRiskSummary {
+  const highThreshold = thresholds?.find(t => t.thresholdKey === 'high_utilization_pct')?.thresholdValue ?? 90;
+  const watchThreshold = thresholds?.find(t => t.thresholdKey === 'warning_utilization_pct')?.thresholdValue ?? 75;
+
+  const warehouses = snapshots.map(snap => classifyWarehouseRisk(snap, highThreshold, watchThreshold));
+
+  return {
+    totalWarehouses: warehouses.length,
+    available: warehouses.filter(w => w.riskStatus === 'available').length,
+    watch: warehouses.filter(w => w.riskStatus === 'watch').length,
+    highUtilization: warehouses.filter(w => w.riskStatus === 'high_utilization').length,
+    constrained: warehouses.filter(w => w.riskStatus === 'constrained').length,
+    overcommitted: warehouses.filter(w => w.riskStatus === 'overcommitted').length,
+    totalShortfall: warehouses.reduce((s, w) => s + w.shortfallCapacity, 0),
+    totalSellable: warehouses.reduce((s, w) => s + w.sellableCapacity, 0),
+    totalCommitted: warehouses.reduce((s, w) => s + w.committedCapacity, 0),
+    totalRemaining: warehouses.reduce((s, w) => s + w.remainingCapacity, 0),
+    warehouses: warehouses.sort((a, b) => {
+      const order: Record<CapacityRiskStatus, number> = { overcommitted: 0, constrained: 1, high_utilization: 2, watch: 3, available: 4 };
+      return (order[a.riskStatus] ?? 5) - (order[b.riskStatus] ?? 5);
+    }),
+  };
+}
+
 function mapLocation(row: any): WarehouseLocation {
   return {
     id: text(row.id, row.warehouse_location_id),
