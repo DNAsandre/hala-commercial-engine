@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Building2, Link2, Search, Users } from "lucide-react";
+import { Link } from "wouter";
 import {
   CommercialOsShell,
   DataTable,
@@ -184,7 +185,9 @@ export default function CommercialOsCustomers() {
                     <tr key={c.id} className={hasReview ? "bg-amber-50/30" : undefined}>
                       <td className="px-3 py-3">
                         <div className="flex items-center gap-2">
-                          <span className="font-medium">{c.displayName}</span>
+                          <Link href={`/commercial-os/customers/${encodeURIComponent(c.canonicalName)}`}>
+                            <span className="font-medium text-blue-700 hover:underline cursor-pointer">{c.displayName}</span>
+                          </Link>
                           {hasReview && (
                             <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700 text-[10px]">
                               <AlertTriangle className="mr-0.5 h-3 w-3" />Review
