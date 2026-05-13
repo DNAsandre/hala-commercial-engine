@@ -4,7 +4,9 @@
  * Implements all 9 compliance points with full configuration UI
  */
 import { useState, useEffect } from "react";
-import { Shield, Lock, Bot, GitBranch, Settings, Activity, AlertTriangle, CheckCircle, XCircle, Eye, EyeOff, ChevronDown, ChevronRight, History, Zap, Server, Users, RefreshCw, DollarSign, ExternalLink, ArrowLeft } from "lucide-react";
+import { Shield, Lock, Bot, GitBranch, Settings, Activity, AlertTriangle, CheckCircle, XCircle, Eye, EyeOff, ChevronDown, ChevronRight, History, Zap, Server, Users, RefreshCw, DollarSign, ExternalLink, ArrowLeft, FileText } from "lucide-react";
+import TenderGovernanceConfig from "@/components/tender/TenderGovernanceConfig";
+import CommercialGovernanceConfig from "@/components/commercial/CommercialGovernanceConfig";
 import { Link } from "wouter";
 import { navigationV1 } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,21 +17,23 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
-  policyGateConfigs,
-  updateGateConfig,
   AI_RESTRICTIONS,
   aiBotConfig,
-  governanceAuditLog,
-  overrideRecords,
   automationGuard,
   environmentConfig,
   getComplianceStatus,
   logAdminChange,
-  type PolicyGateConfig,
 } from "@/lib/governance";
 import { type GateMode } from "@/lib/store";
 import { useCurrentUser } from "@/hooks/useSupabase";
 import { api } from "@/lib/api-client";
+import {
+  fetchPolicyGates,
+  updatePolicyGateConfig,
+  fetchGovernanceAuditLog,
+  type SupabasePolicyGate,
+  type SupabaseGovernanceAuditEntry,
+} from "@/lib/supabase-governance-data";
 
 /* ── Compliance Dashboard ── */
 function ComplianceDashboard() {
@@ -83,35 +87,66 @@ function ComplianceDashboard() {
 function PolicyGatesPanel() {
   const { data: currentUser } = useCurrentUser();
   const [expandedGate, setExpandedGate] = useState<string | null>(null);
+  const [gates, setGates] = useState<SupabasePolicyGate[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const handleModeChange = (gate: PolicyGateConfig, newMode: GateMode) => {
-    updateGateConfig(gate.id, { mode: newMode }, currentUser.name, `Mode changed to ${newMode} via Admin Console`);
-    toast.success(`Gate "${gate.name}" mode changed to ${newMode.toUpperCase()}`);
+  const loadGates = async () => {
+    setLoading(true);
+    const data = await fetchPolicyGates();
+    setGates(data);
+    setLoading(false);
   };
 
-  const handleOverridableToggle = (gate: PolicyGateConfig) => {
+  useEffect(() => { loadGates(); }, []);
+
+  const handleModeChange = async (gate: SupabasePolicyGate, newMode: GateMode) => {
+    const result = await updatePolicyGateConfig(gate.id, { mode: newMode }, `Mode changed to ${newMode} via Admin Console`);
+    if (result.success) {
+      toast.success(`Gate "${gate.gate_name}" mode changed to ${newMode.toUpperCase()}. Persisted to Supabase.`);
+      loadGates();
+    } else {
+      toast.warning(`Gate mode change failed — UI not blocked.`, { description: result.error });
+    }
+  };
+
+  const handleOverridableToggle = async (gate: SupabasePolicyGate) => {
     const newVal = !gate.overridable;
-    updateGateConfig(gate.id, { overridable: newVal }, currentUser.name, `Override ${newVal ? "enabled" : "disabled"} via Admin Console`);
-    toast.success(`Gate "${gate.name}" override ${newVal ? "enabled" : "disabled"}`);
+    const result = await updatePolicyGateConfig(gate.id, { overridable: newVal }, `Override ${newVal ? "enabled" : "disabled"} via Admin Console`);
+    if (result.success) {
+      toast.success(`Gate "${gate.gate_name}" override ${newVal ? "enabled" : "disabled"}. Persisted.`);
+      loadGates();
+    } else {
+      toast.warning(`Toggle failed — UI not blocked.`, { description: result.error });
+    }
   };
+
+  if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading policy gates from Supabase…</p>;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-serif font-bold">Policy Gates</h3>
-          <p className="text-xs text-muted-foreground">{policyGateConfigs.length} gates configured — Enforce / Warn / Off</p>
+          <p className="text-xs text-muted-foreground">{gates.length} gates configured — Mock / Advisory only</p>
         </div>
         <div className="flex gap-2">
-          <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700">{policyGateConfigs.filter(g => g.mode === "enforce").length} Enforce</Badge>
-          <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700">{policyGateConfigs.filter(g => g.mode === "warn").length} Warn</Badge>
-          <Badge variant="outline" className="text-[10px] bg-gray-50 text-gray-500">{policyGateConfigs.filter(g => g.mode === "off").length} Off</Badge>
+          <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">✓ Supabase-Backed</Badge>
+          <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700">{gates.filter(g => g.mode === "enforce").length} Enforce</Badge>
+          <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700">{gates.filter(g => g.mode === "warn").length} Warn</Badge>
+          <Badge variant="outline" className="text-[10px] bg-gray-50 text-gray-500">{gates.filter(g => g.mode === "off").length} Off</Badge>
         </div>
       </div>
 
+      <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/50 flex items-center gap-2">
+        <Shield className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+        <p className="text-xs text-blue-800">Development mode: all gates are mock/advisory only. Mode changes persist to Supabase but do not enforce production rules.</p>
+      </div>
+
       <div className="space-y-2">
-        {policyGateConfigs.map(gate => {
+        {gates.map(gate => {
           const isExpanded = expandedGate === gate.id;
+          const scope = gate.scope || { regions: "all", businessUnits: "all" };
+          const history = gate.rule_version_history || [];
           return (
             <Card key={gate.id} className={`border shadow-none transition-all ${gate.mode === "enforce" ? "border-l-4 border-l-red-400" : gate.mode === "warn" ? "border-l-4 border-l-amber-400" : "border-l-4 border-l-gray-300"}`}>
               <CardContent className="p-0">
@@ -120,8 +155,8 @@ function PolicyGatesPanel() {
                     {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
                     <Shield className={`w-4 h-4 ${gate.mode === "enforce" ? "text-red-600" : gate.mode === "warn" ? "text-amber-600" : "text-gray-400"}`} />
                     <div>
-                      <span className="text-sm font-medium">{gate.name}</span>
-                      <span className="text-[10px] text-muted-foreground ml-2">v{gate.ruleVersion}</span>
+                      <span className="text-sm font-medium">{gate.gate_name}</span>
+                      <span className="text-[10px] text-muted-foreground ml-2">v{gate.rule_version}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-3" onClick={e => e.stopPropagation()}>
@@ -145,21 +180,23 @@ function PolicyGatesPanel() {
                 {isExpanded && (
                   <div className="border-t border-border p-3 bg-muted/20 space-y-3">
                     <p className="text-xs text-muted-foreground">{gate.description}</p>
+                    {gate.tooltip_text && <p className="text-xs text-blue-700 italic">{gate.tooltip_text}</p>}
+                    {gate.future_enforcement_note && <p className="text-xs text-amber-700 italic">Future: {gate.future_enforcement_note}</p>}
                     <div className="grid grid-cols-2 gap-3 text-xs">
-                      <div><span className="text-muted-foreground">Scope — Regions:</span> <span className="font-medium">{gate.scope.regions === "all" ? "All Regions" : (gate.scope.regions as string[]).join(", ")}</span></div>
-                      <div><span className="text-muted-foreground">Scope — BU:</span> <span className="font-medium">{gate.scope.businessUnits === "all" ? "All Business Units" : (gate.scope.businessUnits as string[]).join(", ")}</span></div>
-                      <div><span className="text-muted-foreground">Last Updated:</span> <span className="font-mono">{new Date(gate.updatedAt).toLocaleDateString()}</span></div>
-                      <div><span className="text-muted-foreground">Updated By:</span> <span className="font-medium">{gate.updatedBy}</span></div>
+                      <div><span className="text-muted-foreground">Scope — Regions:</span> <span className="font-medium">{scope.regions === "all" ? "All Regions" : Array.isArray(scope.regions) ? scope.regions.join(", ") : String(scope.regions)}</span></div>
+                      <div><span className="text-muted-foreground">Scope — BU:</span> <span className="font-medium">{scope.businessUnits === "all" ? "All Business Units" : Array.isArray(scope.businessUnits) ? scope.businessUnits.join(", ") : String(scope.businessUnits)}</span></div>
+                      <div><span className="text-muted-foreground">Last Updated:</span> <span className="font-mono">{new Date(gate.updated_at).toLocaleDateString()}</span></div>
+                      <div><span className="text-muted-foreground">Updated By:</span> <span className="font-medium">{gate.updated_by}</span></div>
                     </div>
 
-                    {gate.ruleVersionHistory.length > 0 && (
+                    {history.length > 0 && (
                       <div>
                         <div className="flex items-center gap-1.5 mb-1.5">
                           <History className="w-3 h-3 text-muted-foreground" />
                           <span className="text-[10px] font-medium text-muted-foreground">VERSION HISTORY</span>
                         </div>
                         <div className="space-y-1">
-                          {gate.ruleVersionHistory.slice().reverse().map(v => (
+                          {history.slice().reverse().map(v => (
                             <div key={v.version} className="flex items-center gap-2 text-[10px] p-1.5 rounded bg-background">
                               <span className="font-mono text-muted-foreground">v{v.version}</span>
                               <Badge variant="outline" className={`text-[9px] ${v.mode === "enforce" ? "text-red-600" : v.mode === "warn" ? "text-amber-600" : "text-gray-500"}`}>{v.mode}</Badge>
@@ -292,6 +329,19 @@ function AIRestrictionsPanel() {
 
 /* ── Override Log ── */
 function OverrideLogPanel() {
+  const [entries, setEntries] = useState<SupabaseGovernanceAuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const all = await fetchGovernanceAuditLog();
+      setEntries(all.filter(e => e.category === "override" || e.category === "override_attempt"));
+      setLoading(false);
+    })();
+  }, []);
+
+  if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading override log from Supabase…</p>;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -299,10 +349,13 @@ function OverrideLogPanel() {
           <h3 className="text-lg font-serif font-bold">Override Log</h3>
           <p className="text-xs text-muted-foreground">"Break Glass" doctrine — all overrides are auditable</p>
         </div>
-        <Badge variant="outline" className="text-xs">{overrideRecords.length} overrides recorded</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">✓ Supabase-Backed</Badge>
+          <Badge variant="outline" className="text-xs">{entries.length} override events</Badge>
+        </div>
       </div>
 
-      {overrideRecords.length === 0 ? (
+      {entries.length === 0 ? (
         <Card className="border border-border shadow-none">
           <CardContent className="py-8 text-center">
             <Shield className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
@@ -312,43 +365,25 @@ function OverrideLogPanel() {
         </Card>
       ) : (
         <div className="space-y-2">
-          {overrideRecords.map(o => (
-            <Card key={o.id} className="border border-amber-200 shadow-none border-l-4 border-l-amber-400">
+          {entries.map(e => (
+            <Card key={e.id} className="border border-amber-200 shadow-none border-l-4 border-l-amber-400">
               <CardContent className="p-3">
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-amber-500" />
-                      <span className="text-sm font-medium">{o.gateName}</span>
-                      <Badge variant="outline" className="text-[10px]">v{o.ruleVersionAtOverride}</Badge>
+                      <AlertTriangle className={`w-4 h-4 ${e.action.includes("denied") ? "text-red-500" : "text-amber-500"}`} />
+                      <span className="text-sm font-medium">{e.action.replace(/_/g, " ")}</span>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1 ml-6">By: {o.overriddenBy} ({o.overriddenByRole})</p>
-                    <p className="text-xs mt-1 ml-6"><span className="font-medium">Reason:</span> {o.reason}</p>
+                    <p className="text-xs text-muted-foreground mt-1 ml-6">By: {e.user_name}</p>
+                    <p className="text-xs mt-1 ml-6">{e.details}</p>
                   </div>
-                  <span className="text-[10px] font-mono text-muted-foreground">{new Date(o.overriddenAt).toLocaleString()}</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">{new Date(e.created_at).toLocaleString()}</span>
                 </div>
               </CardContent>
             </Card>
           ))}
         </div>
       )}
-
-      <div className="mt-4">
-        <h4 className="text-sm font-medium mb-2">Override Audit Trail</h4>
-        <div className="space-y-1">
-          {governanceAuditLog.filter(e => e.category === "override" || e.category === "override_attempt").length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-4">No override audit entries yet</p>
-          ) : (
-            governanceAuditLog.filter(e => e.category === "override" || e.category === "override_attempt").map(e => (
-              <div key={e.id} className="flex items-center gap-2 p-2 rounded border border-border text-xs">
-                <AlertTriangle className={`w-3.5 h-3.5 ${e.action.includes("denied") ? "text-red-500" : "text-amber-500"}`} />
-                <span className="flex-1">{e.details}</span>
-                <span className="font-mono text-muted-foreground">{new Date(e.timestamp).toLocaleString()}</span>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
     </div>
   );
 }
@@ -356,8 +391,19 @@ function OverrideLogPanel() {
 /* ── Governance Audit Stream ── */
 function GovernanceAuditPanel() {
   const [catFilter, setCatFilter] = useState<string>("all");
-  const categories = Array.from(new Set(governanceAuditLog.map(e => e.category)));
-  const filtered = catFilter === "all" ? governanceAuditLog : governanceAuditLog.filter(e => e.category === catFilter);
+  const [auditLog, setAuditLog] = useState<SupabaseGovernanceAuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const data = await fetchGovernanceAuditLog();
+      setAuditLog(data);
+      setLoading(false);
+    })();
+  }, []);
+
+  const categories = Array.from(new Set(auditLog.map(e => e.category)));
+  const filtered = catFilter === "all" ? auditLog : auditLog.filter(e => e.category === catFilter);
 
   const catColors: Record<string, string> = {
     gate_evaluation: "bg-blue-100 text-blue-800",
@@ -375,6 +421,8 @@ function GovernanceAuditPanel() {
     user_action: "bg-gray-100 text-gray-800",
   };
 
+  if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading governance audit log from Supabase…</p>;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -382,14 +430,17 @@ function GovernanceAuditPanel() {
           <h3 className="text-lg font-serif font-bold">Governance Audit Stream</h3>
           <p className="text-xs text-muted-foreground">Unified log — every write, approval, gate evaluation, override, and admin change</p>
         </div>
-        <Badge variant="outline" className="text-xs">{governanceAuditLog.length} entries</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">✓ Supabase-Backed</Badge>
+          <Badge variant="outline" className="text-xs">{auditLog.length} entries</Badge>
+        </div>
       </div>
 
       {categories.length > 0 && (
         <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
           {categories.map(cat => (
             <button key={cat} onClick={() => setCatFilter(catFilter === cat ? "all" : cat)} className={`p-2 rounded border text-center transition-all ${catFilter === cat ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"}`}>
-              <div className="text-lg font-bold font-mono">{governanceAuditLog.filter(e => e.category === cat).length}</div>
+              <div className="text-lg font-bold font-mono">{auditLog.filter(e => e.category === cat).length}</div>
               <div className="text-[9px] text-muted-foreground">{cat.replace(/_/g, " ")}</div>
             </button>
           ))}
@@ -417,18 +468,18 @@ function GovernanceAuditPanel() {
             </div>
           ) : (
             <div className="divide-y divide-border">
-              {filtered.slice().reverse().map(entry => (
+              {filtered.map(entry => (
                 <div key={entry.id} className="flex items-start gap-3 p-3 hover:bg-muted/20 transition-colors">
                   <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${entry.action.includes("blocked") || entry.action.includes("denied") || entry.action.includes("rejected") ? "bg-red-500" : entry.action.includes("override") || entry.action.includes("warn") ? "bg-amber-500" : "bg-emerald-500"}`} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <Badge variant="outline" className={`text-[9px] ${catColors[entry.category] || ""}`}>{entry.category.replace(/_/g, " ")}</Badge>
-                      <span className="text-xs font-medium">{entry.userName}</span>
+                      <span className="text-xs font-medium">{entry.user_name}</span>
                       <span className="text-[10px] text-muted-foreground">— {entry.action.replace(/_/g, " ")}</span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5">{entry.details}</p>
                   </div>
-                  <span className="text-[9px] font-mono text-muted-foreground shrink-0">{new Date(entry.timestamp).toLocaleString()}</span>
+                  <span className="text-[9px] font-mono text-muted-foreground shrink-0">{new Date(entry.created_at).toLocaleString()}</span>
                 </div>
               ))}
             </div>
@@ -734,6 +785,8 @@ export default function AdminGovernance() {
           <TabsTrigger value="roles" className="text-xs gap-1.5"><Users className="w-3.5 h-3.5" /> Roles</TabsTrigger>
           <TabsTrigger value="environment" className="text-xs gap-1.5"><Server className="w-3.5 h-3.5" /> Environment</TabsTrigger>
           <TabsTrigger value="audit" className="text-xs gap-1.5"><Activity className="w-3.5 h-3.5" /> Audit Stream</TabsTrigger>
+          <TabsTrigger value="tender_config" className="text-xs gap-1.5"><FileText className="w-3.5 h-3.5" /> Tender Config</TabsTrigger>
+          <TabsTrigger value="commercial_config" className="text-xs gap-1.5"><DollarSign className="w-3.5 h-3.5" /> Commercial Config</TabsTrigger>
         </TabsList>
 
         <TabsContent value="compliance"><ComplianceDashboard /></TabsContent>
@@ -745,6 +798,8 @@ export default function AdminGovernance() {
         <TabsContent value="roles"><RolesPanel /></TabsContent>
         <TabsContent value="environment"><EnvironmentPanel /></TabsContent>
         <TabsContent value="audit"><GovernanceAuditPanel /></TabsContent>
+        <TabsContent value="tender_config"><TenderGovernanceConfig /></TabsContent>
+        <TabsContent value="commercial_config"><CommercialGovernanceConfig /></TabsContent>
       </Tabs>
     </div>
   );

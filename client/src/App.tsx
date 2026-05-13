@@ -70,6 +70,13 @@ const CRMSyncConsole = React.lazy(() => import("./pages/CRMSyncConsole"));
 const PDFStudio = React.lazy(() => import("./pages/PDFStudio"));
 const DocumentVault = React.lazy(() => import("./pages/DocumentVault"));
 const DocumentComposer = React.lazy(() => import("./pages/DocumentComposer"));
+const TenderWorkspaceDetail = React.lazy(() => import("./pages/TenderWorkspaceDetail"));
+const CommercialOsDashboard = React.lazy(() => import("./pages/CommercialOsDashboard"));
+const CommercialOsPipeline = React.lazy(() => import("./pages/CommercialOsPipeline"));
+const CommercialOsCapacity = React.lazy(() => import("./pages/CommercialOsCapacity"));
+const CommercialOsForecast = React.lazy(() => import("./pages/CommercialOsForecast"));
+const CommercialOsRevenue = React.lazy(() => import("./pages/CommercialOsRevenue"));
+const CommercialOsActions = React.lazy(() => import("./pages/CommercialOsActions"));
 
 /**
  * Admin-only routes: require "admin" role.
@@ -118,6 +125,7 @@ function AppRouter() {
       <Route path="/pnl">{() => <LazyPage><PnLCalculator /></LazyPage>}</Route>
       <Route path="/crm-sync">{() => <LazyPage><CRMSync /></LazyPage>}</Route>
       <Route path="/documents">{() => <Redirect to="/document-vault" />}</Route>
+      <Route path="/tenders/:id">{() => <LazyPage><TenderWorkspaceDetail /></LazyPage>}</Route>
       <Route path="/tenders">{() => <LazyPage><Tenders /></LazyPage>}</Route>
       <Route path="/commercial">{() => <LazyPage><Commercial /></LazyPage>}</Route>
       <Route path="/tenders-overview">{() => <LazyPage><TendersOverview /></LazyPage>}</Route>
@@ -136,6 +144,12 @@ function AppRouter() {
       <Route path="/escalations">{() => <LazyPage><GlobalEscalations /></LazyPage>}</Route>
       <Route path="/pdf-studio">{() => <LazyPage><PDFStudio /></LazyPage>}</Route>
       <Route path="/document-vault">{() => <LazyPage><DocumentVault /></LazyPage>}</Route>
+      <Route path="/commercial-os/pipeline">{() => <LazyPage><CommercialOsPipeline /></LazyPage>}</Route>
+      <Route path="/commercial-os/capacity">{() => <LazyPage><CommercialOsCapacity /></LazyPage>}</Route>
+      <Route path="/commercial-os/forecast">{() => <LazyPage><CommercialOsForecast /></LazyPage>}</Route>
+      <Route path="/commercial-os/revenue">{() => <LazyPage><CommercialOsRevenue /></LazyPage>}</Route>
+      <Route path="/commercial-os/actions">{() => <LazyPage><CommercialOsActions /></LazyPage>}</Route>
+      <Route path="/commercial-os">{() => <LazyPage><CommercialOsDashboard /></LazyPage>}</Route>
 
       {/* ── Admin-only routes (lazy + role guard) ────────────── */}
       <Route path="/admin">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={AdminGovernance} /></LazyPage>}</Route>

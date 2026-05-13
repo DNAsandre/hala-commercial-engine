@@ -379,6 +379,28 @@ export const tenders: Tender[] = [
     notes: "Lost to competitor. Price was 12% higher.",
     crmSynced: true,
   },
+  // TND-010: Linde SIGAS — registered here for Pipeline/Board/Dashboard visibility
+  {
+    id: "tn-linde-001",
+    linkedWorkspaceId: null,
+    customerId: "c-linde",
+    customerName: "Linde SIGAS",
+    title: "Linde SIGAS Transportation Tender",
+    submissionDeadline: "2026-05-07",
+    estimatedValue: 55600000,
+    targetGpPercent: 21,
+    probabilityPercent: 55,
+    assignedOwner: "Amin Al-Halabi",
+    assignedTeamMembers: ["Amin Al-Halabi", "Ra'ed", "Finance", "Legal", "Operations"],
+    status: "preparing_submission" as const,
+    source: "Direct" as const,
+    region: "East" as const,
+    createdAt: "2026-03-15",
+    updatedAt: "2026-04-28",
+    daysInStatus: 12,
+    notes: "Multi-pack transport tender. Internal master + Bulk + PGP external child packs.",
+    crmSynced: false,
+  },
 ];
 
 // ─── TRANSITION TYPES ──────────────────────────────────────

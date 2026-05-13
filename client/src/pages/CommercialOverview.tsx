@@ -39,6 +39,8 @@ import {
 } from "@/lib/store";
 import { useWorkspaces } from "@/hooks/useSupabase";
 import { Loader2 } from "lucide-react";
+import { type CommercialWorkspaceSignalSummary } from "@/lib/commercial-workspace-data";
+import { useAllCommercialWorkspaceSignals } from "@/hooks/useCommercialWorkspaceSignals";
 
 // ─── COMMERCIAL MILESTONE VALUES (for lane order) ────────────────
 
@@ -127,9 +129,11 @@ function MiniLifecycleBar({ current }: { current: string }) {
 function SwimLaneCard({
   workspace,
   onClick,
+  cwSummary,
 }: {
   workspace: Workspace;
   onClick: () => void;
+  cwSummary?: CommercialWorkspaceSignalSummary;
 }) {
   const mapped = mapToCommercialMilestone(workspace.stage);
   const margin = getMarginSignal(workspace.gpPercent);
@@ -177,6 +181,41 @@ function SwimLaneCard({
             <span className={`text-[10px] font-medium ${time.textColor}`}>{time.label}</span>
           </div>
         </div>
+
+        {/* CW-011: Compact commercial signal chips */}
+        {(() => {
+          const sig = cwSummary;
+          if (!sig) return null;
+          return (
+            <div className="flex items-center gap-1 flex-wrap mb-3">
+              <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${
+                sig.marginRisk === "Critical" ? 'border-red-300 text-red-700 bg-red-50 dark:bg-red-950/40 dark:text-red-300 dark:border-red-700' :
+                sig.marginRisk === "High" ? 'border-orange-300 text-orange-700 bg-orange-50 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-700' :
+                'border-emerald-300 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700'
+              }`}>GP {sig.gpPercent}%</span>
+              <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${
+                sig.customerRisk === "D" || sig.customerRisk === "C" ? 'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700' :
+                'border-emerald-300 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700'
+              }`}>ECR {sig.customerRisk}</span>
+              <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${
+                sig.capacityRisk === "Constrained" || sig.capacityRisk === "Critical" ? 'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700' :
+                'border-emerald-300 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700'
+              }`}>Cap {sig.capacityRisk}</span>
+              {sig.mockEscalationCount > 0 && (
+                <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${
+                  sig.criticalEscalationCount > 0 ? 'border-red-300 text-red-700 bg-red-50 dark:bg-red-950/40 dark:text-red-300 dark:border-red-700' :
+                  'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700'
+                }`}>Signals {sig.mockEscalationCount} Mock</span>
+              )}
+              {sig.proposalReviewNeeded && (
+                <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700">Proposal Review</span>
+              )}
+              {sig.slaReviewNeeded && (
+                <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700">SLA Review</span>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Footer — value + signal tag */}
         <div className="flex items-center justify-between pt-2.5 border-t border-border gap-2">
@@ -226,7 +265,9 @@ function SwimLaneCard({
 
 export default function CommercialOverview() {
   const [, navigate] = useLocation();
-  const { data: workspaces, loading } = useWorkspaces();
+  const { data: workspaces, loading: wsLoading, error: wsError } = useWorkspaces();
+  const { summaries: cwSummaries, status: cwStatus } = useAllCommercialWorkspaceSignals();
+
   const [filterSearch, setFilterSearch] = useState("");
   const [filterRegion, setFilterRegion] = useState("all");
   const [filterOwner, setFilterOwner] = useState("all");
@@ -275,7 +316,23 @@ export default function CommercialOverview() {
   const totalValue = filtered.reduce((s, w) => s + w.estimatedValue, 0);
   const stalledCount = filtered.filter(w => w.daysInStage > 14).length;
 
-  if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
+  if (wsLoading || cwStatus === 'loading') {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-3">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <p className="text-xs text-muted-foreground">Loading overview…</p>
+      </div>
+    );
+  }
+
+  if (wsError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-3">
+        <p className="text-sm text-muted-foreground">Failed to load overview</p>
+        <p className="text-xs text-muted-foreground/60">{wsError}</p>
+      </div>
+    );
+  }
 
   function getMilestoneLabel(value: string): string {
     return COMMERCIAL_MILESTONES.find(m => m.value === value)?.label || value;
@@ -395,6 +452,7 @@ export default function CommercialOverview() {
                         key={w.id}
                         workspace={w}
                         onClick={() => navigate(`/workspaces/${w.id}`)}
+                        cwSummary={cwSummaries[w.id]}
                       />
                     ))}
                   </div>

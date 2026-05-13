@@ -87,6 +87,7 @@ import {
 } from "@/lib/document-vault";
 import { DocumentViewer, UploadDialog } from "@/components/DocumentViewer";
 import { LifecycleLight, getLightState } from "@/components/LifecycleLight";
+import { useTenderSignalSummary } from "@/hooks/useTenderWorkspaceSignals";
 
 // ─── MILESTONE STRIP ───────────────────────────────────────
 
@@ -373,6 +374,21 @@ function MoveStageDropdown({
 
 // ─── LIST CARD ─────────────────────────────────────────────
 
+function TenderRiskChips({ tenderId, packCount }: { tenderId: string; packCount: number }) {
+  const { signal, status } = useTenderSignalSummary(tenderId);
+  if (status === 'loading') return <span className="text-[8px] text-muted-foreground">Loading…</span>;
+  if (!signal) return null;
+  return (
+    <>
+      <Badge variant="outline" className={`text-[8px] h-4 px-1 ${signal.readinessScore < 50 ? 'border-red-300 text-red-700 bg-red-50' : signal.readinessScore < 80 ? 'border-amber-300 text-amber-700 bg-amber-50' : 'border-emerald-300 text-emerald-700 bg-emerald-50'}`}>{signal.readinessScore}% Ready</Badge>
+      {signal.gatesWouldBlockCount > 0 && <Badge variant="outline" className="text-[8px] h-4 px-1 border-red-300 text-red-700 bg-red-50" title="Gates flagged as would block production">Gates {signal.gatesWouldBlockCount}</Badge>}
+      {signal.requiredDocumentsAwaitingCount > 0 && <Badge variant="outline" className="text-[8px] h-4 px-1 border-amber-300 text-amber-700 bg-amber-50">Docs {signal.requiredDocumentsAwaitingCount}</Badge>}
+      {signal.complianceGapCount > 0 && <Badge variant="outline" className="text-[8px] h-4 px-1 border-amber-300 text-amber-700 bg-amber-50">Compliance {signal.complianceGapCount}</Badge>}
+      <Badge variant="outline" className="text-[8px] h-4 px-1">Packs {packCount}</Badge>
+    </>
+  );
+}
+
 function TenderListCard({
   tender,
   selected,
@@ -441,6 +457,14 @@ function TenderListCard({
                 {timeRisk.label}
               </span>
             </div>
+
+            {/* TND-010: Execution Risk Chips */}
+            <div className="mt-2 pt-2 border-t border-border/50 space-y-1.5">
+                <div className="flex items-center gap-1 flex-wrap">
+                  <TenderRiskChips tenderId={tender.id} packCount={1} />
+                </div>
+                <p className="text-[8px] text-muted-foreground/60 italic">Supabase-backed mock signals</p>
+              </div>
           </div>
         </div>
       </CardContent>
@@ -926,6 +950,9 @@ export default function Tenders() {
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5 truncate">{selectedTender.title}</p>
                     </div>
+                    <Button size="sm" className="text-xs h-7 shrink-0 bg-[var(--color-hala-navy)] hover:bg-[var(--color-hala-navy)]/90" onClick={() => navigate(`/tenders/${selectedTender.id}`)}>
+                      <FolderOpen className="w-3 h-3 mr-1" /> Open Workspace
+                    </Button>
                   </div>
 
                   <div className="p-4 space-y-4">

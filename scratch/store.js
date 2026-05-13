@@ -1,0 +1,515 @@
+"use strict";
+// Hala Commercial Engine — Data Store
+// Swiss Precision Instrument Design
+// All data models, mock data, and business logic
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.HANDOVER_STATES = exports.SLA_STATES = exports.PROPOSAL_STATES = exports.QUOTE_STATES = exports.COMMERCIAL_KANBAN_COLUMNS = exports.COMMERCIAL_MILESTONES = exports.RENEWAL_WORKSPACE_STAGES = exports.TENDER_WORKSPACE_STAGES = exports.WORKSPACE_STAGES = exports.auditLog = exports.crmSyncEvents = exports.policyGates = exports.signals = exports.approvalRecords = exports.proposals = exports.quotes = exports.workspaces = exports.customers = exports.users = exports.currentUser = void 0;
+exports.getApprovalRequirements = getApprovalRequirements;
+exports.calculateECR = calculateECR;
+exports.calculatePnL = calculatePnL;
+exports.mapToCommercialMilestone = mapToCommercialMilestone;
+exports.deriveSubLifecycleStates = deriveSubLifecycleStates;
+exports.getStagesForType = getStagesForType;
+exports.getCommercialMilestones = getCommercialMilestones;
+exports.getWorkspaceType = getWorkspaceType;
+exports.getEffectiveStage = getEffectiveStage;
+exports.getEffectiveStageLabel = getEffectiveStageLabel;
+exports.getEffectiveStageColor = getEffectiveStageColor;
+exports.getWorkspaceTypeLabel = getWorkspaceTypeLabel;
+exports.getWorkspaceTypeBadgeColor = getWorkspaceTypeBadgeColor;
+exports.getStageLabel = getStageLabel;
+exports.getStageColor = getStageColor;
+exports.getRoleLabel = getRoleLabel;
+exports.formatSAR = formatSAR;
+exports.formatSARCompact = formatSARCompact;
+exports.formatPercent = formatPercent;
+exports.getDashboardStats = getDashboardStats;
+// ============================================================
+// MOCK DATA
+// ============================================================
+exports.currentUser = {
+    id: "u1",
+    name: "Amin Al-Rashid",
+    email: "amin@halascs.com",
+    role: "admin",
+    region: "East",
+};
+exports.users = [
+    exports.currentUser,
+    { id: "u2", name: "Ra'ed Al-Harbi", role: "regional_sales_head", email: "raed@halascs.com", region: "East" },
+    { id: "u3", name: "Albert Fernandez", role: "salesman", email: "albert@halascs.com", region: "East" },
+    { id: "u4", name: "Hano Kim", role: "salesman", email: "hano@halascs.com", region: "Central" },
+    { id: "u5", name: "Yazan Khalil", role: "regional_ops_head", email: "yazan@halascs.com", region: "East" },
+    { id: "u6", name: "Mohammed Al-Qahtani", role: "director", email: "mohammed@halascs.com", region: "East" },
+    { id: "u7", name: "Tariq Nasser", role: "ceo_cfo", email: "tariq@halascs.com", region: "East" },
+];
+exports.customers = [
+    { id: "c1", code: "D365-001", name: "SABIC", group: "SABIC", status: "Active", city: "Jubail", region: "East", industry: "Petrochemical", accountOwner: "Ra'ed", serviceType: "WH", grade: "A", facility: "Jubail 1", contractExpiry: "2026-06-30", contractValue2025: 5200000, expectedMonthlyRevenue: 433333, dso: 35, paymentStatus: "Good", revenue2023: 4800000, revenue2024: 5100000, revenue2025: 2600000, palletContracted: 2500, palletOccupied: 2200, palletPotential: 3000, ratePerPallet: 40, contactName: "Ahmed Al-Sabic", contactEmail: "ahmed@sabic.com", contactPhone: "+966-13-555-0001" },
+    { id: "c2", code: "D365-002", name: "Ma'aden", group: "Ma'aden", status: "Active", city: "Jubail", region: "East", industry: "Mining", accountOwner: "Ra'ed", serviceType: "WH & TP", grade: "B", facility: "Jubail 1", contractExpiry: "2026-03-31", contractValue2025: 3400000, expectedMonthlyRevenue: 283333, dso: 42, paymentStatus: "Good", revenue2023: 3100000, revenue2024: 3300000, revenue2025: 1700000, palletContracted: 1800, palletOccupied: 1500, palletPotential: 2200, ratePerPallet: 38, contactName: "Khalid Al-Maaden", contactEmail: "khalid@maaden.com", contactPhone: "+966-13-555-0002" },
+    { id: "c3", code: "D365-003", name: "Almarai", group: "Almarai", status: "Active", city: "Riyadh", region: "Central", industry: "FMCG", accountOwner: "Hano", serviceType: "WH & TP", grade: "A", facility: "RUH Sulai", contractExpiry: "2026-12-31", contractValue2025: 8500000, expectedMonthlyRevenue: 708333, dso: 28, paymentStatus: "Good", revenue2023: 7200000, revenue2024: 8000000, revenue2025: 4250000, palletContracted: 4000, palletOccupied: 3800, palletPotential: 5000, ratePerPallet: 42, contactName: "Faisal Al-Marai", contactEmail: "faisal@almarai.com", contactPhone: "+966-11-555-0003" },
+    { id: "c4", code: "D365-004", name: "Sadara Chemical", group: "Sadara", status: "Active", city: "Jubail", region: "East", industry: "Petrochemical", accountOwner: "Albert", serviceType: "WH", grade: "B", facility: "Jubail 1", contractExpiry: "2025-09-30", contractValue2025: 2800000, expectedMonthlyRevenue: 233333, dso: 45, paymentStatus: "Acceptable", revenue2023: 2500000, revenue2024: 2700000, revenue2025: 1400000, palletContracted: 1200, palletOccupied: 1050, palletPotential: 1500, ratePerPallet: 39, contactName: "Omar Sadara", contactEmail: "omar@sadara.com", contactPhone: "+966-13-555-0004" },
+    { id: "c5", code: "D365-005", name: "Nestlé KSA", group: "Nestlé", status: "Active", city: "Jeddah", region: "West", industry: "FMCG", accountOwner: "Hano", serviceType: "WH & TP", grade: "A", facility: "JED Modon 3", contractExpiry: "2027-03-31", contractValue2025: 6200000, expectedMonthlyRevenue: 516667, dso: 30, paymentStatus: "Good", revenue2023: 5500000, revenue2024: 5900000, revenue2025: 3100000, palletContracted: 3200, palletOccupied: 3000, palletPotential: 4000, ratePerPallet: 41, contactName: "Sarah Nestlé", contactEmail: "sarah@nestle.com", contactPhone: "+966-12-555-0005" },
+    { id: "c6", code: "D365-006", name: "Unilever Arabia", group: "Unilever", status: "Active", city: "Dammam", region: "East", industry: "FMCG", accountOwner: "Albert", serviceType: "WH", grade: "C", facility: "DMM Nahda", contractExpiry: "2025-06-30", contractValue2025: 1800000, expectedMonthlyRevenue: 150000, dso: 55, paymentStatus: "Acceptable", revenue2023: 1900000, revenue2024: 1850000, revenue2025: 900000, palletContracted: 900, palletOccupied: 700, palletPotential: 1200, ratePerPallet: 36, contactName: "Lina Unilever", contactEmail: "lina@unilever.com", contactPhone: "+966-13-555-0006" },
+    { id: "c7", code: "D365-007", name: "Aramco Services", group: "Aramco", status: "Active", city: "Dhahran", region: "East", industry: "Energy", accountOwner: "Ra'ed", serviceType: "WH & TP", grade: "A", facility: "DMM Nahda", contractExpiry: "2027-12-31", contractValue2025: 12000000, expectedMonthlyRevenue: 1000000, dso: 25, paymentStatus: "Good", revenue2023: 10500000, revenue2024: 11200000, revenue2025: 6000000, palletContracted: 5500, palletOccupied: 5200, palletPotential: 7000, ratePerPallet: 45, contactName: "Hassan Aramco", contactEmail: "hassan@aramco.com", contactPhone: "+966-13-555-0007" },
+    { id: "c8", code: "D365-008", name: "Siemens KSA", group: "Siemens", status: "Active", city: "Riyadh", region: "Central", industry: "Manufacturing/Industrial", accountOwner: "Hano", serviceType: "WH", grade: "C", facility: "RUH Sulai", contractExpiry: "2025-12-31", contractValue2025: 1500000, expectedMonthlyRevenue: 125000, dso: 48, paymentStatus: "Acceptable", revenue2023: 1400000, revenue2024: 1450000, revenue2025: 750000, palletContracted: 600, palletOccupied: 480, palletPotential: 800, ratePerPallet: 37, contactName: "Klaus Siemens", contactEmail: "klaus@siemens.com", contactPhone: "+966-11-555-0008" },
+    { id: "c9", code: "D365-009", name: "Al-Rajhi Steel", group: "Al-Rajhi", status: "Active", city: "Jubail", region: "East", industry: "Manufacturing/Industrial", accountOwner: "Albert", serviceType: "WH", grade: "D", facility: "Jubail 1", contractExpiry: "2025-04-30", contractValue2025: 800000, expectedMonthlyRevenue: 66667, dso: 68, paymentStatus: "Bad", revenue2023: 900000, revenue2024: 850000, revenue2025: 400000, palletContracted: 400, palletOccupied: 280, palletPotential: 500, ratePerPallet: 34, contactName: "Majid Al-Rajhi", contactEmail: "majid@alrajhisteel.com", contactPhone: "+966-13-555-0009" },
+    { id: "c10", code: "D365-010", name: "Bayer Middle East", group: "Bayer", status: "Active", city: "Jeddah", region: "West", industry: "Healthcare", accountOwner: "Hano", serviceType: "WH & TP", grade: "B", facility: "JED Modon 3", contractExpiry: "2026-09-30", contractValue2025: 4100000, expectedMonthlyRevenue: 341667, dso: 32, paymentStatus: "Good", revenue2023: 3800000, revenue2024: 4000000, revenue2025: 2050000, palletContracted: 2000, palletOccupied: 1850, palletPotential: 2500, ratePerPallet: 43, contactName: "Anna Bayer", contactEmail: "anna@bayer.com", contactPhone: "+966-12-555-0010" },
+    { id: "c11", code: "D365-011", name: "Tasnee", group: "Tasnee", status: "Active", city: "Jubail", region: "East", industry: "Petrochemical", accountOwner: "Ra'ed", serviceType: "WH", grade: "B", facility: "Jubail 1", contractExpiry: "2026-08-31", contractValue2025: 2900000, expectedMonthlyRevenue: 241667, dso: 38, paymentStatus: "Good", revenue2023: 2600000, revenue2024: 2800000, revenue2025: 1450000, palletContracted: 1400, palletOccupied: 1250, palletPotential: 1800, ratePerPallet: 39, contactName: "Nasser Tasnee", contactEmail: "nasser@tasnee.com", contactPhone: "+966-13-555-0011" },
+    { id: "c12", code: "D365-012", name: "Panda Retail", group: "Savola", status: "Terminated", city: "Jeddah", region: "West", industry: "FMCG/Retail", accountOwner: "Hano", serviceType: "WH & TP", grade: "F", facility: "JED Modon 3", contractExpiry: "2024-12-31", contractValue2025: 0, expectedMonthlyRevenue: 0, dso: 90, paymentStatus: "Bad", revenue2023: 2200000, revenue2024: 1100000, revenue2025: 0, palletContracted: 0, palletOccupied: 0, palletPotential: 0, ratePerPallet: 0, contactName: "Yusuf Panda", contactEmail: "yusuf@panda.com", contactPhone: "+966-12-555-0012" },
+];
+exports.workspaces = [
+    { id: "w1", customerId: "c2", customerName: "Ma'aden", title: "Ma'aden Jubail Expansion 2500PP", stage: "quoting", crmDealId: "ZH-4521", crmStage: "qualified", createdAt: "2025-12-15", updatedAt: "2026-02-10", owner: "Ra'ed", region: "East", estimatedValue: 3400000, palletVolume: 2500, gpPercent: 19.7, ragStatus: "amber", daysInStage: 12, approvalState: "not_required", notes: "Client requesting expanded capacity in Jubail. P&L under review." },
+    { id: "w2", customerId: "c4", customerName: "Sadara Chemical", title: "Sadara Contract Renewal 2025", stage: "negotiation", crmDealId: "ZH-4498", crmStage: "contract_negotiation", createdAt: "2025-11-01", updatedAt: "2026-02-14", owner: "Albert", region: "East", estimatedValue: 2800000, palletVolume: 1200, gpPercent: 24.5, ragStatus: "green", daysInStage: 5, approvalState: "fully_approved", notes: "Renewal negotiation in progress. Client wants 3-year term." },
+    { id: "w3", customerId: "c6", customerName: "Unilever Arabia", title: "Unilever Dammam New SOW", stage: "proposal_active", crmDealId: "ZH-4555", crmStage: "proposal_sent", createdAt: "2026-01-10", updatedAt: "2026-02-12", owner: "Albert", region: "East", estimatedValue: 1800000, palletVolume: 900, gpPercent: 15.2, ragStatus: "amber", daysInStage: 8, approvalState: "pending", notes: "Proposal sent. Awaiting client feedback. GP% below target." },
+    { id: "w4", customerId: "c9", customerName: "Al-Rajhi Steel", title: "Al-Rajhi Emergency Storage", stage: "quoting", crmDealId: "ZH-4580", crmStage: "qualified", createdAt: "2026-02-01", updatedAt: "2026-02-15", owner: "Albert", region: "East", estimatedValue: 1200000, palletVolume: 400, gpPercent: 8.5, ragStatus: "red", daysInStage: 15, approvalState: "not_required", notes: "Low margin deal. Client has payment issues. Needs CEO review." },
+    { id: "w5", customerId: "c3", customerName: "Almarai", title: "Almarai Riyadh Phase 2", stage: "solution_design", crmDealId: "ZH-4590", crmStage: "qualified", createdAt: "2026-02-05", updatedAt: "2026-02-16", owner: "Hano", region: "Central", estimatedValue: 8500000, palletVolume: 4000, gpPercent: 32.1, ragStatus: "green", daysInStage: 3, approvalState: "not_required", notes: "Major expansion opportunity. High margin, strategic account." },
+    { id: "w6", customerId: "c7", customerName: "Aramco Services", title: "Aramco Dhahran VAS Expansion", stage: "commercial_approved", crmDealId: "ZH-4410", crmStage: "shortlisted", createdAt: "2025-10-15", updatedAt: "2026-02-08", owner: "Ra'ed", region: "East", estimatedValue: 12000000, palletVolume: 5500, gpPercent: 28.3, ragStatus: "green", daysInStage: 2, approvalState: "fully_approved", notes: "Approved. Moving to SLA drafting." },
+    { id: "w7", customerId: "c5", customerName: "Nestlé KSA", title: "Nestlé Jeddah Cold Chain", stage: "sla_drafting", crmDealId: "ZH-4450", crmStage: "shortlisted", createdAt: "2025-09-20", updatedAt: "2026-02-11", owner: "Hano", region: "West", estimatedValue: 6200000, palletVolume: 3200, gpPercent: 26.8, ragStatus: "green", daysInStage: 6, approvalState: "fully_approved", notes: "SLA being drafted. Cold chain requirements complex." },
+    { id: "w8", customerId: "c10", customerName: "Bayer Middle East", title: "Bayer Pharma Logistics", stage: "contract_sent", crmDealId: "ZH-4380", crmStage: "contract_negotiation", createdAt: "2025-08-10", updatedAt: "2026-02-09", owner: "Hano", region: "West", estimatedValue: 4100000, palletVolume: 2000, gpPercent: 31.2, ragStatus: "green", daysInStage: 7, approvalState: "fully_approved", notes: "Contract sent to client. Awaiting signature." },
+    // ─── TENDER WORKSPACES (type: "tender") ─────────────────────
+    { id: "wt-001", customerId: "c2", customerName: "Ma'aden", title: "Ma'aden Jubail Expansion — Logistics RFP", stage: "qualified", createdAt: "2026-01-15", updatedAt: "2026-02-14", owner: "Ra'ed", region: "East", estimatedValue: 3400000, palletVolume: 2500, gpPercent: 22, ragStatus: "amber", daysInStage: 8, approvalState: "not_required", notes: "Linked to workspace w1. Technical draft in progress.", type: "tender", tenderStage: "in_preparation", linkedTenderId: "tn-001", submissionDeadline: "2026-03-20", probabilityPercent: 60 },
+    { id: "wt-002", customerId: "c1", customerName: "SABIC", title: "SABIC National Warehousing Services Tender", stage: "qualified", createdAt: "2026-02-01", updatedAt: "2026-02-15", owner: "Ra'ed", region: "East", estimatedValue: 15000000, palletVolume: 5000, gpPercent: 25, ragStatus: "green", daysInStage: 14, approvalState: "not_required", notes: "Large strategic tender. Committee formation pending.", type: "tender", tenderStage: "draft", linkedTenderId: "tn-002", submissionDeadline: "2026-04-01", probabilityPercent: 45 },
+    { id: "wt-003", customerId: "c7", customerName: "Aramco Services", title: "Aramco Dhahran VAS Expansion Tender", stage: "qualified", createdAt: "2025-12-20", updatedAt: "2026-02-10", owner: "Ra'ed", region: "East", estimatedValue: 12000000, palletVolume: 5500, gpPercent: 28, ragStatus: "green", daysInStage: 5, approvalState: "not_required", notes: "Submitted on time. Awaiting evaluation committee review.", type: "tender", tenderStage: "submitted", linkedTenderId: "tn-003", submissionDeadline: "2026-03-10", probabilityPercent: 75 },
+    { id: "wt-004", customerId: "c3", customerName: "Almarai", title: "Almarai Riyadh Phase 2 — Cold Chain Tender", stage: "qualified", createdAt: "2026-01-20", updatedAt: "2026-02-16", owner: "Hano", region: "Central", estimatedValue: 8500000, palletVolume: 4000, gpPercent: 30, ragStatus: "green", daysInStage: 5, approvalState: "not_required", notes: "High-value strategic account. Technical analysis complete.", type: "tender", tenderStage: "in_preparation", linkedTenderId: "tn-004", submissionDeadline: "2026-04-15", probabilityPercent: 70 },
+    { id: "wt-005", customerId: "c5", customerName: "Nestlé KSA", title: "Nestlé Jeddah Cold Chain Partnership", stage: "qualified", createdAt: "2025-11-15", updatedAt: "2026-02-12", owner: "Hano", region: "West", estimatedValue: 6200000, palletVolume: 3200, gpPercent: 26, ragStatus: "amber", daysInStage: 12, approvalState: "not_required", notes: "Evaluation ongoing. Shortlisted with 2 competitors.", type: "tender", tenderStage: "under_evaluation", linkedTenderId: "tn-005", submissionDeadline: "2026-05-01", probabilityPercent: 55 },
+    { id: "wt-006", customerId: "c4", customerName: "Sadara Chemical", title: "Sadara Contract Renewal Tender 2025", stage: "qualified", createdAt: "2025-10-15", updatedAt: "2026-02-14", owner: "Albert", region: "East", estimatedValue: 2800000, palletVolume: 1200, gpPercent: 24, ragStatus: "green", daysInStage: 3, approvalState: "not_required", notes: "Renewal tender. Strong relationship. High probability.", type: "tender", tenderStage: "under_evaluation", linkedTenderId: "tn-006", submissionDeadline: "2026-02-28", probabilityPercent: 85 },
+    { id: "wt-007", customerId: "c3", customerName: "Almarai", title: "Almarai Dammam Distribution Center", stage: "qualified", createdAt: "2025-08-01", updatedAt: "2025-12-20", owner: "Hano", region: "East", estimatedValue: 4500000, palletVolume: 2000, gpPercent: 27, ragStatus: "green", daysInStage: 58, approvalState: "not_required", notes: "Won. Contract signed. Handover initiated.", type: "tender", tenderStage: "won", linkedTenderId: "tn-007", submissionDeadline: "2025-12-15", probabilityPercent: 100 },
+    { id: "wt-008", customerId: "c6", customerName: "Unilever Arabia", title: "Unilever Riyadh Expansion RFP", stage: "qualified", createdAt: "2025-07-15", updatedAt: "2025-12-05", owner: "Albert", region: "Central", estimatedValue: 3200000, palletVolume: 900, gpPercent: 20, ragStatus: "red", daysInStage: 73, approvalState: "not_required", notes: "Lost to competitor. Price was 12% higher.", type: "tender", tenderStage: "lost", linkedTenderId: "tn-008", submissionDeadline: "2025-11-30", probabilityPercent: 0, wonLostReason: "Lost to competitor. Price was 12% higher." },
+];
+exports.quotes = [
+    { id: "q1", workspaceId: "w1", version: 1, state: "draft", createdAt: "2026-02-10", storageRate: 40, inboundRate: 7, outboundRate: 7, palletVolume: 2500, monthlyRevenue: 23360, annualRevenue: 280320, totalCost: 225071, gpPercent: 19.7, gpAmount: 55249 },
+    { id: "q2", workspaceId: "w2", version: 2, state: "approved", createdAt: "2026-01-20", storageRate: 39, inboundRate: 7, outboundRate: 7, palletVolume: 1200, monthlyRevenue: 18500, annualRevenue: 222000, totalCost: 167610, gpPercent: 24.5, gpAmount: 54390 },
+    { id: "q3", workspaceId: "w3", version: 1, state: "submitted", createdAt: "2026-02-05", storageRate: 36, inboundRate: 6, outboundRate: 6, palletVolume: 900, monthlyRevenue: 12800, annualRevenue: 153600, totalCost: 130253, gpPercent: 15.2, gpAmount: 23347 },
+];
+exports.proposals = [
+    { id: "p1", workspaceId: "w3", version: 1, state: "sent", title: "Unilever Arabia — Warehousing Solution", createdAt: "2026-02-08", sections: ["Executive Summary", "Scope of Work", "Pricing", "SLA Framework", "Terms & Conditions"] },
+    { id: "p2", workspaceId: "w6", version: 3, state: "commercial_approved", title: "Aramco Services — VAS Expansion Proposal", createdAt: "2026-01-15", sections: ["Executive Summary", "Solution Design", "VAS Catalog", "Pricing", "Implementation Timeline", "SLA Framework"] },
+];
+exports.approvalRecords = [
+    { id: "a1", entityType: "quote", entityId: "q2", workspaceId: "w2", approverRole: "regional_sales_head", approverName: "Ra'ed Al-Harbi", decision: "approved", reason: "Margin acceptable for renewal", timestamp: "2026-01-22T10:30:00Z", isOverride: false },
+    { id: "a2", entityType: "quote", entityId: "q2", workspaceId: "w2", approverRole: "regional_ops_head", approverName: "Yazan Khalil", decision: "approved", reason: "Capacity confirmed — space available", timestamp: "2026-01-22T14:15:00Z", isOverride: false },
+    { id: "a3", entityType: "quote", entityId: "q3", workspaceId: "w3", approverRole: "regional_sales_head", approverName: "Ra'ed Al-Harbi", decision: "pending", reason: "", timestamp: "2026-02-06T09:00:00Z", isOverride: false },
+    { id: "a4", entityType: "proposal", entityId: "p2", workspaceId: "w6", approverRole: "director", approverName: "Mohammed Al-Qahtani", decision: "approved", reason: "Strategic account. Full support.", timestamp: "2026-01-18T16:45:00Z", isOverride: false },
+];
+exports.signals = [
+    { id: "s1", workspaceId: "w1", type: "margin_warning", severity: "amber", message: "GP% at 19.7% — below 22% threshold. Director approval will be required.", createdAt: "2026-02-10" },
+    { id: "s2", workspaceId: "w4", type: "margin_critical", severity: "red", message: "GP% at 8.5% — below 10%. CEO/CFO approval required. Client has payment issues (DSO: 68 days).", createdAt: "2026-02-15" },
+    { id: "s3", workspaceId: "w3", type: "stage_aging", severity: "amber", message: "Workspace in 'Proposal Active' for 8 days. Follow up recommended.", createdAt: "2026-02-12" },
+    { id: "s4", workspaceId: "w4", type: "payment_risk", severity: "red", message: "Customer Al-Rajhi Steel has DSO of 68 days and 'Bad' payment status.", createdAt: "2026-02-15" },
+    { id: "s5", workspaceId: "w5", type: "high_value", severity: "green", message: "High-value opportunity: SAR 8.5M estimated. GP% 32.1% — excellent margin.", createdAt: "2026-02-05" },
+    { id: "s6", workspaceId: "w8", type: "contract_pending", severity: "green", message: "Contract sent 7 days ago. Normal timeline for pharma clients.", createdAt: "2026-02-09" },
+];
+exports.policyGates = [
+    { id: "pg1", name: "Commercial Approval Gate", description: "Requires approval based on GP% and pallet volume thresholds", mode: "enforce", overridable: true },
+    { id: "pg2", name: "Discount/Margin Gate", description: "Warns when pricing falls below minimum margin thresholds", mode: "warn", overridable: true },
+    { id: "pg3", name: "Proposal Indicative Language Gate", description: "Flags non-committal or indicative language in proposals", mode: "warn", overridable: true },
+    { id: "pg4", name: "SLA Creation Gate", description: "Requires commercial approval before SLA can be drafted", mode: "enforce", overridable: true },
+    { id: "pg5", name: "Contract Readiness Gate", description: "Checks all required documents exist before contract stage", mode: "enforce", overridable: false },
+    { id: "pg6", name: "Tender Committee Gate", description: "Requires tender committee review before submission", mode: "enforce", overridable: false },
+    { id: "pg7", name: "Operational Feasibility Gate", description: "Requires ops confirmation of space and capacity", mode: "enforce", overridable: true },
+    { id: "pg8", name: "CRM Stage Conflict Gate", description: "Flags when CRM stage and workspace stage disagree", mode: "warn", overridable: true },
+];
+exports.crmSyncEvents = [
+    { id: "crm1", direction: "inbound", entity: "Deal", zohoId: "ZH-4580", status: "success", timestamp: "2026-02-15T08:30:00Z", details: "New deal synced → Workspace w4 created" },
+    { id: "crm2", direction: "outbound", entity: "Deal Stage", zohoId: "ZH-4555", status: "success", timestamp: "2026-02-12T14:00:00Z", details: "Stage updated to 'Proposal Sent'" },
+    { id: "crm3", direction: "inbound", entity: "Deal", zohoId: "ZH-4590", status: "success", timestamp: "2026-02-05T09:15:00Z", details: "New deal synced → Workspace w5 created" },
+    { id: "crm4", direction: "outbound", entity: "Attachment", zohoId: "ZH-4555", status: "pending", timestamp: "2026-02-12T14:05:00Z", details: "Proposal PDF queued for upload to CRM" },
+];
+exports.auditLog = [
+    { id: "al1", entityType: "workspace", entityId: "w1", action: "created", userId: "u2", userName: "Ra'ed Al-Harbi", timestamp: "2025-12-15T10:00:00Z", details: "Workspace created from CRM deal ZH-4521" },
+    { id: "al2", entityType: "quote", entityId: "q1", action: "created", userId: "u2", userName: "Ra'ed Al-Harbi", timestamp: "2026-02-10T11:30:00Z", details: "Quote v1 created for Ma'aden Jubail Expansion" },
+    { id: "al3", entityType: "workspace", entityId: "w2", action: "stage_changed", userId: "u3", userName: "Albert Fernandez", timestamp: "2026-02-14T09:00:00Z", details: "Stage changed from 'Proposal Active' to 'Negotiation'" },
+    { id: "al4", entityType: "quote", entityId: "q2", action: "approved", userId: "u2", userName: "Ra'ed Al-Harbi", timestamp: "2026-01-22T10:30:00Z", details: "Quote v2 approved by Regional Sales Head" },
+    { id: "al5", entityType: "proposal", entityId: "p2", action: "approved", userId: "u6", userName: "Mohammed Al-Qahtani", timestamp: "2026-01-18T16:45:00Z", details: "Proposal v3 approved by Director — 'Strategic account. Full support.'" },
+];
+// ============================================================
+// BUSINESS LOGIC
+// ============================================================
+function getApprovalRequirements(gpPercent, palletVolume) {
+    var reqs = [];
+    // Always needs salesman + regional sales head
+    reqs.push({ role: "salesman", type: "approval" });
+    reqs.push({ role: "regional_sales_head", type: "approval" });
+    // Volume check
+    if (palletVolume > 300) {
+        // Directors needed for volume > 300
+        // (already covered by GP% rules below for most cases)
+    }
+    // GP% based
+    if (gpPercent > 25) {
+        reqs.push({ role: "regional_ops_head", type: "feasibility" });
+    }
+    else if (gpPercent > 22) {
+        reqs.push({ role: "regional_ops_head", type: "approval" });
+    }
+    else if (gpPercent >= 10) {
+        reqs.push({ role: "regional_ops_head", type: "approval" });
+        reqs.push({ role: "director", type: "approval" });
+    }
+    else {
+        reqs.push({ role: "regional_ops_head", type: "approval" });
+        reqs.push({ role: "director", type: "approval" });
+        reqs.push({ role: "ceo_cfo", type: "approval" });
+    }
+    return reqs;
+}
+function calculateECR(dso, contractValue, gpPercent, growthScore, acquisitionScore) {
+    // DSO (30%)
+    var dsoScore = 0;
+    if (dso <= 30)
+        dsoScore = 1.0;
+    else if (dso <= 45)
+        dsoScore = 0.5;
+    else
+        dsoScore = 0.0;
+    // Contract Value (30%)
+    var cvScore = 0;
+    if (contractValue > 2000000)
+        cvScore = 1.0;
+    else if (contractValue > 1000000)
+        cvScore = 0.7;
+    else if (contractValue > 500000)
+        cvScore = 0.3;
+    else if (contractValue > 100000)
+        cvScore = 0.2;
+    else
+        cvScore = 0.0;
+    // GP% (20%)
+    var gpScore = 0;
+    if (gpPercent > 20)
+        gpScore = 1.0;
+    else if (gpPercent >= 10)
+        gpScore = 0.5;
+    else
+        gpScore = 0.2;
+    var totalScore = (dsoScore * 0.30) + (cvScore * 0.30) + (gpScore * 0.20) + (growthScore * 0.10) + (acquisitionScore * 0.10);
+    var percentage = totalScore * 100;
+    var grade;
+    if (percentage >= 90)
+        grade = "A";
+    else if (percentage >= 80)
+        grade = "B";
+    else if (percentage >= 70)
+        grade = "C";
+    else if (percentage >= 60)
+        grade = "D";
+    else
+        grade = "F";
+    return { score: percentage, grade: grade };
+}
+function calculatePnL(storageRate, pallets, inboundRate, inboundVol, outboundRate, outboundVol, vasRevenue, totalCost) {
+    var storageRevenue = storageRate * pallets * 30;
+    var inboundRevenue = inboundRate * inboundVol;
+    var outboundRevenue = outboundRate * outboundVol;
+    var monthlyRevenue = storageRevenue + inboundRevenue + outboundRevenue + vasRevenue;
+    var annualRevenue = monthlyRevenue * 12;
+    var grossProfit = annualRevenue - totalCost;
+    var gpPercent = annualRevenue > 0 ? (grossProfit / annualRevenue) * 100 : 0;
+    return { monthlyRevenue: monthlyRevenue, annualRevenue: annualRevenue, gpPercent: gpPercent, grossProfit: grossProfit };
+}
+exports.WORKSPACE_STAGES = [
+    { value: "qualified", label: "Qualified", color: "bg-blue-100 text-blue-800" },
+    { value: "solution_design", label: "Solution Design", color: "bg-indigo-100 text-indigo-800" },
+    { value: "quoting", label: "Quoting", color: "bg-violet-100 text-violet-800" },
+    { value: "proposal_active", label: "Proposal Active", color: "bg-purple-100 text-purple-800" },
+    { value: "negotiation", label: "Negotiation", color: "bg-amber-100 text-amber-800" },
+    { value: "commercial_approved", label: "Commercial Approved", color: "bg-emerald-100 text-emerald-800" },
+    { value: "sla_drafting", label: "SLA Drafting", color: "bg-teal-100 text-teal-800" },
+    { value: "contract_ready", label: "Contract Ready", color: "bg-cyan-100 text-cyan-800" },
+    { value: "contract_sent", label: "Contract Sent", color: "bg-sky-100 text-sky-800" },
+    { value: "contract_signed", label: "Contract Signed", color: "bg-green-100 text-green-800" },
+    { value: "handover", label: "Handover", color: "bg-lime-100 text-lime-800" },
+    { value: "go_live", label: "Go-Live", color: "bg-green-200 text-green-900" },
+];
+// Tender workspace stages
+exports.TENDER_WORKSPACE_STAGES = [
+    { value: "draft", label: "Draft", color: "bg-slate-100 text-slate-700" },
+    { value: "in_preparation", label: "In Preparation", color: "bg-blue-100 text-blue-700" },
+    { value: "submitted", label: "Submitted", color: "bg-violet-100 text-violet-700" },
+    { value: "under_evaluation", label: "Under Evaluation", color: "bg-amber-100 text-amber-700" },
+    { value: "won", label: "Won", color: "bg-emerald-100 text-emerald-700" },
+    { value: "lost", label: "Lost", color: "bg-red-100 text-red-700" },
+    { value: "withdrawn", label: "Withdrawn", color: "bg-gray-100 text-gray-500" },
+];
+// Renewal workspace stages (reuses commercial stages but starts from negotiation)
+exports.RENEWAL_WORKSPACE_STAGES = exports.WORKSPACE_STAGES;
+// ═══════════════════════════════════════════════════════════════
+// COMMERCIAL MILESTONES — Decision-domain lifecycle strip (9 stages)
+// Matches the Commercial Pipeline lifecycle tracker exactly.
+// ═══════════════════════════════════════════════════════════════
+exports.COMMERCIAL_MILESTONES = [
+    { value: "qualified", label: "Qualified", color: "bg-blue-100 text-blue-800" },
+    { value: "solution_design", label: "Solution Design", color: "bg-indigo-100 text-indigo-800" },
+    { value: "quoting", label: "Quoting", color: "bg-violet-100 text-violet-800" },
+    { value: "proposal_active", label: "Proposal Active", color: "bg-purple-100 text-purple-800" },
+    { value: "negotiation", label: "Negotiation", color: "bg-amber-100 text-amber-800" },
+    { value: "commercial_approved", label: "Commercial Approved", color: "bg-emerald-100 text-emerald-800" },
+    { value: "contract_signed", label: "Contract Signed", color: "bg-green-100 text-green-800" },
+    { value: "go_live", label: "Go-Live", color: "bg-green-200 text-green-900" },
+    { value: "closed_lost", label: "Closed Lost", color: "bg-red-100 text-red-700" },
+];
+// Map WorkspaceStage values → COMMERCIAL_MILESTONES for display
+function mapToCommercialMilestone(stage) {
+    var map = {
+        "qualified": "qualified",
+        "solution_design": "solution_design",
+        "quoting": "quoting",
+        "proposal_active": "proposal_active",
+        "negotiation": "negotiation",
+        "commercial_approved": "commercial_approved",
+        // Old intermediate stages collapse into nearest milestone
+        "sla_drafting": "commercial_approved",
+        "contract_ready": "contract_signed",
+        "contract_sent": "contract_signed",
+        "contract_signed": "contract_signed",
+        "handover": "go_live",
+        "go_live": "go_live",
+        "closed_lost": "closed_lost",
+    };
+    return map[stage] || stage;
+}
+// ═══════════════════════════════════════════════════════════════
+// COMMERCIAL KANBAN — Internal working board columns
+// Separate from milestones: represents current work state
+// ═══════════════════════════════════════════════════════════════
+exports.COMMERCIAL_KANBAN_COLUMNS = [
+    { value: "not_ready", label: "Not Ready" },
+    { value: "solution_design_needed", label: "Solution Design Needed" },
+    { value: "determine_pnl", label: "Determine P&L" },
+    { value: "quote_draft_review", label: "Quote Draft / Review" },
+    { value: "proposal_drafting", label: "Proposal Drafting" },
+    { value: "ready_for_crm", label: "Ready for CRM" },
+    { value: "negotiation_active", label: "Negotiation Active" },
+    { value: "commercial_approval", label: "Commercial Approval Needed" },
+    { value: "contracting_sla", label: "Contracting / SLA Drafting" },
+    { value: "handover_golive_prep", label: "Handover / Go-Live Prep" },
+];
+exports.QUOTE_STATES = [
+    { value: "draft", label: "Draft", color: "bg-slate-100 text-slate-700" },
+    { value: "submitted_for_approval", label: "Submitted for Approval", color: "bg-blue-100 text-blue-700" },
+    { value: "approved", label: "Approved", color: "bg-emerald-100 text-emerald-700" },
+    { value: "rejected", label: "Rejected", color: "bg-red-100 text-red-700" },
+    { value: "superseded", label: "Superseded", color: "bg-gray-100 text-gray-500" },
+];
+exports.PROPOSAL_STATES = [
+    { value: "draft", label: "Draft", color: "bg-slate-100 text-slate-700" },
+    { value: "ready_for_crm", label: "Ready for CRM", color: "bg-cyan-100 text-cyan-700" },
+    { value: "sent", label: "Sent", color: "bg-blue-100 text-blue-700" },
+    { value: "negotiation_active", label: "Negotiation Active", color: "bg-amber-100 text-amber-700" },
+    { value: "commercial_approval_pending", label: "Approval Pending", color: "bg-orange-100 text-orange-700" },
+    { value: "commercial_approved", label: "Commercial Approved", color: "bg-emerald-100 text-emerald-700" },
+    { value: "rejected", label: "Rejected", color: "bg-red-100 text-red-700" },
+    { value: "superseded", label: "Superseded", color: "bg-gray-100 text-gray-500" },
+    { value: "closed", label: "Closed", color: "bg-gray-100 text-gray-500" },
+];
+exports.SLA_STATES = [
+    { value: "not_started", label: "Not Started", color: "bg-gray-50 text-gray-400" },
+    { value: "draft", label: "Draft", color: "bg-slate-100 text-slate-700" },
+    { value: "operational_review", label: "Operational Review", color: "bg-blue-100 text-blue-700" },
+    { value: "submitted_for_approval", label: "Submitted for Approval", color: "bg-amber-100 text-amber-700" },
+    { value: "approved", label: "Approved", color: "bg-emerald-100 text-emerald-700" },
+    { value: "rejected", label: "Rejected", color: "bg-red-100 text-red-700" },
+    { value: "superseded", label: "Superseded", color: "bg-gray-100 text-gray-500" },
+];
+exports.HANDOVER_STATES = [
+    { value: "not_started", label: "Not Started", color: "bg-gray-50 text-gray-400" },
+    { value: "initiated", label: "Initiated", color: "bg-blue-100 text-blue-700" },
+    { value: "legal_complete", label: "Legal Complete", color: "bg-indigo-100 text-indigo-700" },
+    { value: "finance_setup_complete", label: "Finance Setup", color: "bg-violet-100 text-violet-700" },
+    { value: "operations_briefed", label: "Ops Briefed", color: "bg-purple-100 text-purple-700" },
+    { value: "client_portal_setup", label: "Portal Setup", color: "bg-cyan-100 text-cyan-700" },
+    { value: "training_complete", label: "Training Complete", color: "bg-teal-100 text-teal-700" },
+    { value: "go_live_scheduled", label: "Go-Live Scheduled", color: "bg-lime-100 text-lime-700" },
+    { value: "completed", label: "Completed", color: "bg-emerald-100 text-emerald-700" },
+];
+// Helper: derive sub-lifecycle display state from existing workspace data
+function deriveSubLifecycleStates(ws, quotes, proposals, slas) {
+    var latestQuote = quotes.length > 0 ? quotes[quotes.length - 1] : null;
+    var latestProposal = proposals.length > 0 ? proposals[proposals.length - 1] : null;
+    var latestSla = slas.length > 0 ? slas[slas.length - 1] : null;
+    // Derive quote sub-state
+    var quoteState = null;
+    if (latestQuote) {
+        var qState = latestQuote.state || latestQuote.status;
+        if (qState === "draft")
+            quoteState = "draft";
+        else if (qState === "submitted")
+            quoteState = "submitted_for_approval";
+        else if (qState === "approved")
+            quoteState = "approved";
+        else if (qState === "rejected")
+            quoteState = "rejected";
+        else if (qState === "superseded")
+            quoteState = "superseded";
+        else
+            quoteState = "draft";
+    }
+    // Derive proposal sub-state
+    var proposalState = null;
+    if (latestProposal) {
+        var pState = latestProposal.state || latestProposal.status;
+        if (pState === "draft")
+            proposalState = "draft";
+        else if (pState === "sent")
+            proposalState = "sent";
+        else if (pState === "commercial_approved")
+            proposalState = "commercial_approved";
+        else if (pState === "rejected")
+            proposalState = "rejected";
+        else
+            proposalState = "draft";
+    }
+    // Derive SLA sub-state from workspace stage
+    var slaState = "not_started";
+    if (latestSla) {
+        var sState = latestSla.status || latestSla.state;
+        if (sState === "draft")
+            slaState = "draft";
+        else if (sState === "under_review")
+            slaState = "operational_review";
+        else if (sState === "active" || sState === "approved")
+            slaState = "approved";
+        else
+            slaState = "draft";
+    }
+    else {
+        // Infer from workspace stage
+        var milestoneIdx = exports.COMMERCIAL_MILESTONES.findIndex(function (m) { return m.value === mapToCommercialMilestone(ws.stage); });
+        var contractingIdx = exports.COMMERCIAL_MILESTONES.findIndex(function (m) { return m.value === "contracting"; });
+        if (milestoneIdx >= contractingIdx && contractingIdx >= 0)
+            slaState = "draft";
+    }
+    // Derive handover sub-state
+    var handoverState = "not_started";
+    var ms = mapToCommercialMilestone(ws.stage);
+    if (ms === "handover_active")
+        handoverState = "initiated";
+    else if (ms === "go_live")
+        handoverState = "completed";
+    return { quoteState: quoteState, proposalState: proposalState, slaState: slaState, handoverState: handoverState };
+}
+// Dynamic stage engine — returns correct stages for workspace type
+function getStagesForType(type) {
+    switch (type) {
+        case "tender": return exports.TENDER_WORKSPACE_STAGES;
+        case "renewal": return exports.RENEWAL_WORKSPACE_STAGES;
+        default: return exports.WORKSPACE_STAGES;
+    }
+}
+// Commercial milestone-aware stage resolution
+function getCommercialMilestones() {
+    return exports.COMMERCIAL_MILESTONES;
+}
+function getWorkspaceType(ws) {
+    var _a;
+    return (_a = ws.type) !== null && _a !== void 0 ? _a : "commercial";
+}
+function getEffectiveStage(ws) {
+    if (ws.type === "tender" && ws.tenderStage)
+        return ws.tenderStage;
+    return ws.stage;
+}
+function getEffectiveStageLabel(ws) {
+    var _a, _b;
+    var stage = getEffectiveStage(ws);
+    var stages = getStagesForType(getWorkspaceType(ws));
+    return (_b = (_a = stages.find(function (s) { return s.value === stage; })) === null || _a === void 0 ? void 0 : _a.label) !== null && _b !== void 0 ? _b : stage;
+}
+function getEffectiveStageColor(ws) {
+    var _a, _b;
+    var stage = getEffectiveStage(ws);
+    var stages = getStagesForType(getWorkspaceType(ws));
+    return (_b = (_a = stages.find(function (s) { return s.value === stage; })) === null || _a === void 0 ? void 0 : _a.color) !== null && _b !== void 0 ? _b : "";
+}
+function getWorkspaceTypeLabel(type) {
+    switch (type) {
+        case "tender": return "Tender";
+        case "renewal": return "Renewal";
+        default: return "Commercial";
+    }
+}
+function getWorkspaceTypeBadgeColor(type) {
+    switch (type) {
+        case "tender": return "bg-violet-100 text-violet-700 border-violet-200";
+        case "renewal": return "bg-amber-100 text-amber-700 border-amber-200";
+        default: return "bg-blue-100 text-blue-700 border-blue-200";
+    }
+}
+function getStageLabel(stage) {
+    var _a, _b;
+    return (_b = (_a = exports.WORKSPACE_STAGES.find(function (s) { return s.value === stage; })) === null || _a === void 0 ? void 0 : _a.label) !== null && _b !== void 0 ? _b : stage;
+}
+function getStageColor(stage) {
+    var _a, _b;
+    return (_b = (_a = exports.WORKSPACE_STAGES.find(function (s) { return s.value === stage; })) === null || _a === void 0 ? void 0 : _a.color) !== null && _b !== void 0 ? _b : "";
+}
+function getRoleLabel(role) {
+    var labels = {
+        salesman: "Salesman",
+        regional_sales_head: "Regional Sales Head",
+        regional_ops_head: "Regional Ops Head",
+        director: "Director",
+        ceo_cfo: "CEO / CFO",
+        admin: "Admin",
+    };
+    return labels[role];
+}
+function formatSAR(amount) {
+    return new Intl.NumberFormat("en-SA", { style: "currency", currency: "SAR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
+}
+/** Compact SAR format for KPI cards: SAR 87.5M, SAR 800K, SAR 1,200 */
+function formatSARCompact(amount) {
+    if (Math.abs(amount) >= 1000000000)
+        return "SAR ".concat((amount / 1000000000).toFixed(1), "B");
+    if (Math.abs(amount) >= 1000000)
+        return "SAR ".concat((amount / 1000000).toFixed(1), "M");
+    if (Math.abs(amount) >= 10000)
+        return "SAR ".concat((amount / 1000).toFixed(0), "K");
+    return formatSAR(amount);
+}
+function formatPercent(value) {
+    return "".concat(value.toFixed(1), "%");
+}
+// @deprecated — DEAD CODE: Dashboard.tsx already uses Supabase hooks directly.
+// Kept for reference only. Will be removed in Wave 4 cleanup.
+function getDashboardStats() {
+    var activeWorkspaces = exports.workspaces.filter(function (w) { return w.stage !== "go_live"; });
+    var totalPipelineValue = activeWorkspaces.reduce(function (sum, w) { return sum + w.estimatedValue; }, 0);
+    var avgGP = activeWorkspaces.reduce(function (sum, w) { return sum + w.gpPercent; }, 0) / activeWorkspaces.length;
+    var redSignals = exports.signals.filter(function (s) { return s.severity === "red"; }).length;
+    var amberSignals = exports.signals.filter(function (s) { return s.severity === "amber"; }).length;
+    var pendingApprovals = exports.approvalRecords.filter(function (a) { return a.decision === "pending"; }).length;
+    var activeCustomers = exports.customers.filter(function (c) { return c.status === "Active"; }).length;
+    var totalRevenue2025 = exports.customers.reduce(function (sum, c) { return sum + c.revenue2025; }, 0);
+    var expiringContracts = exports.customers.filter(function (c) {
+        if (!c.contractExpiry)
+            return false;
+        var expiry = new Date(c.contractExpiry);
+        var now = new Date();
+        var diffDays = (expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+        return diffDays > 0 && diffDays <= 90;
+    });
+    var stageDistribution = exports.WORKSPACE_STAGES.map(function (s) { return ({
+        stage: s.label,
+        count: exports.workspaces.filter(function (w) { return w.stage === s.value; }).length,
+        value: exports.workspaces.filter(function (w) { return w.stage === s.value; }).reduce(function (sum, w) { return sum + w.estimatedValue; }, 0),
+    }); }).filter(function (s) { return s.count > 0; });
+    var gradeDistribution = ["A", "B", "C", "D", "F"].map(function (g) { return ({
+        grade: g,
+        count: exports.customers.filter(function (c) { return c.grade === g; }).length,
+        revenue: exports.customers.filter(function (c) { return c.grade === g; }).reduce(function (sum, c) { return sum + c.revenue2025; }, 0),
+    }); });
+    return {
+        activeWorkspaces: activeWorkspaces.length,
+        totalPipelineValue: totalPipelineValue,
+        avgGP: avgGP,
+        redSignals: redSignals,
+        amberSignals: amberSignals,
+        pendingApprovals: pendingApprovals,
+        activeCustomers: activeCustomers,
+        totalRevenue2025: totalRevenue2025,
+        expiringContracts: expiringContracts,
+        stageDistribution: stageDistribution,
+        gradeDistribution: gradeDistribution,
+    };
+}

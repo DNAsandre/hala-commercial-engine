@@ -54,6 +54,7 @@ import {
   getTenderMetrics,
   type WorkspaceSuggestion,
 } from "@/lib/tender-engine";
+import { useTenderSignalSummary } from "@/hooks/useTenderWorkspaceSignals";
 
 // ─── CONSTANTS ─────────────────────────────────────────────
 
@@ -435,6 +436,21 @@ interface TenderCardProps {
   isDragging: boolean;
 }
 
+function BoardRiskChips({ tenderId, packCount }: { tenderId: string; packCount: number }) {
+  const { signal, status } = useTenderSignalSummary(tenderId);
+  if (status === 'loading') return null;
+  if (!signal) return null;
+  return (
+    <>
+      <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${signal.readinessScore < 50 ? 'border-red-300 text-red-700 bg-red-50' : signal.readinessScore < 80 ? 'border-amber-300 text-amber-700 bg-amber-50' : 'border-emerald-300 text-emerald-700 bg-emerald-50'}`}>{signal.readinessScore}%</span>
+      {signal.gatesWouldBlockCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-red-300 text-red-700 bg-red-50" title="Gates flagged as would block production">G{signal.gatesWouldBlockCount}</span>}
+      {signal.requiredDocumentsAwaitingCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">D{signal.requiredDocumentsAwaitingCount}</span>}
+      {signal.complianceGapCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">C{signal.complianceGapCount}</span>}
+      <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-border">P{packCount}</span>
+    </>
+  );
+}
+
 function TenderCard({ tender, onDragStart, onDragEnd, isDragging }: TenderCardProps) {
   const isRisk = tender.targetGpPercent < GP_THRESHOLD;
   const isCritical = tender.targetGpPercent < 15;
@@ -509,6 +525,11 @@ function TenderCard({ tender, onDragStart, onDragEnd, isDragging }: TenderCardPr
           </div>
         </div>
 
+        {/* TND-010: Compact risk chips */}
+        <div className="mt-1.5 pt-1.5 border-t border-border/30 flex items-center gap-1 flex-wrap" style={{ paddingLeft: isTerminal ? 0 : "1rem" }}>
+          <BoardRiskChips tenderId={tender.id} packCount={1} />
+        </div>
+
         {/* Footer: Owner + Risk Badge */}
         <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-border/50" style={{ paddingLeft: isTerminal ? 0 : "1rem" }}>
           <span className="text-[10px] text-muted-foreground flex items-center gap-1">
@@ -529,7 +550,7 @@ function TenderCard({ tender, onDragStart, onDragEnd, isDragging }: TenderCardPr
                 {isCritical ? "Critical" : "Low GP"}
               </Badge>
             )}
-            <Link href="/tenders">
+            <Link href={`/tenders/${tender.id}`}>
               <span className="text-muted-foreground/40 hover:text-primary transition-colors">
                 <ExternalLink className="w-3 h-3" />
               </span>

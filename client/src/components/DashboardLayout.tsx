@@ -61,6 +61,7 @@ import {
   LayoutList,
   Handshake,
   Sparkles,
+  FileSpreadsheet,
 } from "lucide-react";
 import { getRoleLabel } from "@/lib/store";
 import { useSignals } from "@/hooks/useSupabase";
@@ -132,6 +133,7 @@ const simplifiedNavItems: NavItem[] = [
     children: [
       { path: "/tenders", label: "Tenders", icon: Gavel, group: "core" },
       { path: "/commercial", label: "Commercial", icon: Handshake, group: "core" },
+      { path: "/commercial-os", label: "Commercial OS", icon: FileSpreadsheet, group: "core" },
       { path: "/proposals", label: "Proposals", icon: FileCheck, group: "core" },
       { path: "/slas", label: "SLAs", icon: FileSignature, group: "core" },
       { path: "/renewals", label: "Renewals", icon: RotateCcw, group: "core" },

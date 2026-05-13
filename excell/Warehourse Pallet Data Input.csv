@@ -1,0 +1,32 @@
+"WAREHOUSE SNAPSHOT  —  paste the latest capacity dashboard here. Column A must use REPORT labels (e.g., 'Dammam Port', 'Jubail Total') so Section 4 finds them via VLOOKUP. Empty rows (Subcontractor, etc.) return 0 and are fine. Jubail tip: as soon as you fill Jubail 1 and Jubail 2 individually, Section 4 auto-switches to split mode and ignores the Jubail Total row.",,,,,,,,,,
+Warehouse (Report Label),Region,Total Locations,Total Capacity,Occupied Capacity,Utilization %,Sellable Capacity,Committed Capacity,Blocked Locations,Virtual Locations,Shortfall Capacity
+Definition,,Physical Rac locations,Bin + Manual,Physical + Floor + Manual,,Free to sell Now,Min Commited per customer,,,Unfilled commitment gap
+Dammam Port,Dammam,"28,694","34,755","29,782",85.7%,"4,973","23,400",,,"6,156"
+Dammam 2nd Ind -Tad WH,Dammam,"16,153","18,654","8,607",46.1%,"10,047",,"3,619",,-
+Jubail 1,Jubail,"31,172","35,542","11,836",33.3%,"23,706","13,157",146,144,"10,498"
+Jubail 2,Jubail,"8,152","29,258","10,011",34.2%,"19,247",-,,,0
+Jubail Total,Jubail,"39,324","64,800","21,847",33.7%,"42,953","13,157",146,144,"10,498"
+Jeddah Modon 3A,Jeddah,"36,212","36,840","17,127",46.5%,"19,713",300,"9,038",134,70
+Jeddah Modon 3B,Jeddah,"12,177","14,189","13,503",95.2%,686,"2,600","3,734",,752
+RUH Tayba,Riyadh,,"11,132","8,134",73.1%,"2,998",317,,,77
+Subcontractor,Jeddah (UWC/BDP-Hempel),,,,-,"7,500",,,,
+Contract Logistics,,,,,-,,,,,
+All,,"132,560","180,370","99,000",54.9%,"88,870","39,774","16,537",278,"17,553"
+,,,,,,,,,,
+,,,,,,,,,,
+Subcontractor,Baxter/WH/RUH/2500PP,Baxter,2500,,,,,,,
+Subcontractor,AL Nahdi/WH/RUH/2000PP,Al Nahdi,2500,,,,,,,
+Subcontractor,PSA-BDP (Closed Won),PSA-BDP,2500,,,,,,,
+,,,7500,,,,,,,
+,,,,,,,,,,
+,,,,,,,,,,
+???  JUBAIL BREAKDOWN — by Chamber,,,,,,,,,,
+Facility,Total Locations,Total Capacity,Occupied,Util %,Sellable,Committed,Shortfall,,,
+Jubail 1,"31,172","35,542","11,836",33.3%,"23,706","13,157","10,498",,,
+    ? CHM-01,"9,261","10,533","1,331",12.6%,"9,202",,,,,
+    ? CHM-02,"21,811","24,884","10,450",42.0%,"14,434",,,,,
+    ? FLO-02,100,125,55,44.0%,70,,,,,
+Jubail 2 (CHM-03),"8,152","29,258","10,011",34.2%,"19,247",0,0,,,
+Jubail Total (Jub 1 + Jub 2),"39,324","64,800","21,847",33.7%,"42,953","13,157","10,498",,,
+,,,,,,,,,,
+"Methodology: chamber-summed math is now the source of truth. Total Locations & Capacity tie cleanly to the system rollup (39,324 / 64,800). Occupied & Sellable use chamber sums (21,847 / 42,953) — the system's Total view counts ~10,854 more pallets as Occupied that the chamber view classifies as Sellable. Committed (13,157) and Shortfall (10,498) are warehouse-level metrics — parked on Jubail 1's row so Row 30 sums correctly. Blocked (146) & Virtual (144) likewise live on Jubail 1's row in the main snapshot table.",,,,,,,,,,

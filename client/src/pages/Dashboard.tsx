@@ -45,6 +45,10 @@ import type { Customer } from "@/lib/store";
 import { useWorkspaces, useCustomers, useSignals, useApprovalRecords, useTenders, useRenewalWorkspaces } from "@/hooks/useSupabase";
 import { getTenderMetrics } from "@/lib/tender-engine";
 import { runGlobalEscalationSweep } from "@/lib/escalation-triggers";
+import { type TenderExecutionSignal, type TenderRiskSummary } from "@/lib/tender-workspace-data";
+import { useDashboardSignalSummary } from "@/hooks/useTenderWorkspaceSignals";
+import { type CommercialExecutionSignal, type CommercialWorkspaceSignalSummary } from "@/lib/commercial-workspace-data";
+import { useAllCommercialWorkspaceSignals } from "@/hooks/useCommercialWorkspaceSignals";
 
 import ExecutiveSnapshot from "@/components/dashboard/ExecutiveSnapshot";
 import EscalationAttentionPanel from "@/components/dashboard/EscalationAttentionPanel";
@@ -227,6 +231,8 @@ export default function Dashboard() {
   const { data: approvalRecords, loading: appLoading } = useApprovalRecords();
   const { data: tenders, loading: tendersLoading } = useTenders();
   const { data: renewalWorkspaces, loading: renewalsLoading } = useRenewalWorkspaces();
+  const { signals: cwSignals, summaries: cwSummaries, status: cwStatus } = useAllCommercialWorkspaceSignals();
+  const { signals: tenderExecSignals, status: tenderExecStatus } = useDashboardSignalSummary();
 
   const [filters, setFilters] = useState<DashboardFilterState>({
     timeRange: "all",
@@ -234,7 +240,7 @@ export default function Dashboard() {
     workspaceType: "all",
   });
 
-  const loading = wsLoading || custLoading || sigLoading || appLoading || tendersLoading || renewalsLoading;
+  const loading = wsLoading || custLoading || sigLoading || appLoading || tendersLoading || renewalsLoading || cwStatus === 'loading';
 
   useEffect(() => {
     if (!wsLoading && !custLoading && customers.length > 0) {
@@ -540,6 +546,181 @@ export default function Dashboard() {
               </CardContent>
             </Card>
           </div>
+
+          {/* TND-010: Tender Execution Signals */}
+          {tenderExecStatus === 'loading' && <div className="flex items-center justify-center py-6"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div>}
+          {tenderExecStatus === 'error' && <div className="p-3 text-xs text-red-600">Failed to load tender signals from Supabase.</div>}
+          {tenderExecStatus === 'loaded' && tenderExecSignals.length > 0 && (
+              <Card className="border border-border shadow-none">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                      <ShieldAlert className="w-4 h-4 text-orange-500 shrink-0" />
+                      Tender Execution Signals
+                    </CardTitle>
+                    <Link href="/tenders">
+                      <span className="text-xs text-primary hover:underline flex items-center gap-1 whitespace-nowrap shrink-0">
+                        Tenders <ArrowRight className="w-3 h-3" />
+                      </span>
+                    </Link>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">Supabase-backed mock data · placeholders · documents · compliance · gates · split checks</p>
+                </CardHeader>
+                <CardContent className="pt-0 space-y-2">
+                  {tenderExecSignals.map(sig => {
+                    const worstColor = sig.riskLevel === 'red' ? 'red' as const : 'amber' as const;
+                    return (
+                      <Link key={sig.tenderId} href={`/tenders/${sig.tenderId}`}>
+                        <div className={`p-3 rounded-xl border transition-colors hover:opacity-90 cursor-pointer ${
+                          worstColor === 'red'
+                            ? 'bg-red-50/60 dark:bg-red-950/20 border-red-200 dark:border-red-800/50'
+                            : 'bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/50'
+                        }`}>
+                          <div className="flex items-start gap-3">
+                            <RagDot color={worstColor} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                                <ModeBadge mode="Tender" />
+                                <span className="text-xs font-semibold text-foreground">{sig.tenderTitle}</span>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground">{sig.customerName} · Due: 2026-06-15</p>
+                              <div className="flex items-center gap-1 flex-wrap mt-1.5">
+                                <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${sig.readinessScore < 50 ? 'border-red-300 text-red-700 bg-red-50' : sig.readinessScore < 80 ? 'border-amber-300 text-amber-700 bg-amber-50' : 'border-emerald-300 text-emerald-700 bg-emerald-50'}`}>{sig.readinessScore}% Ready</span>
+                                {sig.gatesWouldBlockCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-red-300 text-red-700 bg-red-50" title="Gates flagged as would block production">Gates {sig.gatesWouldBlockCount}</span>}
+                                {sig.requiredDocumentsAwaitingCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">Docs {sig.requiredDocumentsAwaitingCount}</span>}
+                                {sig.complianceGapCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">Compliance {sig.complianceGapCount}</span>}
+                                {sig.placeholderMissingCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">Placeholders {sig.placeholderMissingCount}</span>}
+                                <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-border">Packs {sig.packCount}</span>
+                              </div>
+                              <p className="text-[10px] text-muted-foreground mt-1">Next: {sig.nextAction}</p>
+                            </div>
+                            <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                          </div>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                  <p className="text-[9px] text-muted-foreground/60 italic pt-1">Development mode: tender execution signals are derived from Supabase-backed mock data.</p>
+                </CardContent>
+              </Card>
+          )}
+
+          {/* CW-011: Commercial Workspace Signals */}
+          {(() => {
+            if (cwStatus === 'loading') {
+              return (
+                <Card className="border border-border shadow-none">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-indigo-500 shrink-0" />
+                      Commercial Workspace Signals
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0 flex items-center justify-center py-6">
+                    <Loader2 className="w-5 h-5 animate-spin text-muted-foreground mr-2" />
+                    <span className="text-sm text-muted-foreground">Loading commercial signals...</span>
+                  </CardContent>
+                </Card>
+              );
+            }
+
+            if (cwStatus === 'empty' || cwSignals.length === 0) {
+              return (
+                <Card className="border border-border shadow-none">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-indigo-500 shrink-0" />
+                      Commercial Workspace Signals
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0 flex items-center justify-center py-6">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 mr-2" />
+                    <span className="text-sm text-muted-foreground">No Supabase-backed commercial signals found.</span>
+                  </CardContent>
+                </Card>
+              );
+            }
+
+            const uniqueWs = Array.from(new Set(cwSignals.map(s => s.workspaceId)));
+            return (
+              <Card className="border border-border shadow-none">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-indigo-500 shrink-0" />
+                      Commercial Workspace Signals
+                    </CardTitle>
+                    <Link href="/commercial">
+                      <span className="text-xs text-primary hover:underline flex items-center gap-1 whitespace-nowrap shrink-0">
+                        Commercial <ArrowRight className="w-3 h-3" />
+                      </span>
+                    </Link>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">Mock workspace-derived signals · margin · customer score · capacity · escalation · proposal · SLA</p>
+                </CardHeader>
+                <CardContent className="pt-0 space-y-2">
+                  {uniqueWs.map(wid => {
+                    const wSignals = cwSignals.filter(s => s.workspaceId === wid);
+                    const summary = cwSummaries[wid];
+                    if (!summary) return null;
+                    const worstColor = wSignals.some(s => s.riskColor === "red") ? "red" as const : wSignals.some(s => s.riskColor === "amber") ? "amber" as const : "green" as const;
+                    const borderStyle = worstColor === "red"
+                      ? "bg-red-50/60 dark:bg-red-950/20 border-red-200 dark:border-red-800/50"
+                      : worstColor === "amber"
+                        ? "bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/50"
+                        : "bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/50";
+                    return (
+                      <Link key={wid} href={`/workspaces/${wid}`}>
+                        <div className={`p-3 rounded-xl border transition-colors hover:opacity-90 cursor-pointer ${borderStyle}`}>
+                          <div className="flex items-start gap-3">
+                            <RagDot color={worstColor} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                                <ModeBadge mode="Commercial" />
+                                <span className="text-xs font-semibold text-foreground">{summary.workspaceName}</span>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground">{summary.customerName} · {summary.stage} · SAR {(summary.value / 1000).toFixed(0)}K · GP {summary.gpPercent}%</p>
+                              <div className="flex items-center gap-1 flex-wrap mt-1.5">
+                                <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${
+                                  summary.marginRisk === "Critical" ? 'border-red-300 text-red-700 bg-red-50 dark:bg-red-950/40 dark:text-red-300 dark:border-red-700' :
+                                  summary.marginRisk === "High" ? 'border-orange-300 text-orange-700 bg-orange-50 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-700' :
+                                  'border-emerald-300 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700'
+                                }`}>GP {summary.gpPercent}%</span>
+                                <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${
+                                  summary.customerRisk === "D" || summary.customerRisk === "C" ? 'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700' :
+                                  'border-emerald-300 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700'
+                                }`}>ECR {summary.customerRisk}</span>
+                                <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${
+                                  summary.capacityRisk === "Constrained" || summary.capacityRisk === "Critical" ? 'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700' :
+                                  'border-emerald-300 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700'
+                                }`}>Cap {summary.capacityRisk}</span>
+                                {summary.mockEscalationCount > 0 && (
+                                  <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${
+                                    summary.criticalEscalationCount > 0 ? 'border-red-300 text-red-700 bg-red-50 dark:bg-red-950/40 dark:text-red-300 dark:border-red-700' :
+                                    'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700'
+                                  }`}>Signals {summary.mockEscalationCount} Mock</span>
+                                )}
+                                {summary.proposalReviewNeeded && (
+                                  <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700">Proposal Review</span>
+                                )}
+                                {summary.slaReviewNeeded && (
+                                  <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700">SLA Review</span>
+                                )}
+                                <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-border">CRM Mock</span>
+                              </div>
+                              <p className="text-[10px] text-muted-foreground mt-1">Next: {summary.nextAction}</p>
+                            </div>
+                            <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                          </div>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                  <p className="text-[9px] text-muted-foreground/60 italic pt-1">Development mode: commercial signals are derived from mock workspace data. No CRM sync or enforcement active.</p>
+                </CardContent>
+              </Card>
+            );
+          })()}
 
           {/* Portfolio compact strip */}
           {portfolioCustomers.length > 0 && (

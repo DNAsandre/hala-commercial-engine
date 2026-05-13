@@ -1,0 +1,666 @@
+import { AlertTriangle, ArrowRight, BarChart3, Boxes, Calculator, ClipboardList, Database, Info, LineChart, TableProperties } from "lucide-react";
+import { Link } from "wouter";
+import {
+  CommercialOsShell,
+  EmptySourceState,
+  ErrorState,
+  LoadingState,
+  MetricCard,
+  SourceCell,
+} from "@/components/commercial-os/CommercialOsShell";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCommercialOsData } from "@/hooks/useCommercialOsData";
+import { computeStrategicTruths, type StrategicTruth, type ParityStatus } from "@/lib/commercial-os-formulas";
+import type { KpiRegistryEntry } from "@/lib/commercial-os-data";
+
+const metricDefinitions = [
+  { label: "Weighted Pipeline", aliases: ["weighted_pipeline", "pipeline_weighted"] },
+  { label: "Materializing 75%+", aliases: ["materializing_75plus", "materializing_75_plus", "materializing_75", "materializing_75_100"] },
+  { label: "Projected GP Weighted", aliases: ["projected_gp_weighted", "weighted_gp"] },
+  { label: "Free Capacity Baseline", aliases: ["free_capacity_baseline", "free_capacity"] },
+  { label: "FY26 Revenue Gap", aliases: ["fy26_revenue_gap", "revenue_gap"] },
+  { label: "FY26 GP Gap", aliases: ["fy26_gp_gap", "gp_gap"] },
+  { label: "Forecast Total", aliases: ["fy26_revenue_forecast", "forecast_total", "fy26_forecast_total"] },
+  { label: "Budget Target", aliases: ["fy26_revenue_budget", "budget_target", "fy26_budget_target"] },
+  { label: "Unsold Capacity Value", aliases: ["unsold_capacity_value"] },
+];
+
+const sections = [
+  { href: "/commercial-os/pipeline", label: "Warehouse Pipeline", icon: TableProperties, detail: "Opportunity rows, flags, weighted value, and source rows." },
+  { href: "/commercial-os/capacity", label: "Warehouse Capacity", icon: Boxes, detail: "Capacity, utilization, shortfall, and remaining space." },
+  { href: "/commercial-os/forecast", label: "Forecast", icon: LineChart, detail: "Monthly forecast, budget deltas, GP, and loss view." },
+  { href: "/commercial-os/revenue", label: "Revenue Actuals", icon: Database, detail: "GL/customer monthly actuals and YTD shell." },
+  { href: "/commercial-os/actions", label: "Leadership Actions", icon: ClipboardList, detail: "Read-only action/risk list for leadership follow-up." },
+];
+
+function fmt(value: number) {
+  if (!value) return "0";
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+}
+
+function numValue(row: any, ...keys: string[]) {
+  for (const key of keys) {
+    const value = Number(row?.[key] ?? 0);
+    if (Number.isFinite(value) && value !== 0) return value;
+  }
+  return 0;
+}
+
+function textValue(row: any, ...keys: string[]) {
+  for (const key of keys) {
+    const value = row?.[key];
+    if (value !== null && value !== undefined && String(value).trim() !== "") return String(value);
+  }
+  return "";
+}
+
+function fmtMonth(value: string) {
+  if (!value) return "--";
+  const date = new Date(value.length === 7 ? `${value}-01T00:00:00` : value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-GB", { month: "short", year: "numeric" }).format(date);
+}
+
+function metricMatches(metricKey: string, metricLabel: string, aliases: string[]) {
+  const normalizedLabel = metricLabel.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  return aliases.includes(metricKey) || aliases.includes(normalizedLabel);
+}
+
+function registryKeyForTruth(st: StrategicTruth) {
+  if (st.label === "Weighted Pipeline") return "weighted_pipeline";
+  if (st.label === "Materializing 75%+") return "materializing_75plus";
+  if (st.label === "FY26 Revenue Gap") return "fy26_revenue_gap";
+  if (st.label === "FY26 GP Gap") return "fy26_gp_gap";
+  if (st.label === "Forecast Total") return "forecast_total";
+  if (st.label === "Monthly Phasing Total (Weighted)") return "monthly_phasing";
+  return st.label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+}
+
+function titleizeSource(sourceType: string) {
+  const labels: Record<string, string> = {
+    formula_native: "Formula Native",
+    excel_snapshot: "Excel Snapshot",
+    d365: "D365",
+    lfs: "LFS",
+    finance_budget: "Finance Budget",
+    manual_hanno: "Manual Hanno",
+    assumption: "Assumption",
+    dangerous_default: "Dangerous Default",
+  };
+  return labels[sourceType] ?? (sourceType || "--");
+}
+
+function sourceBadge(sourceType: string) {
+  if (!sourceType) return <span className="text-xs text-muted-foreground">--</span>;
+  const className =
+    sourceType === "formula_native" ? "border-blue-200 bg-blue-50 text-blue-700" :
+    sourceType === "excel_snapshot" ? "border-emerald-200 bg-emerald-50 text-emerald-700" :
+    sourceType === "dangerous_default" ? "border-red-200 bg-red-50 text-red-700" :
+    sourceType === "assumption" ? "border-amber-200 bg-amber-50 text-amber-700" :
+    sourceType === "finance_budget" ? "border-violet-200 bg-violet-50 text-violet-700" :
+    sourceType === "manual_hanno" ? "border-slate-200 bg-slate-50 text-slate-700" :
+    "border-zinc-200 bg-zinc-50 text-zinc-700";
+
+  return (
+    <Badge variant="outline" className={`${className} text-[10px]`}>
+      {titleizeSource(sourceType)}
+    </Badge>
+  );
+}
+
+function truthStatusBadge(status: string) {
+  if (!status || status === 'unresolved') return <Badge variant="outline" className="border-zinc-200 bg-zinc-50 text-[10px] text-zinc-500">unresolved</Badge>;
+  const styles: Record<string, string> = {
+    verified_formula: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    verified_snapshot: 'border-blue-200 bg-blue-50 text-blue-700',
+    rounded_snapshot: 'border-sky-200 bg-sky-50 text-sky-700',
+    governance_input: 'border-violet-200 bg-violet-50 text-violet-700',
+    assumption: 'border-amber-200 bg-amber-50 text-amber-700',
+    disputed: 'border-red-200 bg-red-50 text-red-700',
+  };
+  const label = status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  return <Badge variant="outline" className={`${styles[status] || 'border-zinc-200 bg-zinc-50 text-zinc-700'} text-[10px]`}>{label}</Badge>;
+}
+
+function confidenceTierBadge(tier: number) {
+  const labels: Record<number, { label: string; className: string }> = {
+    1: { label: 'T1 API', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+    2: { label: 'T2 Formula', className: 'border-blue-200 bg-blue-50 text-blue-700' },
+    3: { label: 'T3 Snapshot', className: 'border-sky-200 bg-sky-50 text-sky-700' },
+    4: { label: 'T4 Assumption', className: 'border-amber-200 bg-amber-50 text-amber-700' },
+    5: { label: 'T5 Default', className: 'border-red-200 bg-red-50 text-red-700' },
+  };
+  const item = labels[tier] || labels[5]!;
+  return <Badge variant="outline" className={`${item.className} text-[10px]`}>{item.label}</Badge>;
+}
+
+function registryTolerance(entry?: KpiRegistryEntry) {
+  if (!entry) return "--";
+  if (entry.toleranceType === "exact") return "exact";
+  return `${entry.toleranceValue} ${entry.toleranceType}`;
+}
+
+function registryRisk(entry?: KpiRegistryEntry, fallback?: string) {
+  const risk = entry?.riskLevel || fallback || "";
+  if (!risk) return <span className="text-xs text-muted-foreground">--</span>;
+  const normalized = risk.toLowerCase();
+  const className =
+    normalized === "critical" ? "border-red-200 bg-red-50 text-red-700" :
+    normalized === "high" ? "border-orange-200 bg-orange-50 text-orange-700" :
+    normalized === "medium" ? "border-amber-200 bg-amber-50 text-amber-700" :
+    "border-zinc-200 bg-zinc-50 text-zinc-500";
+  return <Badge variant="outline" className={className}>{risk}</Badge>;
+}
+
+function futureApiLabel(entry?: KpiRegistryEntry) {
+  const candidate = entry?.externalSourceSystem || "";
+  return candidate ? `Future API candidate: ${candidate}` : "Future API candidate: not registered";
+}
+
+function parityBadge(status: ParityStatus) {
+  switch (status) {
+    case "match":
+      return <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700 text-[10px]">MATCH</Badge>;
+    case "minor_variance":
+      return <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700 text-[10px]">ROUNDING</Badge>;
+    case "material_variance":
+      return <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 text-[10px]">AUDIT</Badge>;
+    case "no_imported_value":
+      return <Badge variant="outline" className="border-zinc-200 bg-zinc-50 text-zinc-500 text-[10px]">NO IMPORT</Badge>;
+  }
+}
+
+function formulaStatus(st: StrategicTruth) {
+  const absPct = Math.abs(st.variance_pct);
+  const absVariance = Math.abs(st.variance);
+
+  if (st.imported_value === null) {
+    return {
+      label: "Needs Row Audit",
+      className: "border-red-200 bg-red-50 text-red-700",
+      helper: "Imported dashboard value is unavailable, so parity cannot be confirmed.",
+      expected: false,
+    };
+  }
+
+  if (absVariance === 0 || st.parity_status === "match") {
+    return {
+      label: "Exact Formula Match",
+      className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      helper: "Imported value and calculated workbook formula truth are aligned.",
+      expected: true,
+    };
+  }
+
+  if (st.label === "Weighted Pipeline" && absPct <= 1) {
+    return {
+      label: "Acceptable Rounding",
+      className: "border-blue-200 bg-blue-50 text-blue-700",
+      helper: "Within 1%; pending per-deal rounding audit.",
+      expected: true,
+    };
+  }
+
+  if (st.label === "Forecast Total" && absPct <= 1) {
+    return {
+      label: "Rounded Dashboard Difference",
+      className: "border-blue-200 bg-blue-50 text-blue-700",
+      helper: "Formula fixed: baseline + pipeline 75%+ structure.",
+      expected: true,
+    };
+  }
+
+  if (st.parity_status === "minor_variance" || absPct <= 5) {
+    return {
+      label: "Rounded Dashboard Difference",
+      className: "border-blue-200 bg-blue-50 text-blue-700",
+      helper: "Imported value is rounded dashboard shorthand. Calculated value is workbook formula truth.",
+      expected: true,
+    };
+  }
+
+  return {
+    label: "Needs Row Audit",
+    className: "border-red-200 bg-red-50 text-red-700",
+    helper: "Variance is larger than expected rounding and should be traced back to source rows.",
+    expected: false,
+  };
+}
+
+function varianceClass(st: StrategicTruth) {
+  const status = formulaStatus(st);
+  if (status.expected) {
+    return st.variance === 0 ? "text-emerald-700" : "text-blue-700";
+  }
+  return "text-red-700";
+}
+
+export default function CommercialOsDashboard() {
+  const { data, loading, error, batchId } = useCommercialOsData();
+  const truths = !loading && !error ? computeStrategicTruths(data) : [];
+
+  const cards = metricDefinitions.map((definition) => {
+    const metric = data.dashboardMetrics.find((m) => metricMatches(m.metricKey, m.metricLabel, definition.aliases));
+    const truth = truths.find((t) => t.label === definition.label);
+    return { definition, metric, truth };
+  });
+  const registryByKey = new Map(data.kpiRegistry.map((entry) => [entry.kpiKey, entry]));
+  const sourceTypes = ["formula_native", "excel_snapshot", "d365", "lfs", "finance_budget", "manual_hanno", "assumption", "dangerous_default"];
+  const phasingMonths = Array.from(new Set(data.monthlyPhasing.map((row) => textValue(row, "month", "phasing_month")).filter(Boolean))).sort();
+  const phasingOpportunityCount = new Set(data.monthlyPhasing.map((row) => textValue(row, "opportunity_id", "commercial_opportunity_id")).filter(Boolean)).size;
+  const phasingRevenue = data.monthlyPhasing.reduce((sum, row) => sum + numValue(row, "revenue_amount", "amount"), 0);
+  const phasingWeighted = data.monthlyPhasing.reduce((sum, row) => sum + numValue(row, "weighted_amount", "weighted_total"), 0);
+
+  return (
+    <CommercialOsShell
+      title="Commercial OS Dashboard"
+      description={`Live read-only dashboard for Excel import batch ${batchId}.`}
+    >
+      <div className="space-y-6">
+        {loading ? <LoadingState label="dashboard metrics" /> : error ? <ErrorState error={error} /> : null}
+
+        {!loading && !error && data.dashboardMetrics.length === 0 ? (
+          <EmptySourceState label="Commercial OS dashboard metrics" />
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {cards.map(({ definition, metric, truth }) => (
+              <MetricCard
+                key={definition.label}
+                label={definition.label}
+                value={metric ? fmt(metric.metricValue) : "--"}
+                helper={
+                  truth
+                    ? `${formulaStatus(truth).label}: ${formulaStatus(truth).helper}`
+                    : metric
+                      ? `${metric.sourceSheet || "Source"}${metric.sourceRow ? ` row ${metric.sourceRow}` : ""}`
+                      : "Metric not present in batch"
+                }
+              />
+            ))}
+          </div>
+        )}
+
+        {!loading && !error && (
+          <Card className="shadow-none">
+            <CardContent className="p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Monthly Phasing Summary</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Read-only rollup of imported monthly phasing rows. No formula changes are applied here.
+                  </p>
+                </div>
+                {sourceBadge(registryByKey.get("monthly_phasing")?.sourceType || "formula_native")}
+              </div>
+              {data.monthlyPhasing.length === 0 ? (
+                <div className="rounded-md border border-dashed bg-background p-4 text-sm text-muted-foreground">
+                  No monthly phasing rows returned.
+                </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                  <MetricCard label="Phasing Rows" value={fmt(data.monthlyPhasing.length)} helper="commercial_opportunity_monthly_phasing" />
+                  <MetricCard label="Opportunities" value={fmt(phasingOpportunityCount)} helper="Distinct opportunity_id values" />
+                  <MetricCard label="Month Range" value={`${fmtMonth(phasingMonths[0])} - ${fmtMonth(phasingMonths[phasingMonths.length - 1])}`} helper={`${fmt(phasingMonths.length)} monthly buckets`} />
+                  <MetricCard label="Revenue Phased" value={fmt(phasingRevenue)} helper="Sum of revenue_amount" />
+                  <MetricCard label="Weighted Phased" value={fmt(phasingWeighted)} helper="Sum of weighted_amount" />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {truths.length > 0 && (
+          <Card className="shadow-none">
+            <CardContent className="p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Calculator className="h-4 w-4 text-blue-600" />
+                  <p className="text-sm font-semibold text-foreground">Strategic Truth - Formula Parity (P1)</p>
+                </div>
+                <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">FORMULA-002D</Badge>
+              </div>
+              <p className="mb-3 text-xs text-muted-foreground">
+                Live app-native formulas vs imported Excel snapshot values. Rounded dashboard shorthand is expected on summary cards; calculated values remain workbook formula truth.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      <th className="px-2 py-2">ID</th>
+                      <th className="px-2 py-2">KPI</th>
+                      <th className="px-2 py-2">Status</th>
+                      <th className="px-2 py-2 text-right">Imported</th>
+                      <th className="px-2 py-2 text-right">Calculated</th>
+                      <th className="px-2 py-2 text-right">Delta</th>
+                      <th className="px-2 py-2">Parity</th>
+                      <th className="px-2 py-2">Explanation</th>
+                      <th className="px-2 py-2">Classification</th>
+                      <th className="px-2 py-2">Source</th>
+                      <th className="px-2 py-2">Tolerance</th>
+                      <th className="px-2 py-2">Rounding</th>
+                      <th className="px-2 py-2">Owner</th>
+                      <th className="px-2 py-2">Risk</th>
+                      <th className="px-2 py-2">Truth</th>
+                      <th className="px-2 py-2">Tier</th>
+                      <th className="px-2 py-2">Detail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {truths.map((st) => {
+                      const status = formulaStatus(st);
+                      const registry = registryByKey.get(registryKeyForTruth(st));
+                      return (
+                        <tr key={st.id} className="border-b last:border-0">
+                          <td className="px-2 py-2 font-mono text-xs font-bold text-blue-700">{st.id}</td>
+                          <td className="px-2 py-2 font-medium">{st.label}</td>
+                          <td className="px-2 py-2">
+                            <Badge variant="outline" className={`${status.className} text-[10px]`}>
+                              {status.label}
+                            </Badge>
+                          </td>
+                          <td className="px-2 py-2 text-right font-mono">{st.imported_value !== null ? fmt(st.imported_value) : "--"}</td>
+                          <td className="px-2 py-2 text-right font-mono font-semibold">{fmt(st.calculated_value)}</td>
+                          <td className="px-2 py-2 text-right font-mono text-xs">
+                            <span className={varianceClass(st)}>
+                              {st.variance >= 0 ? "+" : ""}{fmt(st.variance)} ({st.variance_pct}%)
+                            </span>
+                          </td>
+                          <td className="px-2 py-2">{parityBadge(st.parity_status)}</td>
+                          <td className="max-w-xs px-2 py-2 text-xs text-muted-foreground">{status.helper}</td>
+                          <td className="px-2 py-2 text-xs">{registry?.classification || "--"}</td>
+                          <td className="px-2 py-2">{sourceBadge(registry?.sourceType || st.source_type)}</td>
+                          <td className="px-2 py-2 text-xs">{registryTolerance(registry)}</td>
+                          <td className="px-2 py-2 text-xs">{registry?.roundingPolicy || "--"}</td>
+                          <td className="px-2 py-2 text-xs">{registry?.governanceOwner || st.governance_owner}</td>
+                          <td className="px-2 py-2">
+                            {registryRisk(registry, st.risk_level)}
+                          </td>
+                          <td className="px-2 py-2">{truthStatusBadge(registry?.truthStatus || '')}</td>
+                          <td className="px-2 py-2">{confidenceTierBadge(registry?.confidenceTier || 5)}</td>
+                          <td className="px-2 py-2">
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                                </TooltipTrigger>
+                              <TooltipContent side="left" className="max-w-sm text-xs">
+                                  <div className="space-y-1">
+                                    <p>{registry?.formulaDetail || st.source_detail}</p>
+                                    {registry?.sourceLineage ? <p className="font-mono text-[10px] text-emerald-700">{registry.sourceLineage}</p> : null}
+                                    <p className="font-medium text-blue-700">{futureApiLabel(registry)}</p>
+                                    {registry?.notes ? <p className="text-muted-foreground">{registry.notes}</p> : null}
+                                  </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <Card className="shadow-none">
+          <CardContent className="p-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Source Truth Legend</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Registry-backed source trust labels. This panel is display-only and does not change formulas or data.
+                </p>
+              </div>
+              <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">commercial_kpi_registry</Badge>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {sourceTypes.map((sourceType) => (
+                <TooltipProvider key={sourceType}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>{sourceBadge(sourceType)}</span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs text-xs">
+                      Future API candidate: D365/LFS/Finance/etc.
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ))}
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {data.sourceRegistry.length > 0 ? data.sourceRegistry.map((source) => (
+                <div key={source.id} className="rounded-md border bg-background p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="truncate text-xs font-semibold text-foreground">{source.sourceLabel}</p>
+                    {sourceBadge(source.sourceType)}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">{source.currentIngestionMethod || "--"}</p>
+                  <p className="mt-2 text-[11px] font-medium text-blue-700">
+                    {source.futureApiCandidate ? `Future API candidate: ${source.systemName || source.sourceLabel}` : "Future API candidate: not registered"}
+                  </p>
+                </div>
+              )) : (
+                <div className="rounded-md border border-dashed bg-background p-3 text-xs text-muted-foreground">
+                  No source registry rows returned.
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* ASSUMP-001: Assumption Registry */}
+        <Card className="shadow-none">
+          <CardContent className="p-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-600" />
+                <p className="text-sm font-semibold text-foreground">Assumption Registry</p>
+                <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">ASSUMP-001</Badge>
+              </div>
+              <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">
+                Read-only · Assumptions are not verified truth · Dangerous defaults may materially affect forecasts
+              </Badge>
+            </div>
+
+            {/* Section 1: Commercial Assumptions */}
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-700">Commercial Assumptions</p>
+            {data.defaultAssumptions.length > 0 ? (
+              <div className="mb-4 overflow-x-auto rounded border">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b bg-slate-50 text-left">
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Assumption</th>
+                      <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Value</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Unit</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Source</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Truth</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Tier</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Owner</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Risk</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.defaultAssumptions.map((a) => (
+                      <tr key={a.id} className={`border-b last:border-0 ${
+                        a.riskLevel === 'critical' ? 'bg-red-50/40' :
+                        a.riskLevel === 'high' ? 'bg-amber-50/30' : ''
+                      }`}>
+                        <td className="px-2 py-1.5 font-medium">{a.assumptionLabel}</td>
+                        <td className="px-2 py-1.5 text-right font-mono font-semibold">
+                          {a.valueNumeric ? String(a.valueNumeric) : a.valueText || '--'}
+                        </td>
+                        <td className="px-2 py-1.5 text-muted-foreground">{a.unit}</td>
+                        <td className="px-2 py-1.5">{sourceBadge(a.sourceType)}</td>
+                        <td className="px-2 py-1.5">{truthStatusBadge(a.truthStatus)}</td>
+                        <td className="px-2 py-1.5">{confidenceTierBadge(a.confidenceTier)}</td>
+                        <td className="px-2 py-1.5">{a.governanceOwner}</td>
+                        <td className="px-2 py-1.5">
+                          <Badge variant="outline" className={`text-[10px] ${
+                            a.riskLevel === 'critical' ? 'border-red-200 bg-red-50 text-red-700' :
+                            a.riskLevel === 'high' ? 'border-amber-200 bg-amber-50 text-amber-700' :
+                            a.riskLevel === 'medium' ? 'border-yellow-200 bg-yellow-50 text-yellow-700' :
+                            'border-zinc-200 bg-zinc-50 text-zinc-700'
+                          }`}>{a.riskLevel}</Badge>
+                        </td>
+                        <td className="max-w-xs px-2 py-1.5 text-[11px] text-muted-foreground">
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger>
+                                <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                              </TooltipTrigger>
+                              <TooltipContent side="left" className="max-w-sm text-xs">
+                                <div className="space-y-1">
+                                  <p>{a.notes}</p>
+                                  {a.sourceLineage ? <p className="font-mono text-[10px] text-emerald-700">{a.sourceLineage}</p> : null}
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="mb-4 rounded-md border border-dashed bg-background p-3 text-xs text-muted-foreground">
+                No assumption rows returned. Run ASSUMP-001 migration.
+              </div>
+            )}
+
+            {/* Section 2: Stage Probability Doctrine */}
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-violet-700">Stage Probability Doctrine</p>
+            {data.stageProbabilities.length > 0 ? (
+              <div className="mb-4 overflow-x-auto rounded border">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b bg-slate-50 text-left">
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Stage</th>
+                      <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Probability</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Truth</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Owner</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.stageProbabilities.map((sp) => (
+                      <tr key={sp.id} className="border-b last:border-0">
+                        <td className="px-2 py-1.5 font-medium">{sp.stageName}</td>
+                        <td className="px-2 py-1.5 text-right font-mono font-semibold">{sp.probabilityPct}%</td>
+                        <td className="px-2 py-1.5">{truthStatusBadge(sp.truthStatus)}</td>
+                        <td className="px-2 py-1.5">{sp.governanceOwner}</td>
+                        <td className="max-w-xs px-2 py-1.5 text-[11px] text-muted-foreground">{sp.notes}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="mb-4 rounded-md border border-dashed bg-background p-3 text-xs text-muted-foreground">
+                No stage probability rows returned. Run ASSUMP-001 migration.
+              </div>
+            )}
+
+            {/* Section 3: Dashboard Threshold Doctrine */}
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-blue-700">Dashboard Threshold Doctrine</p>
+            {data.dashboardThresholds.length > 0 ? (
+              <div className="overflow-x-auto rounded border">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b bg-slate-50 text-left">
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Threshold</th>
+                      <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Value</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Unit</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Category</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Owner</th>
+                      <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.dashboardThresholds.map((dt) => (
+                      <tr key={dt.id} className="border-b last:border-0">
+                        <td className="px-2 py-1.5 font-medium">{dt.thresholdLabel}</td>
+                        <td className="px-2 py-1.5 text-right font-mono font-semibold">{dt.thresholdValue}</td>
+                        <td className="px-2 py-1.5 text-muted-foreground">{dt.unit}</td>
+                        <td className="px-2 py-1.5">
+                          <Badge variant="outline" className="text-[10px]">{dt.category}</Badge>
+                        </td>
+                        <td className="px-2 py-1.5">{dt.governanceOwner}</td>
+                        <td className="max-w-xs px-2 py-1.5 text-[11px] text-muted-foreground">{dt.notes}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed bg-background p-3 text-xs text-muted-foreground">
+                No threshold rows returned. Run ASSUMP-001 migration.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+          <Card className="shadow-none">
+            <CardContent className="p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Commercial OS Modules</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Live Supabase reads only. No import execution, CRM sync, gates, or enforcement.</p>
+                </div>
+                <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">Batch {batchId}</Badge>
+              </div>
+              <div className="grid gap-2">
+                {sections.map((section) => {
+                  const Icon = section.icon;
+                  return (
+                    <Link key={section.href} href={section.href}>
+                      <div className="flex cursor-pointer items-center gap-3 rounded-md border bg-background p-3 transition-colors hover:bg-muted/50">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
+                          <Icon className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-foreground">{section.label}</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">{section.detail}</p>
+                        </div>
+                        <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-none">
+            <CardContent className="p-5">
+              <div className="mb-4 flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-emerald-700" />
+                <p className="text-sm font-semibold text-foreground">Live Tables Read</p>
+              </div>
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Opportunities</span><span className="font-medium">{data.opportunities.length}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Capacity snapshots</span><span className="font-medium">{data.capacitySnapshots.length}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Forecast rows</span><span className="font-medium">{data.forecasts.length}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Revenue actuals</span><span className="font-medium">{data.revenueActuals.length}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Monthly phasing</span><span className="font-medium">{data.monthlyPhasing.length}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-muted-foreground">Actions</span><span className="font-medium">{data.leadershipActions.length}</span></div>
+              </div>
+              {data.dashboardMetrics[0] && (
+                <div className="mt-4 border-t pt-3">
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">First source</p>
+                  <SourceCell {...data.dashboardMetrics[0]} />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </CommercialOsShell>
+  );
+}

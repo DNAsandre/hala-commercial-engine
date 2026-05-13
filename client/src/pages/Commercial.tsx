@@ -54,6 +54,8 @@ import { WorkspaceRiskSignalsTab } from "@/components/WorkspaceRiskSignalsTab";
 import { useLocation } from "wouter";
 import CreateWorkspaceDialog from "@/components/CreateWorkspaceDialog";
 import { LifecycleLight, getLightState } from "@/components/LifecycleLight";
+import { type CommercialWorkspaceSignalSummary } from "@/lib/commercial-workspace-data";
+import { useAllCommercialWorkspaceSignals } from "@/hooks/useCommercialWorkspaceSignals";
 
 // ─── MILESTONE STRIP ────────────────────────────────────────
 
@@ -213,10 +215,12 @@ function WorkspaceListCard({
   ws,
   selected,
   onClick,
+  cwSummary,
 }: {
   ws: Workspace;
   selected: boolean;
   onClick: () => void;
+  cwSummary?: CommercialWorkspaceSignalSummary;
 }) {
   const margin = getMarginSignal(ws.gpPercent);
   const isStalled = ws.daysInStage > 21;
@@ -279,19 +283,55 @@ function WorkspaceListCard({
                 {isStalled ? `${ws.daysInStage}d stalled` : `GP ${ws.gpPercent}%`}
               </span>
             </div>
+            </div>
+
+            {/* CW-011: Compact commercial signal chips */}
+            {(() => {
+              const sig = cwSummary;
+              if (!sig) return null;
+              return (
+                <div className="flex items-center gap-1 flex-wrap mt-1">
+                  <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${
+                    sig.marginRisk === "Critical" ? 'border-red-300 text-red-700 bg-red-50 dark:bg-red-950/40 dark:text-red-300 dark:border-red-700' :
+                    sig.marginRisk === "High" ? 'border-orange-300 text-orange-700 bg-orange-50 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-700' :
+                    'border-emerald-300 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700'
+                  }`}>GP {sig.gpPercent}%</span>
+                  <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${
+                    sig.customerRisk === "D" || sig.customerRisk === "C" ? 'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700' :
+                    'border-emerald-300 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700'
+                  }`}>ECR {sig.customerRisk}</span>
+                  <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${
+                    sig.capacityRisk === "Constrained" || sig.capacityRisk === "Critical" ? 'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700' :
+                    'border-emerald-300 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700'
+                  }`}>Cap {sig.capacityRisk}</span>
+                  {sig.mockEscalationCount > 0 && (
+                    <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${
+                      sig.criticalEscalationCount > 0 ? 'border-red-300 text-red-700 bg-red-50 dark:bg-red-950/40 dark:text-red-300 dark:border-red-700' :
+                      'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700'
+                    }`}>Signals {sig.mockEscalationCount} Mock</span>
+                  )}
+                  {sig.proposalReviewNeeded && (
+                    <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700">Proposal Review</span>
+                  )}
+                  {sig.slaReviewNeeded && (
+                    <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700">SLA Review</span>
+                  )}
+                  <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-border">CRM Mock</span>
+                </div>
+              );
+            })()}
           </div>
-        </div>
       </CardContent>
     </Card>
   );
 }
 
 // ─── MAIN COMPONENT ─────────────────────────────────────────
-
 export default function Commercial() {
   const { data: allWorkspaces, loading: wsLoading, error: wsError, refetch } = useWorkspaces();
-  const { data: customerList } = useCustomers();
+  const { data: allCustomers } = useCustomers();
   const [, navigate] = useLocation();
+  const { summaries: cwSummaries, status: cwStatus } = useAllCommercialWorkspaceSignals();
 
   // Only commercial workspaces
   const workspaces = useMemo(
@@ -347,7 +387,7 @@ export default function Commercial() {
   }, [filterCompany, filterSearch, filterOwner, filterRegion, filterStage, workspaces]);
 
   const selectedWs = workspaces.find(w => w.id === selectedId) ?? null;
-  const selectedCustomer = selectedWs ? (customerList || customers).find(c => c.id === selectedWs.customerId) : null;
+  const selectedCustomer = selectedWs ? (allCustomers || customers).find((c: any) => c.id === selectedWs.customerId) : null;
 
   // Pipeline metrics
   const totalValue = workspaces.reduce((s, w) => s + w.estimatedValue, 0);
@@ -364,7 +404,7 @@ export default function Commercial() {
 
   const hasFilters = filterCompany !== "all" || filterSearch || filterOwner !== "all" || filterRegion !== "all" || filterStage !== "all";
 
-  if (wsLoading && !allWorkspaces?.length) {
+  if ((wsLoading || cwStatus === 'loading') && !allWorkspaces?.length) {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-3">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -877,6 +917,7 @@ export default function Commercial() {
                   ws={ws}
                   selected={ws.id === selectedId}
                   onClick={() => setSelectedId(ws.id)}
+                  cwSummary={cwSummaries[ws.id]}
                 />
               ))}
             </div>

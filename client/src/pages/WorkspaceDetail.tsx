@@ -65,6 +65,11 @@ import WorkspaceQuoteSection from "@/components/WorkspaceQuoteSection";
 import WorkspaceProposalSection from "@/components/WorkspaceProposalSection";
 import WorkspaceSlaContractSection from "@/components/WorkspaceSlaContractSection";
 import WorkspaceDocumentSection from "@/components/WorkspaceDocumentSection";
+import CommercialQuoteControlTab from "@/components/commercial/CommercialQuoteControlTab";
+import CommercialProposalControlTab from "@/components/commercial/CommercialProposalControlTab";
+import CommercialSlaControlTab from "@/components/commercial/CommercialSlaControlTab";
+import CommercialActivityTab from "@/components/commercial/CommercialActivityTab";
+import CommercialAuditTrailTab from "@/components/commercial/CommercialAuditTrailTab";
 import { usePnLByWorkspace } from "@/hooks/useSupabase";
 import {
   isWorkspaceIntegrationEnabled, getOrCreateCycle, startRenewal, updateRenewalOwner,
@@ -1098,6 +1103,9 @@ export default function WorkspaceDetail() {
             ) : isCommercial ? (
               /* ── Commercial decision-domain tabs ── */
               <>
+                <TabsTrigger value="quote_control" className="rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">Quote Control</TabsTrigger>
+                <TabsTrigger value="proposal_control" className="rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">Proposals</TabsTrigger>
+                <TabsTrigger value="sla_control" className="rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">SLA</TabsTrigger>
                 <TabsTrigger value="commercial" className="rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">Commercial</TabsTrigger>
                 <TabsTrigger value="delivery" className="rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">Delivery</TabsTrigger>
                 <TabsTrigger value="risk_signals" className="rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">
@@ -1177,6 +1185,27 @@ export default function WorkspaceDetail() {
             </div>
             <Card className="border border-border shadow-none mt-6"><CardHeader className="pb-3"><CardTitle className="text-base font-serif">Notes</CardTitle></CardHeader><CardContent className="pt-0"><p className="text-sm text-muted-foreground">{ws.notes}</p></CardContent></Card>
           </TabsContent>
+
+          {/* ═══ QUOTE CONTROL TAB (CW-001) ═══ */}
+          {isCommercial && (
+            <TabsContent value="quote_control">
+              <CommercialQuoteControlTab workspaceId={ws.id} customerName={ws.customerName} gpPercent={ws.gpPercent} estimatedValue={ws.estimatedValue} />
+            </TabsContent>
+          )}
+
+          {/* ═══ PROPOSAL CONTROL TAB (CW-008) ═══ */}
+          {isCommercial && (
+            <TabsContent value="proposal_control">
+              <CommercialProposalControlTab workspaceId={ws.id} customerName={ws.customerName} />
+            </TabsContent>
+          )}
+
+          {/* ═══ SLA CONTROL TAB (CW-009) ═══ */}
+          {isCommercial && (
+            <TabsContent value="sla_control">
+              <CommercialSlaControlTab workspaceId={ws.id} customerName={ws.customerName} />
+            </TabsContent>
+          )}
 
           {/* ═══ COMMERCIAL TAB (commercial decision-domain) ═══ */}
           {isCommercial && (
@@ -1485,54 +1514,10 @@ export default function WorkspaceDetail() {
             </TabsContent>
           )}
 
-          {/* ═══ ACTIVITY TAB (commercial) ═══ */}
+          {/* ═══ ACTIVITY TAB (CW-010) ═══ */}
           {isCommercial && (
             <TabsContent value="activity">
-              <div className="space-y-4">
-                {/* Notes */}
-                <Card className="border border-border shadow-none">
-                  <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Notes</CardTitle></CardHeader>
-                  <CardContent className="pt-0">
-                    <p className="text-sm text-muted-foreground">{ws.notes || "No notes recorded."}</p>
-                  </CardContent>
-                </Card>
-                {/* Stage History */}
-                <Card className="border border-border shadow-none">
-                  <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Stage History</CardTitle></CardHeader>
-                  <CardContent className="pt-0">
-                    {wsStageHistory.length > 0 ? (
-                      <div className="space-y-2">
-                        {wsStageHistory.map((h: any, i: number) => (
-                          <div key={i} className="flex items-center gap-3 text-xs">
-                            <span className="text-muted-foreground w-24 shrink-0">{new Date(h.timestamp).toLocaleDateString()}</span>
-                            <span className="font-medium">{h.fromStage} → {h.toStage}</span>
-                            {h.override && <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-700">Override</Badge>}
-                          </div>
-                        ))}
-                      </div>
-                    ) : <p className="text-xs text-muted-foreground">No stage transitions recorded yet.</p>}
-                  </CardContent>
-                </Card>
-                {/* Recent Audit */}
-                <Card className="border border-border shadow-none">
-                  <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Recent Activity</CardTitle></CardHeader>
-                  <CardContent className="pt-0">
-                    {wsAudit.length > 0 ? (
-                      <div className="space-y-2">
-                        {wsAudit.slice(0, 10).map(entry => (
-                          <div key={entry.id} className="flex items-start gap-3 text-xs border-b border-border/50 pb-2 last:border-0">
-                            <span className="text-muted-foreground w-28 shrink-0">{new Date(entry.timestamp).toLocaleDateString()}</span>
-                            <div>
-                              <span className="font-medium">{entry.userName}</span>
-                              <span className="text-muted-foreground ml-1">— {entry.details}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : <p className="text-xs text-muted-foreground">No activity recorded.</p>}
-                  </CardContent>
-                </Card>
-              </div>
+              <CommercialActivityTab workspaceId={ws.id} />
             </TabsContent>
           )}
 
@@ -2559,7 +2544,15 @@ export default function WorkspaceDetail() {
             />
           </TabsContent>
 
-          {/* ═══ AUDIT TAB ═══ */}
+          {/* ═══ COMMERCIAL AUDIT TAB (CW-010) ═══ */}
+          {isCommercial && (
+            <TabsContent value="audit">
+              <CommercialAuditTrailTab workspaceId={ws.id} />
+            </TabsContent>
+          )}
+
+          {/* ═══ AUDIT TAB (non-commercial fallback) ═══ */}
+          {!isCommercial && (
           <TabsContent value="audit">
             {wsOverrides.length > 0 && (
               <Card className="border border-amber-200 bg-amber-50/30 shadow-none mb-4">
@@ -2665,6 +2658,7 @@ export default function WorkspaceDetail() {
               </div>
             </CardContent></Card>
           </TabsContent>
+          )}
           {/* ═══ TENDER TEAM TAB ═══ */}
           {isTender && (
             <TabsContent value="team">
