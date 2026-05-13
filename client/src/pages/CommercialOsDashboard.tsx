@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCommercialOsData } from "@/hooks/useCommercialOsData";
 import { computeStrategicTruths, type StrategicTruth, type ParityStatus } from "@/lib/commercial-os-formulas";
-import { computeGpSummary, computeCapacityRiskSummary, type KpiRegistryEntry } from "@/lib/commercial-os-data";
+import { computeGpSummary, computeCapacityRiskSummary, computeForecastComponents, type KpiRegistryEntry } from "@/lib/commercial-os-data";
 
 const metricDefinitions = [
   { label: "Weighted Pipeline", aliases: ["weighted_pipeline", "pipeline_weighted"] },
@@ -262,8 +262,12 @@ export default function CommercialOsDashboard() {
   };
   const forecastTotal = mv('forecast_total') || mv('fy26_revenue_forecast') || mv('fy26_forecast_total');
   const budgetTarget = mv('budget_target') || mv('fy26_revenue_budget') || mv('fy26_budget_target');
-  const revenueGap = mv('fy26_revenue_gap') || mv('revenue_gap') || (forecastTotal && budgetTarget ? forecastTotal - budgetTarget : 0);
-  const gpGap = mv('fy26_gp_gap') || mv('gp_gap');
+  // FCST-001: Use computeForecastComponents for formula-native fallback
+  const fc = !loading && !error ? computeForecastComponents(data) : null;
+  const effectiveForecast = forecastTotal || fc?.forecastTotal || 0;
+  const effectiveBudget = budgetTarget || fc?.budgetTarget || 0;
+  const revenueGap = mv('fy26_revenue_gap') || mv('revenue_gap') || (effectiveForecast && effectiveBudget ? effectiveForecast - effectiveBudget : 0);
+  const gpGap = mv('fy26_gp_gap') || mv('gp_gap') || fc?.gpGap || 0;
   const weightedPipeline = mv('weighted_pipeline') || mv('pipeline_weighted');
   const materializing = mv('materializing_75plus') || mv('materializing_75_plus') || mv('materializing_75') || mv('materializing_75_100');
   const gapStatus = revenueGap > 0 ? 'ahead' : revenueGap === 0 ? 'on_track' : 'behind';
@@ -308,8 +312,8 @@ export default function CommercialOsDashboard() {
                   <span className="ml-auto text-[10px] text-muted-foreground">Formula-native where available · Finance budget is governance input</span>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <MetricCard label="Forecast Total" value={fmt(forecastTotal)} helper="FY26 forecast = baseline + pipeline 75%+" />
-                  <MetricCard label="Budget Target" value={fmt(budgetTarget)} helper="Finance governance input" />
+                  <MetricCard label="Forecast Total" value={fmt(effectiveForecast)} helper={forecastTotal ? 'Imported snapshot' : 'Formula-native (FCST-001)'} />
+                  <MetricCard label="Budget Target" value={fmt(effectiveBudget)} helper="Finance governance input" />
                   <MetricCard label="FY26 Revenue Gap" value={fmt(revenueGap)} helper="Forecast − Budget" />
                   <MetricCard label="FY26 GP Gap" value={fmt(gpGap)} helper="GP forecast − GP budget" />
                 </div>

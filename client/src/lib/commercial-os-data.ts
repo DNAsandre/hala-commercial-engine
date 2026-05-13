@@ -1213,3 +1213,175 @@ export async function getCustomerLinkForTender(tenderWorkspaceId: string): Promi
   }
   return (data ?? []).map(mapTenderCustomerLink);
 }
+
+// ─── FCST-001: Forecast Engine (Read-Only Formula Intelligence) ───
+
+export interface ForecastComponents {
+  // Revenue components
+  baselineActuals: number;
+  organicGrowth: number;
+  shortlistedCy: number;
+  contractNegotiationCy: number;
+  closedWonCy: number;
+  forecastTotal: number;
+  budgetTarget: number;
+  revenueGap: number;
+  // GP components
+  gpForecast: number;
+  gpBudget: number;
+  gpGap: number;
+  // Breakdown by stage
+  stageBreakdown: { stage: string; dealCount: number; acv: number; weighted: number; cyRevenue: number }[];
+  // Reconciliation
+  importedSnapshotValue: number;
+  calculatedValue: number;
+  variance: number;
+  variancePct: number;
+  parityStatus: 'match' | 'rounded_difference' | 'formula_drift' | 'missing_input';
+  // Source notes
+  sourceNotes: string[];
+  confidenceStatus: 'verified' | 'calculated' | 'partial' | 'missing';
+}
+
+const STAGE_SHORTLISTED = ['shortlisted', 'short listed', 'short-listed'];
+const STAGE_NEGOTIATION = ['contract negotiation', 'negotiation', 'contract_negotiation'];
+const STAGE_CLOSED_WON = ['closed won', 'closed-won', 'closed_won', 'won'];
+
+function stageInSet(stage: string, set: string[]): boolean {
+  return set.includes(stage.toLowerCase().trim());
+}
+
+export function computeForecastComponents(data: CommercialOsData): ForecastComponents {
+  const notes: string[] = [];
+
+  // 1. Baseline Actuals — sum of revenue actuals
+  const baselineActuals = data.revenueActuals.reduce((s, r) => s + r.amount, 0);
+  notes.push(`Baseline actuals: ${data.revenueActuals.length} revenue rows summed`);
+
+  // 2. Organic Growth — look for forecast rows with organic/growth category
+  const organicRows = data.forecasts.filter(f =>
+    f.category?.toLowerCase().includes('organic') || f.lineItem?.toLowerCase().includes('organic')
+  );
+  const organicGrowth = organicRows.reduce((s, f) => s + f.amount, 0);
+  if (organicRows.length > 0) notes.push(`Organic growth: ${organicRows.length} forecast rows`);
+
+  // 3. Pipeline CY contributions by stage (avoid double-counting closed won)
+  const closedWonIds = new Set<string>();
+  const closedWonDeals = data.closedWonDeals || [];
+
+  // Closed Won CY from closed_won_deals
+  const closedWonCy = closedWonDeals.reduce((s: number, d: any) => {
+    const acv = Number(d.acv_annual || d.acvAnnual || d.expected_revenue_cy || 0);
+    return s + acv;
+  }, 0);
+
+  // Map opportunities by stage (excl closed won to avoid double-count)
+  let shortlistedCy = 0;
+  let contractNegotiationCy = 0;
+
+  const stageBreakdown: ForecastComponents['stageBreakdown'] = [];
+  const stageMap = new Map<string, { count: number; acv: number; weighted: number; cy: number }>();
+
+  for (const o of data.opportunities) {
+    const stageLower = (o.stage || 'Unknown').toLowerCase().trim();
+    const prev = stageMap.get(o.stage) || { count: 0, acv: 0, weighted: 0, cy: 0 };
+    stageMap.set(o.stage, {
+      count: prev.count + 1,
+      acv: prev.acv + o.acvAnnual,
+      weighted: prev.weighted + o.weightedTotal,
+      cy: prev.cy + o.expectedRevenueCy,
+    });
+
+    if (stageInSet(stageLower, STAGE_CLOSED_WON)) {
+      closedWonIds.add(o.id);
+      // Already counted from closedWonDeals, skip to avoid double-count
+    } else if (stageInSet(stageLower, STAGE_SHORTLISTED)) {
+      shortlistedCy += o.expectedRevenueCy;
+    } else if (stageInSet(stageLower, STAGE_NEGOTIATION)) {
+      contractNegotiationCy += o.expectedRevenueCy;
+    }
+  }
+
+  for (const [stage, v] of stageMap) {
+    stageBreakdown.push({ stage, dealCount: v.count, acv: v.acv, weighted: v.weighted, cyRevenue: v.cy });
+  }
+  stageBreakdown.sort((a, b) => b.weighted - a.weighted);
+
+  notes.push(`Shortlisted CY: ${shortlistedCy > 0 ? shortlistedCy.toLocaleString() : 'none'}`);
+  notes.push(`Contract Negotiation CY: ${contractNegotiationCy > 0 ? contractNegotiationCy.toLocaleString() : 'none'}`);
+  notes.push(`Closed Won CY: ${closedWonDeals.length} deals = ${closedWonCy.toLocaleString()}`);
+
+  // 4. Forecast Total = baseline + organic + shortlisted + negotiation + closed won
+  const forecastTotal = baselineActuals + organicGrowth + shortlistedCy + contractNegotiationCy + closedWonCy;
+
+  // 5. Budget Target from dashboard metrics
+  const budgetMetric = data.dashboardMetrics.find(m =>
+    ['budget_target', 'fy26_revenue_budget', 'fy26_budget_target'].includes(m.metricKey)
+  );
+  const budgetTarget = budgetMetric?.metricValue ?? 0;
+
+  // 6. Revenue Gap
+  const revenueGap = forecastTotal - budgetTarget;
+
+  // 7. GP — use GP basis data
+  const gpForecastMetric = data.dashboardMetrics.find(m =>
+    ['gp_forecast', 'fy26_gp_forecast', 'gp_total'].includes(m.metricKey)
+  );
+  const gpBudgetMetric = data.dashboardMetrics.find(m =>
+    ['gp_budget', 'fy26_gp_budget'].includes(m.metricKey)
+  );
+  const gpForecast = gpForecastMetric?.metricValue ?? 0;
+  const gpBudget = gpBudgetMetric?.metricValue ?? 0;
+  const gpGap = gpForecast - gpBudget;
+
+  // 8. Reconciliation — compare with imported snapshot
+  const forecastSnapshotMetric = data.dashboardMetrics.find(m =>
+    ['forecast_total', 'fy26_revenue_forecast', 'fy26_forecast_total'].includes(m.metricKey)
+  );
+  const importedSnapshotValue = forecastSnapshotMetric?.metricValue ?? 0;
+  const calculatedValue = forecastTotal;
+  const variance = calculatedValue - importedSnapshotValue;
+  const variancePct = importedSnapshotValue > 0 ? (variance / importedSnapshotValue) * 100 : 0;
+
+  let parityStatus: ForecastComponents['parityStatus'] = 'missing_input';
+  if (importedSnapshotValue > 0 && calculatedValue > 0) {
+    const absVarPct = Math.abs(variancePct);
+    if (absVarPct < 0.1) parityStatus = 'match';
+    else if (absVarPct < 2) parityStatus = 'rounded_difference';
+    else parityStatus = 'formula_drift';
+  } else if (calculatedValue > 0) {
+    parityStatus = 'calculated';
+  }
+
+  // Confidence
+  let confidenceStatus: ForecastComponents['confidenceStatus'] = 'missing';
+  if (baselineActuals > 0 && budgetTarget > 0) {
+    confidenceStatus = parityStatus === 'match' || parityStatus === 'rounded_difference' ? 'verified' : 'calculated';
+  } else if (calculatedValue > 0) {
+    confidenceStatus = 'partial';
+  }
+
+  notes.push(`Forecast formula: Baseline (${baselineActuals.toLocaleString()}) + Organic (${organicGrowth.toLocaleString()}) + Shortlisted (${shortlistedCy.toLocaleString()}) + Negotiation (${contractNegotiationCy.toLocaleString()}) + Closed Won (${closedWonCy.toLocaleString()}) = ${forecastTotal.toLocaleString()}`);
+
+  return {
+    baselineActuals,
+    organicGrowth,
+    shortlistedCy,
+    contractNegotiationCy,
+    closedWonCy,
+    forecastTotal,
+    budgetTarget,
+    revenueGap,
+    gpForecast,
+    gpBudget,
+    gpGap,
+    stageBreakdown,
+    importedSnapshotValue,
+    calculatedValue,
+    variance,
+    variancePct,
+    parityStatus,
+    sourceNotes: notes,
+    confidenceStatus,
+  };
+}
