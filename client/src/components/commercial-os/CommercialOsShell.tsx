@@ -13,6 +13,7 @@ import {
   Loader2,
   ShieldOff,
   TableProperties,
+  Truck,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -34,6 +35,7 @@ const navItems = [
   { path: "/commercial-os/revenue", label: "Revenue", icon: Database },
   { path: "/commercial-os/actions", label: "Actions", icon: ClipboardList },
   { path: "/commercial-os/customers", label: "Customers", icon: Building2 },
+  { path: "/commercial-os/transportation", label: "Transportation", icon: Truck },
 ];
 
 export function CommercialOsShell({

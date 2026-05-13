@@ -995,3 +995,146 @@ export async function fetchCustomerSourceLinks(): Promise<CustomerSourceLinkRow[
   }
   return (data ?? []).map(mapCustomerSourceLink);
 }
+
+// ─── TPT-001: Transportation Pipeline (Read-Only) ─────────────
+
+export interface TransportationOpportunity {
+  id: string;
+  customerId: string;
+  customerName: string;
+  opportunityName: string;
+  pipelineType: string;
+  owner: string;
+  stage: string;
+  probabilityPct: number;
+  laneSummary: string;
+  serviceType: string;
+  origin: string;
+  destination: string;
+  expectedStartDate: string;
+  expectedRevenue: number;
+  expectedGp: number;
+  volumeTrips: number;
+  volumeTons: number;
+  volumeUnits: number;
+  sourceType: string;
+  truthStatus: string;
+  confidenceTier: number;
+  sourceLineage: string;
+  notes: string;
+  active: boolean;
+}
+
+export interface TransportationMetric {
+  id: string;
+  transportationOpportunityId: string;
+  metricKey: string;
+  metricLabel: string;
+  metricValue: number;
+  metricUnit: string;
+  metricPeriod: string;
+  sourceType: string;
+  notes: string;
+}
+
+export interface TransportationCustomerLink {
+  id: string;
+  transportationOpportunityId: string;
+  customerId: string;
+  sourceCustomerName: string;
+  matchStatus: string;
+  matchConfidence: string;
+  notes: string;
+}
+
+function mapTransportationOpportunity(row: any): TransportationOpportunity {
+  return {
+    id: text(row.id),
+    customerId: text(row.customer_id),
+    customerName: text(row.customer_name),
+    opportunityName: text(row.opportunity_name),
+    pipelineType: text(row.pipeline_type) || 'transportation',
+    owner: text(row.owner),
+    stage: text(row.stage),
+    probabilityPct: num(row.probability_pct),
+    laneSummary: text(row.lane_summary),
+    serviceType: text(row.service_type),
+    origin: text(row.origin),
+    destination: text(row.destination),
+    expectedStartDate: text(row.expected_start_date),
+    expectedRevenue: num(row.expected_revenue),
+    expectedGp: num(row.expected_gp),
+    volumeTrips: num(row.volume_trips),
+    volumeTons: num(row.volume_tons),
+    volumeUnits: num(row.volume_units),
+    sourceType: text(row.source_type) || 'manual',
+    truthStatus: text(row.truth_status) || 'unverified',
+    confidenceTier: num(row.confidence_tier) || 4,
+    sourceLineage: text(row.source_lineage),
+    notes: text(row.notes),
+    active: row.active !== false,
+  };
+}
+
+function mapTransportationMetric(row: any): TransportationMetric {
+  return {
+    id: text(row.id),
+    transportationOpportunityId: text(row.transportation_opportunity_id),
+    metricKey: text(row.metric_key),
+    metricLabel: text(row.metric_label),
+    metricValue: num(row.metric_value),
+    metricUnit: text(row.metric_unit),
+    metricPeriod: text(row.metric_period),
+    sourceType: text(row.source_type),
+    notes: text(row.notes),
+  };
+}
+
+function mapTransportationCustomerLink(row: any): TransportationCustomerLink {
+  return {
+    id: text(row.id),
+    transportationOpportunityId: text(row.transportation_opportunity_id),
+    customerId: text(row.customer_id),
+    sourceCustomerName: text(row.source_customer_name),
+    matchStatus: text(row.match_status) || 'pending',
+    matchConfidence: text(row.match_confidence) || 'auto',
+    notes: text(row.notes),
+  };
+}
+
+export async function fetchTransportationOpportunities(): Promise<TransportationOpportunity[]> {
+  const { data, error } = await supabase
+    .from("transportation_opportunities")
+    .select("*")
+    .eq("active", true)
+    .order("expected_revenue", { ascending: false });
+  if (error) {
+    console.error("[commercial-os] Failed to fetch transportation opportunities:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapTransportationOpportunity);
+}
+
+export async function fetchTransportationMetrics(): Promise<TransportationMetric[]> {
+  const { data, error } = await supabase
+    .from("transportation_opportunity_metrics")
+    .select("*")
+    .order("metric_key");
+  if (error) {
+    console.error("[commercial-os] Failed to fetch transportation metrics:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapTransportationMetric);
+}
+
+export async function fetchTransportationCustomerLinks(): Promise<TransportationCustomerLink[]> {
+  const { data, error } = await supabase
+    .from("transportation_customer_links")
+    .select("*")
+    .order("source_customer_name");
+  if (error) {
+    console.error("[commercial-os] Failed to fetch transportation customer links:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapTransportationCustomerLink);
+}
