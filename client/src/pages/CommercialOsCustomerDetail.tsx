@@ -19,9 +19,11 @@ import { useCommercialOsData } from "@/hooks/useCommercialOsData";
 import {
   fetchCustomerMaster,
   fetchCustomerAliases,
+  fetchTenderCustomerLinks,
   classifyWarehouseRisk,
   type CustomerMasterRow,
   type CustomerAliasRow,
+  type TenderCustomerLink,
   type CapacityRiskStatus,
 } from "@/lib/commercial-os-data";
 
@@ -67,13 +69,14 @@ export default function CommercialOsCustomerDetail() {
   const { data, loading: osLoading, error: osError, batchId } = useCommercialOsData();
   const [customer, setCustomer] = useState<CustomerMasterRow | null>(null);
   const [aliases, setAliases] = useState<CustomerAliasRow[]>([]);
+  const [tenderLinks, setTenderLinks] = useState<TenderCustomerLink[]>([]);
   const [cmLoading, setCmLoading] = useState(true);
 
   // Try to load customer from customer_master (may not exist yet)
   useEffect(() => {
     let mounted = true;
-    Promise.all([fetchCustomerMaster(), fetchCustomerAliases()])
-      .then(([customers, allAliases]) => {
+    Promise.all([fetchCustomerMaster(), fetchCustomerAliases(), fetchTenderCustomerLinks()])
+      .then(([customers, allAliases, allTenderLinks]) => {
         if (!mounted) return;
         const found = customers.find(c => c.id === customerId) ||
                       customers.find(c => c.canonicalName === customerId) ||
@@ -81,6 +84,14 @@ export default function CommercialOsCustomerDetail() {
         setCustomer(found || null);
         if (found) {
           setAliases(allAliases.filter(a => a.customerId === found.id));
+          setTenderLinks(allTenderLinks.filter(tl => tl.customerId === found.id));
+        } else {
+          // Fallback: match by customer name
+          const nameLower = decodeURIComponent(customerId).toLowerCase();
+          setTenderLinks(allTenderLinks.filter(tl =>
+            tl.tenderCustomerName.toLowerCase() === nameLower ||
+            tl.customerMasterName.toLowerCase() === nameLower
+          ));
         }
         setCmLoading(false);
       })
@@ -353,9 +364,40 @@ export default function CommercialOsCustomerDetail() {
                 <div className="mb-3 flex items-center gap-2">
                   <Link2 className="h-4 w-4 text-violet-700" />
                   <p className="text-sm font-semibold">Tender / Transport Linkage</p>
-                  <span className="text-[10px] text-muted-foreground">Read-only · No tender modification</span>
+                  <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700 text-[10px]">TND-002</Badge>
+                  <span className="text-[10px] text-muted-foreground">Read-only · No tender modification · Does not affect tender workflow</span>
                 </div>
-                {customerNameLower.includes('linde') ? (
+                {tenderLinks.length > 0 ? (
+                  <div className="space-y-2">
+                    {tenderLinks.map(tl => {
+                      const matchCls: Record<string, string> = {
+                        exact: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+                        likely: 'border-blue-200 bg-blue-50 text-blue-700',
+                        possible: 'border-amber-200 bg-amber-50 text-amber-700',
+                        needs_review: 'border-red-200 bg-red-50 text-red-700',
+                        unmatched: 'border-zinc-200 bg-zinc-50 text-zinc-500',
+                      };
+                      return (
+                        <div key={tl.id} className="rounded border border-violet-100 bg-violet-50/20 px-3 py-2 text-xs">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Badge variant="outline" className={`text-[10px] ${matchCls[tl.matchStatus] || matchCls.needs_review}`}>{tl.matchStatus}</Badge>
+                            <span className="font-medium">{tl.tenderCustomerName}</span>
+                            <span className="text-muted-foreground">→ Tender: {tl.tenderWorkspaceId}</span>
+                            <Link href={`/tenders/${tl.tenderWorkspaceId}`}>
+                              <span className="text-blue-700 hover:underline cursor-pointer">Open Workspace →</span>
+                            </Link>
+                          </div>
+                          <div className="mt-1 flex items-center gap-3 text-muted-foreground">
+                            <span>Confidence: {tl.matchConfidence}</span>
+                            <span>Source: {tl.sourceType}</span>
+                            <span>T{tl.confidenceTier}</span>
+                          </div>
+                          {tl.notes && <p className="mt-1 text-muted-foreground">{tl.notes}</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : customerNameLower.includes('linde') ? (
                   <div className="rounded border border-violet-100 bg-violet-50/20 px-3 py-2 text-xs">
                     <div className="flex items-center gap-2">
                       <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700 text-[10px]">Tender Link</Badge>

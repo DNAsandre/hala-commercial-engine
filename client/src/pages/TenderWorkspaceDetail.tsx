@@ -1,5 +1,5 @@
 import { useParams, Link } from "wouter";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ArrowLeft, Package, ShieldAlert, AlertTriangle, CheckCircle2, Clock, DollarSign, Target, Users, Building2, CalendarDays, Radio, FileText, Truck, ClipboardList, FolderOpen, Activity, ScrollText, Info, XCircle, Wrench, FlaskConical, FileOutput, Eye, Mail, Loader2, Database } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,7 @@ import { getPackStatusLabel, getPackTypeLabel, getGateStatusLabel, getSectionSta
 import { useTenderWorkspaceData } from "@/hooks/useTenderWorkspaceData";
 import { toast } from "sonner";
 import { updateTenderPhase } from "@/lib/supabase-tender-actions";
+import { getCustomerLinkForTender, type TenderCustomerLink } from "@/lib/commercial-os-data";
 import { LifecycleLight, getLightState } from "@/components/LifecycleLight";
 import TenderPlaceholdersTab from "@/components/tender/TenderPlaceholdersTab";
 import TenderRequiredDocumentsTab from "@/components/tender/TenderRequiredDocumentsTab";
@@ -104,6 +105,56 @@ function PlaceholderTab({ title, fields }: { title: string; fields: string[] }) 
         </div>
       </div>
     </div>
+  );
+}
+
+/** TND-002: Read-only Customer Link Panel — does not affect tender workflow */
+function TenderCustomerLinkPanel({ tenderWorkspaceId }: { tenderWorkspaceId: string }) {
+  const [links, setLinks] = useState<TenderCustomerLink[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    getCustomerLinkForTender(tenderWorkspaceId)
+      .then(data => { if (mounted) { setLinks(data); setLoaded(true); } })
+      .catch(() => { if (mounted) setLoaded(true); });
+    return () => { mounted = false; };
+  }, [tenderWorkspaceId]);
+
+  if (!loaded || links.length === 0) return null;
+
+  return (
+    <Card className="mb-4 border-violet-200 shadow-none">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Building2 className="h-4 w-4 text-violet-700" />
+          <span className="text-xs font-semibold">Customer Link</span>
+          <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700 text-[10px]">TND-002</Badge>
+          <span className="ml-auto text-[10px] text-muted-foreground">Read-only · Does not affect tender workflow</span>
+        </div>
+        {links.map(tl => {
+          const matchCls: Record<string, string> = {
+            exact: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+            likely: 'border-blue-200 bg-blue-50 text-blue-700',
+            possible: 'border-amber-200 bg-amber-50 text-amber-700',
+            needs_review: 'border-red-200 bg-red-50 text-red-700',
+            unmatched: 'border-zinc-200 bg-zinc-50 text-zinc-500',
+          };
+          return (
+            <div key={tl.id} className="flex items-center gap-2 flex-wrap text-xs">
+              <Badge variant="outline" className={`text-[10px] ${matchCls[tl.matchStatus] || matchCls.needs_review}`}>{tl.matchStatus}</Badge>
+              <span className="font-medium">{tl.tenderCustomerName}</span>
+              {tl.customerMasterName && (
+                <Link href={`/commercial-os/customers/${encodeURIComponent(tl.customerMasterName)}`}>
+                  <span className="text-blue-700 hover:underline cursor-pointer">View in Customer Master →</span>
+                </Link>
+              )}
+              <span className="text-muted-foreground">Confidence: {tl.matchConfidence} · T{tl.confidenceTier}</span>
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -236,6 +287,9 @@ export default function TenderWorkspaceDetail() {
           <Info className="w-4 h-4 text-blue-600 shrink-0" />
           <p className="text-xs text-blue-700">Development mode: gates are mock warnings only. Nothing is hard-blocked.</p>
         </div>
+
+        {/* TND-002: Customer Link Panel — read-only, does not affect tender workflow */}
+        <TenderCustomerLinkPanel tenderWorkspaceId={id!} />
 
         {/* Tabs */}
         <Tabs value={tab} onValueChange={setTab}>

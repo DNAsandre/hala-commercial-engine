@@ -1138,3 +1138,78 @@ export async function fetchTransportationCustomerLinks(): Promise<Transportation
   }
   return (data ?? []).map(mapTransportationCustomerLink);
 }
+
+// ─── TND-002: Tender Customer Links (Read-Only) ───────────────
+
+export interface TenderCustomerLink {
+  id: string;
+  tenderWorkspaceId: string;
+  customerId: string;
+  tenderCustomerName: string;
+  customerMasterName: string;
+  matchStatus: string;
+  matchConfidence: string;
+  sourceType: string;
+  truthStatus: string;
+  confidenceTier: number;
+  sourceLineage: string;
+  notes: string;
+  active: boolean;
+}
+
+function mapTenderCustomerLink(row: any): TenderCustomerLink {
+  return {
+    id: text(row.id),
+    tenderWorkspaceId: text(row.tender_workspace_id),
+    customerId: text(row.customer_id),
+    tenderCustomerName: text(row.tender_customer_name),
+    customerMasterName: text(row.customer_master_name),
+    matchStatus: text(row.match_status) || 'needs_review',
+    matchConfidence: text(row.match_confidence) || 'auto',
+    sourceType: text(row.source_type) || 'tender_workspace',
+    truthStatus: text(row.truth_status) || 'snapshot',
+    confidenceTier: num(row.confidence_tier) || 3,
+    sourceLineage: text(row.source_lineage),
+    notes: text(row.notes),
+    active: row.active !== false,
+  };
+}
+
+export async function fetchTenderCustomerLinks(): Promise<TenderCustomerLink[]> {
+  const { data, error } = await supabase
+    .from("tender_customer_links")
+    .select("*")
+    .eq("active", true)
+    .order("tender_customer_name");
+  if (error) {
+    console.error("[commercial-os] Failed to fetch tender customer links:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapTenderCustomerLink);
+}
+
+export async function getTenderLinksForCustomer(customerId: string): Promise<TenderCustomerLink[]> {
+  const { data, error } = await supabase
+    .from("tender_customer_links")
+    .select("*")
+    .eq("customer_id", customerId)
+    .eq("active", true);
+  if (error) {
+    console.error("[commercial-os] Failed to fetch tender links for customer:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapTenderCustomerLink);
+}
+
+export async function getCustomerLinkForTender(tenderWorkspaceId: string): Promise<TenderCustomerLink[]> {
+  const { data, error } = await supabase
+    .from("tender_customer_links")
+    .select("*")
+    .eq("tender_workspace_id", tenderWorkspaceId)
+    .eq("active", true);
+  if (error) {
+    console.error("[commercial-os] Failed to fetch customer link for tender:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapTenderCustomerLink);
+}
