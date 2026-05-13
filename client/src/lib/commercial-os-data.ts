@@ -877,3 +877,121 @@ export async function fetchDashboardThresholds(): Promise<DashboardThreshold[]> 
   }
   return (data ?? []).map(mapDashboardThreshold);
 }
+
+// ─── CUST-001: Customer Master (Read-Only) ────────────────────
+
+export interface CustomerMasterRow {
+  id: string;
+  canonicalName: string;
+  displayName: string;
+  customerType: string;
+  region: string;
+  country: string;
+  status: string;
+  sourceConfidence: string;
+  notes: string;
+  active: boolean;
+}
+
+export interface CustomerAliasRow {
+  id: string;
+  customerId: string;
+  aliasName: string;
+  sourceTable: string;
+  sourceField: string;
+  sourceRecordId: string;
+  confidenceStatus: string;
+  matchReason: string;
+  needsReview: boolean;
+}
+
+export interface CustomerSourceLinkRow {
+  id: string;
+  customerId: string;
+  sourceSystem: string;
+  sourceTable: string;
+  sourceRecordId: string;
+  sourceName: string;
+  sourceType: string;
+  active: boolean;
+}
+
+function mapCustomerMaster(row: any): CustomerMasterRow {
+  return {
+    id: text(row.id),
+    canonicalName: text(row.canonical_name),
+    displayName: text(row.display_name),
+    customerType: text(row.customer_type) || 'warehouse',
+    region: text(row.region),
+    country: text(row.country) || 'Saudi Arabia',
+    status: text(row.status) || 'active',
+    sourceConfidence: text(row.source_confidence) || 'snapshot',
+    notes: text(row.notes),
+    active: row.active !== false,
+  };
+}
+
+function mapCustomerAlias(row: any): CustomerAliasRow {
+  return {
+    id: text(row.id),
+    customerId: text(row.customer_id),
+    aliasName: text(row.alias_name),
+    sourceTable: text(row.source_table),
+    sourceField: text(row.source_field),
+    sourceRecordId: text(row.source_record_id),
+    confidenceStatus: text(row.confidence_status) || 'auto_matched',
+    matchReason: text(row.match_reason),
+    needsReview: row.needs_review === true,
+  };
+}
+
+function mapCustomerSourceLink(row: any): CustomerSourceLinkRow {
+  return {
+    id: text(row.id),
+    customerId: text(row.customer_id),
+    sourceSystem: text(row.source_system),
+    sourceTable: text(row.source_table),
+    sourceRecordId: text(row.source_record_id),
+    sourceName: text(row.source_name),
+    sourceType: text(row.source_type) || 'warehouse',
+    active: row.active !== false,
+  };
+}
+
+export async function fetchCustomerMaster(): Promise<CustomerMasterRow[]> {
+  const { data, error } = await supabase
+    .from("customer_master")
+    .select("*")
+    .eq("active", true)
+    .order("display_name");
+  if (error) {
+    console.error("[commercial-os] Failed to fetch customer master:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapCustomerMaster);
+}
+
+export async function fetchCustomerAliases(): Promise<CustomerAliasRow[]> {
+  const { data, error } = await supabase
+    .from("customer_aliases")
+    .select("*")
+    .order("alias_name");
+  if (error) {
+    console.error("[commercial-os] Failed to fetch customer aliases:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapCustomerAlias);
+}
+
+export async function fetchCustomerSourceLinks(): Promise<CustomerSourceLinkRow[]> {
+  const { data, error } = await supabase
+    .from("customer_source_links")
+    .select("*")
+    .eq("active", true)
+    .order("source_table");
+  if (error) {
+    console.error("[commercial-os] Failed to fetch customer source links:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapCustomerSourceLink);
+}

@@ -4,6 +4,7 @@ import {
   BadgeCheck,
   BarChart3,
   Boxes,
+  Building2,
   ClipboardList,
   Database,
   FileSpreadsheet,
@@ -32,6 +33,7 @@ const navItems = [
   { path: "/commercial-os/forecast", label: "Forecast", icon: LineChart },
   { path: "/commercial-os/revenue", label: "Revenue", icon: Database },
   { path: "/commercial-os/actions", label: "Actions", icon: ClipboardList },
+  { path: "/commercial-os/customers", label: "Customers", icon: Building2 },
 ];
 
 export function CommercialOsShell({

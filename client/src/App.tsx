@@ -77,6 +77,7 @@ const CommercialOsCapacity = React.lazy(() => import("./pages/CommercialOsCapaci
 const CommercialOsForecast = React.lazy(() => import("./pages/CommercialOsForecast"));
 const CommercialOsRevenue = React.lazy(() => import("./pages/CommercialOsRevenue"));
 const CommercialOsActions = React.lazy(() => import("./pages/CommercialOsActions"));
+const CommercialOsCustomers = React.lazy(() => import("./pages/CommercialOsCustomers"));
 
 /**
  * Admin-only routes: require "admin" role.
@@ -149,6 +150,7 @@ function AppRouter() {
       <Route path="/commercial-os/forecast">{() => <LazyPage><CommercialOsForecast /></LazyPage>}</Route>
       <Route path="/commercial-os/revenue">{() => <LazyPage><CommercialOsRevenue /></LazyPage>}</Route>
       <Route path="/commercial-os/actions">{() => <LazyPage><CommercialOsActions /></LazyPage>}</Route>
+      <Route path="/commercial-os/customers">{() => <LazyPage><CommercialOsCustomers /></LazyPage>}</Route>
       <Route path="/commercial-os">{() => <LazyPage><CommercialOsDashboard /></LazyPage>}</Route>
 
       {/* ── Admin-only routes (lazy + role guard) ────────────── */}
