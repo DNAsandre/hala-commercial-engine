@@ -450,7 +450,7 @@ export default function CommercialOsPipeline() {
     });
   }
 
-  const COL_COUNT = 15;
+  const COL_COUNT = 16;
 
   return (
     <CommercialOsShell
@@ -514,6 +514,7 @@ export default function CommercialOsPipeline() {
               "SQM",
               "Region",
               "Weighted Total",
+              "GP Basis",
               "Flags",
               "Source",
             ]}
@@ -564,6 +565,24 @@ export default function CommercialOsPipeline() {
                     <td className="px-3 py-3 whitespace-nowrap">{fmtVolume(row.volumeSqm, "sqm")}</td>
                     <td className="px-3 py-3">{row.region || "--"}</td>
                     <td className="px-3 py-3">{fmt(row.weightedTotal)}</td>
+                    <td className="px-3 py-3">
+                      {(() => {
+                        const gpAmount = row.weightedTotal * (row.gpMarginPct / 100);
+                        const basisConfig: Record<string, { label: string; className: string }> = {
+                          actual_cost: { label: 'Actual Cost', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+                          assumed_75pct: { label: 'Assumed 75%', className: 'border-red-200 bg-red-50 text-red-700' },
+                          no_revenue: { label: 'No Revenue', className: 'border-zinc-200 bg-zinc-50 text-zinc-500' },
+                          unknown: { label: 'Unknown', className: 'border-yellow-200 bg-yellow-50 text-yellow-700' },
+                        };
+                        const cfg = basisConfig[row.gpBasis] || basisConfig.unknown!;
+                        return (
+                          <div>
+                            <Badge variant="outline" className={`${cfg.className} text-[10px]`}>{cfg.label}</Badge>
+                            {gpAmount > 0 && <p className="mt-0.5 text-[10px] text-muted-foreground font-mono">GP: {fmt(gpAmount)}</p>}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td className="min-w-48 px-3 py-3">
                       {row.flags.length ? (
                         <div className="flex flex-wrap gap-1">

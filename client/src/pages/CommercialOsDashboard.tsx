@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCommercialOsData } from "@/hooks/useCommercialOsData";
 import { computeStrategicTruths, type StrategicTruth, type ParityStatus } from "@/lib/commercial-os-formulas";
-import type { KpiRegistryEntry } from "@/lib/commercial-os-data";
+import { computeGpSummary, type KpiRegistryEntry } from "@/lib/commercial-os-data";
 
 const metricDefinitions = [
   { label: "Weighted Pipeline", aliases: ["weighted_pipeline", "pipeline_weighted"] },
@@ -281,6 +281,73 @@ export default function CommercialOsDashboard() {
             ))}
           </div>
         )}
+
+        {/* GP-001: GP Confidence Panel */}
+        {!loading && !error && data.opportunities.length > 0 && (() => {
+          const gp = computeGpSummary(data.opportunities);
+          return (
+            <Card className="shadow-none border-amber-200">
+              <CardContent className="p-5">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-600" />
+                    <p className="text-sm font-semibold text-foreground">GP Confidence Analysis</p>
+                    <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">GP-001</Badge>
+                  </div>
+                  <Badge variant="outline" className={`text-[10px] ${
+                    gp.assumedGpPctOfTotal > 50
+                      ? 'border-red-200 bg-red-50 text-red-700'
+                      : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  }`}>
+                    {gp.assumedGpPctOfTotal > 50 ? '⚠ GP is NOT fully verified' : '✓ Majority GP verified'}
+                  </Badge>
+                </div>
+
+                <div className="mb-3 rounded border border-amber-100 bg-amber-50/30 px-3 py-2 text-xs text-amber-800">
+                  75% cost ratio / 25% GP default may materially affect forecast. Finance review required for {gp.dealsNeedingReview} deals.
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                  <MetricCard label="Projected GP (Weighted)" value={fmt(gp.projectedGpTotal)} helper="Sum of weighted pipeline × GP margin %" />
+                  <MetricCard label="Verified GP" value={fmt(gp.projectedGpVerified)} helper={`${gp.dealsVerified} deals with actual cost basis`} />
+                  <MetricCard label="Assumed GP (25% default)" value={fmt(gp.projectedGpAssumed)} helper={`${gp.dealsAssumed} deals using 75% cost / 25% GP assumption`} />
+                  <MetricCard label="% Assumed" value={`${gp.assumedGpPctOfTotal}%`} helper={gp.assumedGpPctOfTotal > 50 ? 'WARNING: Majority of GP is based on dangerous default' : 'Acceptable — majority verified'} />
+                  <MetricCard label="Finance Review" value={String(gp.dealsNeedingReview)} helper="Deals with gp_confidence_status = needs_finance_review" />
+                </div>
+
+                {gp.highValueAssumedDeals.length > 0 && (
+                  <div className="mt-4">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-red-700">High-Value Assumed GP Deals (&gt; 500K SAR)</p>
+                    <div className="overflow-x-auto rounded border">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b bg-red-50/50 text-left">
+                            <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Customer</th>
+                            <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Weighted Pipeline</th>
+                            <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Assumed GP</th>
+                            <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Basis</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {gp.highValueAssumedDeals.map((deal, i) => (
+                            <tr key={i} className="border-b bg-red-50/20 last:border-0">
+                              <td className="px-2 py-1.5 font-medium">{deal.customerName}</td>
+                              <td className="px-2 py-1.5 text-right font-mono">{fmt(deal.weightedTotal)}</td>
+                              <td className="px-2 py-1.5 text-right font-mono font-semibold text-red-700">{fmt(deal.assumedGp)}</td>
+                              <td className="px-2 py-1.5">
+                                <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 text-[10px]">Assumed 75%</Badge>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })()}
 
         {!loading && !error && (
           <Card className="shadow-none">

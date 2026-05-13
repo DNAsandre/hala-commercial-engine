@@ -11,7 +11,7 @@
 -- ─── Patch stage_probabilities ───────────────────────────────
 
 ALTER TABLE stage_probabilities
-  ADD COLUMN IF NOT EXISTS confidence_tier INTEGER NOT NULL DEFAULT 4;
+  ADD COLUMN IF NOT EXISTS confidence_tier INTEGER NOT NULL DEFAULT 3;
 
 ALTER TABLE stage_probabilities
   ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
@@ -22,7 +22,7 @@ ALTER TABLE stage_probabilities
 -- ─── Patch dashboard_thresholds ──────────────────────────────
 
 ALTER TABLE dashboard_thresholds
-  ADD COLUMN IF NOT EXISTS truth_status TEXT NOT NULL DEFAULT 'assumption';
+  ADD COLUMN IF NOT EXISTS truth_status TEXT NOT NULL DEFAULT 'governance_input';
 
 ALTER TABLE dashboard_thresholds
   ADD COLUMN IF NOT EXISTS confidence_tier INTEGER NOT NULL DEFAULT 4;

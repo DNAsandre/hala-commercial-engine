@@ -23,6 +23,9 @@ export interface CommercialOpportunity {
   sourceSheet: string;
   sourceRow: number | null;
   flags: CommercialOpportunityFlag[];
+  gpBasis: string;
+  gpMarginPct: number;
+  gpConfidenceStatus: string;
 }
 
 export interface CommercialOpportunityFlag {
@@ -294,6 +297,76 @@ function mapOpportunity(row: any, flags: CommercialOpportunityFlag[]): Commercia
     sourceSheet: text(row.source_sheet),
     sourceRow: sourceRow(row),
     flags,
+    gpBasis: text(row.gp_basis) || 'assumed_75pct',
+    gpMarginPct: num(row.gp_margin_pct) || 25,
+    gpConfidenceStatus: text(row.gp_confidence_status) || 'needs_finance_review',
+  };
+}
+
+// ─── GP-001: GP Visibility Helpers ───────────────────────────
+
+export interface GpSummary {
+  projectedGpTotal: number;
+  projectedGpVerified: number;
+  projectedGpAssumed: number;
+  assumedGpPctOfTotal: number;
+  verifiedGpPctOfTotal: number;
+  dealsNeedingReview: number;
+  dealsVerified: number;
+  dealsAssumed: number;
+  dealsNoRevenue: number;
+  highValueAssumedDeals: { customerName: string; weightedTotal: number; assumedGp: number }[];
+}
+
+export function computeGpSummary(opportunities: CommercialOpportunity[]): GpSummary {
+  let projectedGpVerified = 0;
+  let projectedGpAssumed = 0;
+  let dealsNeedingReview = 0;
+  let dealsVerified = 0;
+  let dealsAssumed = 0;
+  let dealsNoRevenue = 0;
+  const highValueAssumedDeals: GpSummary['highValueAssumedDeals'] = [];
+
+  for (const opp of opportunities) {
+    const gpAmount = opp.weightedTotal * (opp.gpMarginPct / 100);
+
+    if (opp.gpBasis === 'actual_cost') {
+      projectedGpVerified += gpAmount;
+      dealsVerified++;
+    } else if (opp.gpBasis === 'no_revenue') {
+      dealsNoRevenue++;
+    } else {
+      // assumed_75pct or unknown
+      projectedGpAssumed += gpAmount;
+      dealsAssumed++;
+    }
+
+    if (opp.gpConfidenceStatus === 'needs_finance_review') {
+      dealsNeedingReview++;
+    }
+
+    // Flag high-value assumed deals (GP > 500K SAR)
+    if (opp.gpBasis !== 'actual_cost' && opp.gpBasis !== 'no_revenue' && gpAmount > 500000) {
+      highValueAssumedDeals.push({
+        customerName: opp.customerName,
+        weightedTotal: opp.weightedTotal,
+        assumedGp: gpAmount,
+      });
+    }
+  }
+
+  const projectedGpTotal = projectedGpVerified + projectedGpAssumed;
+  return {
+    projectedGpTotal,
+    projectedGpVerified,
+    projectedGpAssumed,
+    assumedGpPctOfTotal: projectedGpTotal > 0 ? Math.round((projectedGpAssumed / projectedGpTotal) * 1000) / 10 : 0,
+    verifiedGpPctOfTotal: projectedGpTotal > 0 ? Math.round((projectedGpVerified / projectedGpTotal) * 1000) / 10 : 0,
+    dealsNeedingReview,
+    dealsVerified,
+    dealsAssumed,
+    dealsNoRevenue,
+    highValueAssumedDeals: highValueAssumedDeals.sort((a, b) => b.assumedGp - a.assumedGp),
   };
 }
 
