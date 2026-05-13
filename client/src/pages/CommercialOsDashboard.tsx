@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCommercialOsData } from "@/hooks/useCommercialOsData";
 import { computeStrategicTruths, type StrategicTruth, type ParityStatus } from "@/lib/commercial-os-formulas";
-import { computeGpSummary, type KpiRegistryEntry } from "@/lib/commercial-os-data";
+import { computeGpSummary, computeCapacityRiskSummary, type KpiRegistryEntry } from "@/lib/commercial-os-data";
 
 const metricDefinitions = [
   { label: "Weighted Pipeline", aliases: ["weighted_pipeline", "pipeline_weighted"] },
@@ -253,6 +253,36 @@ export default function CommercialOsDashboard() {
   const phasingRevenue = data.monthlyPhasing.reduce((sum, row) => sum + numValue(row, "revenue_amount", "amount"), 0);
   const phasingWeighted = data.monthlyPhasing.reduce((sum, row) => sum + numValue(row, "weighted_amount", "weighted_total"), 0);
 
+  // EXEC-001: Executive computed values
+  const gp = !loading && !error && data.opportunities.length > 0 ? computeGpSummary(data.opportunities) : null;
+  const capRisk = !loading && !error && data.capacitySnapshots.length > 0 ? computeCapacityRiskSummary(data.capacitySnapshots, data.dashboardThresholds) : null;
+  const mv = (key: string) => {
+    const m = data.dashboardMetrics.find((x) => metricMatches(x.metricKey, x.metricLabel, [key]));
+    return m?.metricValue ?? 0;
+  };
+  const forecastTotal = mv('forecast_total') || mv('fy26_revenue_forecast') || mv('fy26_forecast_total');
+  const budgetTarget = mv('budget_target') || mv('fy26_revenue_budget') || mv('fy26_budget_target');
+  const revenueGap = mv('fy26_revenue_gap') || mv('revenue_gap') || (forecastTotal && budgetTarget ? forecastTotal - budgetTarget : 0);
+  const gpGap = mv('fy26_gp_gap') || mv('gp_gap');
+  const weightedPipeline = mv('weighted_pipeline') || mv('pipeline_weighted');
+  const materializing = mv('materializing_75plus') || mv('materializing_75_plus') || mv('materializing_75') || mv('materializing_75_100');
+  const gapStatus = revenueGap > 0 ? 'ahead' : revenueGap === 0 ? 'on_track' : 'behind';
+  const stageMap = new Map<string, { count: number; weighted: number }>();
+  for (const o of data.opportunities) {
+    const s = o.stage || 'Unknown';
+    const prev = stageMap.get(s) || { count: 0, weighted: 0 };
+    stageMap.set(s, { count: prev.count + 1, weighted: prev.weighted + o.weightedTotal });
+  }
+  const stageDistribution = Array.from(stageMap.entries()).map(([stage, v]) => ({ stage, ...v })).sort((a, b) => b.weighted - a.weighted);
+  const topDeals = [...data.opportunities].sort((a, b) => b.weightedTotal - a.weightedTotal).slice(0, 5);
+  const kpiTiers = { t2: 0, t3: 0, t4: 0, t5: 0 };
+  for (const k of data.kpiRegistry) {
+    if (k.confidenceTier === 2) kpiTiers.t2++;
+    else if (k.confidenceTier === 3) kpiTiers.t3++;
+    else if (k.confidenceTier === 4) kpiTiers.t4++;
+    else if (k.confidenceTier === 5) kpiTiers.t5++;
+  }
+
   return (
     <CommercialOsShell
       title="Commercial OS Dashboard"
@@ -260,6 +290,200 @@ export default function CommercialOsDashboard() {
     >
       <div className="space-y-6">
         {loading ? <LoadingState label="dashboard metrics" /> : error ? <ErrorState error={error} /> : null}
+
+        {/* ═══ EXEC-001: Executive Command Center ═══ */}
+        {!loading && !error && (
+          <>
+            {/* 1. Revenue Position */}
+            <Card className="shadow-none border-emerald-200">
+              <CardContent className="p-5">
+                <div className="mb-3 flex items-center gap-2">
+                  <LineChart className="h-4 w-4 text-emerald-700" />
+                  <p className="text-sm font-semibold">Revenue Position</p>
+                  <Badge variant="outline" className={`text-[10px] ${
+                    gapStatus === 'ahead' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' :
+                    gapStatus === 'on_track' ? 'border-blue-200 bg-blue-50 text-blue-700' :
+                    'border-red-200 bg-red-50 text-red-700'
+                  }`}>{gapStatus === 'ahead' ? '▲ Ahead' : gapStatus === 'on_track' ? '● On Track' : '▼ Behind'}</Badge>
+                  <span className="ml-auto text-[10px] text-muted-foreground">Formula-native where available · Finance budget is governance input</span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <MetricCard label="Forecast Total" value={fmt(forecastTotal)} helper="FY26 forecast = baseline + pipeline 75%+" />
+                  <MetricCard label="Budget Target" value={fmt(budgetTarget)} helper="Finance governance input" />
+                  <MetricCard label="FY26 Revenue Gap" value={fmt(revenueGap)} helper="Forecast − Budget" />
+                  <MetricCard label="FY26 GP Gap" value={fmt(gpGap)} helper="GP forecast − GP budget" />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 2. GP / Profit Position */}
+            {gp && (
+              <Card className={`shadow-none ${gp.assumedGpPctOfTotal > 50 ? 'border-amber-200' : 'border-emerald-200'}`}>
+                <CardContent className="p-5">
+                  <div className="mb-3 flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-600" />
+                    <p className="text-sm font-semibold">GP / Profit Position</p>
+                    <Badge variant="outline" className={`text-[10px] ${gp.assumedGpPctOfTotal > 50 ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+                      {gp.assumedGpPctOfTotal > 50 ? '⚠ GP not verified' : '✓ GP verified'}
+                    </Badge>
+                    <span className="ml-auto text-[10px] text-muted-foreground">GP confidence depends on cost basis · 75% cost ratio is assumption until Finance validates</span>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                    <MetricCard label="Projected GP Weighted" value={fmt(gp.projectedGpTotal)} helper="Sum of weighted × GP margin %" />
+                    <MetricCard label="Verified GP" value={fmt(gp.projectedGpVerified)} helper={`${gp.dealsVerified} deals`} />
+                    <MetricCard label="Assumed GP" value={fmt(gp.projectedGpAssumed)} helper={`${gp.dealsAssumed} deals at 25% default`} />
+                    <MetricCard label="% Assumed" value={`${gp.assumedGpPctOfTotal}%`} helper={gp.assumedGpPctOfTotal > 50 ? 'Majority on dangerous default' : 'Majority verified'} />
+                    <MetricCard label="Finance Review" value={String(gp.dealsNeedingReview)} helper="Deals needing cost validation" />
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 3. Pipeline Position */}
+            <Card className="shadow-none">
+              <CardContent className="p-5">
+                <div className="mb-3 flex items-center gap-2">
+                  <TableProperties className="h-4 w-4 text-blue-700" />
+                  <p className="text-sm font-semibold">Pipeline Position</p>
+                  <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700 text-[10px]">{data.opportunities.length} opportunities</Badge>
+                  <span className="ml-auto text-[10px] text-muted-foreground">Materializing includes high-probability deals · Closed Won shown separately</span>
+                </div>
+                <div className="mb-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <MetricCard label="Weighted Pipeline" value={fmt(weightedPipeline)} helper="Sum of ACV × probability" />
+                  <MetricCard label="Materializing 75%+" value={fmt(materializing)} helper="Shortlisted + Contract Negotiation + Closed Won" />
+                  <MetricCard label="Opportunity Count" value={String(data.opportunities.length)} helper="Active pipeline deals" />
+                  <MetricCard label="Phasing Revenue" value={fmt(phasingRevenue)} helper={`${data.monthlyPhasing.length} monthly rows`} />
+                </div>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  {topDeals.length > 0 && (
+                    <div>
+                      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Top 5 Weighted Deals</p>
+                      <div className="space-y-1">
+                        {topDeals.map((d, i) => (
+                          <div key={d.id} className="flex items-center justify-between gap-2 rounded border px-2 py-1 text-xs">
+                            <span className="truncate font-medium">{i + 1}. {d.customerName}</span>
+                            <span className="whitespace-nowrap font-mono text-blue-700">{fmt(d.weightedTotal)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {stageDistribution.length > 0 && (
+                    <div>
+                      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Stage Distribution</p>
+                      <div className="space-y-1">
+                        {stageDistribution.map(({ stage, count, weighted }) => (
+                          <div key={stage} className="flex items-center justify-between gap-2 rounded border px-2 py-1 text-xs">
+                            <span><Badge variant="outline" className="text-[10px]">{stage}</Badge> <span className="text-muted-foreground">×{count}</span></span>
+                            <span className="font-mono">{fmt(weighted)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 4. Capacity Position */}
+            {capRisk && (
+              <Card className={`shadow-none ${capRisk.constrained + capRisk.overcommitted > 0 ? 'border-orange-200' : 'border-emerald-200'}`}>
+                <CardContent className="p-5">
+                  <div className="mb-3 flex items-center gap-2">
+                    <Boxes className="h-4 w-4 text-blue-700" />
+                    <p className="text-sm font-semibold">Capacity Position</p>
+                    {capRisk.constrained + capRisk.overcommitted > 0 && (
+                      <Badge variant="outline" className="border-orange-200 bg-orange-50 text-orange-700 text-[10px]">
+                        {capRisk.constrained + capRisk.overcommitted} warehouses at risk
+                      </Badge>
+                    )}
+                    <span className="ml-auto text-[10px] text-muted-foreground">Capacity risk from warehouse snapshot · Thresholds from Assumption Registry</span>
+                  </div>
+                  <div className="mb-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                    <MetricCard label="Total Sellable" value={fmt(capRisk.totalSellable)} helper="Sum of sellable capacity" />
+                    <MetricCard label="Total Committed" value={fmt(capRisk.totalCommitted)} helper="Sum of committed capacity" />
+                    <MetricCard label="Remaining" value={fmt(capRisk.totalRemaining)} helper="Sellable − Committed" />
+                    <MetricCard label="Constrained" value={String(capRisk.constrained)} helper="Warehouses with shortfall" />
+                    <MetricCard label="Overcommitted" value={String(capRisk.overcommitted)} helper="Committed > sellable" />
+                  </div>
+                  {capRisk.warehouses.filter(w => w.riskStatus !== 'available').slice(0, 3).length > 0 && (
+                    <div>
+                      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Top Warehouse Risks</p>
+                      <div className="space-y-1">
+                        {capRisk.warehouses.filter(w => w.riskStatus !== 'available').slice(0, 3).map(w => (
+                          <div key={w.warehouseLabel} className="flex items-center justify-between gap-2 rounded border border-orange-100 bg-orange-50/20 px-2 py-1 text-xs">
+                            <span className="font-medium">{w.warehouseLabel}</span>
+                            <span className="text-muted-foreground">{w.riskReason}</span>
+                            <Badge variant="outline" className={`text-[10px] ${
+                              w.riskStatus === 'overcommitted' ? 'border-red-200 bg-red-50 text-red-700' :
+                              w.riskStatus === 'constrained' ? 'border-orange-200 bg-orange-50 text-orange-700' :
+                              'border-amber-200 bg-amber-50 text-amber-700'
+                            }`}>{w.riskStatus.replace('_', ' ')}</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 5. Source Confidence */}
+            {data.kpiRegistry.length > 0 && (
+              <Card className="shadow-none">
+                <CardContent className="p-5">
+                  <div className="mb-3 flex items-center gap-2">
+                    <Database className="h-4 w-4 text-violet-700" />
+                    <p className="text-sm font-semibold">Source Confidence</p>
+                    <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700 text-[10px]">{data.kpiRegistry.length} KPIs registered</Badge>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <MetricCard label="T2 Formula Verified" value={String(kpiTiers.t2)} helper="Formula-native calculations" />
+                    <MetricCard label="T3 Snapshot / Governance" value={String(kpiTiers.t3)} helper="Verified snapshots & governance inputs" />
+                    <MetricCard label="T4 Assumptions" value={String(kpiTiers.t4)} helper="Unverified assumptions" />
+                    <MetricCard label="T5 Dangerous Defaults" value={String(kpiTiers.t5)} helper="Must be replaced with verified data" />
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 6. Leadership Actions */}
+            {data.leadershipActions.length > 0 && (
+              <Card className="shadow-none">
+                <CardContent className="p-5">
+                  <div className="mb-3 flex items-center gap-2">
+                    <ClipboardList className="h-4 w-4 text-slate-700" />
+                    <p className="text-sm font-semibold">Leadership Actions</p>
+                    <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-700 text-[10px]">{data.leadershipActions.length} items</Badge>
+                    <span className="ml-auto text-[10px] text-muted-foreground">Read-only · No workflow enforcement</span>
+                  </div>
+                  <div className="space-y-1">
+                    {[...data.leadershipActions]
+                      .sort((a: any, b: any) => {
+                        const sev = { critical: 0, high: 1, medium: 2, low: 3 };
+                        return (sev[(a.severity || 'low') as keyof typeof sev] ?? 4) - (sev[(b.severity || 'low') as keyof typeof sev] ?? 4);
+                      })
+                      .slice(0, 8)
+                      .map((action: any, i: number) => (
+                        <div key={i} className="flex items-center gap-2 rounded border px-2 py-1.5 text-xs">
+                          <Badge variant="outline" className={`text-[10px] ${
+                            action.severity === 'critical' ? 'border-red-200 bg-red-50 text-red-700' :
+                            action.severity === 'high' ? 'border-orange-200 bg-orange-50 text-orange-700' :
+                            'border-slate-200 bg-slate-50 text-slate-500'
+                          }`}>{action.severity || 'medium'}</Badge>
+                          <span className="font-medium truncate flex-1">{action.title || action.action_title || action.actionTitle || '--'}</span>
+                          <span className="text-muted-foreground truncate max-w-48">{action.owner || action.action_owner || '--'}</span>
+                          <Badge variant="outline" className="text-[10px]">{action.status || action.action_status || 'open'}</Badge>
+                        </div>
+                      ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </>
+        )}
+
+        {/* ═══ Detailed Technical Sections (existing) ═══ */}
 
         {!loading && !error && data.dashboardMetrics.length === 0 ? (
           <EmptySourceState label="Commercial OS dashboard metrics" />
