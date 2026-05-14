@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import {
-  Archive, CheckCircle, Database, FileText, FolderOpen,
+  CheckCircle, Database, FileText, FolderOpen,
   Info, Shield, Truck,
 } from "lucide-react";
 import {
