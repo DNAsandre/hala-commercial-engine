@@ -42,6 +42,7 @@ const navItems = [
   { path: "/commercial-os/ops-signals", label: "Ops Signals", icon: Radio },
   { path: "/commercial-os/escalations", label: "Escalations", icon: Flame },
   { path: "/commercial-os/reports/monthly", label: "Reports", icon: FileText },
+  { path: "/commercial-os/documents", label: "Documents", icon: Database },
 ];
 
 export function CommercialOsShell({

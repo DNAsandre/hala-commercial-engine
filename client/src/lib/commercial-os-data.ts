@@ -2156,3 +2156,91 @@ export function computeEscalationSummary(escalations: CommercialEscalation[]): E
     escalations,
   };
 }
+
+// ─── DOC-001: Document Vault (Read-Only) ─────────────────────
+export interface DocumentVaultRow {
+  id: string;
+  documentType: string;
+  documentTitle: string;
+  relatedEntityType: string;
+  relatedEntityId: string;
+  sourceBatchId: string;
+  sourceSystem: string;
+  sourceFileName: string;
+  storageReference: string;
+  versionNumber: number;
+  versionStatus: string;
+  truthStatus: string;
+  confidenceTier: number;
+  sourceLineage: string;
+  generatedAt: string;
+  createdBy: string;
+  notes: string;
+  active: boolean;
+}
+
+function mapDocumentVault(row: any): DocumentVaultRow {
+  return {
+    id: text(row.id),
+    documentType: text(row.document_type),
+    documentTitle: text(row.document_title),
+    relatedEntityType: text(row.related_entity_type),
+    relatedEntityId: text(row.related_entity_id),
+    sourceBatchId: text(row.source_batch_id),
+    sourceSystem: text(row.source_system),
+    sourceFileName: text(row.source_file_name),
+    storageReference: text(row.storage_reference),
+    versionNumber: num(row.version_number) || 1,
+    versionStatus: text(row.version_status) || 'active',
+    truthStatus: text(row.truth_status) || 'snapshot',
+    confidenceTier: num(row.confidence_tier) || 4,
+    sourceLineage: text(row.source_lineage),
+    generatedAt: text(row.generated_at),
+    createdBy: text(row.created_by) || 'system',
+    notes: text(row.notes),
+    active: row.active !== false,
+  };
+}
+
+export async function fetchDocumentVault(): Promise<DocumentVaultRow[]> {
+  const { data, error } = await supabase
+    .from("document_vault")
+    .select("*")
+    .eq("active", true)
+    .order("document_type")
+    .order("generated_at", { ascending: false });
+  if (error) {
+    console.error("[commercial-os] Failed to fetch document vault:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapDocumentVault);
+}
+
+export async function fetchDocumentsByEntity(entityType: string, entityId?: string): Promise<DocumentVaultRow[]> {
+  let q = supabase
+    .from("document_vault")
+    .select("*")
+    .eq("active", true)
+    .eq("related_entity_type", entityType);
+  if (entityId) q = q.eq("related_entity_id", entityId);
+  const { data, error } = await q.order("generated_at", { ascending: false });
+  if (error) {
+    console.error("[commercial-os] Failed to fetch documents by entity:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapDocumentVault);
+}
+
+export async function fetchDocumentsByType(docType: string): Promise<DocumentVaultRow[]> {
+  const { data, error } = await supabase
+    .from("document_vault")
+    .select("*")
+    .eq("active", true)
+    .eq("document_type", docType)
+    .order("generated_at", { ascending: false });
+  if (error) {
+    console.error("[commercial-os] Failed to fetch documents by type:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapDocumentVault);
+}
