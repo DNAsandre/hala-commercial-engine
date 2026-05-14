@@ -547,6 +547,94 @@ export function computeCapacityRiskSummary(
   };
 }
 
+// ─── CAP-003: Capacity Monetization Intelligence (Read-Only) ──
+
+export interface WarehouseMonetization {
+  warehouseLabel: string;
+  region: string;
+  riskStatus: CapacityRiskStatus;
+  totalCapacity: number;
+  sellableCapacity: number;
+  committedCapacity: number;
+  remainingCapacity: number;
+  shortfallCapacity: number;
+  utilizationPct: number;
+  palletRateMonthly: number;
+  monthlyPotential: number;
+  annualizedPotential: number;
+  monetizable: boolean;
+  rateSource: string;
+}
+
+export interface CapacityMonetizationSummary {
+  warehouses: WarehouseMonetization[];
+  totalRemainingCapacity: number;
+  totalMonthlyPotential: number;
+  totalAnnualizedPotential: number;
+  constrainedWarehouses: number;
+  monetizableWarehouses: number;
+  palletRateUsed: number;
+  palletRateSource: string;
+  palletRateAvailable: boolean;
+}
+
+const DEFAULT_PALLET_RATE = 48; // SAR/pallet/month — workbook assumption
+
+export function computeCapacityMonetization(
+  riskSummary: CapacityRiskSummary,
+  assumptions: DefaultAssumption[],
+): CapacityMonetizationSummary {
+  // Resolve pallet rate from assumption registry
+  const palletRateAssumption = assumptions.find(
+    a => a.assumptionKey === 'pallet_rate_monthly_sar' ||
+         a.assumptionKey === 'pallet_rate_sar' ||
+         a.assumptionKey === 'pallet_rate' ||
+         a.assumptionLabel.toLowerCase().includes('pallet rate')
+  );
+
+  const palletRateUsed = palletRateAssumption?.valueNumeric ?? DEFAULT_PALLET_RATE;
+  const palletRateSource = palletRateAssumption
+    ? `Assumption Registry: ${palletRateAssumption.assumptionLabel}`
+    : 'Default 48 SAR/pallet/month (workbook assumption)';
+  const palletRateAvailable = !!palletRateAssumption;
+
+  const warehouses: WarehouseMonetization[] = riskSummary.warehouses.map(w => {
+    const available = Math.max(0, w.remainingCapacity);
+    const monetizable = available > 0;
+    const monthlyPotential = monetizable ? available * palletRateUsed : 0;
+    const annualizedPotential = monthlyPotential * 12;
+
+    return {
+      warehouseLabel: w.warehouseLabel,
+      region: w.region,
+      riskStatus: w.riskStatus,
+      totalCapacity: w.totalCapacity,
+      sellableCapacity: w.sellableCapacity,
+      committedCapacity: w.committedCapacity,
+      remainingCapacity: w.remainingCapacity,
+      shortfallCapacity: w.shortfallCapacity,
+      utilizationPct: w.utilizationPct,
+      palletRateMonthly: palletRateUsed,
+      monthlyPotential,
+      annualizedPotential,
+      monetizable,
+      rateSource: palletRateSource,
+    };
+  });
+
+  return {
+    warehouses,
+    totalRemainingCapacity: warehouses.reduce((s, w) => s + Math.max(0, w.remainingCapacity), 0),
+    totalMonthlyPotential: warehouses.reduce((s, w) => s + w.monthlyPotential, 0),
+    totalAnnualizedPotential: warehouses.reduce((s, w) => s + w.annualizedPotential, 0),
+    constrainedWarehouses: warehouses.filter(w => w.riskStatus === 'constrained' || w.riskStatus === 'overcommitted').length,
+    monetizableWarehouses: warehouses.filter(w => w.monetizable).length,
+    palletRateUsed,
+    palletRateSource,
+    palletRateAvailable,
+  };
+}
+
 function mapLocation(row: any): WarehouseLocation {
   return {
     id: text(row.id, row.warehouse_location_id),
