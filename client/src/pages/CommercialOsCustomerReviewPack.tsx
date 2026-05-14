@@ -2,10 +2,10 @@ import { useEffect, useState, useMemo } from "react";
 import { useParams } from "wouter";
 import {
   AlertTriangle, ArrowLeft, BarChart3, Boxes, Building2, Calculator,
-  ClipboardList, Database, FileText, Info, Link2, Radio, Shield,
+  Database, Info, Link2, Radio, Shield,
 } from "lucide-react";
 import {
-  CommercialOsShell, EmptySourceState, ErrorState, LoadingState, MetricCard,
+  CommercialOsShell, ErrorState, LoadingState, MetricCard,
 } from "@/components/commercial-os/CommercialOsShell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,8 +13,7 @@ import { Link } from "wouter";
 import { useCommercialOsData } from "@/hooks/useCommercialOsData";
 import {
   fetchCustomerMaster, fetchCustomerAliases, fetchTenderCustomerLinks,
-  classifyWarehouseRisk, computeGpV2Summary, generateSignalsFromData,
-  computeSignalSummary, generateEscalationsFromData, computeEscalationSummary,
+  classifyWarehouseRisk, computeGpV2Summary,
   type CustomerMasterRow, type CustomerAliasRow, type TenderCustomerLink,
   type CapacityRiskStatus,
 } from "@/lib/commercial-os-data";
