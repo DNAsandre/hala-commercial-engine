@@ -13,7 +13,7 @@
 
 CREATE TABLE IF NOT EXISTS commercial_opportunity_gp_basis (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  opportunity_id UUID REFERENCES commercial_opportunities(id),
+  opportunity_id TEXT REFERENCES commercial_opportunities(id),
   customer_name TEXT,
   gp_basis TEXT NOT NULL DEFAULT 'assumed_margin'
     CHECK (gp_basis IN ('actual_cost', 'assumed_margin', 'imported_gp_snapshot', 'unknown', 'no_revenue')),
