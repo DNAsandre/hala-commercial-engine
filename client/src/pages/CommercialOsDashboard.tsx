@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, BarChart3, Boxes, Calculator, ClipboardList, Database, Info, LineChart, TableProperties } from "lucide-react";
+import { AlertTriangle, ArrowRight, BarChart3, Boxes, Calculator, ClipboardList, Database, FileText, Flame, Info, LineChart, Radio, Shield, TableProperties, TrendingDown } from "lucide-react";
 import { Link } from "wouter";
 import {
   CommercialOsShell,
@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCommercialOsData } from "@/hooks/useCommercialOsData";
 import { computeStrategicTruths, type StrategicTruth, type ParityStatus } from "@/lib/commercial-os-formulas";
-import { computeGpV2Summary, computeCapacityRiskSummary, computeForecastComponents, type KpiRegistryEntry } from "@/lib/commercial-os-data";
+import { computeGpV2Summary, computeCapacityRiskSummary, computeForecastComponents, computeSignalSummary, generateSignalsFromData, computeEscalationSummary, generateEscalationsFromData, type KpiRegistryEntry } from "@/lib/commercial-os-data";
 
 const metricDefinitions = [
   { label: "Weighted Pipeline", aliases: ["weighted_pipeline", "pipeline_weighted"] },
@@ -33,6 +33,9 @@ const sections = [
   { href: "/commercial-os/forecast", label: "Forecast", icon: LineChart, detail: "Monthly forecast, budget deltas, GP, and loss view." },
   { href: "/commercial-os/revenue", label: "Revenue Actuals", icon: Database, detail: "GL/customer monthly actuals and YTD shell." },
   { href: "/commercial-os/actions", label: "Leadership Actions", icon: ClipboardList, detail: "Read-only action/risk list for leadership follow-up." },
+  { href: "/commercial-os/ops-signals", label: "Ops Signals", icon: Radio, detail: "Operations signals — capacity, GP, and finance risk visibility." },
+  { href: "/commercial-os/escalations", label: "Escalations", icon: Flame, detail: "Commercial escalation workspace — leadership visibility for critical risks." },
+  { href: "/commercial-os/reports/monthly", label: "Monthly Report", icon: FileText, detail: "Workbook-grade monthly commercial report for leadership review." },
 ];
 
 function fmt(value: number) {
@@ -286,6 +289,23 @@ export default function CommercialOsDashboard() {
     else if (k.confidenceTier === 4) kpiTiers.t4++;
     else if (k.confidenceTier === 5) kpiTiers.t5++;
   }
+
+  // OPS-001: Signal widget data
+  const gpTotalDeals = gp ? (gp.dealsVerified + gp.dealsAssumed + gp.dealsNoRevenue) : 0;
+  const signalData = generateSignalsFromData(capRisk, gp ? {
+    dangerousDefaultCount: gp.dangerousDefaultCount,
+    totalDeals: gpTotalDeals,
+    projectedGpAssumed: gp.projectedGpAssumed,
+  } : null);
+  const signalSummary = computeSignalSummary(signalData);
+
+  // ESC-001: Escalation widget data
+  const escalationData = generateEscalationsFromData(capRisk, gp ? {
+    dangerousDefaultCount: gp.dangerousDefaultCount,
+    totalDeals: gpTotalDeals,
+    projectedGpAssumed: gp.projectedGpAssumed,
+  } : null);
+  const escalationSummary = computeEscalationSummary(escalationData);
 
   return (
     <CommercialOsShell
@@ -909,6 +929,117 @@ export default function CommercialOsDashboard() {
             )}
           </CardContent>
         </Card>
+
+        {/* ═══ OPS-001: Operations Signal Widget ═══ */}
+        {signalSummary.total > 0 && (
+          <Link href="/commercial-os/ops-signals">
+            <Card className="shadow-none border-slate-200 cursor-pointer hover:bg-muted/30 transition-colors">
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div className="flex items-center gap-2">
+                    <Radio className="h-4 w-4 text-red-600" />
+                    <p className="text-sm font-semibold text-foreground">Operations Signals</p>
+                    <Badge variant="outline" className="border-indigo-200 bg-indigo-50 text-indigo-700 text-[10px]">OPS-001</Badge>
+                  </div>
+                  <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500 text-[10px]">
+                    Read-only · Click to view
+                  </Badge>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                    <Shield className="h-3.5 w-3.5 text-red-600" />
+                    <div>
+                      <p className="text-lg font-semibold text-red-700">{signalSummary.critical}</p>
+                      <p className="text-[10px] text-muted-foreground">Critical</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                    <AlertTriangle className="h-3.5 w-3.5 text-orange-600" />
+                    <div>
+                      <p className="text-lg font-semibold text-orange-700">{signalSummary.high}</p>
+                      <p className="text-[10px] text-muted-foreground">High</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                    <Boxes className="h-3.5 w-3.5 text-amber-600" />
+                    <div>
+                      <p className="text-lg font-semibold text-amber-700">{signalSummary.capacitySignals}</p>
+                      <p className="text-[10px] text-muted-foreground">Capacity</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                    <Calculator className="h-3.5 w-3.5 text-purple-600" />
+                    <div>
+                      <p className="text-lg font-semibold text-purple-700">{signalSummary.financeSignals}</p>
+                      <p className="text-[10px] text-muted-foreground">Finance</p>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+        )}
+
+        {/* ═══ ESC-001: Escalation Widget ═══ */}
+        {escalationSummary.total > 0 && (
+          <Link href="/commercial-os/escalations">
+            <Card className="shadow-none border-slate-200 cursor-pointer hover:bg-muted/30 transition-colors">
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div className="flex items-center gap-2">
+                    <Flame className="h-4 w-4 text-red-600" />
+                    <p className="text-sm font-semibold text-foreground">Escalation Workspace</p>
+                    <Badge variant="outline" className="border-indigo-200 bg-indigo-50 text-indigo-700 text-[10px]">ESC-001</Badge>
+                  </div>
+                  <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500 text-[10px]">
+                    Read-only · Click to view
+                  </Badge>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-5">
+                  <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                    <Shield className="h-3.5 w-3.5 text-red-600" />
+                    <div>
+                      <p className="text-lg font-semibold text-red-700">{escalationSummary.critical}</p>
+                      <p className="text-[10px] text-muted-foreground">Critical</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                    <AlertTriangle className="h-3.5 w-3.5 text-orange-600" />
+                    <div>
+                      <p className="text-lg font-semibold text-orange-700">{escalationSummary.high}</p>
+                      <p className="text-[10px] text-muted-foreground">High</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                    <Boxes className="h-3.5 w-3.5 text-amber-600" />
+                    <div>
+                      <p className="text-lg font-semibold text-amber-700">{escalationSummary.capacityEscalations}</p>
+                      <p className="text-[10px] text-muted-foreground">Capacity</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                    <Calculator className="h-3.5 w-3.5 text-purple-600" />
+                    <div>
+                      <p className="text-lg font-semibold text-purple-700">{escalationSummary.financeEscalations}</p>
+                      <p className="text-[10px] text-muted-foreground">Finance/GP</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                    <TrendingDown className="h-3.5 w-3.5 text-slate-600" />
+                    <div>
+                      <p className="text-sm font-semibold text-slate-700">
+                        {escalationSummary.totalFinancialExposure > 0
+                          ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(escalationSummary.totalFinancialExposure) + ' SAR'
+                          : '--'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Exposure</p>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+        )}
 
         <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
           <Card className="shadow-none">

@@ -1678,3 +1678,481 @@ export function computeBudgetVsActual(data: CommercialOsData): BudgetVsActualDat
     sourceNotes: notes,
   };
 }
+
+// ─── OPS-001: Operations Signal Inbox (Read-Only) ─────────────
+
+export type SignalType = 'capacity_risk' | 'shortfall' | 'high_utilization' | 'complaint' | 'sla_risk' | 'promise_gap' | 'warehouse_issue' | 'finance_signal';
+export type SignalSeverity = 'low' | 'medium' | 'high' | 'critical';
+export type SignalStatus = 'open' | 'monitoring' | 'resolved' | 'ignored';
+
+export interface OperationsSignal {
+  id: string;
+  signalCode: string;
+  signalType: SignalType;
+  sourceArea: string;
+  sourceTable: string;
+  sourceRecordId: string;
+  customerId: string;
+  customerName: string;
+  warehouseId: string;
+  warehouseLabel: string;
+  severity: SignalSeverity;
+  status: SignalStatus;
+  title: string;
+  description: string;
+  commercialImpact: string;
+  recommendedAction: string;
+  sourceType: string;
+  truthStatus: string;
+  confidenceTier: number;
+  sourceLineage: string;
+  createdFromRule: boolean;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SignalSummary {
+  total: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  open: number;
+  monitoring: number;
+  resolved: number;
+  capacitySignals: number;
+  financeSignals: number;
+  warehouseSignals: number;
+  signals: OperationsSignal[];
+}
+
+function mapSignal(row: any): OperationsSignal {
+  return {
+    id: text(row.id, row.signal_code),
+    signalCode: text(row.signal_code),
+    signalType: (text(row.signal_type) || 'warehouse_issue') as SignalType,
+    sourceArea: text(row.source_area),
+    sourceTable: text(row.source_table),
+    sourceRecordId: text(row.source_record_id),
+    customerId: text(row.customer_id),
+    customerName: text(row.customer_name),
+    warehouseId: text(row.warehouse_id),
+    warehouseLabel: text(row.warehouse_label),
+    severity: (text(row.severity) || 'medium') as SignalSeverity,
+    status: (text(row.status) || 'open') as SignalStatus,
+    title: text(row.title),
+    description: text(row.description),
+    commercialImpact: text(row.commercial_impact),
+    recommendedAction: text(row.recommended_action),
+    sourceType: text(row.source_type),
+    truthStatus: text(row.truth_status),
+    confidenceTier: num(row.confidence_tier),
+    sourceLineage: text(row.source_lineage),
+    createdFromRule: row.created_from_rule === true,
+    active: row.active !== false,
+    createdAt: text(row.created_at),
+    updatedAt: text(row.updated_at),
+  };
+}
+
+export async function fetchOperationsSignals(): Promise<OperationsSignal[]> {
+  const { data, error } = await supabase
+    .from("operations_signals")
+    .select("*")
+    .eq("active", true)
+    .order("severity", { ascending: true })
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("[commercial-os] Failed to fetch operations signals:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapSignal);
+}
+
+/**
+ * Generate client-side signals from existing capacity/GP data.
+ * Used as fallback when DB signals are empty (migration not applied).
+ */
+export function generateSignalsFromData(
+  riskSummary: CapacityRiskSummary | null,
+  gpSummary: { dangerousDefaultCount: number; totalDeals: number; projectedGpAssumed: number } | null,
+): OperationsSignal[] {
+  const signals: OperationsSignal[] = [];
+  const now = new Date().toISOString();
+
+  if (riskSummary) {
+    for (const w of riskSummary.warehouses) {
+      if (w.riskStatus === 'overcommitted') {
+        signals.push({
+          id: `gen-overcommit-${w.warehouseLabel}`,
+          signalCode: `OPS-CAP-OVERCOMMIT-${w.warehouseLabel}`,
+          signalType: 'capacity_risk',
+          sourceArea: 'warehouse_capacity',
+          sourceTable: 'warehouse_capacity_snapshots',
+          sourceRecordId: '',
+          customerId: '',
+          customerName: '',
+          warehouseId: '',
+          warehouseLabel: w.warehouseLabel,
+          severity: 'critical',
+          status: 'open',
+          title: `Overcommitted: ${w.warehouseLabel}`,
+          description: `Committed (${w.committedCapacity.toLocaleString()}) exceeds sellable (${w.sellableCapacity.toLocaleString()}). Shortfall of ${w.shortfallCapacity.toLocaleString()} pallets.`,
+          commercialImpact: 'Subcontracting risk — warehouse cannot fulfill committed volumes. New deals will fail SLA.',
+          recommendedAction: `Freeze new commitments to ${w.warehouseLabel}. Review subcontracting options.`,
+          sourceType: 'verified_snapshot',
+          truthStatus: 'verified_snapshot',
+          confidenceTier: 1,
+          sourceLineage: 'warehouse_capacity_snapshots → committed > sellable',
+          createdFromRule: true,
+          active: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } else if (w.shortfallCapacity > 0) {
+        signals.push({
+          id: `gen-shortfall-${w.warehouseLabel}`,
+          signalCode: `OPS-CAP-SHORTFALL-${w.warehouseLabel}`,
+          signalType: 'shortfall',
+          sourceArea: 'warehouse_capacity',
+          sourceTable: 'warehouse_capacity_snapshots',
+          sourceRecordId: '',
+          customerId: '',
+          customerName: '',
+          warehouseId: '',
+          warehouseLabel: w.warehouseLabel,
+          severity: 'high',
+          status: 'open',
+          title: `Shortfall: ${w.warehouseLabel} (${w.shortfallCapacity.toLocaleString()} pallets)`,
+          description: `Shortfall of ${w.shortfallCapacity.toLocaleString()} pallets at ${w.warehouseLabel}. Utilization ${w.utilizationPct.toFixed(1)}%.`,
+          commercialImpact: 'Capacity constraint — new commitments risk breaking SLA.',
+          recommendedAction: 'Review capacity allocation. Do not promise additional volume without operations confirmation.',
+          sourceType: 'verified_snapshot',
+          truthStatus: 'verified_snapshot',
+          confidenceTier: 1,
+          sourceLineage: 'warehouse_capacity_snapshots → shortfall > 0',
+          createdFromRule: true,
+          active: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } else if (w.riskStatus === 'high_utilization') {
+        signals.push({
+          id: `gen-highutil-${w.warehouseLabel}`,
+          signalCode: `OPS-CAP-HIGHUTIL-${w.warehouseLabel}`,
+          signalType: 'high_utilization',
+          sourceArea: 'warehouse_capacity',
+          sourceTable: 'warehouse_capacity_snapshots',
+          sourceRecordId: '',
+          customerId: '',
+          customerName: '',
+          warehouseId: '',
+          warehouseLabel: w.warehouseLabel,
+          severity: 'medium',
+          status: 'open',
+          title: `High utilization: ${w.warehouseLabel} (${w.utilizationPct.toFixed(1)}%)`,
+          description: `${w.warehouseLabel} at ${w.utilizationPct.toFixed(1)}% utilization. Limited headroom for new deals.`,
+          commercialImpact: 'Limited headroom — warehouse review required before new commitments.',
+          recommendedAction: 'Conduct capacity review before committing new deals. Monitor weekly.',
+          sourceType: 'verified_snapshot',
+          truthStatus: 'verified_snapshot',
+          confidenceTier: 2,
+          sourceLineage: 'warehouse_capacity_snapshots → utilization >= 90%',
+          createdFromRule: true,
+          active: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
+  }
+
+  if (gpSummary && gpSummary.dangerousDefaultCount > 0) {
+    signals.push({
+      id: 'gen-gp-assumption',
+      signalCode: 'OPS-FIN-GP-ASSUMED',
+      signalType: 'finance_signal',
+      sourceArea: 'gp_intelligence',
+      sourceTable: 'commercial_opportunity_gp_basis',
+      sourceRecordId: '',
+      customerId: '',
+      customerName: '',
+      warehouseId: '',
+      warehouseLabel: '',
+      severity: 'high',
+      status: 'open',
+      title: `GP assumption risk: ${gpSummary.dangerousDefaultCount}/${gpSummary.totalDeals} deals using 25% default`,
+      description: `${gpSummary.dangerousDefaultCount} pipeline deals use the 25% GP / 75% cost assumption. Assumed GP: ${gpSummary.projectedGpAssumed.toLocaleString()} SAR.`,
+      commercialImpact: 'Entire pipeline GP projection is assumed, not verified. Cannot rely on GP figures for budgeting.',
+      recommendedAction: 'Request Finance to provide actual cost data per deal. Do not treat assumed GP as verified profit.',
+      sourceType: 'assumption',
+      truthStatus: 'assumption',
+      confidenceTier: 3,
+      sourceLineage: 'commercial_opportunity_gp_basis → all gp_basis = assumed_margin',
+      createdFromRule: true,
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  // Sort: critical first, then high, medium, low
+  const severityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+  signals.sort((a, b) => (severityOrder[a.severity] ?? 4) - (severityOrder[b.severity] ?? 4));
+
+  return signals;
+}
+
+export function computeSignalSummary(signals: OperationsSignal[]): SignalSummary {
+  return {
+    total: signals.length,
+    critical: signals.filter(s => s.severity === 'critical').length,
+    high: signals.filter(s => s.severity === 'high').length,
+    medium: signals.filter(s => s.severity === 'medium').length,
+    low: signals.filter(s => s.severity === 'low').length,
+    open: signals.filter(s => s.status === 'open').length,
+    monitoring: signals.filter(s => s.status === 'monitoring').length,
+    resolved: signals.filter(s => s.status === 'resolved').length,
+    capacitySignals: signals.filter(s => ['capacity_risk', 'shortfall', 'high_utilization'].includes(s.signalType)).length,
+    financeSignals: signals.filter(s => s.signalType === 'finance_signal').length,
+    warehouseSignals: signals.filter(s => s.warehouseLabel !== '').length,
+    signals,
+  };
+}
+
+// ─── ESC-001: Commercial Escalation Workspace (Read-Only) ─────
+
+export type EscalationType = 'capacity' | 'finance' | 'gp' | 'customer' | 'tender' | 'operational' | 'leadership';
+export type EscalationSeverity = 'low' | 'medium' | 'high' | 'critical';
+export type EscalationStatus = 'open' | 'monitoring' | 'under_review' | 'mitigated' | 'resolved' | 'ignored';
+
+export interface CommercialEscalation {
+  id: string;
+  escalationCode: string;
+  sourceSignalId: string;
+  escalationType: EscalationType;
+  title: string;
+  description: string;
+  severity: EscalationSeverity;
+  status: EscalationStatus;
+  customerId: string;
+  customerName: string;
+  warehouseId: string;
+  warehouseLabel: string;
+  tenderWorkspaceId: string;
+  ownerRole: string;
+  governanceOwner: string;
+  commercialImpact: string;
+  financialExposure: number | null;
+  recommendedAction: string;
+  sourceType: string;
+  truthStatus: string;
+  confidenceTier: number;
+  sourceLineage: string;
+  createdFromRule: boolean;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EscalationSummary {
+  total: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  open: number;
+  monitoring: number;
+  underReview: number;
+  mitigated: number;
+  resolved: number;
+  capacityEscalations: number;
+  financeEscalations: number;
+  gpEscalations: number;
+  operationalEscalations: number;
+  totalFinancialExposure: number;
+  escalations: CommercialEscalation[];
+}
+
+function mapEscalation(row: any): CommercialEscalation {
+  return {
+    id: text(row.id, row.escalation_code),
+    escalationCode: text(row.escalation_code),
+    escalationType: (text(row.escalation_type) || 'operational') as EscalationType,
+    sourceSignalId: text(row.source_signal_id),
+    title: text(row.title),
+    description: text(row.description),
+    severity: (text(row.severity) || 'medium') as EscalationSeverity,
+    status: (text(row.status) || 'open') as EscalationStatus,
+    customerId: text(row.customer_id),
+    customerName: text(row.customer_name),
+    warehouseId: text(row.warehouse_id),
+    warehouseLabel: text(row.warehouse_label),
+    tenderWorkspaceId: text(row.tender_workspace_id),
+    ownerRole: text(row.owner_role),
+    governanceOwner: text(row.governance_owner),
+    commercialImpact: text(row.commercial_impact),
+    financialExposure: row.financial_exposure != null ? Number(row.financial_exposure) : null,
+    recommendedAction: text(row.recommended_action),
+    sourceType: text(row.source_type),
+    truthStatus: text(row.truth_status),
+    confidenceTier: num(row.confidence_tier),
+    sourceLineage: text(row.source_lineage),
+    createdFromRule: row.created_from_rule === true,
+    active: row.active !== false,
+    createdAt: text(row.created_at),
+    updatedAt: text(row.updated_at),
+  };
+}
+
+export async function fetchCommercialEscalations(): Promise<CommercialEscalation[]> {
+  const { data, error } = await supabase
+    .from("commercial_escalations")
+    .select("*")
+    .eq("active", true)
+    .order("severity", { ascending: true })
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("[commercial-os] Failed to fetch escalations:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapEscalation);
+}
+
+/**
+ * Generate client-side escalations from existing capacity/GP data.
+ * Used as fallback when DB escalations are empty (migration not applied).
+ */
+export function generateEscalationsFromData(
+  riskSummary: CapacityRiskSummary | null,
+  gpSummary: { dangerousDefaultCount: number; totalDeals: number; projectedGpAssumed: number } | null,
+): CommercialEscalation[] {
+  const escalations: CommercialEscalation[] = [];
+  const now = new Date().toISOString();
+
+  if (riskSummary) {
+    for (const w of riskSummary.warehouses) {
+      if (w.riskStatus === 'overcommitted') {
+        escalations.push({
+          id: `gen-esc-overcommit-${w.warehouseLabel}`,
+          escalationCode: `ESC-CAP-OVERCOMMIT-${w.warehouseLabel}`,
+          sourceSignalId: '',
+          escalationType: 'capacity',
+          title: `Escalation: Overcommitted capacity at ${w.warehouseLabel}`,
+          description: `Committed (${w.committedCapacity.toLocaleString()}) exceeds sellable (${w.sellableCapacity.toLocaleString()}). Shortfall of ${w.shortfallCapacity.toLocaleString()} pallets.`,
+          severity: 'critical',
+          status: 'open',
+          customerId: '',
+          customerName: '',
+          warehouseId: '',
+          warehouseLabel: w.warehouseLabel,
+          tenderWorkspaceId: '',
+          ownerRole: 'Operations + Commercial Leadership',
+          governanceOwner: 'COO / Commercial Director',
+          commercialImpact: 'Subcontracting risk — warehouse cannot fulfill committed volumes. Customer escalation likely.',
+          financialExposure: w.shortfallCapacity * 48,
+          recommendedAction: `Freeze new commitments to ${w.warehouseLabel}. Review subcontracting options. Notify affected customers.`,
+          sourceType: 'verified_snapshot',
+          truthStatus: 'verified_snapshot',
+          confidenceTier: 1,
+          sourceLineage: 'warehouse_capacity_snapshots → committed > sellable → signal → escalation',
+          createdFromRule: true,
+          active: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } else if (w.shortfallCapacity > 0) {
+        escalations.push({
+          id: `gen-esc-shortfall-${w.warehouseLabel}`,
+          escalationCode: `ESC-OPS-SHORTFALL-${w.warehouseLabel}`,
+          sourceSignalId: '',
+          escalationType: 'operational',
+          title: `Escalation: Capacity shortfall at ${w.warehouseLabel} (${w.shortfallCapacity.toLocaleString()} pallets)`,
+          description: `Shortfall of ${w.shortfallCapacity.toLocaleString()} pallets at ${w.warehouseLabel}. Utilization ${w.utilizationPct.toFixed(1)}%.`,
+          severity: 'high',
+          status: 'open',
+          customerId: '',
+          customerName: '',
+          warehouseId: '',
+          warehouseLabel: w.warehouseLabel,
+          tenderWorkspaceId: '',
+          ownerRole: 'Operations Leadership',
+          governanceOwner: 'COO',
+          commercialImpact: 'Capacity constraint — new commitments risk breaking SLA. Customer churn risk.',
+          financialExposure: w.shortfallCapacity * 48,
+          recommendedAction: `Review capacity allocation at ${w.warehouseLabel}. Do not promise additional volume.`,
+          sourceType: 'verified_snapshot',
+          truthStatus: 'verified_snapshot',
+          confidenceTier: 1,
+          sourceLineage: 'warehouse_capacity_snapshots → shortfall > 0 → signal → escalation',
+          createdFromRule: true,
+          active: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      // Note: high_utilization doesn't escalate — only overcommitted + shortfall
+    }
+  }
+
+  if (gpSummary && gpSummary.dangerousDefaultCount > 0) {
+    escalations.push({
+      id: 'gen-esc-gp-assumption',
+      escalationCode: 'ESC-FIN-GP-ASSUMED',
+      sourceSignalId: '',
+      escalationType: 'gp',
+      title: `Escalation: ${gpSummary.dangerousDefaultCount}/${gpSummary.totalDeals} deals using 25% GP default`,
+      description: `All pipeline deals use the 25% GP assumption. Projected GP of ${gpSummary.projectedGpAssumed.toLocaleString()} SAR is entirely assumed.`,
+      severity: 'high',
+      status: 'open',
+      customerId: '',
+      customerName: '',
+      warehouseId: '',
+      warehouseLabel: '',
+      tenderWorkspaceId: '',
+      ownerRole: 'Finance + Commercial Leadership',
+      governanceOwner: 'CFO / Commercial Director',
+      commercialImpact: 'Entire pipeline GP projection is assumed. Board reporting at risk.',
+      financialExposure: gpSummary.projectedGpAssumed,
+      recommendedAction: 'Request Finance to provide actual cost data. Do not present assumed GP as verified profit.',
+      sourceType: 'assumption',
+      truthStatus: 'assumption',
+      confidenceTier: 3,
+      sourceLineage: 'commercial_opportunities → gp_basis = assumed → signal → escalation',
+      createdFromRule: true,
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  // Sort: critical first, then high, medium, low
+  const severityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+  escalations.sort((a, b) => (severityOrder[a.severity] ?? 4) - (severityOrder[b.severity] ?? 4));
+
+  return escalations;
+}
+
+export function computeEscalationSummary(escalations: CommercialEscalation[]): EscalationSummary {
+  return {
+    total: escalations.length,
+    critical: escalations.filter(e => e.severity === 'critical').length,
+    high: escalations.filter(e => e.severity === 'high').length,
+    medium: escalations.filter(e => e.severity === 'medium').length,
+    low: escalations.filter(e => e.severity === 'low').length,
+    open: escalations.filter(e => e.status === 'open').length,
+    monitoring: escalations.filter(e => e.status === 'monitoring').length,
+    underReview: escalations.filter(e => e.status === 'under_review').length,
+    mitigated: escalations.filter(e => e.status === 'mitigated').length,
+    resolved: escalations.filter(e => e.status === 'resolved').length,
+    capacityEscalations: escalations.filter(e => e.escalationType === 'capacity').length,
+    financeEscalations: escalations.filter(e => ['finance', 'gp'].includes(e.escalationType)).length,
+    gpEscalations: escalations.filter(e => e.escalationType === 'gp').length,
+    operationalEscalations: escalations.filter(e => e.escalationType === 'operational').length,
+    totalFinancialExposure: escalations.reduce((sum, e) => sum + (e.financialExposure ?? 0), 0),
+    escalations,
+  };
+}

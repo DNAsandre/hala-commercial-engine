@@ -8,9 +8,12 @@ import {
   ClipboardList,
   Database,
   FileSpreadsheet,
+  FileText,
   LineChart,
   Lock,
   Loader2,
+  Flame,
+  Radio,
   ShieldOff,
   TableProperties,
   Truck,
@@ -36,6 +39,9 @@ const navItems = [
   { path: "/commercial-os/actions", label: "Actions", icon: ClipboardList },
   { path: "/commercial-os/customers", label: "Customers", icon: Building2 },
   { path: "/commercial-os/transportation", label: "Transportation", icon: Truck },
+  { path: "/commercial-os/ops-signals", label: "Ops Signals", icon: Radio },
+  { path: "/commercial-os/escalations", label: "Escalations", icon: Flame },
+  { path: "/commercial-os/reports/monthly", label: "Reports", icon: FileText },
 ];
 
 export function CommercialOsShell({
