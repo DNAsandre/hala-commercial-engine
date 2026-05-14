@@ -300,11 +300,11 @@ export default function CommercialOsForecast() {
                           </tr>
                         );
                       })}
-                      {/* Totals row */}
+                      {/* Totals row — YTD actuals vs full-year budget is intentional; delta reflects YTD variance */}
                       <tr className="text-xs font-semibold bg-muted/30">
-                        <td className="px-3 py-2">TOTAL</td>
-                        <td className="px-3 py-2 font-mono text-right">{fmt(bva.monthRows.reduce((s, r) => s + r.actual, 0))}</td>
-                        <td className="px-3 py-2 font-mono text-right">{fmt(bva.fullYearBudget)}</td>
+                        <td className="px-3 py-2">YTD Total</td>
+                        <td className="px-3 py-2 font-mono text-right">{fmt(bva.ytdActual)}</td>
+                        <td className="px-3 py-2 font-mono text-right" title="Full-year budget">{fmt(bva.fullYearBudget)}</td>
                         <td className={`px-3 py-2 font-mono text-right ${bva.ytdDelta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{bva.ytdDelta >= 0 ? '+' : ''}{fmt(bva.ytdDelta)}</td>
                         <td className="px-3 py-2 font-mono text-right">{fmt(bva.fullYearForecast)}</td>
                         <td className={`px-3 py-2 font-mono text-right ${bva.fullYearGap >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{bva.fullYearGap >= 0 ? '+' : ''}{fmt(bva.fullYearGap)}</td>

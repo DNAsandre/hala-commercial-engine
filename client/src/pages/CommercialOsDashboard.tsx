@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCommercialOsData } from "@/hooks/useCommercialOsData";
 import { computeStrategicTruths, type StrategicTruth, type ParityStatus } from "@/lib/commercial-os-formulas";
-import { computeGpSummary, computeCapacityRiskSummary, computeForecastComponents, type KpiRegistryEntry } from "@/lib/commercial-os-data";
+import { computeGpV2Summary, computeCapacityRiskSummary, computeForecastComponents, type KpiRegistryEntry } from "@/lib/commercial-os-data";
 
 const metricDefinitions = [
   { label: "Weighted Pipeline", aliases: ["weighted_pipeline", "pipeline_weighted"] },
@@ -254,7 +254,7 @@ export default function CommercialOsDashboard() {
   const phasingWeighted = data.monthlyPhasing.reduce((sum, row) => sum + numValue(row, "weighted_amount", "weighted_total"), 0);
 
   // EXEC-001: Executive computed values
-  const gp = !loading && !error && data.opportunities.length > 0 ? computeGpSummary(data.opportunities) : null;
+  const gp = !loading && !error && data.opportunities.length > 0 ? computeGpV2Summary(data.opportunities) : null;
   const capRisk = !loading && !error && data.capacitySnapshots.length > 0 ? computeCapacityRiskSummary(data.capacitySnapshots, data.dashboardThresholds) : null;
   const mv = (key: string) => {
     const m = data.dashboardMetrics.find((x) => metricMatches(x.metricKey, x.metricLabel, [key]));
@@ -339,6 +339,11 @@ export default function CommercialOsDashboard() {
                     <MetricCard label="% Assumed" value={`${gp.assumedGpPctOfTotal}%`} helper={gp.assumedGpPctOfTotal > 50 ? 'Majority on dangerous default' : 'Majority verified'} />
                     <MetricCard label="Finance Review" value={String(gp.dealsNeedingReview)} helper="Deals needing cost validation" />
                   </div>
+                  {gp.dangerousDefaultCount > 0 && (
+                    <div className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                      <span className="font-semibold">⚠ Dangerous Default: </span>{gp.defaultWarningMessage}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -517,7 +522,7 @@ export default function CommercialOsDashboard() {
 
         {/* GP-001: GP Confidence Panel */}
         {!loading && !error && data.opportunities.length > 0 && (() => {
-          const gp = computeGpSummary(data.opportunities);
+          const gp = computeGpV2Summary(data.opportunities);
           return (
             <Card className="shadow-none border-amber-200">
               <CardContent className="p-5">

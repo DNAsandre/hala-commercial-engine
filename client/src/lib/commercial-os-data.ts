@@ -370,6 +370,78 @@ export function computeGpSummary(opportunities: CommercialOpportunity[]): GpSumm
   };
 }
 
+// ─── GP-002: Per-Deal GP Confidence Detail (Read-Only) ───────
+
+export interface GpDealDetail {
+  id: string;
+  customerName: string;
+  stage: string;
+  acv: number;
+  weightedTotal: number;
+  gpBasis: string;
+  gpMarginPct: number;
+  estimatedGp: number;
+  gpConfidenceStatus: string;
+  financeReviewRequired: boolean;
+  dangerousDefault: boolean;
+  riskLabel: string;
+}
+
+export interface GpV2Summary extends GpSummary {
+  dealDetails: GpDealDetail[];
+  dangerousDefaultCount: number;
+  dangerousDefaultValue: number;
+  defaultWarningMessage: string;
+}
+
+export function computeGpV2Summary(opportunities: CommercialOpportunity[]): GpV2Summary {
+  const base = computeGpSummary(opportunities);
+
+  const dealDetails: GpDealDetail[] = opportunities.map(opp => {
+    const estimatedGp = opp.weightedTotal * (opp.gpMarginPct / 100);
+    const financeReviewRequired = opp.gpConfidenceStatus === 'needs_finance_review';
+    const dangerousDefault = opp.gpBasis === 'assumed_75pct' && opp.weightedTotal > 0;
+
+    let riskLabel = 'Unknown';
+    if (opp.gpBasis === 'actual_cost') riskLabel = 'Verified — actual cost';
+    else if (opp.gpBasis === 'no_revenue') riskLabel = 'No revenue — GP n/a';
+    else if (opp.gpBasis === 'assumed_75pct' && opp.weightedTotal > 1_000_000) riskLabel = 'High-value assumed — needs Finance';
+    else if (opp.gpBasis === 'assumed_75pct') riskLabel = 'Assumed 25% GP — needs Finance';
+    else riskLabel = `Basis: ${opp.gpBasis}`;
+
+    return {
+      id: opp.id,
+      customerName: opp.customerName,
+      stage: opp.stage,
+      acv: opp.acvAnnual,
+      weightedTotal: opp.weightedTotal,
+      gpBasis: opp.gpBasis,
+      gpMarginPct: opp.gpMarginPct,
+      estimatedGp: estimatedGp,
+      gpConfidenceStatus: opp.gpConfidenceStatus,
+      financeReviewRequired,
+      dangerousDefault,
+      riskLabel,
+    };
+  });
+
+  const dangerousDefaultCount = dealDetails.filter(d => d.dangerousDefault).length;
+  const dangerousDefaultValue = dealDetails.filter(d => d.dangerousDefault).reduce((s, d) => s + d.estimatedGp, 0);
+
+  let defaultWarningMessage = '';
+  if (dangerousDefaultCount > 0) {
+    defaultWarningMessage = `${dangerousDefaultCount} deal${dangerousDefaultCount > 1 ? 's' : ''} using dangerous 25% GP default (${new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(dangerousDefaultValue)} SAR). Do not treat assumed GP as verified profit.`;
+  }
+
+  return {
+    ...base,
+    dealDetails: dealDetails.sort((a, b) => b.estimatedGp - a.estimatedGp),
+    dangerousDefaultCount,
+    dangerousDefaultValue,
+    defaultWarningMessage,
+  };
+}
+
 // ─── CAP-002: Capacity Risk Intelligence (Read-Only) ─────────
 
 export type CapacityRiskStatus = 'available' | 'watch' | 'high_utilization' | 'constrained' | 'overcommitted';

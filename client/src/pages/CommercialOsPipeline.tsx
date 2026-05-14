@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { AlertTriangle, Calendar, ChevronDown, ChevronRight, Scale, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Calendar, ChevronDown, ChevronRight, Scale, ShieldAlert, ShieldCheck } from "lucide-react";
 import {
   CommercialOsShell,
   DataTable,
@@ -12,6 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { useCommercialOsData } from "@/hooks/useCommercialOsData";
+import { computeGpV2Summary } from "@/lib/commercial-os-data";
 
 // ─── Formatters ──────────────────────────────────────────────
 
@@ -441,6 +442,10 @@ export default function CommercialOsPipeline() {
   // Reconciliation
   const reconRows = useMemo(() => buildReconRows(rows, phasingMap), [rows, phasingMap]);
 
+  // GP-002: GP Confidence
+  const gpV2 = useMemo(() => computeGpV2Summary(rows), [rows]);
+  const [showGpDetail, setShowGpDetail] = useState(false);
+
   function toggleExpand(id: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -488,6 +493,116 @@ export default function CommercialOsPipeline() {
                 <MetricCard label="Total Weighted Phasing" value={fmt(totalPhasingWeighted)} helper="SUM(weighted_amount) grand total" />
                 <MetricCard label="Phasing Rows" value={String(totalPhasingRows)} helper="commercial_opportunity_monthly_phasing" />
               </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ═══ GP-002: GP Confidence Intelligence ═══ */}
+        {rows.length > 0 && (
+          <Card className={`shadow-none ${gpV2.assumedGpPctOfTotal > 50 ? 'border-red-200' : 'border-emerald-200'}`}>
+            <CardContent className="p-4">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 text-amber-600" />
+                  <p className="text-sm font-semibold">GP Confidence Intelligence</p>
+                  <Badge variant="outline" className="border-indigo-200 bg-indigo-50 text-indigo-700 text-[10px]">GP-002</Badge>
+                  {gpV2.assumedGpPctOfTotal > 50 ? (
+                    <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 text-[10px]">⚠ {gpV2.assumedGpPctOfTotal}% assumed</Badge>
+                  ) : (
+                    <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700 text-[10px]">✓ Majority verified</Badge>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowGpDetail(!showGpDetail)}
+                  className="flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                >
+                  {showGpDetail ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                  {showGpDetail ? 'Hide' : 'Show'} per-deal GP
+                </button>
+              </div>
+
+              {/* Summary Cards */}
+              <div className="mb-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                <MetricCard label="Projected GP" value={fmt(gpV2.projectedGpTotal)} helper="Weighted × GP margin %" />
+                <MetricCard label="Verified GP" value={fmt(gpV2.projectedGpVerified)} helper={`${gpV2.dealsVerified} deals with actual cost`} />
+                <MetricCard label="Assumed GP" value={fmt(gpV2.projectedGpAssumed)} helper={`${gpV2.dealsAssumed} deals at 25% default`} />
+                <MetricCard label="% Assumed" value={`${gpV2.assumedGpPctOfTotal}%`} helper={gpV2.assumedGpPctOfTotal > 50 ? 'Majority on dangerous default' : 'Majority verified'} />
+                <MetricCard label="Finance Review" value={String(gpV2.dealsNeedingReview)} helper="Deals needing cost validation" />
+                <MetricCard label="No Revenue" value={String(gpV2.dealsNoRevenue)} helper="Zero ACV — GP not applicable" />
+              </div>
+
+              {/* Dangerous Default Warning */}
+              {gpV2.dangerousDefaultCount > 0 && (
+                <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  <span className="font-semibold">⚠ Dangerous Default: </span>{gpV2.defaultWarningMessage}
+                </div>
+              )}
+
+              {/* Source Truth Labels */}
+              <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground">
+                <span>• GP based on assumption until Finance validates cost</span>
+                <span>• 75% cost ratio / 25% GP default</span>
+                <span>• Do not treat assumed GP as verified profit</span>
+              </div>
+
+              {/* Per-Deal Detail */}
+              {showGpDetail && (
+                <div className="mt-3 overflow-x-auto rounded border">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b bg-slate-50 text-left">
+                        <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Customer</th>
+                        <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Stage</th>
+                        <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">ACV</th>
+                        <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Weighted</th>
+                        <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">GP Basis</th>
+                        <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Margin %</th>
+                        <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Est. GP</th>
+                        <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Confidence</th>
+                        <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Risk</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {gpV2.dealDetails.map(d => {
+                        const basisCls: Record<string, string> = {
+                          actual_cost: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+                          assumed_75pct: 'border-red-200 bg-red-50 text-red-700',
+                          no_revenue: 'border-zinc-200 bg-zinc-50 text-zinc-500',
+                          assumed_margin: 'border-red-200 bg-red-50 text-red-700',
+                        };
+                        const confCls: Record<string, string> = {
+                          verified: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+                          needs_finance_review: 'border-amber-200 bg-amber-50 text-amber-700',
+                          unavailable: 'border-zinc-200 bg-zinc-50 text-zinc-500',
+                          assumed: 'border-red-200 bg-red-50 text-red-700',
+                        };
+                        return (
+                          <tr key={d.id} className={`border-b last:border-0 ${d.dangerousDefault ? 'bg-red-50/30' : ''}`}>
+                            <td className="max-w-48 truncate px-2 py-1.5 font-medium">{d.customerName}</td>
+                            <td className="px-2 py-1.5"><Badge variant="outline" className="text-[9px]">{d.stage}</Badge></td>
+                            <td className="px-2 py-1.5 text-right font-mono">{fmt(d.acv)}</td>
+                            <td className="px-2 py-1.5 text-right font-mono">{fmt(d.weightedTotal)}</td>
+                            <td className="px-2 py-1.5"><Badge variant="outline" className={`text-[9px] ${basisCls[d.gpBasis] || basisCls.assumed_75pct}`}>{d.gpBasis}</Badge></td>
+                            <td className="px-2 py-1.5 text-right font-mono">{d.gpMarginPct}%</td>
+                            <td className="px-2 py-1.5 text-right font-mono font-semibold">{fmt(d.estimatedGp)}</td>
+                            <td className="px-2 py-1.5"><Badge variant="outline" className={`text-[9px] ${confCls[d.gpConfidenceStatus] || confCls.assumed}`}>{d.gpConfidenceStatus}</Badge></td>
+                            <td className="px-2 py-1.5 text-muted-foreground">{d.riskLabel}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+                      <tr>
+                        <td className="px-2 py-2" colSpan={4}>Totals</td>
+                        <td className="px-2 py-2"></td>
+                        <td className="px-2 py-2"></td>
+                        <td className="px-2 py-2 text-right font-mono">{fmt(gpV2.projectedGpTotal)}</td>
+                        <td className="px-2 py-2" colSpan={2}></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
