@@ -83,6 +83,7 @@ const CommercialOsTransportation = React.lazy(() => import("./pages/CommercialOs
 const CommercialOsOpsSignals = React.lazy(() => import("./pages/CommercialOsOpsSignals"));
 const CommercialOsEscalations = React.lazy(() => import("./pages/CommercialOsEscalations"));
 const CommercialOsMonthlyReport = React.lazy(() => import("./pages/CommercialOsMonthlyReport"));
+const CommercialOsCustomerReviewPack = React.lazy(() => import("./pages/CommercialOsCustomerReviewPack"));
 
 /**
  * Admin-only routes: require "admin" role.
@@ -155,6 +156,7 @@ function AppRouter() {
       <Route path="/commercial-os/forecast">{() => <LazyPage><CommercialOsForecast /></LazyPage>}</Route>
       <Route path="/commercial-os/revenue">{() => <LazyPage><CommercialOsRevenue /></LazyPage>}</Route>
       <Route path="/commercial-os/actions">{() => <LazyPage><CommercialOsActions /></LazyPage>}</Route>
+      <Route path="/commercial-os/customers/:customerId/review-pack">{() => <LazyPage><CommercialOsCustomerReviewPack /></LazyPage>}</Route>
       <Route path="/commercial-os/customers/:customerId">{() => <LazyPage><CommercialOsCustomerDetail /></LazyPage>}</Route>
       <Route path="/commercial-os/customers">{() => <LazyPage><CommercialOsCustomers /></LazyPage>}</Route>
       <Route path="/commercial-os/transportation">{() => <LazyPage><CommercialOsTransportation /></LazyPage>}</Route>

@@ -204,8 +204,11 @@ export default function CommercialOsCustomerDetail() {
                       </div>
                     )}
                   </div>
-                  <div className="flex gap-2 text-[10px] text-muted-foreground">
+                  <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
                     <span>Read-only · No writes · No CRM</span>
+                    <Link href={`/commercial-os/customers/${customerId}/review-pack`}>
+                      <span className="text-indigo-700 hover:underline cursor-pointer font-medium">📋 Review Pack →</span>
+                    </Link>
                   </div>
                 </div>
               </CardContent>
