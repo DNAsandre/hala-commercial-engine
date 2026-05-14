@@ -1385,3 +1385,136 @@ export function computeForecastComponents(data: CommercialOsData): ForecastCompo
     confidenceStatus,
   };
 }
+
+// ─── FIN-002: Budget vs Actual Intelligence (Read-Only) ───
+
+export interface BvaMonthRow {
+  month: string;
+  actual: number;
+  budget: number;
+  forecast: number;
+  deltaActualVsBudget: number;
+  deltaForecastVsBudget: number;
+  actualAvailable: boolean;
+  budgetAvailable: boolean;
+  forecastAvailable: boolean;
+}
+
+export interface BudgetVsActualData {
+  monthRows: BvaMonthRow[];
+  // YTD (months with actuals only)
+  ytdActual: number;
+  ytdBudget: number;
+  ytdDelta: number;
+  ytdMonths: number;
+  // Full year
+  fullYearForecast: number;
+  fullYearBudget: number;
+  fullYearGap: number;
+  // GP
+  gpForecast: number;
+  gpBudget: number;
+  gpGap: number;
+  gpAvailable: boolean;
+  // Source notes
+  sourceNotes: string[];
+}
+
+export function computeBudgetVsActual(data: CommercialOsData): BudgetVsActualData {
+  const notes: string[] = [];
+
+  // 1. Build month map from forecast rows (which have budget + forecast amounts)
+  // Filter to "Revenue" category / "Total" line items for the aggregate view
+  const forecastTotals = data.forecasts.filter(f =>
+    (f.lineItem?.toLowerCase() === 'total' || f.category?.toLowerCase() === 'revenue') &&
+    f.month
+  );
+
+  const monthMap = new Map<string, { forecast: number; budget: number; actual: number; hasActual: boolean; hasBudget: boolean; hasForecast: boolean }>();
+
+  for (const f of forecastTotals) {
+    const key = f.month;
+    const prev = monthMap.get(key) || { forecast: 0, budget: 0, actual: 0, hasActual: false, hasBudget: false, hasForecast: false };
+    // Use the first (highest-level) forecast row per month, don't sum duplicates
+    if (!prev.hasForecast) {
+      prev.forecast = f.amount;
+      prev.hasForecast = true;
+    }
+    if (!prev.hasBudget && f.budgetAmount > 0) {
+      prev.budget = f.budgetAmount;
+      prev.hasBudget = true;
+    }
+    monthMap.set(key, prev);
+  }
+
+  // 2. Overlay actuals from revenue_actuals (sum per month)
+  const actualByMonth = new Map<string, number>();
+  for (const r of data.revenueActuals) {
+    if (!r.month) continue;
+    actualByMonth.set(r.month, (actualByMonth.get(r.month) || 0) + r.amount);
+  }
+
+  for (const [month, amount] of actualByMonth) {
+    const prev = monthMap.get(month) || { forecast: 0, budget: 0, actual: 0, hasActual: false, hasBudget: false, hasForecast: false };
+    prev.actual = amount;
+    prev.hasActual = true;
+    monthMap.set(month, prev);
+  }
+
+  // 3. Build sorted month rows
+  const monthRows: BvaMonthRow[] = Array.from(monthMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, v]) => ({
+      month,
+      actual: v.actual,
+      budget: v.budget,
+      forecast: v.forecast,
+      deltaActualVsBudget: v.hasActual && v.hasBudget ? v.actual - v.budget : 0,
+      deltaForecastVsBudget: v.hasForecast && v.hasBudget ? v.forecast - v.budget : 0,
+      actualAvailable: v.hasActual,
+      budgetAvailable: v.hasBudget,
+      forecastAvailable: v.hasForecast,
+    }));
+
+  // 4. YTD (only months with actuals)
+  const ytdRows = monthRows.filter(r => r.actualAvailable);
+  const ytdActual = ytdRows.reduce((s, r) => s + r.actual, 0);
+  const ytdBudget = ytdRows.reduce((s, r) => s + r.budget, 0);
+  const ytdDelta = ytdActual - ytdBudget;
+
+  // 5. Full year totals
+  const fullYearForecast = monthRows.reduce((s, r) => s + r.forecast, 0);
+  const fullYearBudget = monthRows.reduce((s, r) => s + r.budget, 0);
+  const fullYearGap = fullYearForecast - fullYearBudget;
+
+  // 6. GP from dashboard metrics
+  const gpFm = data.dashboardMetrics.find(m => ['gp_forecast', 'fy26_gp_forecast', 'gp_total'].includes(m.metricKey));
+  const gpBm = data.dashboardMetrics.find(m => ['gp_budget', 'fy26_gp_budget'].includes(m.metricKey));
+  const gpForecast = gpFm?.metricValue ?? 0;
+  const gpBudget = gpBm?.metricValue ?? 0;
+  const gpGap = gpForecast - gpBudget;
+  const gpAvailable = gpForecast > 0 || gpBudget > 0;
+
+  // Source notes
+  notes.push(`Forecast months: ${monthRows.filter(r => r.forecastAvailable).length}`);
+  notes.push(`Budget months: ${monthRows.filter(r => r.budgetAvailable).length}`);
+  notes.push(`Actual months: ${ytdRows.length}`);
+  if (ytdRows.length > 0) notes.push(`YTD actual: ${ytdActual.toLocaleString()} vs budget: ${ytdBudget.toLocaleString()} = ${ytdDelta >= 0 ? '+' : ''}${ytdDelta.toLocaleString()}`);
+  if (gpAvailable) notes.push(`GP forecast: ${gpForecast.toLocaleString()} vs GP budget: ${gpBudget.toLocaleString()}`);
+
+  return {
+    monthRows,
+    ytdActual,
+    ytdBudget,
+    ytdDelta,
+    ytdMonths: ytdRows.length,
+    fullYearForecast,
+    fullYearBudget,
+    fullYearGap,
+    gpForecast,
+    gpBudget,
+    gpGap,
+    gpAvailable,
+    sourceNotes: notes,
+  };
+}

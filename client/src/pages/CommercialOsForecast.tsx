@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import {
-  AlertTriangle, Calculator, ChevronRight, FileSpreadsheet,
-  LineChart, Target, TrendingDown, TrendingUp,
+  AlertTriangle, Calculator, ChevronRight, DollarSign, FileSpreadsheet,
+  LineChart, Scale, Target, TrendingDown, TrendingUp,
 } from "lucide-react";
 import {
   CommercialOsShell,
@@ -15,10 +15,16 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { useCommercialOsData } from "@/hooks/useCommercialOsData";
-import { computeForecastComponents, type ForecastComponents } from "@/lib/commercial-os-data";
+import { computeForecastComponents, computeBudgetVsActual, type ForecastComponents } from "@/lib/commercial-os-data";
 
 function fmt(v: number) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(v || 0);
+}
+function fmtMonth(v: string) {
+  if (!v) return "--";
+  const d = new Date(v.length === 7 ? `${v}-01T00:00:00` : v);
+  if (Number.isNaN(d.getTime())) return v;
+  return new Intl.DateTimeFormat("en-GB", { month: "short", year: "numeric" }).format(d);
 }
 
 function parityBadge(status: ForecastComponents['parityStatus']) {
@@ -64,6 +70,11 @@ export default function CommercialOsForecast() {
   const fc = useMemo(() => {
     if (loading || error) return null;
     return computeForecastComponents(data);
+  }, [data, loading, error]);
+
+  const bva = useMemo(() => {
+    if (loading || error) return null;
+    return computeBudgetVsActual(data);
   }, [data, loading, error]);
 
   return (
@@ -218,6 +229,130 @@ export default function CommercialOsForecast() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Raw Forecast Rows */}
+
+            {/* ═══ FIN-002: Budget vs Actual Intelligence ═══ */}
+            {bva && bva.monthRows.length > 0 && (
+              <>
+                {/* BvA Labels */}
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <Badge variant="outline" className="border-indigo-200 bg-indigo-50 text-indigo-700 text-[10px]">FIN-002</Badge>
+                  <Badge variant="outline" className="text-[10px]">Budget vs Actual</Badge>
+                  <span className="ml-auto text-[10px] text-muted-foreground">Read-only · No writes · No CRM</span>
+                </div>
+
+                {/* 1. YTD + Full-Year Summary Cards */}
+                <Card className="shadow-none border-indigo-200">
+                  <CardContent className="p-5">
+                    <div className="mb-3 flex items-center gap-2">
+                      <Scale className="h-4 w-4 text-indigo-700" />
+                      <p className="text-sm font-semibold">Budget vs Actual Summary</p>
+                      <Badge variant="outline" className={`text-[10px] ${bva.ytdDelta >= 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                        {bva.ytdDelta >= 0 ? '▲ YTD Ahead' : '▼ YTD Behind'}
+                      </Badge>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+                      <MetricCard label="YTD Actual" value={fmt(bva.ytdActual)} helper={`${bva.ytdMonths} months with actuals`} />
+                      <MetricCard label="YTD Budget" value={fmt(bva.ytdBudget)} helper="Finance governance input" />
+                      <MetricCard label="YTD Variance" value={`${bva.ytdDelta >= 0 ? '+' : ''}${fmt(bva.ytdDelta)}`} helper={bva.ytdDelta >= 0 ? 'Favorable' : 'Unfavorable'} />
+                      <MetricCard label="Full-Year Forecast" value={fmt(bva.fullYearForecast)} helper="Formula-native where available" />
+                      <MetricCard label="Full-Year Budget" value={fmt(bva.fullYearBudget)} helper="Finance governance input" />
+                      <MetricCard label="Full-Year Gap" value={`${bva.fullYearGap >= 0 ? '+' : ''}${fmt(bva.fullYearGap)}`} helper={bva.fullYearGap >= 0 ? 'Ahead of plan' : 'Behind plan'} />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* 2. Monthly Variance Table */}
+                <Card className="shadow-none">
+                  <CardContent className="p-5">
+                    <div className="mb-3 flex items-center gap-2">
+                      <DollarSign className="h-4 w-4 text-blue-700" />
+                      <p className="text-sm font-semibold">Monthly Revenue Variance</p>
+                      <Badge variant="outline" className="text-[10px]">{bva.monthRows.length} months</Badge>
+                    </div>
+                    <DataTable columns={["Month", "Actual", "Budget", "Actual vs Budget", "Forecast", "Forecast vs Budget", "Status"]}>
+                      {bva.monthRows.map(r => {
+                        const hasActual = r.actualAvailable;
+                        const hasBudget = r.budgetAvailable;
+                        const hasForecast = r.forecastAvailable;
+                        return (
+                          <tr key={r.month} className="text-xs">
+                            <td className="px-3 py-2 font-medium">{fmtMonth(r.month)}</td>
+                            <td className="px-3 py-2 font-mono text-right">{hasActual ? fmt(r.actual) : <span className="text-muted-foreground">--</span>}</td>
+                            <td className="px-3 py-2 font-mono text-right">{hasBudget ? fmt(r.budget) : <span className="text-muted-foreground">--</span>}</td>
+                            <td className={`px-3 py-2 font-mono text-right font-semibold ${hasActual && hasBudget ? (r.deltaActualVsBudget >= 0 ? 'text-emerald-700' : 'text-red-700') : ''}`}>
+                              {hasActual && hasBudget ? `${r.deltaActualVsBudget >= 0 ? '+' : ''}${fmt(r.deltaActualVsBudget)}` : <span className="text-muted-foreground">--</span>}
+                            </td>
+                            <td className="px-3 py-2 font-mono text-right">{hasForecast ? fmt(r.forecast) : <span className="text-muted-foreground">--</span>}</td>
+                            <td className={`px-3 py-2 font-mono text-right ${hasForecast && hasBudget ? (r.deltaForecastVsBudget >= 0 ? 'text-emerald-700' : 'text-red-700') : ''}`}>
+                              {hasForecast && hasBudget ? `${r.deltaForecastVsBudget >= 0 ? '+' : ''}${fmt(r.deltaForecastVsBudget)}` : <span className="text-muted-foreground">--</span>}
+                            </td>
+                            <td className="px-3 py-2">
+                              {hasActual && hasBudget ? (
+                                <Badge variant="outline" className={`text-[10px] ${r.deltaActualVsBudget >= 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                                  {r.deltaActualVsBudget >= 0 ? 'Favorable' : 'Unfavorable'}
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[10px] border-zinc-200 bg-zinc-50 text-zinc-500">Forecast only</Badge>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {/* Totals row */}
+                      <tr className="text-xs font-semibold bg-muted/30">
+                        <td className="px-3 py-2">TOTAL</td>
+                        <td className="px-3 py-2 font-mono text-right">{fmt(bva.monthRows.reduce((s, r) => s + r.actual, 0))}</td>
+                        <td className="px-3 py-2 font-mono text-right">{fmt(bva.fullYearBudget)}</td>
+                        <td className={`px-3 py-2 font-mono text-right ${bva.ytdDelta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{bva.ytdDelta >= 0 ? '+' : ''}{fmt(bva.ytdDelta)}</td>
+                        <td className="px-3 py-2 font-mono text-right">{fmt(bva.fullYearForecast)}</td>
+                        <td className={`px-3 py-2 font-mono text-right ${bva.fullYearGap >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{bva.fullYearGap >= 0 ? '+' : ''}{fmt(bva.fullYearGap)}</td>
+                        <td className="px-3 py-2"></td>
+                      </tr>
+                    </DataTable>
+                  </CardContent>
+                </Card>
+
+                {/* 3. GP Budget vs Forecast */}
+                {bva.gpAvailable && (
+                  <Card className="shadow-none">
+                    <CardContent className="p-5">
+                      <div className="mb-3 flex items-center gap-2">
+                        <TrendingDown className="h-4 w-4 text-amber-600" />
+                        <p className="text-sm font-semibold">GP Budget vs Forecast</p>
+                        <Badge variant="outline" className={`text-[10px] ${bva.gpGap >= 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                          {bva.gpGap >= 0 ? '▲ Ahead' : '▼ Behind'}
+                        </Badge>
+                      </div>
+                      <div className="rounded border bg-muted/30 p-3 text-xs font-mono">
+                        <span className="text-blue-700">GP Gap</span> = <span className="text-emerald-700">GP Forecast ({fmt(bva.gpForecast)})</span> − <span className="text-amber-700">GP Budget ({fmt(bva.gpBudget)})</span> = <span className={bva.gpGap >= 0 ? 'text-emerald-700 font-bold' : 'text-red-700 font-bold'}>{bva.gpGap >= 0 ? '+' : ''}{fmt(bva.gpGap)}</span>
+                      </div>
+                      <p className="mt-2 text-[10px] text-muted-foreground">GP confidence depends on cost basis · 75% cost ratio is assumption until Finance validates</p>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* 4. Source Truth Labels */}
+                <Card className="shadow-none">
+                  <CardContent className="p-5">
+                    <div className="mb-3 flex items-center gap-2">
+                      <FileSpreadsheet className="h-4 w-4 text-slate-700" />
+                      <p className="text-sm font-semibold">Budget vs Actual Source Truth</p>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground flex items-start gap-1.5"><span className="text-indigo-400 shrink-0">•</span><span>Budget is Finance Governance Input</span></div>
+                      <div className="text-xs text-muted-foreground flex items-start gap-1.5"><span className="text-indigo-400 shrink-0">•</span><span>Actuals are historical imported values</span></div>
+                      <div className="text-xs text-muted-foreground flex items-start gap-1.5"><span className="text-indigo-400 shrink-0">•</span><span>Forecast is formula-native where available</span></div>
+                      <div className="text-xs text-muted-foreground flex items-start gap-1.5"><span className="text-indigo-400 shrink-0">•</span><span>No missing month is assumed unless explicitly present in source</span></div>
+                      {bva.sourceNotes.map((n, i) => (
+                        <div key={i} className="text-xs text-muted-foreground flex items-start gap-1.5"><span className="text-blue-400 shrink-0">•</span><span>{n}</span></div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            )}
 
             {/* Raw Forecast Rows */}
             <Card className="shadow-none">
