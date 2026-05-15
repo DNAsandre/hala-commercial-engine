@@ -31,6 +31,8 @@ import { systemSettingsRoutes } from './routes/system-settings.js';
 import { systemHealthRoutes } from './routes/system-health.js';
 import { handoversRouter } from './routes/handovers.js';
 import { ecrRulesRouter } from './routes/ecr-rules.js';
+import { ghlWebhookRoutes } from './routes/ghl-webhooks.js';
+import { ghlSyncRoutes } from './routes/ghl-sync.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -79,6 +81,10 @@ app.use('/api', systemSettingsRoutes);
 app.use('/api', systemHealthRoutes);
 app.use('/api/handovers', handoversRouter);
 app.use('/api/ecr', ecrRulesRouter);
+
+// ─── GHL CRM Integration Routes ─────────────────────────
+app.use('/api/webhooks', ghlWebhookRoutes);
+app.use('/api/ghl', ghlSyncRoutes);
 
 // ─── Global Error Handler ────────────────────────────────
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
