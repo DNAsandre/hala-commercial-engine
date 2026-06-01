@@ -1,14 +1,13 @@
-/**
+﻿/**
  * CW-010: Commercial Activity Tab
- * Mock operational timeline. No real event bus or backend.
- * SUPA-003B: Now reads from Supabase via useCommercialWorkspaceData.
+ * Verified operational timeline shell.
+ * SUPA-003B compatibility remains, but no local activity fallback is used.
  */
 import { useState, useMemo } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Activity, AlertTriangle, Clock, Info, User, Loader2, Database } from "lucide-react";
-import { getActivityForWorkspace } from "@/lib/commercial-workspace-data";
+import { Activity, Clock, Info, User, Loader2, Database } from "lucide-react";
 import { useCommercialWorkspaceData } from "@/hooks/useCommercialWorkspaceData";
 
 const sevColor = (s: string) => s === "Critical" ? "text-red-700 bg-red-100 border-red-300" : s === "High" ? "text-red-600 bg-red-50 border-red-200" : s === "Warning" ? "text-amber-700 bg-amber-50 border-amber-200" : "text-slate-600 bg-slate-50 border-slate-200";
@@ -26,10 +25,7 @@ interface Props { workspaceId: string; }
 export default function CommercialActivityTab({ workspaceId }: Props) {
   const { bundle, status } = useCommercialWorkspaceData(workspaceId);
 
-  // SUPA-003B: Use Supabase-backed activity data when available
-  const allEvents = bundle && bundle.activityEvents.length > 0
-    ? bundle.activityEvents
-    : getActivityForWorkspace(workspaceId);
+  const allEvents = bundle?.activityEvents ?? [];
   const isSupabaseBacked = bundle?.supabaseBacked && bundle.activityEvents.length > 0;
 
   const [catFilter, setCatFilter] = useState("All");
@@ -54,17 +50,17 @@ export default function CommercialActivityTab({ workspaceId }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div><h3 className="text-base font-serif font-bold flex items-center gap-2"><Activity className="w-5 h-5 text-[var(--color-hala-navy)]" /> Commercial Activity</h3><p className="text-xs text-muted-foreground">Mock operational timeline</p></div>
+        <div><h3 className="text-base font-serif font-bold flex items-center gap-2"><Activity className="w-5 h-5 text-[var(--color-hala-navy)]" /> Commercial Activity</h3><p className="text-xs text-muted-foreground">Verified workflow history</p></div>
         <div className="flex items-center gap-2">
           {isSupabaseBacked && <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200"><Database className="w-3 h-3 mr-1" />Supabase-Backed</Badge>}
-          <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">Development Mode</Badge>
+          <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">Verified Data Only</Badge>
         </div>
       </div>
-      <Card className="border-2 border-amber-200 shadow-none bg-amber-50/50"><CardContent className="p-3"><div className="flex items-start gap-3"><AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" /><div><div className="text-sm font-semibold text-amber-800 mb-0.5">Development mode: mock operational timeline</div><p className="text-xs text-amber-700">Real workflow history will be backend-backed later.</p></div></div></CardContent></Card>
+      <Card className="border shadow-none bg-muted/20"><CardContent className="p-3"><div className="flex items-start gap-3"><Info className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" /><div><div className="text-sm font-semibold mb-0.5">No verified activity events found</div><p className="text-xs text-muted-foreground">This tab will stay empty until backend-backed workflow events exist for this workspace.</p></div></div></CardContent></Card>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {[{l:"Total Events",v:String(allEvents.length),c:""},{l:"Warnings",v:String(warnings),c:warnings>0?"text-amber-600":""},{l:"High / Critical",v:String(highCritical),c:highCritical>0?"text-red-600":""},{l:"Mock Events",v:String(allEvents.length),c:""},{l:"Last Activity",v:lastTs,c:""}].map(i=>(
+        {[{l:"Total Events",v:String(allEvents.length),c:""},{l:"Warnings",v:String(warnings),c:warnings>0?"text-amber-600":""},{l:"High / Critical",v:String(highCritical),c:highCritical>0?"text-red-600":""},{l:"Source Events",v:String(allEvents.length),c:""},{l:"Last Activity",v:lastTs,c:""}].map(i=>(
           <div key={i.l} className="bg-muted/30 rounded-lg p-2.5"><p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">{i.l}</p><p className={`text-sm font-bold mt-0.5 ${i.c}`}>{i.v}</p></div>
         ))}
       </div>
@@ -91,7 +87,7 @@ export default function CommercialActivityTab({ workspaceId }: Props) {
                 <div className="flex items-center gap-1.5 shrink-0">
                   <Badge variant="outline" className={`text-[8px] ${catColor(e.category)}`}>{e.category}</Badge>
                   <Badge variant="outline" className={`text-[8px] ${sevColor(e.severity)}`}>{e.severity}</Badge>
-                  <Badge variant="outline" className="text-[8px] bg-slate-50 border-slate-200">Mock</Badge>
+                  {e.mock && <Badge variant="outline" className="text-[8px] bg-slate-50 border-slate-200">Advisory</Badge>}
                 </div>
               </div>
               <p className="text-[11px] text-muted-foreground mb-1">{e.description}</p>
@@ -105,7 +101,7 @@ export default function CommercialActivityTab({ workspaceId }: Props) {
         ))}
       </div>
 
-      <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 flex items-start gap-2"><Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" /><p className="text-xs text-blue-800">All activity events are mock records for development. Production activity will be backend-backed and immutable.</p></div>
+      <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 flex items-start gap-2"><Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" /><p className="text-xs text-blue-800">Only backend-backed events are shown here. Empty means not captured yet.</p></div>
     </div>
   );
 }

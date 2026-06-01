@@ -2,7 +2,7 @@ import React, { Suspense } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch, Redirect } from "wouter";
+import { Route, Switch, Redirect, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import PageErrorBoundary from "./components/PageErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -16,6 +16,9 @@ import { Loader2 } from "lucide-react";
 import Dashboard from "./pages/Dashboard";
 import Customers from "./pages/Customers";
 import Login from "./pages/Login";
+
+// ── Lazy loaded (heavy pages) ─────────────────────────────────
+const CrmPipeline = React.lazy(() => import("./pages/CrmPipeline"));
 
 // ── Lazy loaded (heavy pages) ─────────────────────────────────
 const WorkspaceDetail = React.lazy(() => import("./pages/WorkspaceDetail"));
@@ -38,6 +41,7 @@ const RenewalsOverview = React.lazy(() => import("./pages/RenewalsOverview"));
 const Handover = React.lazy(() => import("./pages/Handover"));
 const AdminGovernance = React.lazy(() => import("./pages/AdminGovernance"));
 const AdminPanel = React.lazy(() => import("./pages/AdminPanel"));
+const FacilitiesAdmin = React.lazy(() => import("./pages/FacilitiesAdmin"));
 const AuditTrail = React.lazy(() => import("./pages/AuditTrail"));
 const Editor = React.lazy(() => import("./pages/Editor"));
 const BotRegistry = React.lazy(() => import("./pages/BotRegistry"));
@@ -66,6 +70,7 @@ const GlobalEscalations = React.lazy(() => import("./pages/GlobalEscalations"));
 const AIProviders = React.lazy(() => import("./pages/AIProviders"));
 const EditorBotBuilder = React.lazy(() => import("./pages/EditorBotBuilder"));
 const KnowledgebaseManager = React.lazy(() => import("./pages/KnowledgebaseManager"));
+const AICostLedger = React.lazy(() => import("./pages/AICostLedger"));
 const CRMSyncConsole = React.lazy(() => import("./pages/CRMSyncConsole"));
 const PDFStudio = React.lazy(() => import("./pages/PDFStudio"));
 const DocumentVault = React.lazy(() => import("./pages/DocumentVault"));
@@ -86,6 +91,7 @@ const CommercialOsMonthlyReport = React.lazy(() => import("./pages/CommercialOsM
 const CommercialOsCustomerReviewPack = React.lazy(() => import("./pages/CommercialOsCustomerReviewPack"));
 const CommercialOsDocuments = React.lazy(() => import("./pages/CommercialOsDocuments"));
 
+
 /**
  * Admin-only routes: require "admin" role.
  */
@@ -102,8 +108,9 @@ function PageLoader() {
 
 /** Wraps lazy pages with Suspense + per-page error boundary */
 function LazyPage({ children }: { children: React.ReactNode }) {
+  const [location] = useLocation();
   return (
-    <PageErrorBoundary>
+    <PageErrorBoundary key={location}>
       <Suspense fallback={<PageLoader />}>
         {children}
       </Suspense>
@@ -120,6 +127,7 @@ function AppRouter() {
       {/* /workspaces → redirect to dedicated Commercial Pipeline */}
       <Route path="/workspaces">{() => <Redirect to="/commercial" />}</Route>
       <Route path="/customers" component={Customers} />
+      <Route path="/customer-command" component={Customers} />
 
       {/* ── Lazy loaded public routes ────────────────────────── */}
       <Route path="/workspaces/:id">{() => <LazyPage><WorkspaceDetail /></LazyPage>}</Route>
@@ -139,7 +147,8 @@ function AppRouter() {
       <Route path="/tenders-overview">{() => <LazyPage><TendersOverview /></LazyPage>}</Route>
       <Route path="/commercial-overview">{() => <LazyPage><CommercialOverview /></LazyPage>}</Route>
       <Route path="/renewals-overview">{() => <LazyPage><RenewalsOverview /></LazyPage>}</Route>
-      <Route path="/tender-board">{() => <LazyPage><TenderBoard /></LazyPage>}</Route>
+      <Route path="/crm_pipeline">{() => <LazyPage><CrmPipeline /></LazyPage>}</Route>
+      <Route path="/tender-board">{() => <Redirect to="/crm_pipeline" />}</Route>
       <Route path="/handover">{() => <LazyPage><Handover /></LazyPage>}</Route>
       <Route path="/editor">{() => <LazyPage><Editor /></LazyPage>}</Route>
       <Route path="/renewals">{() => <LazyPage><Renewals /></LazyPage>}</Route>
@@ -170,6 +179,7 @@ function AppRouter() {
       {/* ── Admin-only routes (lazy + role guard) ────────────── */}
       <Route path="/admin">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={AdminGovernance} /></LazyPage>}</Route>
       <Route path="/admin-panel">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={AdminPanel} /></LazyPage>}</Route>
+      <Route path="/admin/facilities">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={FacilitiesAdmin} /></LazyPage>}</Route>
       <Route path="/audit">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={AuditTrail} /></LazyPage>}</Route>
       <Route path="/bot-registry">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={BotRegistry} /></LazyPage>}</Route>
       <Route path="/bot-builder">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={BotBuilder} /></LazyPage>}</Route>
@@ -191,6 +201,7 @@ function AppRouter() {
       <Route path="/ai-providers">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={AIProviders} /></LazyPage>}</Route>
       <Route path="/editor-bot-builder">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={EditorBotBuilder} /></LazyPage>}</Route>
       <Route path="/knowledgebase">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={KnowledgebaseManager} /></LazyPage>}</Route>
+      <Route path="/ai-cost-ledger">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={AICostLedger} /></LazyPage>}</Route>
       <Route path="/crm-sync-console">{() => <LazyPage><RequireRole roles={ADMIN_ROLES} component={CRMSyncConsole} /></LazyPage>}</Route>
 
       {/* ── 404 ─────────────────────────────────────────────── */}

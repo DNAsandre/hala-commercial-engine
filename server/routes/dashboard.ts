@@ -36,9 +36,10 @@ dashboardRoutes.get('/summary', async (_req, res, next) => {
 
     // Count open escalations
     const { count: escalationCount, error: escErr } = await supabaseAdmin
-      .from('escalation_events')
+      .from('commercial_escalations')
       .select('*', { count: 'exact', head: true })
-      .in('status', ['open', 'pending']);
+      .eq('active', true)
+      .in('status', ['open', 'monitoring', 'under_review']);
 
     if (escErr) {
       // Escalation table might not exist yet — don't fail

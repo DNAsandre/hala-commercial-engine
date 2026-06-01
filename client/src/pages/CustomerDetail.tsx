@@ -40,7 +40,7 @@ import {
 import {
   getAllDocumentsByCustomer, getDocumentCounts, getVaultStats,
   searchDocuments, uploadDocument, archiveDocument, hasRealFile,
-  initializeMockFiles,
+  initializeDocumentVault,
   DOCUMENT_CATEGORIES, DOCUMENT_STATUSES,
   getFileTypeColor, getCategoryIcon,
   type UnifiedDocument, type DocumentCategory, type DocumentStatus,
@@ -76,8 +76,8 @@ export default function CustomerDetail() {
   const [viewerDoc, setViewerDoc] = useState<UnifiedDocument | null>(null);
   const [showUpload, setShowUpload] = useState(false);
 
-  // Initialize mock files
-  useState(() => { initializeMockFiles(); });
+  // Initialize document vault without seeding local records
+  useState(() => { initializeDocumentVault(); });
 
   // useMemo hooks — MUST be above early returns
   const customerId = c?.id || "";

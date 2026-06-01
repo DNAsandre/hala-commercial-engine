@@ -6,7 +6,7 @@
  * 
  * Each module is checked against its actual backend:
  *   - PDF Compiler: tests PDFKit import
- *   - Escalation Engine: checks escalation_events table
+ *   - Escalation Engine: checks commercial_escalations table
  *   - Audit Logger: checks audit_log table + recent activity
  *   - AI Authoring: checks AI provider configuration
  *   - Notification Service: checks for SMTP/email configuration
@@ -68,9 +68,10 @@ systemHealthRoutes.get('/system-health', async (_req, res) => {
     // ─── Escalation Engine ──────────────────────────────
     try {
       const { count, error } = await supabaseAdmin
-        .from('escalation_events')
+        .from('commercial_escalations')
         .select('*', { count: 'exact', head: true })
-        .eq('status', 'open');
+        .eq('active', true)
+        .in('status', ['open', 'monitoring', 'under_review']);
 
       if (error) throw error;
       modules.push({

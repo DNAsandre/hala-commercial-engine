@@ -3,6 +3,16 @@ import { getCurrentUser } from "./auth-state";
  * Unified Document Architecture — Production-Grade File Infrastructure
  * Sprint 5: Real file-backed document storage.
  *
+ * ⚠️ FUTURE WIRE — DOCUMENT RECORDS LOAD FROM REAL SOURCES
+ * ════════════════════════════════════════════════════
+ * TARGET WIRING:
+ *   documentVault[]     → Supabase `document_vault` table
+ *   Version history     → Supabase `document_versions` table
+ *   File content        → Supabase Storage (S3-compatible)
+ *   Approval chains     → Supabase `document_approvals` table
+ *
+ * Do not add hardcoded documents. Load from Supabase or explicit uploads only.
+ *
  * Architecture:
  *   1. Every document belongs to a Customer (customerId)
  *   2. Documents are categorized into folders (category)
@@ -17,12 +27,12 @@ import { getCurrentUser } from "./auth-state";
  * File Storage Strategy (frontend-only, no backend):
  *   - Uploaded files are stored as Blob URLs via URL.createObjectURL()
  *   - A fileRegistry maps document version IDs to Blob URLs
- *   - Mock documents use synthetic Blob URLs created from sample content
  *   - Documents without valid file_path are rendered as non-clickable
  */
 
 import { type AuditEntry } from "./store";
 import { syncAuditEntry } from "./supabase-sync";
+import { supabase } from "./supabase";
 
 // ─── DOCUMENT CATEGORIES (Folder Structure) ──────────────────
 
@@ -137,7 +147,7 @@ export function mimeToExtension(mime: string): string {
 /**
  * Maps "docId:versionNumber" → Blob URL.
  * For uploaded files, the Blob URL is created from the actual File object.
- * For mock documents, we create synthetic Blob URLs from sample content.
+ * Document records must come from Supabase or explicit user uploads.
  */
 const fileRegistry = new Map<string, string>();
 
@@ -155,6 +165,12 @@ export function storeFile(docId: string, versionNumber: number, file: File): str
 /** Get the Blob URL for a specific document version */
 export function getFileUrl(docId: string, versionNumber: number): string | null {
   return fileRegistry.get(`${docId}:${versionNumber}`) || null;
+}
+
+/** Get a signed download URL for a Supabase Storage document */
+export async function getSignedDownloadUrl(storagePath: string): Promise<string | null> {
+  const { data } = await supabase.storage.from("documents").createSignedUrl(storagePath, 3600);
+  return data?.signedUrl || null;
 }
 
 /** Get the Blob URL for the current version of a document */
@@ -231,483 +247,13 @@ export interface UnifiedDocument {
   updatedAt: string;
 }
 
-// ─── SYNTHETIC FILE GENERATION ──────────────────────────────────
+// EMPTY DOCUMENT STORE
 
-/**
- * Create a synthetic file (Blob URL) for mock documents.
- * This makes mock documents "real" — they have actual file content
- * that can be opened in the viewer.
- */
-function createSyntheticFile(doc: {
-  id: string;
-  name: string;
-  mimeType: string;
-  versionNumber: number;
-  fileName: string;
-}): string {
-  let content: string;
-  let type: string;
+export const documentVault: UnifiedDocument[] = [];
 
-  const mimeCategory = getMimeCategory(doc.mimeType);
-
-  if (mimeCategory === "pdf") {
-    // Create a minimal PDF
-    content = `%PDF-1.4
-1 0 obj
-<< /Type /Catalog /Pages 2 0 R >>
-endobj
-2 0 obj
-<< /Type /Pages /Kids [3 0 R] /Count 1 >>
-endobj
-3 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]
-   /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
-endobj
-4 0 obj
-<< /Length 120 >>
-stream
-BT
-/F1 24 Tf
-50 700 Td
-(${doc.name}) Tj
-0 -40 Td
-/F1 12 Tf
-(File: ${doc.fileName}) Tj
-0 -20 Td
-(Version: ${doc.versionNumber}) Tj
-0 -20 Td
-(This is a production document from Hala Commercial Engine.) Tj
-ET
-endstream
-endobj
-5 0 obj
-<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
-endobj
-xref
-0 6
-0000000000 65535 f 
-0000000009 00000 n 
-0000000058 00000 n 
-0000000115 00000 n 
-0000000266 00000 n 
-0000000438 00000 n 
-trailer
-<< /Size 6 /Root 1 0 R >>
-startxref
-521
-%%EOF`;
-    type = "application/pdf";
-  } else if (mimeCategory === "text" || doc.mimeType === "text/csv") {
-    content = `${doc.name}\n\nFile: ${doc.fileName}\nVersion: ${doc.versionNumber}\n\nThis is a production document from Hala Commercial Engine.\nGenerated for document infrastructure validation.`;
-    type = doc.mimeType;
-  } else if (mimeCategory === "image") {
-    // Create a simple SVG as image placeholder
-    content = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
-  <rect width="800" height="600" fill="#1a1a2e"/>
-  <text x="400" y="280" text-anchor="middle" fill="#e0e0e0" font-family="Arial" font-size="24">${doc.name}</text>
-  <text x="400" y="320" text-anchor="middle" fill="#888" font-family="Arial" font-size="14">v${doc.versionNumber} — ${doc.fileName}</text>
-  <text x="400" y="360" text-anchor="middle" fill="#666" font-family="Arial" font-size="12">Hala Commercial Engine</text>
-</svg>`;
-    type = "image/svg+xml";
-  } else {
-    // For office documents (DOCX, XLSX, PPTX), create a text representation
-    content = `${doc.name}\n\nFile: ${doc.fileName}\nVersion: ${doc.versionNumber}\nType: ${doc.mimeType}\n\nThis is a production document from Hala Commercial Engine.\nOffice document preview is available via download.`;
-    type = "text/plain";
-  }
-
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  fileRegistry.set(`${doc.id}:${doc.versionNumber}`, url);
-  return url;
-}
-
-// ─── MOCK DATA ───────────────────────────────────────────────
-
-
-
-function makeMockDoc(input: {
-  id: string;
-  name: string;
-  category: DocumentCategory;
-  customerId: string;
-  customerName: string;
-  workspaceId?: string | null;
-  workspaceName?: string | null;
-  tenderId?: string | null;
-  tenderName?: string | null;
-  uploadedBy: string;
-  uploadDate: string;
-  status: DocumentStatus;
-  notes: string;
-  fileName: string;
-  fileSize: string;
-  fileType: string;
-  mimeType: string;
-  tags?: string[];
-  permissionLevel?: "public" | "internal" | "restricted";
-  versions: Array<{
-    versionNumber: number;
-    fileName: string;
-    fileSize: string;
-    fileType: string;
-    mimeType: string;
-    uploadedBy: string;
-    uploadedAt: string;
-    notes: string;
-  }>;
-}): UnifiedDocument {
-  const currentVersion = input.versions.length;
-  const doc: UnifiedDocument = {
-    id: input.id,
-    name: input.name,
-    category: input.category,
-    customerId: input.customerId,
-    customerName: input.customerName,
-    workspaceId: input.workspaceId ?? null,
-    workspaceName: input.workspaceName ?? null,
-    tenderId: input.tenderId ?? null,
-    tenderName: input.tenderName ?? null,
-    dealId: null,
-    dealName: null,
-    opportunityId: null,
-    opportunityName: null,
-    uploadedBy: input.uploadedBy,
-    uploadDate: input.uploadDate,
-    currentVersion,
-    status: input.status,
-    notes: input.notes,
-    tags: input.tags ?? [],
-    fileName: input.fileName,
-    fileSize: input.fileSize,
-    fileType: input.fileType,
-    mimeType: input.mimeType,
-    filePath: null, // Will be set by initializeMockFiles()
-    permissionLevel: input.permissionLevel ?? "internal",
-    createdBy: input.versions[0]?.uploadedBy ?? input.uploadedBy,
-    createdAt: input.versions[0]?.uploadedAt ?? input.uploadDate,
-    updatedAt: input.uploadDate,
-    versions: input.versions.map(v => ({
-      ...v,
-      filePath: null, // Will be set by initializeMockFiles()
-    })),
-  };
-  return doc;
-}
-
-export const documentVault: UnifiedDocument[] = [
-  // SABIC Documents
-  makeMockDoc({
-    id: "doc-001",
-    name: "SABIC Master Service Agreement 2025",
-    category: "Contracts",
-    customerId: "c1",
-    customerName: "SABIC",
-    tenderId: "tn-002",
-    tenderName: "SABIC National Warehousing Services Tender",
-    uploadedBy: "Ra'ed",
-    uploadDate: "2025-11-15",
-    status: "Signed",
-    notes: "Renewed for 2025. Includes updated SLA terms.",
-    fileName: "SABIC_MSA_2025_v2.pdf",
-    fileSize: "2.4 MB",
-    fileType: "PDF",
-    mimeType: "application/pdf",
-    tags: ["contract", "MSA", "2025"],
-    permissionLevel: "internal",
-    versions: [
-      { versionNumber: 1, fileName: "SABIC_MSA_2025_v1.pdf", fileSize: "2.1 MB", fileType: "PDF", mimeType: "application/pdf", uploadedBy: "Ra'ed", uploadedAt: "2025-10-01", notes: "Initial draft" },
-      { versionNumber: 2, fileName: "SABIC_MSA_2025_v2.pdf", fileSize: "2.4 MB", fileType: "PDF", mimeType: "application/pdf", uploadedBy: "Ra'ed", uploadedAt: "2025-11-15", notes: "Final signed version" },
-    ],
-  }),
-  makeMockDoc({
-    id: "doc-002",
-    name: "SABIC SLA — Warehousing KPIs",
-    category: "SLAs",
-    customerId: "c1",
-    customerName: "SABIC",
-    uploadedBy: "Hano",
-    uploadDate: "2025-12-01",
-    status: "Final",
-    notes: "Operational KPI targets for SABIC warehousing.",
-    fileName: "SABIC_SLA_WH_KPIs.pdf",
-    fileSize: "890 KB",
-    fileType: "PDF",
-    mimeType: "application/pdf",
-    tags: ["SLA", "KPI", "warehousing"],
-    versions: [
-      { versionNumber: 1, fileName: "SABIC_SLA_WH_KPIs.pdf", fileSize: "890 KB", fileType: "PDF", mimeType: "application/pdf", uploadedBy: "Hano", uploadedAt: "2025-12-01", notes: "Approved SLA" },
-    ],
-  }),
-  makeMockDoc({
-    id: "doc-003",
-    name: "SABIC Insurance Certificate 2025",
-    category: "Insurance",
-    customerId: "c1",
-    customerName: "SABIC",
-    uploadedBy: "Finance",
-    uploadDate: "2025-09-20",
-    status: "Final",
-    notes: "Annual insurance certificate covering all SABIC goods.",
-    fileName: "SABIC_Insurance_2025.pdf",
-    fileSize: "1.2 MB",
-    fileType: "PDF",
-    mimeType: "application/pdf",
-    tags: ["insurance", "annual"],
-    permissionLevel: "restricted",
-    versions: [
-      { versionNumber: 1, fileName: "SABIC_Insurance_2025.pdf", fileSize: "1.2 MB", fileType: "PDF", mimeType: "application/pdf", uploadedBy: "Finance", uploadedAt: "2025-09-20", notes: "Annual certificate" },
-    ],
-  }),
-  makeMockDoc({
-    id: "doc-013",
-    name: "SABIC Compliance Audit Report Q4 2025",
-    category: "Compliance",
-    customerId: "c1",
-    customerName: "SABIC",
-    uploadedBy: "Ra'ed",
-    uploadDate: "2026-01-05",
-    status: "Final",
-    notes: "Q4 compliance audit results — all clear.",
-    fileName: "SABIC_Compliance_Q4_2025.pdf",
-    fileSize: "1.8 MB",
-    fileType: "PDF",
-    mimeType: "application/pdf",
-    tags: ["compliance", "audit", "Q4"],
-    versions: [
-      { versionNumber: 1, fileName: "SABIC_Compliance_Q4_2025.pdf", fileSize: "1.8 MB", fileType: "PDF", mimeType: "application/pdf", uploadedBy: "Ra'ed", uploadedAt: "2026-01-05", notes: "Q4 audit complete" },
-    ],
-  }),
-  // Ma'aden Documents
-  makeMockDoc({
-    id: "doc-004",
-    name: "Ma'aden Jubail Expansion — Technical Proposal",
-    category: "Tenders",
-    customerId: "c2",
-    customerName: "Ma'aden",
-    workspaceId: "w1",
-    workspaceName: "Ma'aden Jubail Expansion 2500PP",
-    tenderId: "tn-001",
-    tenderName: "Ma'aden Jubail Expansion — Logistics RFP",
-    uploadedBy: "Ra'ed",
-    uploadDate: "2026-02-10",
-    status: "Draft",
-    notes: "Technical proposal for Jubail expansion. Under review.",
-    fileName: "Maaden_Jubail_TechProposal_v3.docx",
-    fileSize: "4.7 MB",
-    fileType: "DOCX",
-    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    tags: ["proposal", "technical", "Jubail"],
-    versions: [
-      { versionNumber: 1, fileName: "Maaden_Jubail_TechProposal_v1.docx", fileSize: "3.2 MB", fileType: "DOCX", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", uploadedBy: "Ra'ed", uploadedAt: "2026-01-20", notes: "First draft" },
-      { versionNumber: 2, fileName: "Maaden_Jubail_TechProposal_v2.docx", fileSize: "4.1 MB", fileType: "DOCX", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", uploadedBy: "Yazan", uploadedAt: "2026-02-01", notes: "Added cost breakdown" },
-      { versionNumber: 3, fileName: "Maaden_Jubail_TechProposal_v3.docx", fileSize: "4.7 MB", fileType: "DOCX", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", uploadedBy: "Ra'ed", uploadedAt: "2026-02-10", notes: "Final review edits" },
-    ],
-  }),
-  makeMockDoc({
-    id: "doc-005",
-    name: "Ma'aden Quote — Storage & Handling",
-    category: "Quotes",
-    customerId: "c2",
-    customerName: "Ma'aden",
-    workspaceId: "w1",
-    workspaceName: "Ma'aden Jubail Expansion 2500PP",
-    uploadedBy: "Ra'ed",
-    uploadDate: "2026-01-28",
-    status: "Final",
-    notes: "Approved quote for storage and handling services.",
-    fileName: "Maaden_Quote_StorageHandling.xlsx",
-    fileSize: "320 KB",
-    fileType: "XLSX",
-    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    tags: ["quote", "storage", "handling"],
-    versions: [
-      { versionNumber: 1, fileName: "Maaden_Quote_StorageHandling.xlsx", fileSize: "320 KB", fileType: "XLSX", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", uploadedBy: "Ra'ed", uploadedAt: "2026-01-28", notes: "Approved by director" },
-    ],
-  }),
-  // Almarai Documents
-  makeMockDoc({
-    id: "doc-006",
-    name: "Almarai Cold Chain SLA Agreement",
-    category: "SLAs",
-    customerId: "c3",
-    customerName: "Almarai",
-    workspaceId: "w5",
-    workspaceName: "Almarai Riyadh Phase 2",
-    tenderId: "tn-004",
-    tenderName: "Almarai Riyadh Phase 2 — Cold Chain Tender",
-    uploadedBy: "Hano",
-    uploadDate: "2026-02-05",
-    status: "Draft",
-    notes: "Cold chain SLA terms for Riyadh Phase 2.",
-    fileName: "Almarai_ColdChain_SLA_Draft.pdf",
-    fileSize: "1.8 MB",
-    fileType: "PDF",
-    mimeType: "application/pdf",
-    tags: ["SLA", "cold-chain", "Riyadh"],
-    versions: [
-      { versionNumber: 1, fileName: "Almarai_ColdChain_SLA_Draft.pdf", fileSize: "1.8 MB", fileType: "PDF", mimeType: "application/pdf", uploadedBy: "Hano", uploadedAt: "2026-02-05", notes: "Initial SLA draft" },
-    ],
-  }),
-  makeMockDoc({
-    id: "doc-007",
-    name: "Almarai Financial Due Diligence Report",
-    category: "Financial",
-    customerId: "c3",
-    customerName: "Almarai",
-    uploadedBy: "Finance",
-    uploadDate: "2025-08-15",
-    status: "Final",
-    notes: "Annual financial review for Almarai account.",
-    fileName: "Almarai_FinDueDiligence_2025.pdf",
-    fileSize: "3.1 MB",
-    fileType: "PDF",
-    mimeType: "application/pdf",
-    tags: ["financial", "due-diligence"],
-    permissionLevel: "restricted",
-    versions: [
-      { versionNumber: 1, fileName: "Almarai_FinDueDiligence_2025.pdf", fileSize: "3.1 MB", fileType: "PDF", mimeType: "application/pdf", uploadedBy: "Finance", uploadedAt: "2025-08-15", notes: "Completed review" },
-    ],
-  }),
-  // Sadara Chemical Documents
-  makeMockDoc({
-    id: "doc-008",
-    name: "Sadara Contract Renewal Draft 2025",
-    category: "Contracts",
-    customerId: "c4",
-    customerName: "Sadara Chemical",
-    workspaceId: "w2",
-    workspaceName: "Sadara Contract Renewal",
-    tenderId: "tn-006",
-    tenderName: "Sadara Contract Renewal Tender 2025",
-    uploadedBy: "Albert",
-    uploadDate: "2026-01-10",
-    status: "Draft",
-    notes: "Contract renewal draft. Pending legal review.",
-    fileName: "Sadara_ContractRenewal_v2.pdf",
-    fileSize: "2.9 MB",
-    fileType: "PDF",
-    mimeType: "application/pdf",
-    tags: ["contract", "renewal"],
-    versions: [
-      { versionNumber: 1, fileName: "Sadara_ContractRenewal_v1.pdf", fileSize: "2.5 MB", fileType: "PDF", mimeType: "application/pdf", uploadedBy: "Albert", uploadedAt: "2025-12-15", notes: "Initial draft" },
-      { versionNumber: 2, fileName: "Sadara_ContractRenewal_v2.pdf", fileSize: "2.9 MB", fileType: "PDF", mimeType: "application/pdf", uploadedBy: "Albert", uploadedAt: "2026-01-10", notes: "Updated terms per negotiation" },
-    ],
-  }),
-  // Aramco Documents
-  makeMockDoc({
-    id: "doc-009",
-    name: "Aramco VAS Expansion Compliance Checklist",
-    category: "Compliance",
-    customerId: "c1",
-    customerName: "Aramco Services",
-    workspaceId: "w6",
-    workspaceName: "Aramco Dhahran VAS Expansion",
-    tenderId: "tn-003",
-    tenderName: "Aramco Dhahran VAS Expansion Tender",
-    uploadedBy: "Ra'ed",
-    uploadDate: "2026-02-08",
-    status: "Final",
-    notes: "Compliance requirements for Aramco VAS expansion.",
-    fileName: "Aramco_VAS_Compliance.pdf",
-    fileSize: "1.5 MB",
-    fileType: "PDF",
-    mimeType: "application/pdf",
-    tags: ["compliance", "VAS", "Aramco"],
-    permissionLevel: "restricted",
-    versions: [
-      { versionNumber: 1, fileName: "Aramco_VAS_Compliance.pdf", fileSize: "1.5 MB", fileType: "PDF", mimeType: "application/pdf", uploadedBy: "Ra'ed", uploadedAt: "2026-02-08", notes: "Approved compliance checklist" },
-    ],
-  }),
-  // Nestlé Documents
-  makeMockDoc({
-    id: "doc-010",
-    name: "Nestlé Jeddah Partnership Correspondence",
-    category: "Correspondence",
-    customerId: "c8",
-    customerName: "Nestlé KSA",
-    tenderId: "tn-005",
-    tenderName: "Nestlé Jeddah Cold Chain Partnership",
-    uploadedBy: "Hano",
-    uploadDate: "2026-01-25",
-    status: "Final",
-    notes: "Key correspondence with Nestlé procurement team.",
-    fileName: "Nestle_Jeddah_Correspondence.pdf",
-    fileSize: "650 KB",
-    fileType: "PDF",
-    mimeType: "application/pdf",
-    tags: ["correspondence", "procurement"],
-    versions: [
-      { versionNumber: 1, fileName: "Nestle_Jeddah_Correspondence.pdf", fileSize: "650 KB", fileType: "PDF", mimeType: "application/pdf", uploadedBy: "Hano", uploadedAt: "2026-01-25", notes: "Compiled correspondence" },
-    ],
-  }),
-  // Al-Rajhi Documents
-  makeMockDoc({
-    id: "doc-011",
-    name: "Al-Rajhi Emergency Storage Quote",
-    category: "Quotes",
-    customerId: "c5",
-    customerName: "Al-Rajhi Steel",
-    workspaceId: "w3",
-    workspaceName: "Al-Rajhi Emergency Storage",
-    uploadedBy: "Albert",
-    uploadDate: "2026-02-12",
-    status: "Draft",
-    notes: "Emergency storage pricing. Low margin — flagged.",
-    fileName: "AlRajhi_EmergencyQuote.xlsx",
-    fileSize: "180 KB",
-    fileType: "XLSX",
-    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    tags: ["quote", "emergency"],
-    versions: [
-      { versionNumber: 1, fileName: "AlRajhi_EmergencyQuote.xlsx", fileSize: "180 KB", fileType: "XLSX", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", uploadedBy: "Albert", uploadedAt: "2026-02-12", notes: "Initial quote" },
-    ],
-  }),
-  // Unilever Documents
-  makeMockDoc({
-    id: "doc-012",
-    name: "Unilever Arabia Historical Contract 2024",
-    category: "Historical",
-    customerId: "c6",
-    customerName: "Unilever Arabia",
-    uploadedBy: "Albert",
-    uploadDate: "2025-06-01",
-    status: "Archived",
-    notes: "Previous year contract. Archived after expiry.",
-    fileName: "Unilever_Contract_2024.pdf",
-    fileSize: "2.0 MB",
-    fileType: "PDF",
-    mimeType: "application/pdf",
-    tags: ["contract", "archived", "2024"],
-    versions: [
-      { versionNumber: 1, fileName: "Unilever_Contract_2024.pdf", fileSize: "2.0 MB", fileType: "PDF", mimeType: "application/pdf", uploadedBy: "Albert", uploadedAt: "2025-06-01", notes: "Archived" },
-    ],
-  }),
-];
-
-// ─── INITIALIZE MOCK FILES ──────────────────────────────────────
-
-let _initialized = false;
-
-export function initializeMockFiles(): void {
-  if (_initialized) return;
-  _initialized = true;
-
-  for (const doc of documentVault) {
-    // Create synthetic files for each version
-    for (const ver of doc.versions) {
-      const url = createSyntheticFile({
-        id: doc.id,
-        name: doc.name,
-        mimeType: ver.mimeType,
-        versionNumber: ver.versionNumber,
-        fileName: ver.fileName,
-      });
-      ver.filePath = url;
-    }
-    // Set current version file path
-    const currentVer = doc.versions.find(v => v.versionNumber === doc.currentVersion);
-    doc.filePath = currentVer?.filePath ?? null;
-  }
+export function initializeDocumentVault(): void {
+  // No local document records are seeded here. Documents arrive through
+  // Supabase-backed uploads or explicit API-loaded records only.
 }
 
 // ─── QUERY HELPERS ───────────────────────────────────────────
@@ -766,10 +312,11 @@ export interface UploadDocumentInput {
 }
 
 /**
- * Upload a real file and create a document entry.
- * If a document with the same name exists for this customer, auto-increment version.
+ * Upload a real file and create a document entry in Supabase Storage.
+ * File is uploaded directly from browser to Supabase Storage.
+ * DB record is created via the API.
  */
-export function uploadDocument(input: UploadDocumentInput): UnifiedDocument {
+export async function uploadDocument(input: UploadDocumentInput): Promise<UnifiedDocument> {
   const now = new Date().toISOString().slice(0, 10);
   const ext = input.file.name.split(".").pop()?.toLowerCase() || "";
   const mimeType = input.file.type || extensionToMime(ext);
@@ -777,48 +324,54 @@ export function uploadDocument(input: UploadDocumentInput): UnifiedDocument {
   const fileSize = formatFileSize(input.file.size);
   const uploadedBy = input.uploadedBy ?? getCurrentUser().name;
 
-  // Check if document with same name exists for this customer → version increment
-  const existing = documentVault.find(
-    d => d.name === input.name && d.customerId === input.customerId && d.status !== "Archived"
-  );
+  const BUCKET = "documents";
+  const date = new Date().toISOString().split("T")[0];
+  const safeName = input.name.replace(/[^a-zA-Z0-9]/g, "_").substring(0, 40);
+  const storagePath = `customers/${input.customerId}/workspaces/${input.workspaceId || "unassigned"}/${input.category}/${date}-${safeName}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
 
-  if (existing) {
-    // Version increment
-    const newVersion = existing.currentVersion + 1;
-    const blobUrl = storeFile(existing.id, newVersion, input.file);
+  // Upload file directly from browser to Supabase Storage
+  const { error: uploadErr } = await supabase.storage
+    .from(BUCKET)
+    .upload(storagePath, input.file, { contentType: mimeType, upsert: false });
 
-    existing.currentVersion = newVersion;
-    existing.fileName = input.file.name;
-    existing.fileSize = fileSize;
-    existing.fileType = fileType;
-    existing.mimeType = mimeType;
-    existing.filePath = blobUrl;
-    existing.uploadDate = now;
-    existing.updatedAt = now;
-    if (input.notes) existing.notes = input.notes;
-    if (input.status) existing.status = input.status;
-
-    existing.versions.push({
-      versionNumber: newVersion,
-      fileName: input.file.name,
-      fileSize,
-      fileType,
-      mimeType,
-      filePath: blobUrl,
-      uploadedBy,
-      uploadedAt: now,
-      notes: input.notes || `Version ${newVersion} uploaded`,
-    });
-
-    logDocumentAction(existing, "document_version_uploaded", `New version v${newVersion} of "${existing.name}" uploaded by ${uploadedBy}.`);
-    return existing;
+  if (uploadErr) {
+    console.error("[document-vault] Storage upload failed:", uploadErr);
+    throw new Error(`File upload failed: ${uploadErr.message}`);
   }
 
-  // New document
-  // B7 FIX: Use crypto.randomUUID() for collision-safe IDs
-  const docId = `doc-${crypto.randomUUID()}`;
-  const blobUrl = storeFile(docId, 1, input.file);
+  // Create DB record via API
+  let docId: string;
+  const res = await fetch("/api/documents/upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: input.name,
+      category: input.category,
+      customerId: input.customerId,
+      customerName: input.customerName,
+      workspaceId: input.workspaceId,
+      workspaceName: input.workspaceName,
+      tenderId: input.tenderId,
+      tenderName: input.tenderName,
+      fileName: input.file.name,
+      fileSize: String(input.file.size),
+      mimeType,
+      storagePath,
+      notes: input.notes,
+      tags: input.tags,
+      permissionLevel: input.permissionLevel ?? "internal",
+    }),
+  });
 
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Upload failed" }));
+    throw new Error(err.error || "Failed to create document record");
+  }
+
+  const created = await res.json();
+  docId = created.data.id;
+
+  // Build the UnifiedDocument to return (for local in-memory state)
   const doc: UnifiedDocument = {
     id: docId,
     name: input.name,
@@ -843,7 +396,7 @@ export function uploadDocument(input: UploadDocumentInput): UnifiedDocument {
     fileSize,
     fileType,
     mimeType,
-    filePath: blobUrl,
+    filePath: storagePath,
     permissionLevel: input.permissionLevel ?? "internal",
     createdBy: uploadedBy,
     createdAt: now,
@@ -854,7 +407,7 @@ export function uploadDocument(input: UploadDocumentInput): UnifiedDocument {
       fileSize,
       fileType,
       mimeType,
-      filePath: blobUrl,
+      filePath: storagePath,
       uploadedBy,
       uploadedAt: now,
       notes: input.notes || "Initial upload",
@@ -1306,7 +859,7 @@ function formatFileSize(bytes: number): string {
 }
 
 /** Download a document file */
-export function downloadDocument(doc: UnifiedDocument, versionNumber?: number): void {
+export async function downloadDocument(doc: UnifiedDocument, versionNumber?: number): Promise<void> {
   const ver = versionNumber
     ? doc.versions.find(v => v.versionNumber === versionNumber)
     : doc.versions.find(v => v.versionNumber === doc.currentVersion);
@@ -1316,10 +869,23 @@ export function downloadDocument(doc: UnifiedDocument, versionNumber?: number): 
     return;
   }
 
-  const a = document.createElement("a");
-  a.href = ver.filePath;
-  a.download = ver.fileName;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  // Check if filePath is a blob URL or Supabase Storage path
+  if (ver.filePath.startsWith("blob:")) {
+    const a = document.createElement("a");
+    a.href = ver.filePath;
+    a.download = ver.fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } else {
+    // Real document in Supabase Storage — get signed URL then trigger download
+    const signedUrl = await getSignedDownloadUrl(ver.filePath);
+    if (!signedUrl) { console.warn("Could not generate download URL"); return; }
+    const a = document.createElement("a");
+    a.href = signedUrl;
+    a.download = ver.fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
 }

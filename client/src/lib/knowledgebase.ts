@@ -4,6 +4,18 @@
  * Data model, chunking, retrieval, and citation logic for the
  * Bot Builder + Editor AI integration.
  *
+ * ⚠️ FUTURE WIRE — SEED DATA IS MOCK (SUPABASE-FIRST WITH FALLBACK)
+ * ════════════════════════════════════════════════════════════════════
+ * Supabase tables exist (kb_collections, kb_documents, kb_chunks) but fall
+ * back to hardcoded SEED_COLLECTIONS[] and SEED_DOCUMENTS[] when empty.
+ *
+ * TARGET WIRING:
+ *   SEED_COLLECTIONS[] → Remove once Supabase kb_collections is populated
+ *   SEED_DOCUMENTS[]   → Remove once Supabase kb_documents is populated
+ *   Embeddings         → Real embedding provider (OpenAI/Voyage)
+ *
+ * DO NOT add more seed data. Populate Supabase directly.
+ *
  * Architecture:
  *   kb_collections → kb_documents → kb_chunks → kb_embeddings
  *   bot_kb_links (many-to-many: bot ↔ collection)
@@ -202,167 +214,9 @@ let botKBLinksCache: Map<string, BotKBLink[]> = new Map();
 let botRunsCache: BotRun[] = [];
 
 // Seed data for demo
-const SEED_COLLECTIONS: KBCollection[] = [
-  {
-    id: "kb-col-1",
-    name: "Hala Service Catalog",
-    description: "Complete catalog of Hala Supply Chain Services offerings, capabilities, and SLAs",
-    visibility: "internal",
-    created_by: "admin",
-    created_at: "2025-11-01T00:00:00Z",
-    doc_count: 3,
-    chunk_count: 18,
-  },
-  {
-    id: "kb-col-2",
-    name: "Legal Templates & Clauses",
-    description: "Standard legal clauses, T&C templates, and Saudi commercial law references",
-    visibility: "admin-only",
-    created_by: "admin",
-    created_at: "2025-11-15T00:00:00Z",
-    doc_count: 2,
-    chunk_count: 12,
-  },
-  {
-    id: "kb-col-3",
-    name: "Case Studies & References",
-    description: "Client success stories, reference architectures, and industry benchmarks",
-    visibility: "internal",
-    created_by: "admin",
-    created_at: "2025-12-01T00:00:00Z",
-    doc_count: 4,
-    chunk_count: 24,
-  },
-  {
-    id: "kb-col-4",
-    name: "Pricing & Rate Cards",
-    description: "Standard rate cards, pricing models, and commercial terms reference",
-    visibility: "admin-only",
-    created_by: "admin",
-    created_at: "2026-01-10T00:00:00Z",
-    doc_count: 2,
-    chunk_count: 10,
-  },
-];
+const SEED_COLLECTIONS: KBCollection[] = [];
 
-const SEED_DOCUMENTS: KBDocument[] = [
-  // Collection 1: Service Catalog
-  {
-    id: "kb-doc-1a",
-    collection_id: "kb-col-1",
-    title: "Hala Warehousing Services Overview",
-    source_type: "manual",
-    file_url: null,
-    text_content: "Hala Supply Chain Services operates 12 state-of-the-art warehousing facilities across Saudi Arabia, totaling over 500,000 square meters of storage capacity. Our facilities support ambient, temperature-controlled (+2°C to +8°C), and frozen storage (-18°C to -25°C) zones. Each facility is equipped with advanced Warehouse Management Systems (WMS) integrated with real-time inventory tracking, automated pick-and-pack systems, and IoT-enabled environmental monitoring. We maintain 99.8% inventory accuracy through cycle counting and barcode/RFID verification. Our warehousing services include inbound receiving and quality inspection, put-away optimization, inventory management with real-time visibility, order fulfillment and kitting, value-added services (labeling, repackaging, quality checks), and cross-docking for time-sensitive shipments.",
-    mime: "text/plain",
-    size: 680,
-    chunk_count: 1,
-    created_by: "admin",
-    created_at: "2025-11-01T10:00:00Z",
-    is_deleted: false,
-  },
-  {
-    id: "kb-doc-1b",
-    collection_id: "kb-col-1",
-    title: "Hala Transportation & Last-Mile Delivery",
-    source_type: "manual",
-    file_url: null,
-    text_content: "Our transportation network covers all major cities and industrial zones across the Kingdom of Saudi Arabia. We operate a fleet of 450+ vehicles including refrigerated trucks, flatbed trailers, and last-mile delivery vans. Route optimization is powered by AI-driven logistics planning that reduces transit times by an average of 18%. We offer same-day delivery within major metropolitan areas (Riyadh, Jeddah, Dammam), next-day delivery to secondary cities, and scheduled delivery windows for B2B clients. Our cold-chain transportation maintains unbroken temperature integrity from warehouse to destination, with real-time GPS tracking and temperature logging accessible through our client portal. All drivers are trained in safe handling procedures for pharmaceutical, food, and hazardous materials categories.",
-    mime: "text/plain",
-    size: 720,
-    chunk_count: 1,
-    created_by: "admin",
-    created_at: "2025-11-05T10:00:00Z",
-    is_deleted: false,
-  },
-  {
-    id: "kb-doc-1c",
-    collection_id: "kb-col-1",
-    title: "Hala Technology & Integration Capabilities",
-    source_type: "manual",
-    file_url: null,
-    text_content: "Hala's technology stack provides end-to-end supply chain visibility through our proprietary platform. Key capabilities include: WMS integration with SAP, Oracle, and Microsoft Dynamics via standard APIs and EDI connections. Real-time dashboard with KPI tracking for fill rates, order accuracy, on-time delivery, and inventory turns. Client portal with self-service reporting, order tracking, and document management. IoT sensor network for temperature, humidity, and security monitoring across all facilities. Mobile app for delivery confirmation with photo proof-of-delivery and electronic signatures. Business intelligence suite with predictive analytics for demand forecasting and capacity planning. We support integration timelines of 4-6 weeks for standard ERP connections and 8-12 weeks for custom integrations.",
-    mime: "text/plain",
-    size: 750,
-    chunk_count: 1,
-    created_by: "admin",
-    created_at: "2025-11-10T10:00:00Z",
-    is_deleted: false,
-  },
-  // Collection 2: Legal
-  {
-    id: "kb-doc-2a",
-    collection_id: "kb-col-2",
-    title: "Standard Terms & Conditions Template",
-    source_type: "manual",
-    file_url: null,
-    text_content: "STANDARD TERMS AND CONDITIONS FOR LOGISTICS SERVICES. 1. DEFINITIONS: 'Services' means the logistics, warehousing, and transportation services described in the Service Order. 'Client' means the party engaging Hala for Services. 'Goods' means the items entrusted to Hala for storage, handling, or transportation. 2. LIABILITY: Hala's liability for loss or damage to Goods shall be limited to the lesser of (a) the declared value of the Goods or (b) SAR 100 per kilogram of gross weight. Hala shall not be liable for consequential, indirect, or special damages. 3. INSURANCE: Client shall maintain adequate insurance coverage for all Goods. Hala maintains comprehensive warehouse legal liability insurance with coverage of SAR 50 million per occurrence. 4. FORCE MAJEURE: Neither party shall be liable for failure to perform due to Force Majeure events including natural disasters, government actions, pandemics, strikes, or civil unrest. 5. GOVERNING LAW: This Agreement shall be governed by the laws of the Kingdom of Saudi Arabia. Disputes shall be resolved through arbitration under SCCA rules in Riyadh. 6. TERMINATION: Either party may terminate with 90 days written notice. Early termination fees apply as specified in the Service Order.",
-    mime: "text/plain",
-    size: 1100,
-    chunk_count: 2,
-    created_by: "admin",
-    created_at: "2025-11-15T10:00:00Z",
-    is_deleted: false,
-  },
-  {
-    id: "kb-doc-2b",
-    collection_id: "kb-col-2",
-    title: "SLA Framework & KPI Definitions",
-    source_type: "manual",
-    file_url: null,
-    text_content: "SERVICE LEVEL AGREEMENT FRAMEWORK. Standard KPIs: 1. Order Accuracy: Target 99.5%, measured monthly. Penalty: 2% credit per 0.1% below target. 2. On-Time Delivery: Target 98%, measured monthly. Penalty: 1.5% credit per 1% below target. 3. Inventory Accuracy: Target 99.8%, measured quarterly via cycle counts. 4. Inbound Processing: Target 24-hour turnaround for standard receipts, 4-hour for urgent. 5. Temperature Compliance: Target 100% for cold-chain, with automated alerts for any deviation exceeding 2°C from set point for more than 15 minutes. 6. Damage Rate: Target below 0.1% of units handled. Escalation Matrix: Level 1 (Operational) — Account Manager, response within 4 hours. Level 2 (Management) — Operations Director, response within 8 hours. Level 3 (Executive) — VP Operations, response within 24 hours. Monthly service review meetings with detailed KPI reporting and continuous improvement action plans.",
-    mime: "text/plain",
-    size: 900,
-    chunk_count: 1,
-    created_by: "admin",
-    created_at: "2025-11-20T10:00:00Z",
-    is_deleted: false,
-  },
-  // Collection 3: Case Studies
-  {
-    id: "kb-doc-3a",
-    collection_id: "kb-col-3",
-    title: "Case Study: Almarai Cold Chain Partnership",
-    source_type: "manual",
-    file_url: null,
-    text_content: "CLIENT: Almarai Company. INDUSTRY: Food & Dairy. CHALLENGE: Almarai required a reliable cold-chain partner to handle distribution of fresh dairy products across the Eastern Province, maintaining strict temperature controls from production facility to retail outlets. SOLUTION: Hala deployed a dedicated fleet of 35 refrigerated vehicles with real-time temperature monitoring, established a 15,000 sqm temperature-controlled distribution center in Dammam, and implemented a custom WMS integration with Almarai's SAP system. RESULTS: 99.7% temperature compliance maintained across all shipments. 98.5% on-time delivery rate achieved within 6 months. 15% reduction in distribution costs through route optimization. Zero product recalls due to cold-chain breaks over 18-month period. CLIENT TESTIMONIAL: 'Hala's cold-chain expertise and technology integration have been instrumental in maintaining the quality standards our customers expect.' — Supply Chain Director, Almarai.",
-    mime: "text/plain",
-    size: 850,
-    chunk_count: 1,
-    created_by: "admin",
-    created_at: "2025-12-01T10:00:00Z",
-    is_deleted: false,
-  },
-  {
-    id: "kb-doc-3b",
-    collection_id: "kb-col-3",
-    title: "Case Study: SABIC Industrial Logistics",
-    source_type: "manual",
-    file_url: null,
-    text_content: "CLIENT: SABIC. INDUSTRY: Petrochemicals. CHALLENGE: SABIC needed a specialized logistics partner for handling hazardous materials and oversized industrial equipment across multiple manufacturing sites in Jubail Industrial City. SOLUTION: Hala provided certified hazmat handling teams, specialized transport equipment, and a dedicated warehouse facility with appropriate safety systems. We implemented a custom tracking system for regulatory compliance documentation. RESULTS: 100% regulatory compliance maintained across all shipments. 40% improvement in warehouse utilization through optimized layout design. Successful handling of 12,000+ hazmat shipments without incident. Integration with SABIC's procurement system reduced order processing time by 60%.",
-    mime: "text/plain",
-    size: 700,
-    chunk_count: 1,
-    created_by: "admin",
-    created_at: "2025-12-05T10:00:00Z",
-    is_deleted: false,
-  },
-  // Collection 4: Pricing
-  {
-    id: "kb-doc-4a",
-    collection_id: "kb-col-4",
-    title: "Standard Rate Card 2026",
-    source_type: "manual",
-    file_url: null,
-    text_content: "HALA SUPPLY CHAIN SERVICES — STANDARD RATE CARD 2026. Warehousing: Ambient storage SAR 12-18/pallet/month. Chilled storage SAR 25-35/pallet/month. Frozen storage SAR 40-55/pallet/month. Handling: Inbound receiving SAR 3-5/pallet. Outbound picking SAR 2-4/order line. Value-added services priced per activity. Transportation: Local delivery (within city) SAR 150-300/trip. Regional delivery SAR 500-1,200/trip. Long-haul SAR 2,500-5,000/trip. Cold-chain premium: +25-40% on base rates. Technology: Standard WMS access included. Custom integration setup SAR 15,000-50,000. API access included for enterprise clients. All rates subject to volume commitments and contract duration. Minimum contract term: 12 months.",
-    mime: "text/plain",
-    size: 650,
-    chunk_count: 1,
-    created_by: "admin",
-    created_at: "2026-01-10T10:00:00Z",
-    is_deleted: false,
-  },
-];
+const SEED_DOCUMENTS: KBDocument[] = [];
 
 // Pre-generate chunks from seed documents
 function generateSeedChunks(): Map<string, KBChunk[]> {

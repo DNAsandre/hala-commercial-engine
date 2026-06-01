@@ -106,7 +106,7 @@ function ComplianceReviewModal({ item, onClose, tenderId, reload }: { item: Tend
           )}
           {item.wouldBlockInProduction && item.status !== "compliant" && (
             <div className="p-2.5 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30">
-              <p className="text-xs text-amber-800 flex items-center gap-1.5"><ShieldAlert className="w-3.5 h-3.5 shrink-0" />Mock Gate: Would block production submission.</p>
+              <p className="text-xs text-amber-800 flex items-center gap-1.5"><ShieldAlert className="w-3.5 h-3.5 shrink-0" />Advisory signal: review recommended before submission. You may continue — override always available.</p>
             </div>
           )}
         </div>
@@ -189,7 +189,7 @@ export default function TenderComplianceMatrixTab({ ws, tenderId, reload }: { ws
         <div className="flex items-center gap-2.5">
           <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
           <p className="text-xs text-amber-700">
-            Development mode: compliance items are tracked as mock data. Compliance gaps would block or escalate production submission, but do not block testing.
+            Advisory signals only: compliance items are tracked as risk indicators. Gaps will escalate to review — they do not block testing or submission.
           </p>
         </div>
         <Badge variant="outline" className="text-[10px] border-emerald-400 text-emerald-700 bg-emerald-50 flex items-center gap-1 shrink-0"><Database className="w-2.5 h-2.5" />Supabase-Backed</Badge>
@@ -203,7 +203,7 @@ export default function TenderComplianceMatrixTab({ ws, tenderId, reload }: { ws
         <SummaryCard label="Non-Compliant" value={nonCompliantCount} color="text-red-600" />
         <SummaryCard label="Clarification" value={clarificationCount} color="text-amber-600" />
         <SummaryCard label="High / Critical" value={highCriticalCount} color="text-red-600" />
-        <SummaryCard label="Would Block" value={wouldBlockCount} color="text-red-600" />
+        <SummaryCard label="Review Rec." value={wouldBlockCount} color="text-amber-600" />
       </div>
 
       {/* Filters */}
@@ -268,7 +268,7 @@ export default function TenderComplianceMatrixTab({ ws, tenderId, reload }: { ws
                   </td>
                   <td className="px-3 py-2 text-center">
                     {item.wouldBlockInProduction && item.status !== "compliant" ? (
-                      <Badge variant="outline" className="text-[9px] text-amber-700 bg-amber-50 border-amber-200">Would Block</Badge>
+                      <Badge variant="outline" className="text-[9px] text-amber-700 bg-amber-50 border-amber-200">Review Rec.</Badge>
                     ) : item.status === "compliant" ? (
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mx-auto" />
                     ) : (

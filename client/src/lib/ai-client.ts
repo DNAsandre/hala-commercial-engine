@@ -63,6 +63,8 @@ export interface AIGenerateRequest {
   temperature?: number;
   workspaceId?: string;
   action?: string;
+  botId?: string;
+  botName?: string;
 }
 
 export interface AIGenerateResponse {
@@ -258,8 +260,8 @@ function getDefaultProviders(): AIProvider[] {
       id: "aip-openai-001",
       name: "openai",
       displayName: "OpenAI",
-      modelDefault: "gpt-4o",
-      models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
+      modelDefault: "gpt-5.5",
+      models: ["gpt-5.5", "gpt-5.5-pro", "gpt-5.5-instant", "gpt-5.4", "gpt-5.3-codex", "gpt-5.1", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "o3", "o3-mini", "o4-mini"],
       enabled: true,
       config: { max_tokens: 4096, endpoint: "openai-generate" },
       createdAt: new Date().toISOString(),
@@ -269,8 +271,8 @@ function getDefaultProviders(): AIProvider[] {
       id: "aip-google-001",
       name: "google",
       displayName: "Google AI (Gemini)",
-      modelDefault: "gemini-1.5-pro",
-      models: ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash"],
+      modelDefault: "gemini-2.5-pro",
+      models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro", "gemini-1.5-flash"],
       enabled: true,
       config: { max_tokens: 4096, endpoint: "google-generate" },
       createdAt: new Date().toISOString(),
@@ -300,7 +302,7 @@ export async function updateAIProvider(
     .single();
 
   if (error) {
-    console.error("[ai-client] updateAIProvider error:", error.message);
+    console.error("[ai-client] updateAIProvider error:", error.message, "code:", error.code, "hint:", error.hint, "details:", error.details);
     return null;
   }
 
@@ -457,8 +459,11 @@ async function logUsage(entry: {
   action?: string;
   status: string;
   errorMessage?: string;
+  botId?: string;
+  botName?: string;
 }): Promise<void> {
   const user = getCurrentUser();
+  const costUsd = estimateCost(entry.model, entry.tokensInput, entry.tokensOutput);
 
   const row = {
     id: nanoid(),
@@ -473,6 +478,9 @@ async function logUsage(entry: {
     action: entry.action || null,
     status: entry.status,
     error_message: entry.errorMessage || null,
+    cost_usd: costUsd,
+    bot_id: entry.botId || null,
+    bot_name: entry.botName || null,
     created_at: new Date().toISOString(),
   };
 
@@ -486,10 +494,6 @@ async function logUsage(entry: {
 // EDGE FUNCTION CALLERS
 // ============================================================
 
-/**
- * Calls the Supabase Edge Function for the given provider.
- * The Edge Function holds the API key securely — never exposed to client.
- */
 async function callEdgeFunction(
   functionName: string,
   payload: {
@@ -499,23 +503,137 @@ async function callEdgeFunction(
     temperature: number;
   }
 ): Promise<{ content: string; tokens_input: number; tokens_output: number }> {
-  const { data, error } = await supabase.functions.invoke(functionName, {
-    body: payload,
+  // ── 1. Try edge function first (15s timeout) ──
+  try {
+    const edgeResult = await Promise.race([
+      supabase.functions.invoke(functionName, { body: payload }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("edge_timeout")), 15_000)
+      ),
+    ]);
+
+    if (!edgeResult.error && edgeResult.data?.content) {
+      return {
+        content: edgeResult.data.content,
+        tokens_input: edgeResult.data.tokens_input ?? 0,
+        tokens_output: edgeResult.data.tokens_output ?? 0,
+      };
+    }
+    console.warn("[ai-client] Edge function returned error, falling back to direct call:", edgeResult.error?.message);
+  } catch (err: any) {
+    console.warn("[ai-client] Edge function unavailable, falling back to direct API call:", err.message);
+  }
+
+  // ── 2. Fallback: call OpenAI/Google directly ──
+  return callProviderDirect(functionName, payload);
+}
+
+/**
+ * Direct provider call — used when edge functions are not deployed.
+ * Reads the API key from ai_provider_secrets via RPC.
+ */
+async function callProviderDirect(
+  functionName: string,
+  payload: {
+    model: string;
+    systemPrompt: string;
+    userPrompt: string;
+    temperature: number;
+  }
+): Promise<{ content: string; tokens_input: number; tokens_output: number }> {
+  // Determine provider from function name
+  const isOpenAI = functionName.includes("openai");
+  const providerId = isOpenAI ? "aip-openai-001" : "aip-google-001";
+
+  // Read API key from database
+  const { data: secretRow, error: secretErr } = await supabase
+    .from("ai_provider_secrets")
+    .select("encrypted_key")
+    .eq("provider_id", providerId)
+    .single();
+
+  if (secretErr || !secretRow?.encrypted_key) {
+    throw new Error(
+      `No API key configured for ${isOpenAI ? "OpenAI" : "Google"}. Go to Admin Panel → AI Providers → Add API Key.`
+    );
+  }
+
+  const apiKey = secretRow.encrypted_key;
+  const model = payload.model || (isOpenAI ? "gpt-4o" : "gemini-1.5-pro");
+
+  if (isOpenAI) {
+    return callOpenAIDirect(apiKey, model, payload);
+  } else {
+    return callGoogleDirect(apiKey, model, payload);
+  }
+}
+
+async function callOpenAIDirect(
+  apiKey: string,
+  model: string,
+  payload: { systemPrompt: string; userPrompt: string; temperature: number }
+): Promise<{ content: string; tokens_input: number; tokens_output: number }> {
+  const messages: { role: string; content: string }[] = [];
+  if (payload.systemPrompt) messages.push({ role: "system", content: payload.systemPrompt });
+  messages.push({ role: "user", content: payload.userPrompt });
+
+  // Newer models (o-series) use max_completion_tokens and only support temperature=1
+  const isNewModel = model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4") || model.startsWith("gpt-5");
+  const tokenParam = isNewModel ? { max_completion_tokens: 4096 } : { max_tokens: 4096 };
+  const tempParam = isNewModel ? {} : { temperature: payload.temperature };
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model, messages, ...tempParam, ...tokenParam }),
   });
 
-  if (error) {
-    throw new Error(`Edge function "${functionName}" failed: ${error.message}`);
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`OpenAI API error (${res.status}): ${errBody}`);
   }
 
-  if (!data || typeof data.content !== "string") {
-    throw new Error(`Edge function "${functionName}" returned invalid response`);
-  }
-
+  const data = await res.json();
   return {
-    content: data.content,
-    tokens_input: data.tokens_input ?? 0,
-    tokens_output: data.tokens_output ?? 0,
+    content: data.choices?.[0]?.message?.content || "",
+    tokens_input: data.usage?.prompt_tokens || 0,
+    tokens_output: data.usage?.completion_tokens || 0,
   };
+}
+
+async function callGoogleDirect(
+  apiKey: string,
+  model: string,
+  payload: { systemPrompt: string; userPrompt: string; temperature: number }
+): Promise<{ content: string; tokens_input: number; tokens_output: number }> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const body: any = {
+    contents: [{ parts: [{ text: payload.userPrompt }] }],
+    generationConfig: { temperature: payload.temperature, maxOutputTokens: 4096 },
+  };
+  if (payload.systemPrompt) {
+    body.systemInstruction = { parts: [{ text: payload.systemPrompt }] };
+  }
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Google AI error (${res.status}): ${errBody}`);
+  }
+
+  const data = await res.json();
+  const content = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  const tokensIn = data.usageMetadata?.promptTokenCount || 0;
+  const tokensOut = data.usageMetadata?.candidatesTokenCount || 0;
+  return { content, tokens_input: tokensIn, tokens_output: tokensOut };
 }
 
 // ============================================================
@@ -583,6 +701,8 @@ export async function generateAI(request: AIGenerateRequest): Promise<AIGenerate
       action: request.action,
       status: "error",
       errorMessage: err.message,
+      botId: request.botId,
+      botName: request.botName,
     });
 
     throw err;
@@ -600,6 +720,8 @@ export async function generateAI(request: AIGenerateRequest): Promise<AIGenerate
     workspaceId: request.workspaceId,
     action: request.action,
     status: "success",
+    botId: request.botId,
+    botName: request.botName,
   });
 
   // 8. Audit trail

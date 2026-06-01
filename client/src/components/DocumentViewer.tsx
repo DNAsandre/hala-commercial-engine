@@ -30,7 +30,7 @@ import {
   getFileUrl,
   hasRealFile,
   downloadDocument,
-  initializeMockFiles,
+  initializeDocumentVault,
   softDeleteDocument,
   restoreDocument,
   updateDocumentMetadata,
@@ -86,7 +86,7 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
 
   // Initialize mock files on first render
   useEffect(() => {
-    initializeMockFiles();
+    initializeDocumentVault();
   }, []);
 
   // Reset state when document changes

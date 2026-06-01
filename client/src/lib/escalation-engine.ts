@@ -32,7 +32,15 @@ export type TriggerType =
   | "crm_ongoing"
   | "notes_red_flag"
   | "stalled_workspace"
-  | "customer_grade_drop";
+  | "customer_grade_drop"
+  // Source-backed commercial escalation feed
+  | "commercial_capacity"
+  | "commercial_finance"
+  | "commercial_gp"
+  | "commercial_customer"
+  | "commercial_tender"
+  | "commercial_operational"
+  | "commercial_leadership";
 export type TaskStatus = "open" | "in_progress" | "done";
 
 export interface EscalationRule {
@@ -88,8 +96,8 @@ export interface EscalationTask {
 // CONSTANTS
 // ============================================================
 
-/** Commercial Director (Amin Al-Rashid) — default escalation assignee */
-const COMMERCIAL_DIRECTOR = { id: "u1", name: "Amin Al-Rashid" };
+/** Default escalation assignee fallback */
+const COMMERCIAL_DIRECTOR = { id: "", name: "Unassigned" };
 
 /** Default rule IDs matching the seeded escalation_rules */
 export const RULE_IDS = {
@@ -252,41 +260,125 @@ function mapTaskRow(row: any): EscalationTask {
   };
 }
 
+function mapCommercialSeverity(severity: string | null | undefined): EscalationSeverity {
+  const normalized = (severity || "").toLowerCase();
+  return normalized === "critical" || normalized === "high" ? "red" : "amber";
+}
+
+function mapCommercialStatus(status: string | null | undefined): EscalationStatus {
+  const normalized = (status || "").toLowerCase();
+  if (["resolved", "mitigated", "ignored"].includes(normalized)) return "resolved";
+  if (["monitoring", "under_review"].includes(normalized)) return "acknowledged";
+  return "open";
+}
+
+function commercialTypeToTrigger(type: string | null | undefined): TriggerType {
+  switch ((type || "").toLowerCase()) {
+    case "capacity": return "commercial_capacity";
+    case "finance": return "commercial_finance";
+    case "gp": return "commercial_gp";
+    case "customer": return "commercial_customer";
+    case "tender": return "commercial_tender";
+    case "leadership": return "commercial_leadership";
+    default: return "commercial_operational";
+  }
+}
+
+function triggerToCommercialType(type: TriggerType): string {
+  if (type.includes("margin") || type.includes("delta") || type.includes("gp")) return "gp";
+  if (type.includes("contract") || type.includes("payment") || type.includes("finance")) return "finance";
+  if (type.includes("customer") || type.includes("score")) return "customer";
+  if (type.includes("renewal")) return "operational";
+  if (type.includes("capacity")) return "capacity";
+  if (type.includes("tender")) return "tender";
+  return "operational";
+}
+
+function mapCommercialEscalationRow(row: any): EscalationEvent {
+  const entityType = row.tender_workspace_id
+    ? "workspace"
+    : row.customer_id
+      ? "customer"
+      : row.warehouse_id
+        ? "warehouse"
+        : "commercial";
+  const entityId = row.tender_workspace_id || row.customer_id || row.warehouse_id || row.id;
+  const status = mapCommercialStatus(row.status);
+
+  return {
+    id: row.id,
+    entityType,
+    entityId,
+    workspaceId: row.tender_workspace_id || null,
+    severity: mapCommercialSeverity(row.severity),
+    ruleId: row.escalation_code || null,
+    triggerType: commercialTypeToTrigger(row.escalation_type),
+    triggerReason: row.description || row.title || row.recommended_action || "Commercial escalation",
+    status,
+    assignedTo: null,
+    assignedToName: row.owner_role || row.governance_owner || null,
+    triggeredBy: null,
+    triggeredByName: row.created_from_rule ? "Commercial OS rule engine" : "Commercial OS",
+    metadata: {
+      customerName: row.customer_name || undefined,
+      workspaceTitle: row.title || undefined,
+      warehouseLabel: row.warehouse_label || undefined,
+      governanceOwner: row.governance_owner || undefined,
+      commercialImpact: row.commercial_impact || undefined,
+      recommendedAction: row.recommended_action || undefined,
+      financialExposure: row.financial_exposure ?? undefined,
+      sourceType: row.source_type || undefined,
+      truthStatus: row.truth_status || undefined,
+      sourceLineage: row.source_lineage || undefined,
+      confidenceTier: row.confidence_tier ?? undefined,
+      sourceTable: "commercial_escalations",
+    },
+    resolutionReason: status === "resolved" ? "Resolved in commercial_escalations status." : null,
+    resolvedBy: null,
+    resolvedByName: null,
+    createdAt: row.created_at,
+    acknowledgedAt: status === "acknowledged" ? row.updated_at : null,
+    resolvedAt: status === "resolved" ? row.updated_at : null,
+  };
+}
+
+function escalationCodeFor(params: CreateEscalationParams, eventId: string): string {
+  const base = `${params.ruleId}-${params.entityType}-${params.entityId}`
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+  return `ESC-${base}-${eventId.slice(0, 8)}`;
+}
+
 /** Fetch all escalation events for a workspace */
 export async function fetchEscalationsByWorkspace(workspaceId: string): Promise<EscalationEvent[]> {
-  const { data, error } = await supabase
-    .from("escalation_events")
-    .select("*")
-    .eq("workspace_id", workspaceId)
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    console.error("[EscalationEngine] fetchEscalationsByWorkspace error:", error);
-    return [];
-  }
-  return (data || []).map(mapEventRow);
+  const events = await fetchAllEscalations();
+  return events.filter(event => event.workspaceId === workspaceId || event.entityId === workspaceId);
 }
 
 /** Fetch ALL escalation events (for global dashboard) */
 export async function fetchAllEscalations(): Promise<EscalationEvent[]> {
   const { data, error } = await supabase
-    .from("escalation_events")
+    .from("commercial_escalations")
     .select("*")
+    .eq("active", true)
     .order("created_at", { ascending: false });
 
   if (error) {
     console.error("[EscalationEngine] fetchAllEscalations error:", error);
     return [];
   }
-  return (data || []).map(mapEventRow);
+  return (data || []).map(mapCommercialEscalationRow);
 }
 
 /** Fetch all open escalation events (for badge count) */
 export async function fetchOpenEscalationCount(): Promise<number> {
   const { count, error } = await supabase
-    .from("escalation_events")
+    .from("commercial_escalations")
     .select("*", { count: "exact", head: true })
-    .in("status", ["open", "acknowledged"]);
+    .eq("active", true)
+    .in("status", ["open", "monitoring", "under_review"]);
 
   if (error) {
     console.error("[EscalationEngine] fetchOpenEscalationCount error:", error);
@@ -297,17 +389,8 @@ export async function fetchOpenEscalationCount(): Promise<number> {
 
 /** Fetch tasks for an escalation event */
 export async function fetchTasksByEscalation(escalationId: string): Promise<EscalationTask[]> {
-  const { data, error } = await supabase
-    .from("escalation_tasks")
-    .select("*")
-    .eq("escalation_id", escalationId)
-    .order("created_at", { ascending: true });
-
-  if (error) {
-    console.error("[EscalationEngine] fetchTasksByEscalation error:", error);
-    return [];
-  }
-  return (data || []).map(mapTaskRow);
+  void escalationId;
+  return [];
 }
 
 // ============================================================
@@ -331,59 +414,54 @@ export interface CreateEscalationParams {
 }
 
 /**
- * Core function: Create an escalation event + optional task + audit log entry.
+ * Core function: Create a source-backed commercial escalation + audit log entry.
  * Returns the created event, or null if creation failed.
  */
 export async function createEscalation(params: CreateEscalationParams): Promise<EscalationEvent | null> {
   const user = getCurrentUser();
   const eventId = crypto.randomUUID();
   const now = new Date().toISOString();
-
-  // 1. Insert escalation_event
-  const eventRow = {
+  const metadata = params.metadata || {};
+  const commercialRow = {
     id: eventId,
-    entity_type: params.entityType,
-    entity_id: params.entityId,
-    workspace_id: params.workspaceId,
-    severity: params.severity,
-    rule_id: params.ruleId,
-    trigger_type: params.triggerType,
-    trigger_reason: params.triggerReason,
+    escalation_code: escalationCodeFor(params, eventId),
+    escalation_type: triggerToCommercialType(params.triggerType),
+    title: params.taskTitle || getTriggerTypeLabel(params.triggerType),
+    description: params.triggerReason,
+    severity: params.severity === "red" ? "critical" : "high",
     status: "open",
-    assigned_to: params.assignedToId || COMMERCIAL_DIRECTOR.id,
-    assigned_to_name: params.assignedToName || COMMERCIAL_DIRECTOR.name,
-    triggered_by: user.id,
-    triggered_by_name: user.name,
-    metadata: params.metadata || null,
+    customer_id: params.entityType === "customer" ? params.entityId : metadata.customerId || null,
+    customer_name: metadata.customerName || null,
+    warehouse_id: metadata.warehouseId || null,
+    warehouse_label: metadata.warehouseLabel || null,
+    tender_workspace_id: params.workspaceId || null,
+    owner_role: params.assignedToName || COMMERCIAL_DIRECTOR.name,
+    governance_owner: params.assignedToName || "Commercial Director",
+    commercial_impact: metadata.commercialImpact || "",
+    financial_exposure: metadata.estimatedValue ?? metadata.financialExposure ?? null,
+    recommended_action: params.taskDescription || params.taskTitle || "Review and resolve through approved governance workflow.",
+    source_type: "workflow_event",
+    truth_status: "rule_triggered",
+    confidence_tier: 2,
+    source_lineage: `commercial escalation engine -> ${params.ruleId} / ${params.triggerType} -> ${params.entityType}:${params.entityId}`,
+    created_from_rule: true,
+    active: true,
     created_at: now,
+    updated_at: now,
   };
 
-  const { error: eventError } = await supabase.from("escalation_events").insert(eventRow);
-  if (eventError) {
-    console.error("[EscalationEngine] createEscalation insert error:", eventError);
+  const { data, error } = await supabase
+    .from("commercial_escalations")
+    .insert(commercialRow)
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("[EscalationEngine] createEscalation insert error:", error);
     return null;
   }
 
-  // 2. Insert escalation_task (if title provided)
-  if (params.taskTitle) {
-    const taskRow = {
-      id: crypto.randomUUID(),
-      escalation_id: eventId,
-      title: params.taskTitle,
-      description: params.taskDescription || null,
-      assigned_to: params.assignedToId || COMMERCIAL_DIRECTOR.id,
-      assigned_to_name: params.assignedToName || COMMERCIAL_DIRECTOR.name,
-      due_date: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days from now
-      status: "open",
-      created_at: now,
-    };
-    const { error: taskError } = await supabase.from("escalation_tasks").insert(taskRow);
-    if (taskError) {
-      console.error("[EscalationEngine] createEscalation task insert error:", taskError);
-    }
-  }
-
-  // 3. Write audit_log entry
+  // Write audit_log entry
   await syncAuditEntry({
     id: `audit-esc-${eventId}`,
     entityType: params.entityType,
@@ -402,7 +480,7 @@ export async function createEscalation(params: CreateEscalationParams): Promise<
     },
   });
 
-  return mapEventRow(eventRow);
+  return mapCommercialEscalationRow(data);
 }
 
 // ============================================================
@@ -420,12 +498,14 @@ export async function acknowledgeEscalation(escalationId: string): Promise<boole
   }
 
   const now = new Date().toISOString();
-  const { error } = await supabase
-    .from("escalation_events")
-    .update({ status: "acknowledged", acknowledged_at: now })
-    .eq("id", escalationId);
+  const { data, error } = await supabase
+    .from("commercial_escalations")
+    .update({ status: "under_review", updated_at: now })
+    .eq("id", escalationId)
+    .select("id")
+    .maybeSingle();
 
-  if (error) {
+  if (error || !data) {
     console.error("[EscalationEngine] acknowledgeEscalation error:", error);
     return false;
   }
@@ -449,18 +529,17 @@ export async function resolveEscalation(escalationId: string, reason: string): P
   }
 
   const now = new Date().toISOString();
-  const { error } = await supabase
-    .from("escalation_events")
+  const { data, error } = await supabase
+    .from("commercial_escalations")
     .update({
       status: "resolved",
-      resolution_reason: reason.trim(),
-      resolved_by: user.id,
-      resolved_by_name: user.name,
-      resolved_at: now,
+      updated_at: now,
     })
-    .eq("id", escalationId);
+    .eq("id", escalationId)
+    .select("id")
+    .maybeSingle();
 
-  if (error) {
+  if (error || !data) {
     console.error("[EscalationEngine] resolveEscalation error:", error);
     return false;
   }
@@ -603,12 +682,12 @@ export async function checkCustomerScoreRed(
 
   // Check for existing open escalation for this customer
   const { data: existing } = await supabase
-    .from("escalation_events")
+    .from("commercial_escalations")
     .select("id")
-    .eq("entity_type", "customer")
-    .eq("entity_id", customer.id)
-    .eq("trigger_type", "score_red")
-    .in("status", ["open", "acknowledged"])
+    .eq("active", true)
+    .eq("customer_id", customer.id)
+    .ilike("source_lineage", `%${RULE_IDS.SCORE_RED}%`)
+    .in("status", ["open", "monitoring", "under_review"])
     .limit(1);
 
   if (existing && existing.length > 0) return null;
@@ -646,12 +725,12 @@ export async function checkRenewalRisk(
 
   // Check for existing open escalation
   const { data: existing } = await supabase
-    .from("escalation_events")
+    .from("commercial_escalations")
     .select("id")
-    .eq("entity_type", "renewal")
-    .eq("entity_id", renewalWorkspaceId)
-    .eq("trigger_type", "renewal_risk")
-    .in("status", ["open", "acknowledged"])
+    .eq("active", true)
+    .ilike("source_lineage", `%${RULE_IDS.RENEWAL_RISK}%`)
+    .ilike("source_lineage", `%renewal:${renewalWorkspaceId}%`)
+    .in("status", ["open", "monitoring", "under_review"])
     .limit(1);
 
   if (existing && existing.length > 0) return null;
@@ -715,131 +794,12 @@ export async function evaluateWorkspaceEscalations(
 // ============================================================
 
 /**
- * Seed initial escalation events for demo purposes.
- * Only seeds if no events exist yet.
+ * Escalation seed hook disabled. Escalation records must come from real workflow events.
  */
 export async function seedEscalationEvents(): Promise<void> {
-  const { count } = await supabase
-    .from("escalation_events")
-    .select("*", { count: "exact", head: true });
-
-  if (count && count > 0) return; // Already seeded
-
-  const now = new Date();
-  const events = [
-    {
-      id: crypto.randomUUID(),
-      entity_type: "workspace",
-      entity_id: "w4",
-      workspace_id: "w4",
-      severity: "red",
-      rule_id: RULE_IDS.MARGIN_BREACH,
-      trigger_type: "margin_breach",
-      trigger_reason: "GP% at 8.5% — below 10% critical threshold. CEO/CFO approval required.",
-      status: "open",
-      assigned_to: COMMERCIAL_DIRECTOR.id,
-      assigned_to_name: COMMERCIAL_DIRECTOR.name,
-      triggered_by: "system",
-      triggered_by_name: "System",
-      metadata: { gpPercent: 8.5, threshold: 10, customerName: "Al-Rajhi Steel", workspaceTitle: "Al-Rajhi Emergency Storage" },
-      created_at: new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString(),
-    },
-    {
-      id: crypto.randomUUID(),
-      entity_type: "customer",
-      entity_id: "c9",
-      workspace_id: "w4",
-      severity: "red",
-      rule_id: RULE_IDS.SCORE_RED,
-      trigger_type: "score_red",
-      trigger_reason: "Customer Al-Rajhi Steel ECR grade dropped to D. Immediate review required.",
-      status: "open",
-      assigned_to: COMMERCIAL_DIRECTOR.id,
-      assigned_to_name: COMMERCIAL_DIRECTOR.name,
-      triggered_by: "system",
-      triggered_by_name: "System",
-      metadata: { customerName: "Al-Rajhi Steel", grade: "D", region: "East" },
-      created_at: new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString(),
-    },
-    {
-      id: crypto.randomUUID(),
-      entity_type: "workspace",
-      entity_id: "w3",
-      workspace_id: "w3",
-      severity: "amber",
-      rule_id: RULE_IDS.STAGE_OVERRIDE,
-      trigger_type: "stage_override",
-      trigger_reason: "Admin override: Pricing lock bypass. Reason: Client requested urgent pricing revision for Unilever Dammam.",
-      status: "acknowledged",
-      assigned_to: COMMERCIAL_DIRECTOR.id,
-      assigned_to_name: COMMERCIAL_DIRECTOR.name,
-      triggered_by: "u1",
-      triggered_by_name: "Amin Al-Rashid",
-      metadata: { overrideType: "pricing_lock_bypass", customerName: "Unilever Arabia", workspaceTitle: "Unilever Dammam New SOW" },
-      created_at: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
-      acknowledged_at: new Date(now.getTime() - 20 * 60 * 60 * 1000).toISOString(),
-    },
-    {
-      id: crypto.randomUUID(),
-      entity_type: "workspace",
-      entity_id: "w1",
-      workspace_id: "w1",
-      severity: "red",
-      rule_id: RULE_IDS.MARGIN_BREACH,
-      trigger_type: "margin_breach",
-      trigger_reason: "GP% at 19.7% — below 22% warning threshold. Director approval required.",
-      status: "resolved",
-      assigned_to: COMMERCIAL_DIRECTOR.id,
-      assigned_to_name: COMMERCIAL_DIRECTOR.name,
-      triggered_by: "system",
-      triggered_by_name: "System",
-      metadata: { gpPercent: 19.7, threshold: 22, customerName: "Ma'aden", workspaceTitle: "Ma'aden Jubail Expansion 2500PP" },
-      resolution_reason: "Director approved margin exception. Client is strategic account with growth potential.",
-      resolved_by: "u1",
-      resolved_by_name: "Amin Al-Rashid",
-      created_at: new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString(),
-      resolved_at: new Date(now.getTime() - 36 * 60 * 60 * 1000).toISOString(),
-    },
-  ];
-
-  const { error } = await supabase.from("escalation_events").insert(events);
-  if (error) {
-    console.error("[EscalationEngine] seedEscalationEvents error:", error);
-  }
-
-  // Seed tasks for open events
-  const tasks = [
-    {
-      id: crypto.randomUUID(),
-      escalation_id: events[0].id,
-      title: "Review margin breach: Al-Rajhi Emergency Storage",
-      description: "GP% at 8.5% for Al-Rajhi Steel. Requires CEO/CFO review and decision.",
-      assigned_to: COMMERCIAL_DIRECTOR.id,
-      assigned_to_name: COMMERCIAL_DIRECTOR.name,
-      due_date: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString(),
-      status: "open",
-      created_at: events[0].created_at,
-    },
-    {
-      id: crypto.randomUUID(),
-      escalation_id: events[1].id,
-      title: "Review customer health: Al-Rajhi Steel",
-      description: "ECR grade at D. Assess risk and determine action plan.",
-      assigned_to: COMMERCIAL_DIRECTOR.id,
-      assigned_to_name: COMMERCIAL_DIRECTOR.name,
-      due_date: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString(),
-      status: "open",
-      created_at: events[1].created_at,
-    },
-  ];
-
-  const { error: taskError } = await supabase.from("escalation_tasks").insert(tasks);
-  if (taskError) {
-    console.error("[EscalationEngine] seedEscalationTasks error:", taskError);
-  }
+  return;
 }
 
-// ============================================================
 // TRIGGER LABEL HELPERS
 // ============================================================
 
@@ -852,6 +812,13 @@ export function getTriggerTypeLabel(type: TriggerType): string {
     score_red: "Customer Score Red",
     renewal_risk: "Renewal Risk",
     crm_sync_failed: "CRM Sync Failed",
+    commercial_capacity: "Commercial Capacity",
+    commercial_finance: "Commercial Finance",
+    commercial_gp: "Commercial GP",
+    commercial_customer: "Commercial Customer",
+    commercial_tender: "Commercial Tender",
+    commercial_operational: "Commercial Operational",
+    commercial_leadership: "Commercial Leadership",
     // Extended
     contract_expired: "Contract Expired",
     contract_expiring: "Contract Expiring",

@@ -9,7 +9,9 @@
  *   - Tender governance config (reference data)
  *   - Commercial governance config (reference data)
  *
- * DOCTRINE: mock_only is ALWAYS true. No production enforcement.
+ * DOCTRINE: policy gates are advisory by default until production enforcement
+ * is explicitly approved. The legacy mock_only column is kept only for schema
+ * compatibility and must not be used to create fake business truth.
  * All failures return { success: false, error } — no throws.
  */
 
@@ -185,7 +187,8 @@ export async function fetchGovernanceAuditLog(limit: number = 200): Promise<Supa
 
 /**
  * Insert a governance audit log entry.
- * Always sets mock_only = true.
+ * Keeps legacy mock_only false. Advisory behavior is controlled by gate mode,
+ * not by creating mock business records.
  */
 export async function insertGovernanceAuditEntry(params: {
   category: string;
@@ -206,7 +209,7 @@ export async function insertGovernanceAuditEntry(params: {
     user_name: userName,
     details: params.details ?? '',
     metadata: params.metadata ?? {},
-    mock_only: true,
+    mock_only: false,
     created_at: new Date().toISOString(),
   });
 

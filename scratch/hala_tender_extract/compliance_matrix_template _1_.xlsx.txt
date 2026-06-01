@@ -1,0 +1,18 @@
+
+[SHEET] ComplianceMatrix
+Req_ID	RFQ_Reference	Requirement_Description	Response_Plan	Assigned_Owner	Status	Clarification_Required	Clarification_Question	Buyer_Response	Evidence/Attachment	Final_Response_Text
+REQ-001	Section 3.2 / Page 15	Provide ISO 9001 certification	Attach valid ISO certificate, reference in Quality section	QA Manager	Open	No			ISO9001_Certificate.pdf	Company is ISO 9001:2015 certified, certificate attached.
+
+[SHEET] Instructions
+Field	Purpose
+Req_ID	Unique identifier for each requirement (e.g., REQ-001).
+RFQ_Reference	Section/page number in RFQ where requirement appears.
+Requirement_Description	Exact requirement statement from RFQ.
+Response_Plan	How your company will address the requirement.
+Assigned_Owner	Person responsible for preparing the response.
+Status	Open / In Progress / Complete.
+Clarification_Required	Yes/No — flag if clarification is needed.
+Clarification_Question	Specific question to buyer (include RFQ reference).
+Buyer_Response	Response received from buyer (leave blank until received).
+Evidence/Attachment	File names or links to supporting docs.
+Final_Response_Text	Draft final text to include in the proposal.

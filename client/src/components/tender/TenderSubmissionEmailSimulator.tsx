@@ -1,4 +1,4 @@
-/**
+﻿/**
  * TND-008: Tender Submission Email Simulator
  * Mock email preparation for Bulk/PGP separate submission threads.
  */
@@ -8,11 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ShieldAlert, XCircle, Mail, Info, Send, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
-import { logEmailSimulation } from "@/lib/supabase-tender-actions";
 import {
   type TenderWorkspace,
   type TenderSubmissionEmail,
-  type TenderSubmissionAttachment,
   type SubmissionEmailType,
   getEmailStatusLabel,
   getEmailStatusColor,
@@ -21,65 +19,13 @@ import {
   getAttachmentStatusColor,
 } from "@/lib/tender-workspace-data";
 
-// ─── MOCK EMAIL DATA GENERATOR ───────────────────────────────
-
-const BULK_ATTACHMENTS: TenderSubmissionAttachment[] = [
-  { id: "ba-1", fileName: "Bulk Final Tender Pack.pdf", documentType: "Final Output", format: "PDF", required: true, included: true, status: "included_mock", sizeMb: 4.2, notes: "" },
-  { id: "ba-2", fileName: "Bulk OBK Native.xlsx", documentType: "Pricing / OBK", format: "Excel", required: true, included: true, status: "included_mock", sizeMb: 1.8, notes: "" },
-  { id: "ba-3", fileName: "Bulk OBK Signed Stamped.pdf", documentType: "Pricing / OBK", format: "PDF", required: true, included: false, status: "missing", sizeMb: 0, notes: "Signed/stamped PDF not yet available" },
-  { id: "ba-4", fileName: "Bulk Bid Statement Signed.pdf", documentType: "Bid Statement", format: "PDF", required: true, included: false, status: "missing", sizeMb: 0, notes: "Signed/stamped copy pending" },
-  { id: "ba-5", fileName: "Bulk Transition Plan.pdf", documentType: "Transition", format: "PDF", required: true, included: true, status: "warning", sizeMb: 2.1, notes: "Draft version — not final" },
-  { id: "ba-6", fileName: "Bulk Compliance Pack.pdf", documentType: "Compliance", format: "PDF", required: true, included: true, status: "included_mock", sizeMb: 3.5, notes: "" },
-];
-
-const PGP_ATTACHMENTS: TenderSubmissionAttachment[] = [
-  { id: "pa-1", fileName: "PGP Final Tender Pack.pdf", documentType: "Final Output", format: "PDF", required: true, included: true, status: "included_mock", sizeMb: 3.1, notes: "" },
-  { id: "pa-2", fileName: "PGP OBK Native.xlsx", documentType: "Pricing / OBK", format: "Excel", required: true, included: true, status: "included_mock", sizeMb: 1.2, notes: "" },
-  { id: "pa-3", fileName: "PGP OBK Signed Stamped.pdf", documentType: "Pricing / OBK", format: "PDF", required: true, included: false, status: "missing", sizeMb: 0, notes: "Signed/stamped PDF not yet available" },
-  { id: "pa-4", fileName: "PGP Bid Statement Signed.pdf", documentType: "Bid Statement", format: "PDF", required: true, included: false, status: "missing", sizeMb: 0, notes: "Signed/stamped copy pending" },
-  { id: "pa-5", fileName: "PGP Transition Plan.pdf", documentType: "Transition", format: "PDF", required: true, included: true, status: "included_mock", sizeMb: 1.4, notes: "" },
-  { id: "pa-6", fileName: "PGP Compliance Pack.pdf", documentType: "Compliance", format: "PDF", required: true, included: true, status: "included_mock", sizeMb: 2.8, notes: "" },
-];
-
-function buildEmail(type: SubmissionEmailType): { to: string; ccExternal: string; ccInternal: string; subject: string; body: string; attachments: TenderSubmissionAttachment[] } {
-  if (type === "bulk_submission") {
-    return {
-      to: "sulman.ahmed@example-client.com",
-      ccExternal: "",
-      ccInternal: "amin@hala.example, tenders@hala.example",
-      subject: "Linde SIGAS Bulk Transportation Tender — Hala Submission",
-      body: "Dear Mr. Ahmed,\n\nPlease find attached our submission for the Linde SIGAS Bulk Transportation Tender.\n\nBest regards,\nAmin Al-Halabi\nHala Commercial Operations",
-      attachments: BULK_ATTACHMENTS,
-    };
-  }
-  if (type === "pgp_submission") {
-    return {
-      to: "sulman.ahmed@example-client.com",
-      ccExternal: "",
-      ccInternal: "amin@hala.example, tenders@hala.example",
-      subject: "Linde SIGAS PGP Transportation Tender — Hala Submission",
-      body: "Dear Mr. Ahmed,\n\nPlease find attached our submission for the Linde SIGAS PGP Transportation Tender.\n\nBest regards,\nAmin Al-Halabi\nHala Commercial Operations",
-      attachments: PGP_ATTACHMENTS,
-    };
-  }
-  // test_bundle
-  return {
-    to: "sulman.ahmed@example-client.com",
-    ccExternal: "",
-    ccInternal: "amin@hala.example, tenders@hala.example",
-    subject: "Linde SIGAS Transportation Tender — Hala Combined Submission",
-    body: "⚠️ TEST BUNDLE — This email combines Bulk + PGP. In production, these must be sent as separate threads.",
-    attachments: [...BULK_ATTACHMENTS, ...PGP_ATTACHMENTS],
-  };
-}
-
-// ─── MAIN COMPONENT ──────────────────────────────────────────
+// â”€â”€â”€ MAIN COMPONENT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export default function TenderSubmissionEmailSimulator({ ws, onClose, tenderId, reload }: { ws: TenderWorkspace; onClose: () => void; tenderId: string; reload: () => void }) {
   const [emailType, setEmailType] = useState<SubmissionEmailType>("bulk_submission");
-  const [submissions, setSubmissions] = useState<TenderSubmissionEmail[]>(ws.submissionEmails && ws.submissionEmails.length > 0 ? ws.submissionEmails : []);
+  const [submissions] = useState<TenderSubmissionEmail[]>(ws.submissionEmails && ws.submissionEmails.length > 0 ? ws.submissionEmails : []);
 
-  // Determine data source: require explicit Supabase data — no silent frontend mock fallback
+  // Determine data source: require explicit Supabase data â€” no silent frontend mock fallback
   const hasSupabaseEmails = ws.submissionEmails && ws.submissionEmails.length > 0;
   const supabaseEmail = hasSupabaseEmails ? (ws.submissionEmails ?? []).find(e => e.emailType === emailType) : null;
 
@@ -92,7 +38,7 @@ export default function TenderSubmissionEmailSimulator({ ws, onClose, tenderId, 
   const totalSizeMb = email ? email.attachments.reduce((s, a) => s + a.sizeMb, 0) : 0;
   const isBundle = emailType === "test_bundle";
 
-  // No email type in Supabase — show explicit empty state (not a silent mock fallback)
+  // No email type in Supabase â€” show explicit empty state (not a silent mock fallback)
   if (hasSupabaseEmails && !supabaseEmail) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -112,7 +58,7 @@ export default function TenderSubmissionEmailSimulator({ ws, onClose, tenderId, 
     );
   }
 
-  // No Supabase data at all — error state
+  // No Supabase data at all â€” error state
   if (!hasSupabaseEmails) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -134,7 +80,7 @@ export default function TenderSubmissionEmailSimulator({ ws, onClose, tenderId, 
   // At this point, we have Supabase data AND a matching email for this type.
   // TypeScript needs an explicit guard to narrow `email` from nullable.
   if (!email) {
-    // Should never reach here — the early returns above handle all null cases.
+    // Should never reach here â€” the early returns above handle all null cases.
     return null;
   }
 
@@ -142,37 +88,9 @@ export default function TenderSubmissionEmailSimulator({ ws, onClose, tenderId, 
   const safeEmail = email;
 
   async function handleSimulate() {
-    const hasWarnings = missingCount > 0 || warningCount > 0 || isBundle;
-    const newSub: TenderSubmissionEmail = {
-      id: `sub-${Date.now()}`,
-      tenderPackId: emailType === "bulk_submission" ? "tp-linde-bulk" : emailType === "pgp_submission" ? "tp-linde-pgp" : "bundle",
-      packName: getEmailTypeLabel(emailType),
-      emailType,
-      to: safeEmail.to,
-      ccExternal: safeEmail.ccExternal,
-      ccInternal: safeEmail.ccInternal,
-      subject: safeEmail.subject,
-      body: safeEmail.body,
-      attachments: safeEmail.attachments,
-      attachmentSizeMb: totalSizeMb,
-      status: hasWarnings ? "simulated_with_warnings" : "simulated_submitted",
-      simulated: true,
-      submittedBy: "Amin Al-Halabi",
-      submittedAt: new Date().toISOString(),
-      crmSyncStatus: "Simulated",
-      warningsCount: missingCount + warningCount + (isBundle ? 1 : 0),
-      notes: "",
-    };
-    setSubmissions(prev => [...prev, newSub]);
-
-    // Persist simulation event to Supabase
-    const result = await logEmailSimulation(tenderId, emailType, getEmailTypeLabel(emailType));
-    if (result.success) {
-      toast.info("Submission simulated and logged to Supabase.", { description: `${safeEmail.subject} — ${hasWarnings ? "with warnings" : "clean"}` });
-      reload();
-    } else {
-      toast.warning("Simulation logged locally. Supabase write failed.", { description: result.error });
-    }
+    toast.warning("Submission simulation is disabled.", {
+      description: "No fake submission event will be created. Wire a real submission workflow before logging this action.",
+    });
   }
 
   return (
@@ -183,8 +101,8 @@ export default function TenderSubmissionEmailSimulator({ ws, onClose, tenderId, 
         <div className="p-5 border-b">
           <div className="flex items-start justify-between">
             <div>
-              <h3 className="text-sm font-serif font-bold flex items-center gap-2"><Mail className="w-4 h-4" /> Submission Email Simulator (Mock)</h3>
-              <p className="text-[10px] text-muted-foreground mt-0.5">Development mode — no external email is sent.</p>
+              <h3 className="text-sm font-serif font-bold flex items-center gap-2"><Mail className="w-4 h-4" /> Submission Email Review</h3>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Verified records only. No external email is sent.</p>
             </div>
             <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onClose}><XCircle className="w-4 h-4" /></Button>
           </div>
@@ -194,13 +112,13 @@ export default function TenderSubmissionEmailSimulator({ ws, onClose, tenderId, 
           {/* Dev banner */}
           <div className="p-3 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 flex items-center gap-2.5">
             <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
-            <p className="text-xs text-amber-700">Development mode: this simulator creates mock submission records only. No external email is sent.</p>
+            <p className="text-xs text-amber-700">Submission sending is disabled here. This review surface cannot create fake submission records.</p>
           </div>
 
           {/* Separate thread rule */}
           <div className="p-3 rounded-lg border border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 flex items-center gap-2">
             <Info className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-            <p className="text-[10px] text-blue-700">Future production rule: Bulk and PGP must be submitted as separate emails and separate threads. This simulator allows testing but will show warnings for bundled submissions.</p>
+            <p className="text-[10px] text-blue-700">Future production rule: Bulk and PGP must be submitted as separate emails and separate threads. This surface reviews records only.</p>
           </div>
 
           {/* Email type selection */}
@@ -211,7 +129,7 @@ export default function TenderSubmissionEmailSimulator({ ws, onClose, tenderId, 
               <SelectContent>
                 <SelectItem value="bulk_submission" className="text-xs">Bulk Transportation Pack</SelectItem>
                 <SelectItem value="pgp_submission" className="text-xs">PGP Transportation Pack</SelectItem>
-                <SelectItem value="test_bundle" className="text-xs">Test Bundle (Combined — Warning)</SelectItem>
+                <SelectItem value="test_bundle" className="text-xs">Test Bundle (Combined â€” Warning)</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -219,7 +137,7 @@ export default function TenderSubmissionEmailSimulator({ ws, onClose, tenderId, 
           {/* Bundle warning */}
           {isBundle && (
             <div className="p-3 rounded-lg border border-red-200 bg-red-50">
-              <p className="text-xs text-red-700 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Mock Warning: Bulk and PGP should be submitted as separate email threads in production. This combined bundle would require correction before production submission.</p>
+              <p className="text-xs text-red-700 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Warning: Bulk and PGP should be submitted as separate email threads. This combined bundle would require correction before submission.</p>
             </div>
           )}
 
@@ -237,8 +155,8 @@ export default function TenderSubmissionEmailSimulator({ ws, onClose, tenderId, 
                 <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-sans leading-relaxed">{safeEmail.body}</pre>
               </div>
               <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                <span>CRM Sync: <span className="font-medium">Simulated</span></span>
-                <span>Status: <span className="font-medium">Draft (Mock)</span></span>
+                <span>CRM Sync: <span className="font-medium">Not connected</span></span>
+                <span>Status: <span className="font-medium">{getEmailStatusLabel(safeEmail.status)}</span></span>
               </div>
             </div>
           </div>
@@ -247,7 +165,7 @@ export default function TenderSubmissionEmailSimulator({ ws, onClose, tenderId, 
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Attachments</label>
-              <span className="text-[10px] text-muted-foreground">{safeEmail.attachments.length} files · {totalSizeMb.toFixed(1)} MB</span>
+              <span className="text-[10px] text-muted-foreground">{safeEmail.attachments.length} files Â· {totalSizeMb.toFixed(1)} MB</span>
             </div>
             <div className="border rounded-lg overflow-hidden">
               <table className="w-full text-xs">
@@ -270,9 +188,9 @@ export default function TenderSubmissionEmailSimulator({ ws, onClose, tenderId, 
                       </td>
                       <td className="px-3 py-2 text-muted-foreground">{a.documentType}</td>
                       <td className="px-3 py-2 text-muted-foreground">{a.format}</td>
-                      <td className="px-3 py-2 text-center">{a.required ? <Badge variant="outline" className="text-[8px]">Required</Badge> : "—"}</td>
+                      <td className="px-3 py-2 text-center">{a.required ? <Badge variant="outline" className="text-[8px]">Required</Badge> : "â€”"}</td>
                       <td className="px-3 py-2"><Badge variant="outline" className={`text-[9px] ${getAttachmentStatusColor(a.status)}`}>{getAttachmentStatusLabel(a.status)}</Badge></td>
-                      <td className="px-3 py-2 text-right font-mono text-muted-foreground">{a.sizeMb > 0 ? `${a.sizeMb} MB` : "—"}</td>
+                      <td className="px-3 py-2 text-right font-mono text-muted-foreground">{a.sizeMb > 0 ? `${a.sizeMb} MB` : "â€”"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -316,7 +234,7 @@ export default function TenderSubmissionEmailSimulator({ ws, onClose, tenderId, 
                         <td className="px-3 py-2"><Badge variant="outline" className="text-[9px]">{getEmailTypeLabel(s.emailType)}</Badge></td>
                         <td className="px-3 py-2 max-w-[200px] truncate">{s.subject}</td>
                         <td className="px-3 py-2"><Badge variant="outline" className={`text-[9px] ${getEmailStatusColor(s.status)}`}>{getEmailStatusLabel(s.status)}</Badge></td>
-                        <td className="px-3 py-2 text-muted-foreground text-[10px] font-mono">{s.submittedAt ? new Date(s.submittedAt).toLocaleTimeString() : "—"}</td>
+                        <td className="px-3 py-2 text-muted-foreground text-[10px] font-mono">{s.submittedAt ? new Date(s.submittedAt).toLocaleTimeString() : "â€”"}</td>
                         <td className="px-3 py-2 text-muted-foreground">{s.submittedBy}</td>
                         <td className="px-3 py-2 text-center font-mono">{s.warningsCount}</td>
                         <td className="px-3 py-2 text-muted-foreground">{s.crmSyncStatus}</td>

@@ -1,0 +1,11 @@
+id,name,region_scope,website,tags
+1,Bid Specialists,Global,https://www.bidspecialists.com,"['global', 'government', 'commercial', 'technical', 'training']"
+2,Impact Bids,Global,https://impactbids.com,"['global', 'government', 'private sector', 'training']"
+3,The Tender Team,Australia/New Zealand (Global support),https://thetenderteam.com.au,"['australia', 'new zealand', 'government', 'commercial', 'editing']"
+4,Right People Group,Global,https://rightpeoplegroup.com,"['global', 'public sector', 'strategy', 'pricing']"
+5,Essca Consulting,Global,https://www.esscaconsulting.com,"['global', 'construction', 'engineering', 'qs']"
+6,Tsaks Consulting,Saudi Arabia & GCC,https://tsaksconsulting.com,"['ksa', 'gcc', 'government', 'localization']"
+7,Writers.sa,Saudi Arabia,https://www.writers.sa.com,"['ksa', 'arabic', 'editing', 'formatting']"
+8,Stonehaven,UAE (serving GCC incl. KSA),https://www.stonehaven.ae,"['uae', 'gcc', 'construction', 'infrastructure', 'procurement']"
+9,Delta Gulf Overseas,GCC (serving KSA projects),https://deltagulfo.com,"['gcc', 'ksa', 'construction', 'procurement']"
+10,Write Right Dubai,UAE (serving GCC),https://www.writeright.ae,"['uae', 'gcc', 'copywriting', 'presentation']"

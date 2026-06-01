@@ -3,14 +3,11 @@
  * ──────────────────────────
  * SUPA-007: Tender Signal Read Layer — Supabase-backed
  *
- * Replaces getTenderRiskSummary() and getAllTenderExecutionSignals() from
- * tender-workspace-data.ts (which source from static frontend arrays).
+ * Derives advisory signals from live Supabase data.
+ * ALL signals are informational only — flag → explain → recommend.
+ * Nothing blocks. Nothing locks. Everything is overridable.
  *
- * All signals are derived from live Supabase data via fetchTenderWorkspaceBundle.
- * Source of truth: Supabase tender_* tables, NOT runtime mock stores.
- *
- * Type-only imports from tender-workspace-data.ts (labels/helpers only).
- * No writes. No real submission. No CRM sync. No hard gates.
+ * Doctrine: signal-only. No gates. No enforcement. No prisons.
  */
 
 import { supabase } from './supabase';
@@ -29,14 +26,17 @@ export interface TenderSignalSummary {
   placeholderMissingCount: number;
   requiredDocumentsAwaitingCount: number;
   complianceGapCount: number;
+  /** @deprecated use readinessSignalCount */
   gatesWouldBlockCount: number;
-  criticalGateCount: number;
+  /** Signals flagged for review — advisory only, never blocking */
+  readinessSignalCount: number;
+  criticalSignalCount: number;
   splitCheckWarningCount: number;
   submissionEmailStatus: string;
   nextAction: string;
   riskLevel: 'green' | 'amber' | 'red';
-  developmentMode: true;
-  source: 'Supabase-backed mock data';
+  developmentMode: boolean;
+  source: string;
 }
 
 // ─── Single-tender signal summary ─────────────────────────────
@@ -49,15 +49,12 @@ export async function getTenderWorkspaceSignalSummaryFromSupabase(
 
   const { tender, packs, placeholders, requiredDocuments, complianceItems, mockGates, splitChecks, submissionEmails } = bundle;
 
-  // Pack count
   const packCount = packs.length;
 
-  // Placeholder counts
   const placeholderMissingCount = placeholders.filter(
     p => p.status === 'missing' || p.status === 'needs_evidence'
   ).length;
 
-  // Required document counts — native OR signed missing counts as awaiting
   const requiredDocumentsAwaitingCount = requiredDocuments.filter(
     d =>
       d.status === 'awaiting' ||
@@ -65,7 +62,6 @@ export async function getTenderWorkspaceSignalSummaryFromSupabase(
       d.signedPdfStatus === 'missing'
   ).length;
 
-  // Compliance gap counts
   const complianceGapCount = complianceItems.filter(
     c =>
       c.status === 'non_compliant' ||
@@ -73,34 +69,32 @@ export async function getTenderWorkspaceSignalSummaryFromSupabase(
       c.status === 'clarification_required'
   ).length;
 
-  // Gate counts
-  const gatesWouldBlockCount = mockGates.filter(g => g.wouldBlock).length;
-  const criticalGateCount = mockGates.filter(g => g.severity === 'critical').length;
+  // Advisory signals — items flagged for review, never blocking
+  const readinessSignalCount = mockGates.filter(g => g.needsReview === true || g.wouldBlock === true).length;
+  const criticalSignalCount = mockGates.filter(g => g.severity === 'critical').length;
 
-  // Split check warnings (status = warning or would_block)
   const splitCheckWarningCount = splitChecks.filter(
     c => c.status === 'warning' || c.status === 'would_block'
   ).length;
 
-  // Submission email status — latest email status or 'none'
   const latestEmail = submissionEmails[0];
   const submissionEmailStatus = latestEmail?.status ?? 'none';
 
-  // Risk level
+  // Risk level — advisory signal, not enforcement
   let riskLevel: 'green' | 'amber' | 'red' = 'green';
-  if (gatesWouldBlockCount > 5 || requiredDocumentsAwaitingCount > 5 || criticalGateCount > 0 || complianceGapCount > 5) {
+  if (readinessSignalCount > 5 || requiredDocumentsAwaitingCount > 5 || criticalSignalCount > 0 || complianceGapCount > 5) {
     riskLevel = 'red';
-  } else if (gatesWouldBlockCount > 0 || requiredDocumentsAwaitingCount > 0 || placeholderMissingCount > 0 || complianceGapCount > 0) {
+  } else if (readinessSignalCount > 0 || requiredDocumentsAwaitingCount > 0 || placeholderMissingCount > 0 || complianceGapCount > 0) {
     riskLevel = 'amber';
   }
 
-  // Next action logic
+  // Next action — recommendation, not requirement
   let nextAction = 'Review tender workspace';
-  if (criticalGateCount > 0) nextAction = 'Review critical submission gates';
+  if (criticalSignalCount > 0) nextAction = 'Review critical readiness signals';
   else if (requiredDocumentsAwaitingCount > 5) nextAction = 'Complete missing required documents';
   else if (complianceGapCount > 3) nextAction = 'Resolve compliance gaps';
   else if (placeholderMissingCount > 3) nextAction = 'Populate missing placeholders';
-  else if (gatesWouldBlockCount > 0) nextAction = 'Review submission gates';
+  else if (readinessSignalCount > 0) nextAction = 'Review submission readiness signals';
 
   return {
     tenderId: tender.id,
@@ -112,22 +106,27 @@ export async function getTenderWorkspaceSignalSummaryFromSupabase(
     placeholderMissingCount,
     requiredDocumentsAwaitingCount,
     complianceGapCount,
-    gatesWouldBlockCount,
-    criticalGateCount,
+    gatesWouldBlockCount: readinessSignalCount, // backward-compat alias
+    readinessSignalCount,
+    criticalSignalCount,
     splitCheckWarningCount,
     submissionEmailStatus,
     nextAction,
     riskLevel,
-    developmentMode: true,
-    source: 'Supabase-backed mock data',
+    developmentMode: false,
+    source: 'Supabase commercial_tickets',
   };
 }
 
 // ─── All tenders signal summary ─────────────────────────────
 
 export async function getAllTenderWorkspaceSignalsFromSupabase(): Promise<TenderSignalSummary[]> {
-  // Fetch all tender IDs from Supabase
-  const { data: tenderRows, error } = await supabase.from('tenders').select('id');
+  const { data: tenderRows, error } = await supabase
+    .from('commercial_tickets')
+    .select('id')
+    .eq('ticket_type', 'tender')
+    .eq('active', true)
+    .neq('lineage_status', 'rejected');
   if (error) {
     console.warn('[SUPA-007] getAllTenderWorkspaceSignalsFromSupabase error:', error.message);
     return [];
@@ -135,7 +134,6 @@ export async function getAllTenderWorkspaceSignalsFromSupabase(): Promise<Tender
   const tenderIds = (tenderRows ?? []).map((r: any) => r.id as string);
   if (!tenderIds.length) return [];
 
-  // Fetch summaries in parallel
   const results = await Promise.all(
     tenderIds.map(id => getTenderWorkspaceSignalSummaryFromSupabase(id))
   );
@@ -162,7 +160,6 @@ export async function getTenderDashboardSignalSummaryFromSupabase(): Promise<{
 }
 
 // ─── Convert TenderSignalSummary → TenderRiskSummary ──────────
-// Used for UI chip wiring that expects TenderRiskSummary shape
 
 export function signalSummaryToRiskSummary(sig: TenderSignalSummary): TenderRiskSummary {
   const daysLeft = Math.ceil(
@@ -180,8 +177,8 @@ export function signalSummaryToRiskSummary(sig: TenderSignalSummary): TenderRisk
     missingPlaceholders: sig.placeholderMissingCount,
     missingDocuments: sig.requiredDocumentsAwaitingCount,
     complianceGaps: sig.complianceGapCount,
-    gatesWouldBlock: sig.gatesWouldBlockCount,
-    criticalGates: sig.criticalGateCount,
+    gatesWouldBlock: sig.readinessSignalCount,
+    criticalGates: sig.criticalSignalCount,
     nextAction: sig.nextAction,
     deadline: '2026-06-15',
     daysToDeadline: daysLeft,

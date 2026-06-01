@@ -41,7 +41,7 @@ import { updateWorkspace as updateWorkspaceDB, createAuditEntry } from "@/lib/su
 import { logAuditAction } from "@/hooks/useMutations";
 import {
   getDocumentsByWorkspace, getFileTypeColor, getCategoryIcon,
-  uploadDocument, hasRealFile, initializeMockFiles,
+  uploadDocument, hasRealFile, initializeDocumentVault,
   type UnifiedDocument, type DocumentCategory,
 } from "@/lib/document-vault";
 import { DocumentViewer, UploadDialog } from "@/components/DocumentViewer";
@@ -71,6 +71,13 @@ import CommercialSlaControlTab from "@/components/commercial/CommercialSlaContro
 import CommercialActivityTab from "@/components/commercial/CommercialActivityTab";
 import CommercialAuditTrailTab from "@/components/commercial/CommercialAuditTrailTab";
 import { usePnLByWorkspace } from "@/hooks/useSupabase";
+import ProposalTrackerStrip from "@/components/proposal-workspace/ProposalTrackerStrip";
+import ProposalStageWorkbench from "@/components/proposal-workspace/ProposalStageWorkbench";
+import ProposalOverviewPanel from "@/components/proposal-workspace/ProposalOverviewPanel";
+import ProposalSnapshotCard from "@/components/proposal-workspace/ProposalSnapshotCard";
+import CrmPipelineStrip, { getCrmStageLabel } from "@/components/proposal-workspace/CrmPipelineStrip";
+import { getProposalStageLabel } from "@/components/proposal-workspace/proposal-stages";
+import { createDefaultWorkspaceData, type ProposalWorkspaceData, logProposalAudit, calcQualificationReadiness, calcDiscoveryCompleteness, calcSolutionReadiness, calcPricingConfidence, generateSignals } from "@/components/proposal-workspace/proposal-workspace-state";
 import {
   isWorkspaceIntegrationEnabled, getOrCreateCycle, startRenewal, updateRenewalOwner,
   getDaysToExpiry, isInRenewalWindow, getSupportingDocs, uploadSupportingDoc,
@@ -79,7 +86,7 @@ import {
   SUPPORT_DOC_CATEGORIES, type SupportingDoc, type SupportDocCategory, type ContractCycle,
 } from "@/lib/workspace-integration";
 
-// ─── SLA Mock Data (local to workspace) ─────────────────────
+// ─── SLA Records (canonical backing pending) ─────────────────────
 interface WorkspaceSLA {
   id: string;
   workspaceId: string;
@@ -92,12 +99,7 @@ interface WorkspaceSLA {
   expiryDate: string;
 }
 
-const workspaceSLAs: WorkspaceSLA[] = [
-  { id: "wsla1", workspaceId: "w2", customerName: "Sadara Chemical", customerId: "c4", title: "Sadara Warehousing SLA", status: "active", version: 2, effectiveDate: "2024-04-01", expiryDate: "2026-03-31" },
-  { id: "wsla2", workspaceId: "w6", customerName: "Aramco Services", customerId: "c7", title: "Aramco VAS SLA", status: "active", version: 1, effectiveDate: "2024-01-01", expiryDate: "2026-12-31" },
-  { id: "wsla3", workspaceId: "w7", customerName: "Nestlé KSA", customerId: "c5", title: "Nestlé Cold Chain SLA", status: "draft", version: 1, effectiveDate: "2025-09-20", expiryDate: "2026-09-30" },
-  { id: "wsla4", workspaceId: "w8", customerName: "Bayer Middle East", customerId: "c10", title: "Bayer Pharma Logistics SLA", status: "active", version: 1, effectiveDate: "2024-06-01", expiryDate: "2026-06-30" },
-];
+const workspaceSLAs: WorkspaceSLA[] = [];
 
 // ─── CYCLE STATUS CONFIG ────────────────────────────────────
 const cycleStatusConfig: Record<string, { color: string; label: string }> = {
@@ -164,6 +166,18 @@ export default function WorkspaceDetail() {
   const [supportUploadCategory, setSupportUploadCategory] = useState<SupportDocCategory>("Other");
   const [supportUploadRequired, setSupportUploadRequired] = useState(false);
 
+  // ── Internal Proposal Tracker stage (separate from CRM pipeline stage) ──
+  const [proposalStage, setProposalStage] = useState("qualified");
+
+  // ── CRM Pipeline Stage (TOP tracker — completely independent from proposalStage) ──
+  const [crmPipelineStage, setCrmPipelineStage] = useState<import("@/lib/store").CRMStage>("qualified");
+
+  // Proposal workbench state is session-only until it is backed by Supabase.
+  const [proposalWsData, setProposalWsData] = useState<ProposalWorkspaceData>(() => createDefaultWorkspaceData());
+  const updateProposalWsData = (d: ProposalWorkspaceData) => {
+    setProposalWsData(d);
+  };
+
   // Async contract cycle + ready checks state (migrated from sync to Supabase)
   const [activeCycle, setActiveCycle] = useState<ContractCycle | undefined>(undefined);
   const [contractReadyChecks, setContractReadyChecks] = useState<any[]>([]);
@@ -173,7 +187,7 @@ export default function WorkspaceDetail() {
   useEffect(() => {
     if (!initRef.current) {
       initRef.current = true;
-      initializeMockFiles();
+      initializeDocumentVault();
       if (isWorkspaceIntegrationEnabled()) seedWorkspaceIntegrationData();
     }
   }, []);
@@ -256,6 +270,14 @@ export default function WorkspaceDetail() {
     return () => { cancelled = true; };
   }, [ws?.id]);
 
+  // ── Sync CRM Pipeline Stage from ws.crmStage on first load ──
+  useEffect(() => {
+    if (ws?.crmStage && ws.crmStage !== crmPipelineStage) {
+      setCrmPipelineStage(ws.crmStage);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ws?.id]);
+
   const loading = wsLoading || qLoading || pLoading || appLoading || sigLoading || auditLoading || diLoading || pnlLoading;
   if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
   if (!ws) return (
@@ -273,6 +295,38 @@ export default function WorkspaceDetail() {
   const effectiveStage = getEffectiveStage(ws);
   const effectiveStageIdx = effectiveStages.findIndex(s => s.value === effectiveStage);
 
+  // ── CRM Stage handler (updates pipeline_stage ONLY, never internal stage) ──
+  const handleCrmStageChange = (newStage: import("@/lib/store").CRMStage) => {
+    const oldStage = crmPipelineStage;
+    setCrmPipelineStage(newStage);
+    logProposalAudit({
+      workspaceId: ws.id,
+      action: "crm_stage_change",
+      stage: newStage,
+      tab: "crm_pipeline",
+      field: "pipeline_stage",
+      oldValue: oldStage,
+      newValue: newStage,
+      details: `CRM Pipeline stage moved: ${getCrmStageLabel(oldStage as any)} → ${getCrmStageLabel(newStage)}`,
+    });
+    toast.success(`CRM Pipeline → ${getCrmStageLabel(newStage)}`);
+  };
+
+  // ── Proposal Stage handler (updates internal stage ONLY, never CRM pipeline) ──
+  const handleProposalStageChange = (newStage: string) => {
+    const oldStage = proposalStage;
+    setProposalStage(newStage);
+    logProposalAudit({
+      workspaceId: ws.id,
+      action: "proposal_stage_change",
+      stage: newStage,
+      tab: "internal_tracker",
+      field: "stage",
+      oldValue: oldStage,
+      newValue: newStage,
+      details: `Internal Proposal stage moved: ${getProposalStageLabel(oldStage)} → ${getProposalStageLabel(newStage)}`,
+    });
+  };
   // We'll use a simple customer lookup from the workspace data for now
   // The full customer data is fetched via the CustomerDetail page
   const customer: any = ws.customerId ? { id: ws.customerId, name: ws.customerName, industry: '', grade: 'TBA', dso: 0, paymentStatus: 'Good', contractExpiry: '', contractValue2025: 0, revenue2025: 0, region: ws.region, facility: '', status: 'Active' } : null;
@@ -547,13 +601,32 @@ export default function WorkspaceDetail() {
         <div className="flex items-center gap-3 mb-4">
           <Link href="/workspaces"><Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4" /></Button></Link>
           <div className="flex-1">
+            {/* Opportunity Type Heading */}
+            {isCommercial && (
+              <p className="text-[11px] font-bold uppercase tracking-widest text-indigo-600 mb-1">Proposal Opportunity</p>
+            )}
+            {isTender && (
+              <p className="text-[11px] font-bold uppercase tracking-widest text-red-600 mb-1">Tender Opportunity</p>
+            )}
             <div className="flex items-center gap-3">
               <div className={`rag-dot ${ws.ragStatus === "red" ? "rag-dot-red" : ws.ragStatus === "amber" ? "rag-dot-amber" : "rag-dot-green"}`} />
               <h1 className="text-xl font-serif font-bold">{ws.customerName}</h1>
               <Badge variant="outline" className={`text-[10px] px-1.5 py-0 border ${getWorkspaceTypeBadgeColor(wsType)}`}>
                 {getWorkspaceTypeLabel(wsType)}
               </Badge>
-              <Badge variant="outline" className={`text-xs ${getEffectiveStageColor(ws)}`}>{getEffectiveStageLabel(ws)}</Badge>
+              {isCommercial && (
+                <Badge variant="outline" className="text-[10px] border-emerald-200 bg-emerald-50 text-emerald-700">
+                  CRM: {getCrmStageLabel(crmPipelineStage)}
+                </Badge>
+              )}
+              {isCommercial && (
+                <Badge variant="outline" className="text-[10px] border-indigo-200 bg-indigo-50 text-indigo-700">
+                  Internal: {getProposalStageLabel(proposalStage)}
+                </Badge>
+              )}
+              {!isCommercial && (
+                <Badge variant="outline" className={`text-xs ${getEffectiveStageColor(ws)}`}>{getEffectiveStageLabel(ws)}</Badge>
+              )}
               <CRMSyncBadge workspaceId={ws.id} workspaceTitle={ws.title} variant="badge" />
               {ws.crmDealId && <span className="text-xs text-muted-foreground data-value">CRM: {ws.crmDealId}</span>}
               {isTender && ws.submissionDeadline && (
@@ -582,10 +655,13 @@ export default function WorkspaceDetail() {
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">{ws.title}</p>
           </div>
-          <Button variant="outline" size="sm" onClick={handleAdvanceStage} disabled={!nextStage} data-advance-stage-btn>
-            <ChevronRight className="w-3.5 h-3.5 mr-1" />
-            {nextStage ? `Advance to ${getStageDisplayName(nextStage)}` : "Final Stage"}
-          </Button>
+          {/* Advance button — only for non-commercial. Commercial uses CRM strip + Proposal strip buttons. */}
+          {!isCommercial && (
+            <Button variant="outline" size="sm" onClick={handleAdvanceStage} disabled={!nextStage} data-advance-stage-btn>
+              <ChevronRight className="w-3.5 h-3.5 mr-1" />
+              {nextStage ? `Advance to ${getStageDisplayName(nextStage)}` : "Final Stage"}
+            </Button>
+          )}
         </div>
 
         {/* ═══ CONFIRMATION MODAL ═══ */}
@@ -740,128 +816,22 @@ export default function WorkspaceDetail() {
           </div>
         )}
 
-        {/* ═══ STAGE PIPELINE (type-aware — commercial uses milestone strip) ═══ */}
+        {/* ═══ STAGE PIPELINE (type-aware — commercial uses dual-tracker) ═══ */}
         {isCommercial ? (
-          /* ── Commercial Milestone Strip (IDENTICAL design to Tender MilestoneStrip) ── */
-          <Card className="border border-border shadow-none mb-3"><CardContent className="pt-4 pb-3 px-6">
-            {(() => {
-              const mappedStage = mapToCommercialMilestone(ws.stage);
-              const mappedIdx = COMMERCIAL_MILESTONES.findIndex(m => m.value === mappedStage);
-              // Strip milestones = all except closed_lost (terminal)
-              const stripMs = COMMERCIAL_MILESTONES.filter(m => m.value !== "closed_lost");
-              const currentIdx = stripMs.findIndex(m => m.value === mappedStage);
-              const isTerminal = mappedStage === "closed_lost";
-              // Suggested next = next milestone in sequence
-              const suggestedIdx = isTerminal ? -1 : currentIdx + 1;
+          <>
+          {/* ═══ TOP TRACKER: CRM PIPELINE STAGE (10 stages) ═══ */}
+          <CrmPipelineStrip
+            activeCrmStage={crmPipelineStage}
+            crmDealId={ws.crmDealId}
+            onCrmStageChange={handleCrmStageChange}
+          />
 
-              return (
-                <div>
-                  {/* Header row */}
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      Lifecycle Tracker
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="default" size="sm" className="text-xs h-7 bg-[var(--color-hala-navy)] hover:bg-[var(--color-hala-navy)]/90">
-                            Move Stage <ChevronDown className="w-3 h-3 ml-1" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="max-h-64 overflow-y-auto">
-                          {COMMERCIAL_MILESTONES.map(m => (
-                            <DropdownMenuItem key={m.value} disabled={m.value === mappedStage} onClick={() => {
-                              const reverseMap: Record<string, string> = {};
-                              COMMERCIAL_MILESTONES.forEach(cm => { if (!reverseMap[cm.value]) reverseMap[cm.value] = cm.value; });
-                              const effectiveStage = WORKSPACE_STAGES.find((s: { value: string; label: string }) => mapToCommercialMilestone(s.value) === m.value);
-                              if (effectiveStage) { advanceStage(ws.id); forceUpdate(n => n + 1); toast.success(`Moved to ${m.label}`); }
-                              else { toast.success(`Moved to ${m.label}`); }
-                            }}>
-                              {m.label}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </div>
-
-                  {/* Strip — dot + label nodes with connectors (matching Tender UI exactly) */}
-                  <div className="flex items-center gap-0 overflow-x-auto pb-1 scrollbar-thin">
-                    {stripMs.map((m, i) => {
-                      const isCurrent = i === currentIdx && !isTerminal;
-                      const isPast = !isTerminal && i < currentIdx;
-                      const isFuture = !isCurrent && !isPast;
-                      const isSuggested = i === suggestedIdx;
-
-                      return (
-                        <div key={m.value} className="flex items-center shrink-0">
-                          {/* Step node */}
-                          <button
-                            onClick={() => !isCurrent && advanceStage(ws.id)}
-                            disabled={isCurrent}
-                            title={isSuggested ? `Suggested next: ${m.label}` : m.label}
-                            className={`
-                              relative flex flex-col items-center px-3 py-2 rounded-lg transition-all group
-                              ${isCurrent
-                                ? "bg-[var(--color-hala-navy)] text-white shadow-md cursor-default"
-                                : isPast
-                                  ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-950/50 cursor-pointer"
-                                  : isSuggested
-                                    ? "border border-dashed border-primary/50 text-primary hover:bg-primary/5 cursor-pointer"
-                                    : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted/40 cursor-pointer"
-                              }
-                            `}
-                          >
-                            {/* 3D LED Light */}
-                            <LifecycleLight state={getLightState(i, currentIdx, isTerminal)} size={12} className="mb-1.5" />
-                            <span className={`text-[10px] font-medium whitespace-nowrap leading-none ${
-                              isCurrent ? "text-white font-semibold" : ""
-                            }`}>
-                              {m.label}
-                            </span>
-
-                          </button>
-
-                          {/* Connector */}
-                          {i < stripMs.length - 1 && (
-                            <div className={`h-px w-4 shrink-0 ${
-                              i < currentIdx ? "bg-emerald-400" : "bg-muted-foreground/15"
-                            }`} />
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {/* Terminal state — separated */}
-                    <div className="ml-3 flex items-center gap-1">
-                      <div className="h-4 w-px bg-border mx-1" />
-                      <button
-                        onClick={() => mappedStage !== "closed_lost" && advanceStage(ws.id)}
-                        disabled={mappedStage === "closed_lost"}
-                        className={`px-2.5 py-1.5 rounded-lg text-[10px] font-medium transition-all cursor-pointer ${
-                          mappedStage === "closed_lost"
-                            ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 cursor-default"
-                            : "text-red-500/60 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-600"
-                        }`}
-                      >
-                        Closed Lost
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Helper microcopy */}
-                  <p className="text-[10px] text-muted-foreground/60 mt-1.5 italic">
-                    Commercial lifecycle tracker — separate from internal working board.
-                    {!isTerminal && suggestedIdx >= 0 && suggestedIdx < stripMs.length && (
-                      <span className="ml-1 text-primary/70 not-italic">
-                        Suggested next: <strong>{stripMs[suggestedIdx]?.label}</strong>
-                      </span>
-                    )}
-                  </p>
-                </div>
-              );
-            })()}
-          </CardContent></Card>
+          {/* ═══ SECOND TRACKER: INTERNAL PROPOSAL TRACKER (11 stages) ═══ */}
+          <ProposalTrackerStrip
+            activeStage={proposalStage}
+            onStageChange={handleProposalStageChange}
+          />
+          </>
         ) : (
           /* ── Tender / Renewal strip (unchanged) ── */
           <Card className="border border-border shadow-none mb-6"><CardContent className="py-4 px-6">
@@ -876,113 +846,21 @@ export default function WorkspaceDetail() {
           </CardContent></Card>
         )}
 
-        {/* ═══ COMMERCIAL: SUGGESTED NEXT ACTION + SMART CHIPS + DECISION STATUS ═══ */}
-        {isCommercial && (() => {
-          const sub = deriveSubLifecycleStates(ws, wsQuotes, wsProposals, wsSLAs);
-          const mappedMs = mapToCommercialMilestone(ws.stage);
-          const msIdx = COMMERCIAL_MILESTONES.findIndex(m => m.value === mappedMs);
-          const approvedIdx = COMMERCIAL_MILESTONES.findIndex(m => m.value === "commercial_approved");
-          const contractingIdx = COMMERCIAL_MILESTONES.findIndex(m => m.value === "contracting");
 
-          // ── Derive suggested next actions ──
-          const nextActions: string[] = [];
-          if (!sub.quoteState && msIdx <= 2) nextActions.push("Create Quote");
-          if (sub.quoteState === "draft") nextActions.push("Submit Quote for Approval");
-          if (sub.quoteState === "approved" && !sub.proposalState) nextActions.push("Create Proposal");
-          if (sub.proposalState === "draft") nextActions.push("Send Proposal to CRM");
-          if (sub.proposalState === "sent") nextActions.push("Follow up on Proposal");
-          if (sub.proposalState === "commercial_approved" && sub.slaState === "not_started") nextActions.push("Start SLA Draft");
-          if (msIdx >= approvedIdx && sub.slaState === "draft") nextActions.push("Submit SLA for Review");
-          if (msIdx >= contractingIdx && sub.slaState === "approved") nextActions.push("Prepare Contract Pack");
-          if (nextActions.length === 0) {
-            if (msIdx === 0) nextActions.push("Begin Solution Design");
-            else nextActions.push("Continue " + (COMMERCIAL_MILESTONES[msIdx]?.label || "Current Phase"));
-          }
-
-          // ── Derive smart chip context ──
-          const quoteContext = !sub.quoteState ? "Not started" : sub.quoteState === "draft" ? "Draft (needs approval)" : sub.quoteState === "submitted_for_approval" ? "Awaiting approval" : sub.quoteState === "approved" ? "Approved ✓" : sub.quoteState === "rejected" ? "Rejected (revise)" : "Superseded";
-          const proposalContext = !sub.proposalState ? (sub.quoteState === "approved" ? "Not started (blocking)" : "Not required yet") : sub.proposalState === "draft" ? "Draft (needs CRM)" : sub.proposalState === "sent" ? "Sent (awaiting response)" : sub.proposalState === "commercial_approved" ? "Approved ✓" : sub.proposalState === "rejected" ? "Rejected (revise)" : PROPOSAL_STATES.find(s => s.value === sub.proposalState)?.label || "Draft";
-          const slaContext = sub.slaState === "not_started" ? (msIdx >= approvedIdx ? "Not started (overdue)" : "Not required yet") : sub.slaState === "draft" ? "Draft (in progress)" : sub.slaState === "approved" ? "Approved ✓" : SLA_STATES.find(s => s.value === sub.slaState)?.label || "—";
-          const handoverContext = sub.handoverState === "not_started" ? "Not required yet" : sub.handoverState === "completed" ? "Completed ✓" : HANDOVER_STATES.find(s => s.value === sub.handoverState)?.label || "In Progress";
-
-          // ── Margin interpretation ──
-          const marginDelta = ws.gpPercent - 22;
-          const marginLabel = ws.gpPercent >= 22 ? "Healthy" : ws.gpPercent >= 10 ? "Tight" : "Critical";
-          const marginDetail = ws.gpPercent >= 22 ? `+${marginDelta.toFixed(1)}% above target` : `${marginDelta.toFixed(1)}% below target`;
-
-          return (
-            <>
-              {/* ── Suggested Next Action ── */}
-              <div className="flex items-center gap-3 mb-3 p-2.5 rounded-lg border border-primary/20 bg-primary/5">
-                <ChevronRight className="w-4 h-4 text-primary shrink-0" />
-                <span className="text-xs font-semibold text-primary">Next:</span>
-                {nextActions.slice(0, 2).map((a, i) => (
-                  <span key={i} className="text-xs font-medium text-foreground">{i > 0 ? " · " : ""}{a}</span>
-                ))}
-              </div>
-
-              {/* ── Smart Sub-Lifecycle Chips ── */}
-              <div className="flex items-center gap-2 mb-3 flex-wrap">
-                {[
-                  { label: "Quote", ctx: quoteContext, color: sub.quoteState === "approved" ? "bg-emerald-100 text-emerald-700" : sub.quoteState === "rejected" ? "bg-red-100 text-red-700" : sub.quoteState ? "bg-blue-50 text-blue-700" : "bg-gray-50 text-gray-400" },
-                  { label: "Proposal", ctx: proposalContext, color: sub.proposalState === "commercial_approved" ? "bg-emerald-100 text-emerald-700" : sub.proposalState === "rejected" ? "bg-red-100 text-red-700" : proposalContext.includes("blocking") ? "bg-amber-100 text-amber-700" : sub.proposalState ? "bg-blue-50 text-blue-700" : "bg-gray-50 text-gray-400" },
-                  { label: "SLA", ctx: slaContext, color: sub.slaState === "approved" ? "bg-emerald-100 text-emerald-700" : slaContext.includes("overdue") ? "bg-red-100 text-red-700" : sub.slaState !== "not_started" ? "bg-blue-50 text-blue-700" : "bg-gray-50 text-gray-400" },
-                  { label: "Handover", ctx: handoverContext, color: sub.handoverState === "completed" ? "bg-emerald-100 text-emerald-700" : sub.handoverState !== "not_started" ? "bg-blue-50 text-blue-700" : "bg-gray-50 text-gray-400" },
-                ].map(c => (
-                  <span key={c.label} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-medium ${c.color}`}>
-                    {c.label}: {c.ctx}
-                  </span>
-                ))}
-              </div>
-
-              {/* ── Decision Status Row (replaces KPI cards) ── */}
-              <div className="grid grid-cols-4 gap-3 mb-4">
-                <div className={`rounded-lg border p-3 ${ws.gpPercent < 10 ? "border-red-200 bg-red-50/60" : ws.gpPercent < 22 ? "border-amber-200 bg-amber-50/60" : "border-emerald-200 bg-emerald-50/60"}`}>
-                  <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Margin</p>
-                  <p className={`text-sm font-bold mt-0.5 ${ws.gpPercent >= 22 ? "text-emerald-700" : ws.gpPercent >= 10 ? "text-amber-700" : "text-red-700"}`}>{marginLabel}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{marginDetail}</p>
-                </div>
-                <div className={`rounded-lg border p-3 ${!sub.proposalState && sub.quoteState === "approved" ? "border-amber-200 bg-amber-50/60" : "border-border bg-muted/20"}`}>
-                  <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Execution</p>
-                  <p className="text-sm font-bold mt-0.5">{sub.proposalState ? (PROPOSAL_STATES.find(s => s.value === sub.proposalState)?.label || "Active") : sub.quoteState ? "Quote Only" : "Not Started"}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{formatSAR(ws.estimatedValue)} · {ws.palletVolume.toLocaleString()} plt</p>
-                </div>
-                <div className={`rounded-lg border p-3 ${ws.daysInStage > 14 ? "border-red-200 bg-red-50/60" : ws.daysInStage > 7 ? "border-amber-200 bg-amber-50/60" : "border-border bg-muted/20"}`}>
-                  <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Time Pressure</p>
-                  <p className={`text-sm font-bold mt-0.5 ${ws.daysInStage > 14 ? "text-red-700" : ws.daysInStage > 7 ? "text-amber-700" : ""}`}>{ws.daysInStage}d in stage</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{ws.daysInStage > 14 ? "Stalled — action needed" : ws.daysInStage > 7 ? "Monitor closely" : "On track"}</p>
-                </div>
-                <div className={`rounded-lg border p-3 ${ws.approvalState === "not_required" ? "border-border bg-muted/20" : ws.approvalState === "fully_approved" ? "border-emerald-200 bg-emerald-50/60" : "border-amber-200 bg-amber-50/60"}`}>
-                  <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Approval</p>
-                  <p className={`text-sm font-bold mt-0.5 ${ws.approvalState === "fully_approved" ? "text-emerald-700" : ws.approvalState === "pending" ? "text-amber-700" : ""}`}>{ws.approvalState === "fully_approved" ? "Approved" : ws.approvalState === "pending" ? "Pending" : "Not Started"}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{ws.owner} · {ws.region}</p>
-                </div>
-              </div>
-
-              {/* ── Signal Banner (upgraded — with consequence) ── */}
-              {wsSignals.length > 0 && <div className="mb-4 space-y-2">
-                {wsSignals.map(sig => (
-                  <div key={sig.id} className={`flex items-start gap-3 p-3 rounded-lg border ${sig.severity === "red" ? "border-red-200 bg-red-50" : sig.severity === "amber" ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
-                    <AlertTriangle className={`w-4 h-4 mt-0.5 shrink-0 ${sig.severity === "red" ? "text-red-500" : sig.severity === "amber" ? "text-amber-500" : "text-emerald-500"}`} />
-                    <div>
-                      <p className="text-sm font-semibold">{sig.type.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{sig.message}</p>
-                      {sig.severity === "amber" && ws.gpPercent < 22 && sig.type === "margin_warning" && (
-                        <p className="text-xs text-amber-700 mt-1">→ Director approval required before advancing · Risk: deal delay</p>
-                      )}
-                      {sig.severity === "red" && sig.type === "margin_critical" && (
-                        <p className="text-xs text-red-700 mt-1">→ CEO/CFO approval required · Consider re-pricing before proposal</p>
-                      )}
-                      {sig.type === "stage_aging" && (
-                        <p className="text-xs text-amber-700 mt-1">→ Action: follow up or escalate to sales head</p>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>}
-            </>
-          );
-        })()}
+        {/* ═══ PROPOSAL STAGE WORKBENCH ═══ */}
+        {isCommercial && (
+          <ProposalStageWorkbench
+            activeStage={proposalStage}
+            workspaceId={ws.id}
+            customerName={ws.customerName}
+            wsData={proposalWsData}
+            onWsDataChange={updateProposalWsData}
+            onNavigateToComposer={(type) => {
+              const entityId = `new-${ws.id}`;
+              openInComposer(type === "quote" ? "quote" : "proposal", entityId);
+            }}
+          />
+        )}
 
         {/* ═══ TENDER/RENEWAL: KPI CARDS (unchanged) ═══ */}
         {!isCommercial && <>
@@ -1083,7 +961,7 @@ export default function WorkspaceDetail() {
 
         {/* ═══ TABS (type-aware — commercial uses decision-domain tabs) ═══ */}
         <Tabs defaultValue={initialTab} className="space-y-4">
-          <TabsList className={isCommercial ? "bg-muted/60 rounded-full p-1 gap-0.5" : ""}>
+          <TabsList className={isCommercial ? "hidden" : ""}>
             <TabsTrigger value="overview" className={isCommercial ? "rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm" : ""}>Overview</TabsTrigger>
             {isTender ? (
               /* Tender workspace tabs */
@@ -1153,7 +1031,8 @@ export default function WorkspaceDetail() {
             )}
           </TabsList>
 
-          {/* ═══ OVERVIEW TAB ═══ */}
+          {/* ═══ OVERVIEW TAB (hidden for commercial — content moved to Stage Indicators) ═══ */}
+          {!isCommercial && (
           <TabsContent value="overview">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card className="border border-border shadow-none">
@@ -1185,6 +1064,7 @@ export default function WorkspaceDetail() {
             </div>
             <Card className="border border-border shadow-none mt-6"><CardHeader className="pb-3"><CardTitle className="text-base font-serif">Notes</CardTitle></CardHeader><CardContent className="pt-0"><p className="text-sm text-muted-foreground">{ws.notes}</p></CardContent></Card>
           </TabsContent>
+          )}
 
           {/* ═══ QUOTE CONTROL TAB (CW-001) ═══ */}
           {isCommercial && (
@@ -2523,8 +2403,8 @@ export default function WorkspaceDetail() {
                       <DocumentViewer document={viewerDoc} open={!!viewerDoc} onClose={() => setViewerDoc(null)} onDocumentChanged={() => forceUpdate(n => n + 1)} />
                       <UploadDialog open={showDocUpload} onClose={() => setShowDocUpload(false)} defaultCategory="Supporting"
                         suggestedName={`${customer?.name ?? ""} — ${ws.title}`}
-                        onUpload={({ name, category, file, notes, tags }) => {
-                          uploadDocument({ name, category: category as DocumentCategory, customerId: ws.customerId, customerName: customer?.name ?? "Unknown", workspaceId: ws.id, workspaceName: ws.title, file, notes, tags });
+                        onUpload={async ({ name, category, file, notes, tags }) => {
+                          await uploadDocument({ name, category: category as DocumentCategory, customerId: ws.customerId, customerName: customer?.name ?? "Unknown", workspaceId: ws.id, workspaceName: ws.title, file, notes, tags });
                           toast.success(`Document "${name}" uploaded.`);
                           forceUpdate(n => n + 1);
                         }} />

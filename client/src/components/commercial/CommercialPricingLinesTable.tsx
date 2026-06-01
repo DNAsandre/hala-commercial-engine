@@ -1,4 +1,4 @@
-/**
+﻿/**
  * CW-002: Pricing Lines Table + Review Modal
  * Extracted from CommercialQuoteControlTab.
  * Mock-only — no backend, no real pricing engine.
@@ -163,7 +163,7 @@ function LineReviewModal({ line, workspaceId, onActionComplete, onClose }: { lin
               if (workspaceId) {
                 const result = await markPricingLineReviewedMock(line.id, workspaceId, line.serviceName, actor);
                 if (result.success) { toast.success(`"${line.serviceName}" review saved to Supabase.`); onActionComplete?.(); }
-                else { toast.error(`Mock action could not be saved: ${result.error}`); }
+                else { toast.error(`Advisory action could not be saved: ${result.error}`); }
               } else { toast.info(`"${line.serviceName}" marked as reviewed (mock). No backend update.`); }
               onClose();
             }}>

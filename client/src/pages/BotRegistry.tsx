@@ -24,9 +24,11 @@ import {
 } from 'lucide-react';
 import {
   toggleGlobalKillSwitch, toggleBotStatus, toggleProviderEnabled, toggleConnectorEnabled,
-  getTotalBotCost, HARD_ACTION_DENY_LIST,
+  getTotalBotCost, HARD_ACTION_DENY_LIST, mockBots,
   type Bot as BotType, type BotStatus
 } from '@/lib/bot-governance';
+import { fetchAIProviders } from '@/lib/ai-client';
+import { supabase } from '@/lib/supabase';
 import { api } from '@/lib/api-client';
 
 const statusColors: Record<string, string> = {
@@ -79,39 +81,46 @@ export default function BotRegistry() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [signalEvents, setSignalEvents] = useState<any[]>([]);
 
-  // Load from API on mount
+  // Load from Supabase + mockBots fallback on mount
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        const [botsRes, provRes, connRes, settRes, eventsRes] = await Promise.all([
-          api.botGovernance.listBots(),
-          api.botGovernance.listProviders(),
-          api.botGovernance.listConnectors(),
-          api.botGovernance.getSettings(),
-          api.botGovernance.listSignalEvents(),
-        ]);
-        if (!mounted) return;
-        setBots((botsRes.data || []).map(mapBot));
-        setProviders((provRes.data || []).map((p: any) => ({
-          id: p.id, name: p.name, enabled: p.enabled, apiEndpoint: p.api_endpoint || '', models: p.models || [],
-          costPerToken: p.cost_per_token ?? 0, maxRatePerMinute: p.max_rate_per_minute ?? 30,
-          status: p.status || 'offline', lastHealthCheck: p.last_health_check || '',
-        })));
-        setConnectors((connRes.data || []).map((c: any) => ({
-          id: c.id, type: c.type, name: c.name, enabled: c.enabled, accessMode: c.access_mode || 'read_only',
-          endpoint: c.endpoint || '', status: c.status || 'disconnected', lastSyncAt: c.last_sync_at || '',
-        })));
-        if (settRes.data) setKillSwitch(settRes.data.global_kill_switch ?? false);
-        setSignalEvents((eventsRes.data || []).map((e: any) => ({
-          id: e.id, ruleId: e.rule_id || '', botId: e.bot_id, severity: e.severity, metric: e.metric,
-          thresholdTriggered: e.threshold_triggered || '', timeRangeAnalyzed: e.time_range_analyzed || '',
-          message: e.message, timestamp: e.triggered_at || e.created_at,
-          acknowledged: e.acknowledged, acknowledgedBy: e.acknowledged_by || null,
-          acknowledgedAt: e.acknowledged_at || null,
-          explainability: e.explainability || '', suggestedAction: e.suggested_action || '',
-        })));
-      } catch { /* empty state is honest */ }
+        // Load bots from Supabase ai_bots table
+        let loadedBots: BotType[] = [];
+        try {
+          const { data: supaRows, error } = await supabase.from('ai_bots').select('*').order('created_at', { ascending: false });
+          if (error) {
+            console.error('[BotRegistry] Supabase ai_bots error:', error.message, error.code);
+          } else {
+            console.log(`[BotRegistry] Loaded ${supaRows?.length || 0} bots from Supabase`);
+            if (supaRows?.length) {
+              loadedBots = supaRows.map(mapBot);
+            }
+          }
+        } catch (e: any) { console.error('[BotRegistry] ai_bots fetch exception:', e.message); }
+        // Merge in-memory bots created before Supabase was wired
+        const supaIds = new Set(loadedBots.map((b: BotType) => b.id));
+        const localOnly = mockBots.filter(b => !supaIds.has(b.id));
+        if (mounted) setBots([...loadedBots, ...localOnly]);
+
+        // Load providers from Supabase (real path)
+        const supaProviders = await fetchAIProviders();
+        if (mounted) {
+          setProviders(supaProviders.map(p => ({
+            id: p.id, name: p.displayName, enabled: p.enabled, apiEndpoint: '',
+            models: p.models || [], costPerToken: 0, maxRatePerMinute: 30,
+            status: p.enabled ? 'healthy' : 'offline', lastHealthCheck: '',
+          })));
+        }
+
+        // Connectors and signal events — not wired to Supabase yet
+        // Show honest empty state (no fake data)
+      } catch {
+        if (mounted && mockBots.length > 0) {
+          setBots([...mockBots]);
+        }
+      }
     })();
     return () => { mounted = false; };
   }, []);
@@ -139,9 +148,12 @@ export default function BotRegistry() {
     toggleBotStatus(botId, newStatus);
     setBots(prev => prev.map(b => b.id === botId ? { ...b, status: newStatus, updatedAt: new Date().toISOString() } : b));
     try {
-      await api.botGovernance.updateBot(botId, { status: newStatus });
+      // Write directly to Supabase (same as Bot Builder) — no dependency on Express API server
+      const { error } = await supabase.from('ai_bots').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', botId);
+      if (error) throw error;
       toast.success(`Bot ${newStatus === 'active' ? 'enabled' : 'disabled'}`);
-    } catch {
+    } catch (err: any) {
+      console.error('[BotRegistry] toggle failed:', err.message || err);
       // Rollback optimistic update
       toggleBotStatus(botId, currentStatus);
       setBots(prev => prev.map(b => b.id === botId ? { ...b, status: currentStatus } : b));

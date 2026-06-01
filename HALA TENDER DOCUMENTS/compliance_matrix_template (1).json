@@ -1,0 +1,15 @@
+[
+  {
+    "Req_ID": "REQ-001",
+    "RFQ_Reference": "Section 3.2 / Page 15",
+    "Requirement_Description": "Provide ISO 9001 certification",
+    "Response_Plan": "Attach valid ISO certificate, reference in Quality section",
+    "Assigned_Owner": "QA Manager",
+    "Status": "Open",
+    "Clarification_Required": "No",
+    "Clarification_Question": "",
+    "Buyer_Response": "",
+    "Evidence/Attachment": "ISO9001_Certificate.pdf",
+    "Final_Response_Text": "Company is ISO 9001:2015 certified, certificate attached."
+  }
+]

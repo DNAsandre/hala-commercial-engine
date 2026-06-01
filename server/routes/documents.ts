@@ -18,6 +18,7 @@ export const documentRoutes = Router();
 documentRoutes.use(requireAuth);
 
 const BUCKET = 'documents';
+const DOCUMENT_TABLE = 'generated_documents';
 
 // Resolves generated_by user IDs → display names. Best-effort: never throws.
 async function enrichWithUserNames(docs: any[]): Promise<any[]> {
@@ -43,6 +44,68 @@ async function ensureBucket() {
   bucketReady = true;
 }
 
+// ─── POST /api/documents/upload ───────────────────────────
+// Note: File is uploaded directly from browser to Supabase Storage.
+// This endpoint only creates the DB record with the storage path.
+const uploadSchema = z.object({
+  name: z.string().min(1),
+  category: z.string().min(1),
+  customerId: z.string().min(1),
+  customerName: z.string(),
+  workspaceId: z.string().min(1).optional(),
+  workspaceName: z.string().optional(),
+  tenderId: z.string().min(1).optional(),
+  tenderName: z.string().optional(),
+  fileName: z.string().min(1),
+  fileSize: z.string().default("0"),
+  mimeType: z.string().default("application/octet-stream"),
+  storagePath: z.string().min(1),
+  notes: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  permissionLevel: z.enum(["public", "internal", "restricted"]).default("internal"),
+});
+
+documentRoutes.post('/documents/upload',
+  validateBody(uploadSchema),
+  async (req, res, next) => {
+    try {
+      const body = (req as any).validatedBody;
+
+      const parentType = body.tenderId ? 'tender' : (body.workspaceId ? 'ticket' : 'customer');
+      const parentId = body.tenderId || body.workspaceId || body.customerId;
+
+      // Insert document record with the storage path from direct browser upload
+      const { data: doc, error: dbErr } = await supabaseAdmin
+        .from(DOCUMENT_TABLE).insert({
+          workspace_id: body.workspaceId || body.tenderId || body.customerId,
+          customer_id: body.customerId || null,
+          document_type: body.category,
+          source_type: parentType,
+          source_id: parentId,
+          source_version: 1,
+          file_name: body.fileName,
+          file_size: Number(body.fileSize) || 0,
+          mime_type: body.mimeType || "application/octet-stream",
+          storage_path: body.storagePath,
+          status: 'generated',
+          version_number: 1,
+          generated_by: req.authUser?.userId || 'system',
+          notes: body.notes || '',
+        }).select().single();
+      if (dbErr) throw { status: 500, message: dbErr.message, code: 'DB_ERROR' };
+
+      await writeAuditLog({
+        actor: req.authUser, action: 'document.uploaded',
+        entityType: 'generated_document', entityId: doc.id,
+        after: { name: body.name, category: body.category, storage_path: body.storagePath },
+        source: 'human',
+      });
+
+      res.status(201).json({ data: doc });
+    } catch (err) { next(err); }
+  }
+);
+
 // ─── POST /api/documents/generate-pdf ─────────────────────
 const generateSchema = z.object({
   workspace_id: z.string().min(1),
@@ -66,7 +129,7 @@ documentRoutes.post('/documents/generate-pdf',
 
       // Find previous latest to link supersedes
       const { data: existing } = await supabaseAdmin
-        .from('generated_documents').select('id, version_number')
+        .from(DOCUMENT_TABLE).select('id, version_number')
         .eq('workspace_id', workspace_id).eq('document_type', document_type).eq('source_id', source_id)
         .eq('status', 'generated')
         .order('version_number', { ascending: false }).limit(1);
@@ -85,7 +148,7 @@ documentRoutes.post('/documents/generate-pdf',
 
       // Mark old versions as superseded
       if (prevId) {
-        const { error: supersededErr } = await supabaseAdmin.from('generated_documents')
+        const { error: supersededErr } = await supabaseAdmin.from(DOCUMENT_TABLE)
           .update({ status: 'superseded' })
           .eq('workspace_id', workspace_id).eq('document_type', document_type).eq('source_id', source_id)
           .eq('status', 'generated');
@@ -104,12 +167,12 @@ documentRoutes.post('/documents/generate-pdf',
       };
 
       const { data: doc, error: dbErr } = await supabaseAdmin
-        .from('generated_documents').insert(row).select().single();
+        .from(DOCUMENT_TABLE).insert(row).select().single();
       if (dbErr) throw { status: 500, message: dbErr.message, code: 'DB_ERROR' };
 
       // Consistency guard: warn if multiple generated records exist for same source
       const { count: generatedCount } = await supabaseAdmin
-        .from('generated_documents')
+        .from(DOCUMENT_TABLE)
         .select('id', { count: 'exact', head: true })
         .eq('workspace_id', workspace_id).eq('document_type', document_type).eq('source_id', source_id)
         .eq('status', 'generated');
@@ -132,7 +195,7 @@ documentRoutes.post('/documents/generate-pdf',
 documentRoutes.get('/documents/download/:id', async (req, res, next) => {
   try {
     const { data: doc } = await supabaseAdmin
-      .from('generated_documents').select('*').eq('id', req.params.id).single();
+      .from(DOCUMENT_TABLE).select('*').eq('id', req.params.id).single();
     if (!doc) { res.status(404).json({ error: 'Document not found', code: 'NOT_FOUND' }); return; }
 
     const { data: signed, error } = await supabaseAdmin.storage
@@ -140,7 +203,7 @@ documentRoutes.get('/documents/download/:id', async (req, res, next) => {
     if (error || !signed) { res.status(500).json({ error: 'Failed to generate download URL', code: 'STORAGE_ERROR' }); return; }
 
     // Track last downloaded
-    await supabaseAdmin.from('generated_documents').update({ last_downloaded_at: new Date().toISOString() }).eq('id', doc.id);
+    await supabaseAdmin.from(DOCUMENT_TABLE).update({ last_downloaded_at: new Date().toISOString() }).eq('id', doc.id);
 
     await writeAuditLog({
       actor: req.authUser, action: 'document.downloaded',
@@ -155,7 +218,7 @@ documentRoutes.get('/documents/download/:id', async (req, res, next) => {
 // ─── GET /api/documents/:id ──────────────────────────────
 documentRoutes.get('/documents/:id', async (req, res, next) => {
   try {
-    const { data } = await supabaseAdmin.from('generated_documents').select('*').eq('id', req.params.id).single();
+    const { data } = await supabaseAdmin.from(DOCUMENT_TABLE).select('*').eq('id', req.params.id).single();
     if (!data) { res.status(404).json({ error: 'Document not found', code: 'NOT_FOUND' }); return; }
     res.json({ data });
   } catch (err) { next(err); }
@@ -164,7 +227,7 @@ documentRoutes.get('/documents/:id', async (req, res, next) => {
 // ─── GET /api/workspaces/:workspaceId/documents ───────────
 documentRoutes.get('/workspaces/:workspaceId/documents', async (req, res, next) => {
   try {
-    let q = supabaseAdmin.from('generated_documents').select('*')
+    let q = supabaseAdmin.from(DOCUMENT_TABLE).select('*')
       .eq('workspace_id', req.params.workspaceId);
     if (req.query.document_type) q = q.eq('document_type', req.query.document_type as string);
     if (req.query.status) q = q.eq('status', req.query.status as string);
@@ -179,7 +242,7 @@ documentRoutes.get('/workspaces/:workspaceId/documents', async (req, res, next) 
 // ─── GET /api/customers/:customerId/documents ─────────────
 documentRoutes.get('/customers/:customerId/documents', async (req, res, next) => {
   try {
-    let q = supabaseAdmin.from('generated_documents').select('*')
+    let q = supabaseAdmin.from(DOCUMENT_TABLE).select('*')
       .eq('customer_id', req.params.customerId);
     if (req.query.document_type) q = q.eq('document_type', req.query.document_type as string);
     if (req.query.status) q = q.eq('status', req.query.status as string);
@@ -193,7 +256,7 @@ documentRoutes.get('/customers/:customerId/documents', async (req, res, next) =>
 // ─── GET /api/documents — Central Vault (filtered) ────────
 documentRoutes.get('/documents', async (req, res, next) => {
   try {
-    let q = supabaseAdmin.from('generated_documents').select('*');
+    let q = supabaseAdmin.from(DOCUMENT_TABLE).select('*');
     if (req.query.workspace_id) q = q.eq('workspace_id', req.query.workspace_id as string);
     if (req.query.customer_id) q = q.eq('customer_id', req.query.customer_id as string);
     if (req.query.document_type) q = q.eq('document_type', req.query.document_type as string);
@@ -223,9 +286,9 @@ documentRoutes.patch('/documents/:id/status',
     try {
       const id = req.params.id;
       const { status } = (req as any).validatedBody;
-      const { data: before } = await supabaseAdmin.from('generated_documents').select('*').eq('id', id).single();
+      const { data: before } = await supabaseAdmin.from(DOCUMENT_TABLE).select('*').eq('id', id).single();
       if (!before) { res.status(404).json({ error: 'Document not found', code: 'NOT_FOUND' }); return; }
-      const { data: after, error } = await supabaseAdmin.from('generated_documents')
+      const { data: after, error } = await supabaseAdmin.from(DOCUMENT_TABLE)
         .update({ status }).eq('id', id).select().single();
       if (error) throw { status: 500, message: error.message, code: 'DB_ERROR' };
       await writeAuditLog({

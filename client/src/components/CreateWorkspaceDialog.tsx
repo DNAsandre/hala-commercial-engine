@@ -231,6 +231,7 @@ export default function CreateWorkspaceDialog({ open, onOpenChange, onCreated, d
                   <SelectItem value="East">East</SelectItem>
                   <SelectItem value="Central">Central</SelectItem>
                   <SelectItem value="West">West</SelectItem>
+                  <SelectItem value="Global">Global</SelectItem>
                 </SelectContent>
               </Select>
             </div>

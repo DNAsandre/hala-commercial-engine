@@ -1,0 +1,693 @@
+
+
+--- PAGE 1 ---
+  
+ 
+________________________________________________________________________________________________ 
+ COMPLETED BY: Hala SCS               │            DATE: 19 08 2025               │                         REF: HSCS04062025 
+Page 1 of 12 
+ 
+Stock Count, transport and 
+warehouse Storage area 
+Proposal  
+ 
+For: KAFD 
+ 
+  
+ 
+ 
+ 
+Technical Proposal for Stock Count, transport 
+and warehouse Storage area 
+ KAFD 
+Warehouse Solutions  
+19 August 2025 
+
+
+--- PAGE 2 ---
+  
+ 
+________________________________________________________________________________________________ 
+ COMPLETED BY: Hala SCS               │            DATE: 19 08 2025               │                         REF: HSCS04062025 
+Page 2 of 12 
+ 
+Stock Count, transport and 
+warehouse Storage area 
+Proposal  
+ 
+For: KAFD 
+ 
+Table of Contents 
+1. Executive Summary ................................ ................................ ...............................  3 
+2. Hala SCS Value Proposition ................................ ................................ ................. 3 
+3. Proposed Solution Description ................................ ................................ ........... 4 
+4. Compliance & Certifications ................................ ................................ ............... 4 
+5. Hala SCS Track Record (Relevant Projects) ................................ ...................... 5 
+Local Content…………………………………………………………………………………………………………………………...6 
+6. Riyadh Warehouse Requirements: ................................ ................................ .... 7 
+7. Fullfillment of Requirements: ................................ ................................ ............. 8 
+8. SOW & Add-On Value Execution and Enhanchmenet : ................................ . 9 
+9. WMS and GPS Tracking Management: ................................ ...........................  10 
+10. IT Specifications: ................................ ................................ ................................  11 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+
+--- PAGE 3 ---
+  
+ 
+________________________________________________________________________________________________ 
+ COMPLETED BY: Hala SCS               │            DATE: 19 08 2025               │                         REF: HSCS04062025 
+Page 3 of 12 
+ 
+Stock Count, transport and 
+warehouse Storage area 
+Proposal  
+ 
+For: KAFD 
+1. Executive Summary 
+Hala Supply Chain Services (Hala SCS) purpose of this project is to facilitate 
+accurate stock counting, safe transportation, and secure storage of one restaurant 
+tools, furniture, and kitchen equipment currently located at KAFD. This includes 
+verifying the existing inventory through a comprehensive physical count, ensuring 
+the safe handling and transfer of all items to the storage facility, and providing 
+adequate warehouse space for their organized and protected storage. 
+Hala’s solution addresses the full scope of KAFD’s requirements for: 
+• Stock Count Services 
+• Transportation Services 
+• Storage Services 
+2. Hala SCS Value Proposition 
+2.1. Centralized Warehouse Control: 
+Hala offers a dedicated or shared, consolidated logistics facility within Riyadh that centralizes all 
+KAFD materials — from construction and maintenance stock to tenant deliveries and high -value 
+equipment — under one roof. This hub includes integrated office space for KAFD personnel, 
+ensuring real-time coordination and operational oversight. 
+ 
+2.2. Strategic Workforce Integration: 
+Staff trained in warehouse operations, DG handling, and transport compliance . Escalation 
+hierarchy and dedicated office space for up to 6 KAFD representatives ensure streamlined 
+coordination. 
+ 
+2.3. Safety, Compliance & Specialized Handling: 
+Hala operates licensed, regulation-compliant facilities, equipped to safely store and manage 
+dangerous goods, temperature-sensitive chemicals, fragile items, and high-value inventory. 
+Our compliance architecture includes fire suppression systems, climate control, material 
+classification zones, and safety-trained staff. 
+ 
+2.4. Scalable, Flexible Service Model: 
+We offer a scalable model designed for KAFD’s long-term growth, with the ability to expand both 
+storage capacity and fleet size in response to project velocity, seasonal peaks, or event -based 
+surges. Our operating model supports both dedicated and shared-space options, giving KAFD 
+strategic control and financial flexibility. 
+ 
+2.5. Technology-Integrated Delivery: 
+All services are delivered via a tech-driven logistics architecture — including API-enabled 
+
+
+--- PAGE 4 ---
+  
+ 
+________________________________________________________________________________________________ 
+ COMPLETED BY: Hala SCS               │            DATE: 19 08 2025               │                         REF: HSCS04062025 
+Page 4 of 12 
+ 
+Stock Count, transport and 
+warehouse Storage area 
+Proposal  
+ 
+For: KAFD 
+WMS/LMS, real-time dashboards, RFID/barcode tracking, and automated KPI reporting. This 
+ensures end-to-end visibility, rapid response capability, and transparent performance 
+management. / Subject to System Integration Project Completion. 
+3. Proposed Solution Description: 
+Hala SCS proposes a complete 3PL execution model based on direct alignment with KAFD’s Scope 
+of Work: 
+• Stock Count Services 
+o Conduct a comprehensive physical count and verification of all inventory items 
+located at KAFD. 
+o Record the description, quantity, and condition of each item.  
+o Prepare and submit a detailed inventory report, including photographic evidence of 
+all items. 
+o Securely wrap and protect all materials prior to transportation from KAFD.  
+• Transportation Services 
+o Provide appropriately sized trucks with a minimum capacity of ten (10) MT for the 
+transfer of materials from KAFD to the Vendor’s designated storage facility.  
+o Perform safe loading and unloading operations at both KAFD and the storage facility.  
+o Ensure that all transportation activities are conducted in compliance with applicable 
+safety regulations and handling procedures. 
+• Storage Services 
+o Provide a secure, dry warehouse storage area with a minimum size of two hundred 
+(200) square meters, to be leased for a mandatory period of three (3) months, with 
+the option to renew for additional periods as required. 
+o Maintain the storage facility in a clean, organized, and safe condition suitable for the 
+nature of the stored materials. 
+4. Compliance & Certifications 
+• Compliance: The facility is licensed by the Civil Defence, and the municipality has confirmed 
+our compliance with the established regulations. 
+• Fire & Safety Systems: Full compliance with NFPA standards 
+• ISO 9001 (Quality Management System) 
+• ISO 45001 (Occupational Health and Safety Management Systems 
+• Inventory Management System Requirements  
+• CCC (Compliance Cyber Security Certificate)  
+• SFDA-compliant for regulated inventory 
+• Inventory Management: FIFO methodology, real-time tracking. 
+ 
+ 
+ 
+ 
+ 
+
+
+--- PAGE 5 ---
+  
+ 
+________________________________________________________________________________________________ 
+ COMPLETED BY: Hala SCS               │            DATE: 19 08 2025               │                         REF: HSCS04062025 
+Page 5 of 12 
+ 
+Stock Count, transport and 
+warehouse Storage area 
+Proposal  
+ 
+For: KAFD 
+ 
+5. Hala SCS Track Record 
+• Tahakom: Proven Track Record with Tahakom (Saudi Technology and Security 
+Comprehensive Control Co.) 
+For over three years, Hala Supply Chain Services (Hala SCS) has maintained a trusted, 
+nationwide partnership with Tahakom, supporting their logistics and warehousing 
+operations across the Kingdom of Saudi Arabia. Our scope has included the management of 
+secure storage, time-critical distribution, and inventory control for advanced technology 
+equipment and sensitive infrastructure components.  
+ 
+o Key highlights of our collaboration include: 
+ 
+➢ Nationwide Coverage: Seamless logistics support to Tahakom facilities and sites 
+across multiple regions. 
+ 
+➢ Secure Handling: Specialized storage protocols and trained staff for high-security, 
+high-value assets. 
+ 
+➢ On-Time Delivery Performance: Consistently maintained an OTIF (On-Time In-Full) 
+rate exceeding 98%. 
+ 
+➢ Compliance & Visibility: Full traceability through our WMS system with tailored 
+reporting aligned to Tahakom’ s internal KPIs. 
+ 
+This sustained performance reflects Hala SCS’s ability to serve high-profile, security-sensitive 
+entities with reliability, precision, and confidentiality. 
+ 
+• SACO:  Track Record with SACO 
+Hala has proudly supported SACO, one of Saudi Arabia’s leading retail chains, with 
+nationwide logistics and warehousing solutions for over 6 months. Our collaboration spans 
+across multiple touchpoints in their supply chain, from centralized distribution to  last-mile 
+retail fulfilment. 
+ 
+o Key highlights of our partnership include: 
+ 
+➢ Retail-Focused Logistics: Tailored storage and dispatch solutions aligned with 
+SACO’s high SKU volumes and seasonal demand patterns. 
+ 
+➢ Nationwide Distribution: Reliable fulfilment to over 30 SACO branches across the 
+Kingdom. 
+
+
+--- PAGE 6 ---
+  
+ 
+________________________________________________________________________________________________ 
+ COMPLETED BY: Hala SCS               │            DATE: 19 08 2025               │                         REF: HSCS04062025 
+Page 6 of 12 
+ 
+Stock Count, transport and 
+warehouse Storage area 
+Proposal  
+ 
+For: KAFD 
+ 
+➢ High Service Levels: Maintained over 98% OTIF (On-Time In-Full) performance for 
+store replenishment. 
+ 
+This long-term engagement reflects Hala SCS’s capability to deliver scalable, retail -aligned 
+logistics performance in support of fast-moving consumer operations. 
+ 
+Local Content 
+Hala SCS has achieved a local content scope of 55.22% for the financial year 2023. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+
+--- PAGE 7 ---
+  
+ 
+________________________________________________________________________________________________ 
+ COMPLETED BY: Hala SCS               │            DATE: 19 08 2025               │                         REF: HSCS04062025 
+Page 7 of 12 
+ 
+Stock Count, transport and 
+warehouse Storage area 
+Proposal  
+ 
+For: KAFD 
+ 
+ 
+ 
+6. Riyadh Warehouse Requirements: 
+No Requirement  STRATEGIC RESPONSE Checked and 
+Confirmed  
+1 Warehouse Ops 
+Propose dual models: a dedicated facility 
+& shared warehouse in Riyadh. 
+Demonstrate capability to offer secure, 
+expandable space with climate control 
+and archiving. 
+✓ 
+2 Material Movement 
+Show a fleet plan that includes branded, 
+height-compliant, GPS-enabled vehicles 
+and the ability to scale, backed by 
+manpower, training, and branding 
+alignment. 
+✓ 
+3 Systems Integration 
+Commit to a WMS/LMS system with real-
+time dashboards, full API connectivity, and 
+barcoding. Show roadmap for 
+customization to KAFD workflows. 
+✓ 
+4 Workforce 
+Showcase a specialist-trained team: 
+warehouse managers, material handlers, 
+and tech support. Emphasize training 
+programs and KAFD-compliant uniforms. 
+✓ 
+5 Reporting & 
+Governance 
+Propose a robust reporting cadence: 
+weekly KPIs, incident management, 
+escalation protocols, with a single 
+accountable POC. 
+✓ 
+ 
+ 
+ 
+ 
+
+
+--- PAGE 8 ---
+  
+ 
+________________________________________________________________________________________________ 
+ COMPLETED BY: Hala SCS               │            DATE: 19 08 2025               │                         REF: HSCS04062025 
+Page 8 of 12 
+ 
+Stock Count, transport and 
+warehouse Storage area 
+Proposal  
+ 
+For: KAFD 
+ 
+ 
+ 
+7. Fulfilment of Requirements: 
+ 
+No KAFD Requirement Hala SCS Strategic 
+Response 
+Compliance 
+Status 
+ 
+1. Warehouse within 60KM of 
+KAFD 
+Two models proposed: (a) Dedicated 
+facility, (b) Shared warehouse with 
+secure segregated zones 
+✓ 
+ 
+2. Minimum 5,000 sqm warehouse 
+Existing facility exceeds 5,000 sqm, 
+expandable up to 15,000 sqm as 
+needed – Space is subjected to 
+availability 
+✓ 
+ 
+3. 
+ 
+ 
+Office space for 5–6 KAFD 
+personnel onsite 
+Fully equipped office space available 
+with connectivity, utilities, and access 
+controls 
+✓ 
+ 
+4. Secure & compliant storage 
+(incl. DG, temperature-sensitive 
+items) 
+Climate-controlled zones, DG-
+compliant storage areas, and high-
+value item segregation 
+✓ 
+ 
+5. Material movement using 
+branded, GPS-enabled fleet 
+Fleet of: 4 vehicles, all GPS-enabled 
+and compliant with 2m height 
+restriction; scalable on demand 
+✓ 
+ 
+6. Provision of cross-docking and 
+reverse logistics 
+Cross-docking points at KAFD 
+integrated with warehouse dispatch 
+flow; reverse logistics fully embedded 
+✓ 
+ 
+7. WMS/LMS integration with 
+KAFD ERP 
+API-enabled WMS and LMS with live 
+dashboards, real-time data capture, 
+and ERP handshake 
+✓ 
+ 
+8. Specialized workforce 
+Dedicated team of trained personnel 
+across warehouse, fleet, and system 
+ops; uniforms and ID compliance 
+✓ 
+ 
+9. Reporting and incident 
+management 
+Full reporting matrix: weekly 
+dashboards, KPI reports, incident 
+tracking, escalation matrix with SPOC 
+✓ 
+
+
+--- PAGE 9 ---
+  
+ 
+________________________________________________________________________________________________ 
+ COMPLETED BY: Hala SCS               │            DATE: 19 08 2025               │                         REF: HSCS04062025 
+Page 9 of 12 
+ 
+Stock Count, transport and 
+warehouse Storage area 
+Proposal  
+ 
+For: KAFD 
+ 
+10. Scalability across warehouse 
+and fleet 
+Infrastructure and manpower 
+scalability roadmap provided based 
+on KAFD growth stages 
+✓ 
+8. Scope of Work & Add-On Value – Execution and Enhancement  
+ 
+No Scope Area Hala SCS Delivery 
+Plan 
+Add-On Value 
+(Differentiators) 
+Compliance 
+Status 
+ 
+ 
+ 
+1. Warehouse 
+Operations 
+Operate 3,000+ sqm bulk 
+storage and 2,000sqm 
+racking facility, with 
+temp-controlled zones, 
+and secure archiving 
+Pre-configured areas for 
+surge storage, VIP event 
+staging, and tenant-
+specific allocation 
+✓ 
+ 
+ 
+ 
+2. 
+Fleet 
+Management & 
+Movement 
+GPS-monitored, height-
+compliant fleet with 
+KAFD branding; flexible 
+capacity scheduling 
+Real-time tracking 
+dashboard for KAFD 
+stakeholders + branded 
+uniformed drivers 
+✓ 
+ 
+ 
+3. Cross-Docking & 
+Reverse 
+Logistics 
+5 cross-dock points + 
+reverse logistics for 
+returns/spare parts 
+across all parcels 
+Dynamic routing for 
+cross-dock optimization 
++ auto-flagged 
+replenishment alerts 
+✓ 
+ 
+ 
+4. 
+ 
+ 
+ 
+System 
+Integration & 
+Visibility 
+Full WMS & LMS with API 
+integration into KAFD 
+ERP; real-time inventory 
+control 
+Operational Digital Twin 
+for inventory 
+visualization + live KPI 
+portal access 
+✓ 
+    
+ 
+   5. Personnel & 
+Workforce 
+Trained teams for 
+warehouse, transport, 
+and IT support; escalation 
+matrix and contact 
+hierarchy 
+Multi-language SOPs + 
+rapid-response 
+concierge team for 
+tenant requests 
+✓ 
+ 
+ 
+    6. Reporting & 
+Governance 
+Weekly inventory and 
+performance reports, 
+monthly SLA scorecards, 
+and incident logs 
+SLA-linked 
+penalty/reward model 
+to assure service 
+commitment and 
+accountability 
+✓ 
+
+
+--- PAGE 10 ---
+  
+ 
+________________________________________________________________________________________________ 
+ COMPLETED BY: Hala SCS               │            DATE: 19 08 2025               │                         REF: HSCS04062025 
+Page 10 of 12 
+ 
+Stock Count, transport and 
+warehouse Storage area 
+Proposal  
+ 
+For: KAFD 
+ 
+    7. Handover & Exit 
+Plan 
+Structured exit protocols, 
+asset and data handover 
+documentation 
+Business Continuity 
+Toolkit with optional 
+transition training for 
+incoming vendors  
+✓ 
+ 
+9. WMS and GPS Tracking Management: 
+No WMS and GPS Tracking Management: Checked and 
+Confirmed  
+1 
+Hala will propose a warehouse management system that will 
+keep and maintain records of all customer materials and will 
+investigate a solution to integrate the proposed system with 
+KAFD’s system. 
+✓ 
+2 
+Hala will investigate a way to either use/or integrate KAFD Tools 
+Management System with SUPPLIER WMS system to maintain 
+the stock of tools or assets or will propose its dedicated solution. 
+✓ 
+3 
+Hala will be responsible for generating monthly Excel reports 
+containing detailed information on the inventory. This report will 
+encompass items, their bin locations, and the inventory status of 
+items including but not limited to assets, consumables, and 
+customer materials, along with calibration and recalibration 
+dates. Additionally, the report will include records of inbound 
+and outbound activities, identification of borrowed items, the 
+borrower's information, and the scheduled return dates. 
+✓ 
+ 
+ 
+ 
+HALA SCS Capabilities  
+ 
+WMS Systems: 
+ 
+o We utilize a robust WMS system integrated with a state-of-the-art 
+Warehouse Management System (WMS). Our WMS supports advanced put-
+away and collection rules tailored to meet specific operational needs, 
+ensuring efficient inventory management and streamlined workflows. 
+o The system is the EPG LFS (Logistics Fulfillment System). It is a 
+comprehensive Warehouse Management System (WMS) that integrates with 
+
+
+--- PAGE 11 ---
+  
+ 
+________________________________________________________________________________________________ 
+ COMPLETED BY: Hala SCS               │            DATE: 19 08 2025               │                         REF: HSCS04062025 
+Page 11 of 12 
+ 
+Stock Count, transport and 
+warehouse Storage area 
+Proposal  
+ 
+For: KAFD 
+various ERP systems to provide robust data management, real-time tracking, 
+and advanced reporting capabilities. 
+ 
+• Key values of the EPG LFS WMS system: 
+o Comprehensive Data Integration: 
+o Flexible Connection Types: 
+o Advanced Monitoring and Interface Settings: 
+o Customizable Interface Tables: 
+o User-Friendly Mapping Tool: 
+o Real-Time Acknowledgements: 
+o Excel and SQL Integration: 
+o Cloud-Based Deployment: 
+o Comprehensive Asset Management: 
+o Enhanced Visibility and Reporting 
+Enhanced Visibility and Reporting. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+
+
+--- PAGE 12 ---
+  
+ 
+________________________________________________________________________________________________ 
+ COMPLETED BY: Hala SCS               │            DATE: 19 08 2025               │                         REF: HSCS04062025 
+Page 12 of 12 
+ 
+Stock Count, transport and 
+warehouse Storage area 
+Proposal  
+ 
+For: KAFD 
+ 
+ 
+ 
+ 
+ 
+ 
+                                                                             
+ 
+Order Management Capabilities: 
+o Our order management system includes comprehensive searching tools with 
+picture display for items during order placement. Additionally, it supports 
+multiple layers of approvals, ensuring thorough oversight and control 
+throughout the order process 
+10. IT Specifications: 
+No IT Specifications: Checked and 
+Confirmed  
+1 
+HALA will furnish the subsequent IT specifications, including the 
+requirements received from Siemens Energy, and incorporate 
+the necessary specifications to guarantee the operational 
+functionality of the warehouse: 
+✓ 
+2 Network Infrastructure and connectivity. ✓ 
+3 Warehouse Management System. ✓ 
+4 Electronic Data Integration and the associated interfaces. ✓ 
+ 5 
+The costs associated with the provision of these items, as well as 
+the running costs, will be charged separately in the costing 
+model. 
+✓ 
+ 

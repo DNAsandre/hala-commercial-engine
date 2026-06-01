@@ -147,7 +147,7 @@ function DocumentReviewModal({
             <div className="p-2.5 rounded-md border border-red-300 bg-red-50 dark:bg-red-950/30">
               <p className="text-xs text-red-800 flex items-center gap-1.5">
                 <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-                Mock Gate: This document would block production submission.
+                Advisory signal: review recommended. This document should be provided before submission. Override is always available.
               </p>
             </div>
           )}
@@ -254,7 +254,7 @@ export default function TenderRequiredDocumentsTab({ ws, tenderId, reload }: { w
         <div className="flex items-center gap-2.5">
           <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
           <p className="text-xs text-amber-700">
-            Development mode: required documents are tracked as mock data. Missing documents would block production submission, but do not block testing.
+            Advisory signals only: required documents are tracked as readiness indicators. Missing items escalate to review — they do not block testing or submission.
           </p>
         </div>
         <Badge variant="outline" className="text-[10px] border-emerald-400 text-emerald-700 bg-emerald-50 flex items-center gap-1 shrink-0"><Database className="w-2.5 h-2.5" />Supabase-Backed</Badge>
@@ -267,7 +267,7 @@ export default function TenderRequiredDocumentsTab({ ws, tenderId, reload }: { w
         <SummaryCard label="In Review" value={inReviewCount} color="text-violet-600" />
         <SummaryCard label="Ready / Approved" value={readyCount} color="text-emerald-600" />
         <SummaryCard label="In Output" value={includedCount} color="text-blue-600" />
-        <SummaryCard label="Would Block" value={wouldBlockCount} color="text-red-600" />
+        <SummaryCard label="Review Rec." value={wouldBlockCount} color="text-amber-600" />
       </div>
 
       {/* Filters */}
@@ -344,7 +344,7 @@ export default function TenderRequiredDocumentsTab({ ws, tenderId, reload }: { w
                 </td>
                 <td className="px-3 py-2 text-center">
                   {doc.wouldBlockInProduction && !["ready", "signed", "stamped", "approved", "submitted_mock"].includes(doc.status) ? (
-                    <Badge variant="outline" className="text-[9px] text-amber-700 bg-amber-50 border-amber-200">Would Block</Badge>
+                    <Badge variant="outline" className="text-[9px] text-amber-700 bg-amber-50 border-amber-200">Review Rec.</Badge>
                   ) : ["ready", "signed", "stamped", "approved", "submitted_mock"].includes(doc.status) ? (
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mx-auto" />
                   ) : (

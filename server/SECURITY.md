@@ -66,20 +66,10 @@ migrations/sprint2_rls_policies.sql
 ```
 in the Supabase SQL Editor.
 
-### Test Users
+### Users
 
-8 users exist in the `users` table, each linked to a Supabase Auth account:
-
-| User | Role | Region |
-|------|------|--------|
-| Amin Al-Rashid | admin | East |
-| Ra'ed Al-Harbi | regional_sales_head | East |
-| Albert Fernandez | salesman | East |
-| Hano Kim | salesman | Central |
-| Yazan Khalil | regional_ops_head | East |
-| Mohammed Al-Qahtani | director | East |
-| Tariq Nasser | ceo_cfo | East |
-| Samer Khoury | regional_sales_head | Central |
+Do not seed test users from documentation. Users must come from the approved
+authentication/user-management flow and the current Supabase database.
 
 ### Audit Logging
 

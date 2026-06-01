@@ -108,70 +108,15 @@ export interface SyncHealthStats {
 const MAX_RETRIES = 5;
 const RETRY_BACKOFF_MINUTES = [1, 5, 15, 60, 360]; // 1m → 5m → 15m → 1h → 6h
 
-// DNA Supersystems-specific field name mappings (GHL white-label)
-const GHL_STAGE_MAP: Record<string, string> = {
-  prospecting: "New Lead",
-  qualified: "Qualified",
-  quoting: "Quote Sent",
-  solution_design: "Solution Design",
-  proposal_active: "Proposal Active",
-  negotiation: "Negotiation",
-  commercial_approved: "Approved",
-  sla_drafting: "SLA Draft",
-  contract_sent: "Contract Sent",
-  closed_won: "Won",
-  contract_signed: "Signed",
-  go_live: "Active",
-  closed_lost: "Closed Lost",
-};
-
-// Zoho-specific field name mappings
-const ZOHO_STAGE_MAP: Record<string, string> = {
-  prospecting: "Prospecting",
-  qualified: "Qualification",
-  quoting: "Proposal/Price Quote",
-  solution_design: "Needs Analysis",
-  proposal_active: "Proposal Sent",
-  negotiation: "Negotiation/Review",
-  commercial_approved: "Value Proposition",
-  sla_drafting: "SLA Drafting",
-  contract_sent: "Contract Sent",
-  closed_won: "Closed Won",
-  contract_signed: "Contract Signed",
-  go_live: "Go Live",
-  closed_lost: "Closed Lost",
-};
-
 // ============================================================
 // SEED DATA — CRM CONNECTIONS
 // ============================================================
 
 const SEED_CONNECTIONS: CRMConnection[] = [
   {
-    id: "crm-conn-zoho",
-    provider: "zoho",
-    name: "Zoho CRM (Production)",
-    base_url: "https://www.zohoapis.com/crm/v2",
-    enabled: true,
-    auth_method: "oauth2",
-    last_sync_at: null,
-    health_status: "configuring",
-    sync_interval_minutes: 15,
-    created_at: "2025-06-01T00:00:00Z",
-    updated_at: new Date().toISOString(),
-    config: {
-      org_id: "hala-logistics",
-      module_deals: "Deals",
-      module_contacts: "Contacts",
-      module_accounts: "Accounts",
-      webhook_secret: "••••••••",
-      ip_whitelist: ["52.168.0.0/16"],
-    },
-  },
-  {
     id: "crm-conn-ghl",
     provider: "ghl",
-    name: "DNA Supersystems (Migration Target)",
+    name: "DNA Supersystems (GHL)",
     base_url: "https://rest.gohighlevel.com/v1",
     enabled: true,
     auth_method: "api_key",
@@ -183,9 +128,8 @@ const SEED_CONNECTIONS: CRMConnection[] = [
     config: {
       location_id: "hala-ksa",
       pipeline_id: "commercial-pipeline",
-      pipeline_stages: GHL_STAGE_MAP,
       webhook_url: "/api/webhooks/dna",
-      migration_mode: true, // read-only sync during migration
+      migration_mode: true,
     },
   },
 ];
@@ -195,20 +139,9 @@ const SEED_CONNECTIONS: CRMConnection[] = [
 // ============================================================
 
 const SEED_MAPPINGS: CRMFieldMapping[] = [
-  // Zoho Deal mappings
-  { id: "fm-z1", connection_id: "crm-conn-zoho", local_table: "workspaces", local_field: "title", crm_field: "Deal_Name", direction: "both", transform: null, active: true },
-  { id: "fm-z2", connection_id: "crm-conn-zoho", local_table: "workspaces", local_field: "stage", crm_field: "Stage", direction: "both", transform: "map:zoho_stages", active: true },
-  { id: "fm-z3", connection_id: "crm-conn-zoho", local_table: "workspaces", local_field: "estimatedValue", crm_field: "Amount", direction: "both", transform: null, active: true },
-  { id: "fm-z4", connection_id: "crm-conn-zoho", local_table: "workspaces", local_field: "owner", crm_field: "Owner.name", direction: "outbound", transform: null, active: true },
-  { id: "fm-z5", connection_id: "crm-conn-zoho", local_table: "workspaces", local_field: "crmDealId", crm_field: "id", direction: "inbound", transform: null, active: true },
-  { id: "fm-z6", connection_id: "crm-conn-zoho", local_table: "workspaces", local_field: "palletVolume", crm_field: "Pallet_Volume", direction: "outbound", transform: null, active: true },
-  { id: "fm-z7", connection_id: "crm-conn-zoho", local_table: "customers", local_field: "name", crm_field: "Account_Name", direction: "both", transform: null, active: true },
-  { id: "fm-z8", connection_id: "crm-conn-zoho", local_table: "customers", local_field: "city", crm_field: "Billing_City", direction: "both", transform: null, active: true },
-  { id: "fm-z9", connection_id: "crm-conn-zoho", local_table: "customers", local_field: "industry", crm_field: "Industry", direction: "both", transform: null, active: true },
-  { id: "fm-z10", connection_id: "crm-conn-zoho", local_table: "customers", local_field: "contactEmail", crm_field: "Email", direction: "both", transform: null, active: true },
   // DNA Supersystems Opportunity mappings
   { id: "fm-g1", connection_id: "crm-conn-ghl", local_table: "workspaces", local_field: "title", crm_field: "name", direction: "both", transform: null, active: true },
-  { id: "fm-g2", connection_id: "crm-conn-ghl", local_table: "workspaces", local_field: "stage", crm_field: "pipelineStageId", direction: "both", transform: "map:ghl_stages", active: true },
+  { id: "fm-g2", connection_id: "crm-conn-ghl", local_table: "workspaces", local_field: "stage", crm_field: "pipelineStageId", direction: "both", transform: null, active: true },
   { id: "fm-g3", connection_id: "crm-conn-ghl", local_table: "workspaces", local_field: "estimatedValue", crm_field: "monetaryValue", direction: "both", transform: null, active: true },
   { id: "fm-g4", connection_id: "crm-conn-ghl", local_table: "workspaces", local_field: "owner", crm_field: "assignedTo", direction: "outbound", transform: null, active: true },
   { id: "fm-g5", connection_id: "crm-conn-ghl", local_table: "customers", local_field: "name", crm_field: "contactName", direction: "both", transform: null, active: true },
@@ -220,124 +153,13 @@ const SEED_MAPPINGS: CRMFieldMapping[] = [
 // SEED DATA — HARDENED SYNC EVENTS (existing + new)
 // ============================================================
 
-const SEED_SYNC_EVENTS: HardenedSyncEvent[] = [
-  {
-    id: "cse-001", connection_id: "crm-conn-zoho", entity_type: "deal", entity_id: "w4",
-    direction: "inbound", trigger: "webhook", status: "success",
-    payload: { zoho_id: "ZH-4580", deal_name: "Al-Rajhi Emergency Storage", stage: "Qualification" },
-    response: { workspace_id: "w4", action: "created" }, error: null,
-    retry_count: 0, max_retries: MAX_RETRIES, next_retry_at: null,
-    idempotency_key: "zoho-ZH-4580-inbound-20260215",
-    created_at: "2026-02-15T08:30:00Z", processed_at: "2026-02-15T08:30:02Z", conflict_detail: null,
-  },
-  {
-    id: "cse-002", connection_id: "crm-conn-zoho", entity_type: "deal_stage", entity_id: "w3",
-    direction: "outbound", trigger: "stage_change", status: "success",
-    payload: { zoho_id: "ZH-4555", stage: "Proposal Sent", amount: 1800000 },
-    response: { status: 200, message: "Stage updated" }, error: null,
-    retry_count: 0, max_retries: MAX_RETRIES, next_retry_at: null,
-    idempotency_key: "zoho-w3-stage-20260212",
-    created_at: "2026-02-12T14:00:00Z", processed_at: "2026-02-12T14:00:03Z", conflict_detail: null,
-  },
-  {
-    id: "cse-003", connection_id: "crm-conn-zoho", entity_type: "deal", entity_id: "w5",
-    direction: "inbound", trigger: "webhook", status: "success",
-    payload: { zoho_id: "ZH-4590", deal_name: "Almarai Riyadh Phase 2", stage: "Qualification" },
-    response: { workspace_id: "w5", action: "created" }, error: null,
-    retry_count: 0, max_retries: MAX_RETRIES, next_retry_at: null,
-    idempotency_key: "zoho-ZH-4590-inbound-20260205",
-    created_at: "2026-02-05T09:15:00Z", processed_at: "2026-02-05T09:15:01Z", conflict_detail: null,
-  },
-  {
-    id: "cse-004", connection_id: "crm-conn-zoho", entity_type: "attachment", entity_id: "w3",
-    direction: "outbound", trigger: "manual_push", status: "pending",
-    payload: { zoho_id: "ZH-4555", file_name: "Unilever_Proposal_v3.pdf", file_size: "2.4MB" },
-    response: null, error: null,
-    retry_count: 0, max_retries: MAX_RETRIES, next_retry_at: null,
-    idempotency_key: "zoho-w3-attachment-20260212",
-    created_at: "2026-02-12T14:05:00Z", processed_at: null, conflict_detail: null,
-  },
-  {
-    id: "cse-005", connection_id: "crm-conn-zoho", entity_type: "deal_stage", entity_id: "w6",
-    direction: "outbound", trigger: "stage_change", status: "failed",
-    payload: { zoho_id: "ZH-4410", stage: "Value Proposition", amount: 12000000 },
-    response: { status: 503, message: "Service Unavailable" },
-    error: "Zoho API returned 503 — Service Unavailable. Retry exhausted.",
-    retry_count: 5, max_retries: MAX_RETRIES, next_retry_at: null,
-    idempotency_key: "zoho-w6-stage-20260208",
-    created_at: "2026-02-08T10:00:00Z", processed_at: "2026-02-09T16:00:00Z", conflict_detail: null,
-  },
-  {
-    id: "cse-006", connection_id: "crm-conn-zoho", entity_type: "deal_stage", entity_id: "w2",
-    direction: "outbound", trigger: "stage_change", status: "retrying",
-    payload: { zoho_id: "ZH-4498", stage: "Negotiation/Review", amount: 2800000 },
-    response: { status: 429, message: "Rate limit exceeded" },
-    error: "Rate limit exceeded. Retrying...",
-    retry_count: 2, max_retries: MAX_RETRIES,
-    next_retry_at: new Date(Date.now() + 15 * 60000).toISOString(),
-    idempotency_key: "zoho-w2-stage-20260214",
-    created_at: "2026-02-14T09:00:00Z", processed_at: null, conflict_detail: null,
-  },
-  {
-    id: "cse-007", connection_id: "crm-conn-zoho", entity_type: "customer", entity_id: "c2",
-    direction: "inbound", trigger: "webhook", status: "conflict_resolved",
-    payload: { zoho_id: "ACC-002", account_name: "Ma'aden Mining", billing_city: "Jubail" },
-    response: { action: "local_wins", reason: "Local updated_at is newer" }, error: null,
-    retry_count: 0, max_retries: MAX_RETRIES, next_retry_at: null,
-    idempotency_key: "zoho-ACC-002-inbound-20260215",
-    created_at: "2026-02-15T11:00:00Z", processed_at: "2026-02-15T11:00:01Z",
-    conflict_detail: "Local updated 2026-02-15T10:30:00Z vs CRM updated 2026-02-15T09:00:00Z → Local wins",
-  },
-  // DNA Supersystems events (migration mode — read-only sync)
-  {
-    id: "cse-008", connection_id: "crm-conn-ghl", entity_type: "deal", entity_id: "w5",
-    direction: "outbound", trigger: "manual_push", status: "success",
-    payload: { name: "Almarai Riyadh Phase 2", monetaryValue: 8500000, pipelineStageId: "Solution Design" },
-    response: { id: "dna-opp-001", status: "created" }, error: null,
-    retry_count: 0, max_retries: MAX_RETRIES, next_retry_at: null,
-    idempotency_key: "dna-w5-deal-20260301",
-    created_at: "2026-03-01T10:00:00Z", processed_at: "2026-03-01T10:00:02Z", conflict_detail: null,
-  },
-  {
-    id: "cse-009", connection_id: "crm-conn-ghl", entity_type: "customer", entity_id: "c3",
-    direction: "outbound", trigger: "customer_created", status: "success",
-    payload: { contactName: "Almarai", email: "faisal@almarai.com", phone: "+966-11-555-0003" },
-    response: { id: "dna-contact-001", status: "created" }, error: null,
-    retry_count: 0, max_retries: MAX_RETRIES, next_retry_at: null,
-    idempotency_key: "dna-c3-customer-20260301",
-    created_at: "2026-03-01T10:01:00Z", processed_at: "2026-03-01T10:01:01Z", conflict_detail: null,
-  },
-  {
-    id: "cse-010", connection_id: "crm-conn-ghl", entity_type: "deal", entity_id: "w1",
-    direction: "outbound", trigger: "manual_push", status: "retrying",
-    payload: { name: "Ma'aden Jubail Expansion 2500PP", monetaryValue: 3400000, pipelineStageId: "Quote Sent" },
-    response: { status: 401, message: "Unauthorized" },
-    error: "DNA Supersystems API returned 401 — check API key configuration",
-    retry_count: 1, max_retries: MAX_RETRIES,
-    next_retry_at: new Date(Date.now() + 5 * 60000).toISOString(),
-    idempotency_key: "dna-w1-deal-20260302",
-    created_at: "2026-03-02T08:00:00Z", processed_at: null, conflict_detail: null,
-  },
-];
+const SEED_SYNC_EVENTS: HardenedSyncEvent[] = [];
 
 // ============================================================
 // SEED DATA — CONFLICT RECORDS
 // ============================================================
 
-const SEED_CONFLICTS: ConflictRecord[] = [
-  {
-    id: "conf-001",
-    sync_event_id: "cse-007",
-    entity_type: "customer",
-    entity_id: "c2",
-    local_updated_at: "2026-02-15T10:30:00Z",
-    crm_updated_at: "2026-02-15T09:00:00Z",
-    resolution: "local_wins",
-    resolved_by: null,
-    resolved_at: "2026-02-15T11:00:01Z",
-    detail: "Ma'aden customer record — local had newer billing address update. CRM inbound change discarded.",
-  },
-];
+const SEED_CONFLICTS: ConflictRecord[] = [];
 
 // ============================================================
 // IN-MEMORY STORE (Supabase-first with fallback)
@@ -1005,11 +827,7 @@ function applyOutboundMappings(
     if (value === undefined) continue;
 
     // Apply transforms
-    if (mapping.transform === "map:zoho_stages" && conn?.provider === "zoho") {
-      value = ZOHO_STAGE_MAP[value] || value;
-    } else if (mapping.transform === "map:ghl_stages" && conn?.provider === "ghl") {
-      value = GHL_STAGE_MAP[value] || value;
-    } else if (mapping.transform === "uppercase" && typeof value === "string") {
+    if (mapping.transform === "uppercase" && typeof value === "string") {
       value = value.toUpperCase();
     } else if (mapping.transform === "date_iso" && value) {
       value = new Date(value).toISOString();

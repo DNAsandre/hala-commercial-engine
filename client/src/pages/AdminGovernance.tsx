@@ -127,7 +127,7 @@ function PolicyGatesPanel() {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-serif font-bold">Policy Gates</h3>
-          <p className="text-xs text-muted-foreground">{gates.length} gates configured — Mock / Advisory only</p>
+          <p className="text-xs text-muted-foreground">{gates.length} gates configured - advisory only until production enforcement is approved</p>
         </div>
         <div className="flex gap-2">
           <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">✓ Supabase-Backed</Badge>
@@ -139,7 +139,7 @@ function PolicyGatesPanel() {
 
       <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/50 flex items-center gap-2">
         <Shield className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-        <p className="text-xs text-blue-800">Development mode: all gates are mock/advisory only. Mode changes persist to Supabase but do not enforce production rules.</p>
+        <p className="text-xs text-blue-800">Advisory mode: gate changes persist to Supabase but do not enforce production rules until explicit approval and testing are complete.</p>
       </div>
 
       <div className="space-y-2">
@@ -548,6 +548,17 @@ function EnvironmentPanel() {
 
 /* ── Versioning & Immutability ── */
 function VersioningPanel() {
+  const [versionEvents, setVersionEvents] = useState<SupabaseGovernanceAuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const all = await fetchGovernanceAuditLog();
+      setVersionEvents(all.filter((e: any) => e.category === "versioning"));
+      setLoading(false);
+    })();
+  }, []);
+
   return (
     <div className="space-y-4">
       <div>
@@ -580,14 +591,16 @@ function VersioningPanel() {
         </CardHeader>
         <CardContent className="pt-0">
           <div className="space-y-1.5">
-            {governanceAuditLog.filter(e => e.category === "versioning").length === 0 ? (
+            {loading ? (
+              <p className="text-xs text-muted-foreground text-center py-4">Loading version events…</p>
+            ) : versionEvents.length === 0 ? (
               <p className="text-xs text-muted-foreground text-center py-4">No version lock events yet — events will appear when documents are approved</p>
             ) : (
-              governanceAuditLog.filter(e => e.category === "versioning").map(e => (
+              versionEvents.map((e: any) => (
                 <div key={e.id} className="flex items-center gap-2 p-2 rounded border border-border text-xs">
                   <Lock className="w-3.5 h-3.5 text-violet-500" />
                   <span className="flex-1">{e.details}</span>
-                  <span className="font-mono text-muted-foreground">{new Date(e.timestamp).toLocaleString()}</span>
+                  <span className="font-mono text-muted-foreground">{new Date(e.created_at).toLocaleString()}</span>
                 </div>
               ))
             )}
@@ -771,6 +784,7 @@ export default function AdminGovernance() {
           <Link href="/renewals"><Badge variant="outline" className="text-xs cursor-pointer hover:bg-muted transition-colors gap-1"><RefreshCw className="w-3 h-3" /> Renewals</Badge></Link>
           <Link href="/renewal-gates"><Badge variant="outline" className="text-xs cursor-pointer hover:bg-muted transition-colors gap-1"><Shield className="w-3 h-3" /> Renewal Policy Gates</Badge></Link>
           <Link href="/revenue-exposure"><Badge variant="outline" className="text-xs cursor-pointer hover:bg-muted transition-colors gap-1"><DollarSign className="w-3 h-3" /> Revenue Exposure</Badge></Link>
+          <Link href="/ai-cost-ledger"><Badge variant="outline" className="text-xs cursor-pointer hover:bg-muted transition-colors gap-1"><DollarSign className="w-3 h-3" /> AI Cost Ledger</Badge></Link>
         </div>
       )}
 

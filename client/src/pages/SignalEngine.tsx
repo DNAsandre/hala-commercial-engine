@@ -110,7 +110,7 @@ export default function SignalEngine() {
 
   const handleAcknowledge = async (eventId: string) => {
     setEvents(prev => prev.map(e =>
-      e.id === eventId ? { ...e, acknowledged: true, acknowledgedBy: 'Amin Al-Rashid', acknowledgedAt: new Date().toISOString() } : e
+      e.id === eventId ? { ...e, acknowledged: true, acknowledgedBy: 'Unknown user', acknowledgedAt: new Date().toISOString() } : e
     ));
     try {
       await api.botGovernance.acknowledgeSignal(eventId);
@@ -283,7 +283,7 @@ export default function SignalEngine() {
               </SelectContent>
             </Select>
             <Button variant="outline" size="sm" onClick={() => {
-              setEvents(prev => prev.map(e => ({ ...e, acknowledged: true, acknowledgedBy: 'Amin Al-Rashid', acknowledgedAt: new Date().toISOString() })));
+              setEvents(prev => prev.map(e => ({ ...e, acknowledged: true, acknowledgedBy: 'Unknown user', acknowledgedAt: new Date().toISOString() })));
               toast.success('All signals acknowledged');
             }}>
               Acknowledge All

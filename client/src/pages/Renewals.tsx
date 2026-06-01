@@ -279,7 +279,7 @@ function MilestoneStrip({ current }: { current: RenewalStage }) {
 
       {/* Helper microcopy */}
       <p className="text-[10px] text-muted-foreground/60 mt-1.5 italic">
-        Renewal lifecycle tracker — ECR-driven decision stages.
+        Renewal process tracker — ECR-driven decision stages.
         {!isOutcome && suggestedIdx >= 0 && suggestedIdx < STRIP_STAGES.length && (
           <span className="ml-1 text-primary/70 not-italic">
             Suggested next: <strong>{RENEWAL_STAGES.find(rs => rs.value === STRIP_STAGES[suggestedIdx])?.label}</strong>
@@ -647,7 +647,7 @@ export default function Renewals() {
                   <div className="px-4 pt-4 pb-3 border-b border-border">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        Lifecycle Tracker
+                        Process Tracker
                       </span>
                     </div>
                     <MilestoneStrip current={selected.stage} />

@@ -1,4 +1,5 @@
 import { getCurrentUser } from "./auth-state";
+import { supabase } from "./supabase";
 /**
  * workspace-integration.ts
  * ────────────────────────────────────────────────────────────
@@ -139,7 +140,7 @@ export async function getOrCreateCycle(workspaceId: string, wsData?: Workspace |
   const ws = wsData ?? await fetchWorkspaceById(workspaceId);
   if (!ws) throw new Error(`Workspace ${workspaceId} not found`);
 
-  // Try to find SLA expiry from customer data (mock)
+  // No inferred SLA expiry. It must come from persisted source data.
   const slaExpiry = getSlaExpiryForWorkspace(workspaceId, ws);
 
   const cycle: ContractCycle = {
@@ -220,23 +221,9 @@ export function isInRenewalWindow(cycle: ContractCycle): boolean {
   return daysLeft > 0 && daysLeft <= cycle.renewalWindowDays;
 }
 
-/** Get SLA expiry for a workspace (mock — uses hardcoded data) */
-function getSlaExpiryForWorkspace(_workspaceId: string, ws?: Workspace | null): string | null {
-  if (!ws) return null;
-  const expiryMap: Record<string, string> = {
-    "SABIC": "2026-05-31",
-    "Almarai": "2025-12-31",
-    "Maaden": "2027-02-28",
-    "Ma'aden": "2027-02-28",
-    "NADEC": "2025-06-30",
-    "Aramco": "2024-12-31",
-    "Aramco Services": "2024-12-31",
-    "Sadara Chemical": "2026-03-31",
-    "Unilever Arabia": "2025-06-30",
-    "Nestlé KSA": "2026-09-30",
-    "Bayer Middle East": "2026-06-30",
-  };
-  return expiryMap[ws.customerName] ?? null;
+/** Get SLA expiry for a workspace. No hardcoded customer/date map is allowed. */
+function getSlaExpiryForWorkspace(_workspaceId: string, _ws?: Workspace | null): string | null {
+  return null;
 }
 
 // ─── SUPPORTING DOC HELPERS ─────────────────────────────────
@@ -368,48 +355,17 @@ export async function getContractReadyChecks(workspaceId: string): Promise<Contr
   return checks;
 }
 
-// ─── MOCK DATA SEEDING ──────────────────────────────────────
+// ─── NO-OP LEGACY SEEDING ──────────────────────────────────────
 let _seeded = false;
 
 /**
- * Seed mock data for development.
- * Call once on app init when feature flag is ON.
+ * Legacy initializer retained for existing imports; it does not seed business data.
  */
 export function seedWorkspaceIntegrationData(): void {
-  if (_seeded) return;
   _seeded = true;
-
-  // Seed contract cycles for workspaces that have SLA data
-  const seedCycles: Omit<ContractCycle, "id">[] = [
-    { workspaceId: "w2", cycleNumber: 1, status: "expiring", startDate: "2023-04-01", endDate: "2026-03-31", renewalWindowDays: 90, renewalOwnerId: "u3", renewalOwnerName: "Albert", linkedSlaVersionId: undefined, createdAt: "2023-04-01T00:00:00Z", createdBy: "system" },
-    { workspaceId: "w6", cycleNumber: 1, status: "active", startDate: "2024-01-01", endDate: "2026-12-31", renewalWindowDays: 90, renewalOwnerId: "u2", renewalOwnerName: "Ra'ed", linkedSlaVersionId: undefined, createdAt: "2024-01-01T00:00:00Z", createdBy: "system" },
-    { workspaceId: "w7", cycleNumber: 1, status: "draft", startDate: "2025-09-20", endDate: "2026-09-30", renewalWindowDays: 90, renewalOwnerId: "u4", renewalOwnerName: "Hano", linkedSlaVersionId: undefined, createdAt: "2025-09-20T00:00:00Z", createdBy: "system" },
-    { workspaceId: "w8", cycleNumber: 1, status: "active", startDate: "2024-06-01", endDate: "2026-06-30", renewalWindowDays: 90, renewalOwnerId: "u4", renewalOwnerName: "Hano", linkedSlaVersionId: undefined, createdAt: "2024-06-01T00:00:00Z", createdBy: "system" },
-  ];
-
-  for (const seed of seedCycles) {
-    contractCycles.push({ ...seed, id: `cc-${seed.workspaceId}-${seed.cycleNumber}` });
-  }
-
-  // Seed some supporting docs
-  const seedDocs: Omit<SupportingDoc, "id">[] = [
-    { workspaceId: "w2", name: "Sadara Trade License 2025", fileName: "sadara-trade-license-2025.pdf", category: "Trade License", isRequiredForContractReady: true, linkedCycleId: "cc-w2-1", version: 1, status: "active", uploadedBy: "Albert Fernandez", uploadedAt: "2025-11-15T10:00:00Z" },
-    { workspaceId: "w2", name: "Sadara Insurance Certificate", fileName: "sadara-insurance-cert.pdf", category: "Insurance", isRequiredForContractReady: true, linkedCycleId: "cc-w2-1", version: 1, status: "active", uploadedBy: "Albert Fernandez", uploadedAt: "2025-11-20T10:00:00Z" },
-    { workspaceId: "w6", name: "Aramco Compliance Certificate", fileName: "aramco-compliance.pdf", category: "Compliance Certificate", isRequiredForContractReady: true, linkedCycleId: "cc-w6-1", version: 1, status: "active", uploadedBy: "Ra'ed Al-Harbi", uploadedAt: "2025-10-20T10:00:00Z" },
-    { workspaceId: "w7", name: "Nestlé Cold Chain Specs", fileName: "nestle-cold-chain-specs.pdf", category: "Technical Specs", isRequiredForContractReady: false, version: 1, status: "active", uploadedBy: "Hano", uploadedAt: "2025-10-01T10:00:00Z" },
-  ];
-
-  for (const seed of seedDocs) {
-    supportingDocs.push({ ...seed, id: `sd-${seed.workspaceId}-${Math.random().toString(36).slice(2, 6)}` });
-  }
 }
 
 // ─── TEAM MEMBERS (for renewal owner dropdown) ──────────────
 export const teamMembers = [
   { id: getCurrentUser().id, name: getCurrentUser().name, role: getCurrentUser().role },
-  { id: "u2", name: "Ra'ed Al-Harbi", role: "Regional Sales Head" },
-  { id: "u3", name: "Albert Fernandez", role: "Account Manager" },
-  { id: "u4", name: "Hano", role: "Account Manager" },
-  { id: "u5", name: "Nora Al-Dosari", role: "Commercial Analyst" },
-  { id: "u6", name: "Mohammed Al-Qahtani", role: "Director" },
 ];

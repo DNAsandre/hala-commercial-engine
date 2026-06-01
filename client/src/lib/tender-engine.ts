@@ -1,4 +1,6 @@
 import { getCurrentUser } from "./auth-state";
+import type { SowData } from "./sow-pdf-studio-wiring";
+import type { TenderPricingData } from "./tender-pricing-types";
 /*
  * Tender Engine — Commercial Lifecycle Engine
  *
@@ -22,63 +24,63 @@ import {
 } from "./store";
 import { syncTenderCreate, syncTenderUpdate, syncAuditEntry } from "./supabase-sync";
 
-// ─── TENDER MILESTONE (LIFECYCLE) ──────────────────────────
+// ─── CRM PIPELINE STAGES (Kanban) ──────────────────────────────
 
 export type TenderMilestone =
-  | "identified"
-  | "preparing_submission"
-  | "submitted"
-  | "clarification"
-  | "technical_review"
-  | "commercial_review"
-  | "negotiation"
-  | "awarded"
-  | "lost"
-  | "withdrawn";
+  | "prospecting"
+  | "qualified"
+  | "proposal_sent"
+  | "shortlisted"
+  | "contract_negotiation"
+  | "closed_won"
+  | "contract_signed"
+  | "operational_handover"
+  | "closed_lost"
+  | "discontinued";
 
 // Keep TenderStatus as alias for backward compatibility
 export type TenderStatus = TenderMilestone;
 
 export const TENDER_MILESTONE_ORDER: TenderMilestone[] = [
-  "identified",
-  "preparing_submission",
-  "submitted",
-  "clarification",
-  "technical_review",
-  "commercial_review",
-  "negotiation",
-  "awarded",
+  "prospecting",
+  "qualified",
+  "proposal_sent",
+  "shortlisted",
+  "contract_negotiation",
+  "closed_won",
+  "contract_signed",
+  "operational_handover",
 ];
 
-// Active (non-terminal) milestones — shown in kanban and filters
+// Kanban columns — all stages including terminal
 export const TENDER_KANBAN_COLUMNS: TenderMilestone[] = [
-  "identified",
-  "preparing_submission",
-  "submitted",
-  "clarification",
-  "technical_review",
-  "commercial_review",
-  "negotiation",
-  "awarded",
-  "lost",
-  "withdrawn",
+  "prospecting",
+  "qualified",
+  "proposal_sent",
+  "shortlisted",
+  "contract_negotiation",
+  "closed_won",
+  "contract_signed",
+  "operational_handover",
+  "closed_lost",
+  "discontinued",
 ];
 
-// Terminal milestones
-export const TENDER_TERMINAL: TenderMilestone[] = ["awarded", "lost", "withdrawn"];
+// Terminal milestones — drag disabled
+export const TENDER_TERMINAL: TenderMilestone[] = ["closed_won", "closed_lost", "discontinued", "operational_handover"];
 
 // Recommended (soft) transitions — guidance only, never enforced
 export const TENDER_SOFT_TRANSITIONS: Record<TenderMilestone, TenderMilestone[]> = {
-  identified: ["preparing_submission"],
-  preparing_submission: ["submitted"],
-  submitted: ["clarification", "technical_review", "commercial_review"],
-  clarification: ["technical_review", "commercial_review", "negotiation"],
-  technical_review: ["commercial_review", "negotiation"],
-  commercial_review: ["negotiation"],
-  negotiation: ["awarded", "lost"],
-  awarded: [],
-  lost: [],
-  withdrawn: [],
+  prospecting: ["qualified"],
+  qualified: ["proposal_sent"],
+  proposal_sent: ["shortlisted"],
+  shortlisted: ["contract_negotiation"],
+  contract_negotiation: ["closed_won", "closed_lost"],
+  closed_won: ["contract_signed"],
+  contract_signed: ["operational_handover"],
+  operational_handover: [],
+  closed_lost: [],
+  discontinued: [],
 };
 
 export function getMilestoneIndex(milestone: TenderMilestone): number {
@@ -96,16 +98,16 @@ export function getPrimaryNextMilestone(current: TenderMilestone): TenderMilesto
 
 export function getTenderStatusDisplayName(status: TenderMilestone): string {
   const labels: Record<TenderMilestone, string> = {
-    identified: "Identified",
-    preparing_submission: "Preparing Submission",
-    submitted: "Submitted",
-    clarification: "Clarification",
-    technical_review: "Technical Review",
-    commercial_review: "Commercial Review",
-    negotiation: "Negotiation",
-    awarded: "Awarded",
-    lost: "Lost",
-    withdrawn: "Withdrawn",
+    prospecting: "Prospecting",
+    qualified: "Qualified",
+    proposal_sent: "Proposal Sent",
+    shortlisted: "Shortlisted",
+    contract_negotiation: "Contract Negotiation",
+    closed_won: "Closed Won",
+    contract_signed: "Contract Signed",
+    operational_handover: "Operational Handover",
+    closed_lost: "Closed Lost",
+    discontinued: "Discontinued",
   };
   return labels[status] ?? status;
 }
@@ -113,35 +115,63 @@ export function getTenderStatusDisplayName(status: TenderMilestone): string {
 // Short labels for the milestone strip
 export function getTenderMilestoneShortLabel(status: TenderMilestone): string {
   const labels: Record<TenderMilestone, string> = {
-    identified: "Identified",
-    preparing_submission: "Preparing",
-    submitted: "Submitted",
-    clarification: "Clarification",
-    technical_review: "Tech Review",
-    commercial_review: "Commercial",
-    negotiation: "Negotiation",
-    awarded: "Awarded",
-    lost: "Lost",
-    withdrawn: "Withdrawn",
+    prospecting: "Prospecting",
+    qualified: "Qualified",
+    proposal_sent: "Proposal Sent",
+    shortlisted: "Shortlisted",
+    contract_negotiation: "Negotiation",
+    closed_won: "Closed Won",
+    contract_signed: "Contract Signed",
+    operational_handover: "Ops Handover",
+    closed_lost: "Closed Lost",
+    discontinued: "Discontinued",
   };
   return labels[status] ?? status;
 }
 
 export function getTenderStatusColor(status: TenderMilestone): string {
   const colors: Record<TenderMilestone, string> = {
-    identified: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
-    preparing_submission: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
-    submitted: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
-    clarification: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-    technical_review: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300",
-    commercial_review: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300",
-    negotiation: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300",
-    awarded: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
-    lost: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
-    withdrawn: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
+    prospecting: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
+    qualified: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+    proposal_sent: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
+    shortlisted: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+    contract_negotiation: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300",
+    closed_won: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+    contract_signed: "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300",
+    operational_handover: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300",
+    closed_lost: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+    discontinued: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
   };
   return colors[status] ?? "";
 }
+
+// Stage header background colors
+export const TENDER_STATUS_HEADER_BG: Record<TenderMilestone, string> = {
+  prospecting: "bg-slate-50 dark:bg-slate-900/30",
+  qualified: "bg-blue-50 dark:bg-blue-900/30",
+  proposal_sent: "bg-violet-50 dark:bg-violet-900/30",
+  shortlisted: "bg-amber-50 dark:bg-amber-900/30",
+  contract_negotiation: "bg-orange-50 dark:bg-orange-900/30",
+  closed_won: "bg-emerald-50 dark:bg-emerald-900/30",
+  contract_signed: "bg-teal-50 dark:bg-teal-900/30",
+  operational_handover: "bg-cyan-50 dark:bg-cyan-900/30",
+  closed_lost: "bg-red-50 dark:bg-red-900/30",
+  discontinued: "bg-gray-50 dark:bg-gray-900/30",
+};
+
+// Column border accent colors
+export const TENDER_STATUS_COLUMN_COLORS: Record<TenderMilestone, string> = {
+  prospecting: "border-t-slate-400",
+  qualified: "border-t-blue-400",
+  proposal_sent: "border-t-violet-400",
+  shortlisted: "border-t-amber-400",
+  contract_negotiation: "border-t-orange-400",
+  closed_won: "border-t-emerald-400",
+  contract_signed: "border-t-teal-400",
+  operational_handover: "border-t-cyan-400",
+  closed_lost: "border-t-red-400",
+  discontinued: "border-t-gray-400",
+};
 
 // Margin signal interpretation
 export function getMarginSignal(gpPercent: number): { label: string; color: "green" | "amber" | "red" } {
@@ -162,16 +192,16 @@ export function getTimeRisk(deadlineStr: string): { label: string; color: "green
 // State signal — what does the current milestone imply?
 export function getStateSignal(status: TenderMilestone, daysInStatus: number): string {
   const signals: Record<TenderMilestone, string> = {
-    identified: "Needs qualification",
-    preparing_submission: "Submission in progress",
-    submitted: "Awaiting customer response",
-    clarification: "Clarification round active",
-    technical_review: "Technical evaluation underway",
-    commercial_review: "Commercial evaluation underway",
-    negotiation: "In active negotiation",
-    awarded: "Contract awarded",
-    lost: "Tender not awarded",
-    withdrawn: "Tender withdrawn",
+    prospecting: "Identifying and qualifying opportunity",
+    qualified: "Lead qualified — ready for proposal",
+    proposal_sent: "Proposal submitted — awaiting response",
+    shortlisted: "Shortlisted — in final consideration",
+    contract_negotiation: "Contract negotiation in progress",
+    closed_won: "Deal closed — contract signed",
+    contract_signed: "Contract signed — preparing operational handover",
+    operational_handover: "Operational handover to delivery team in progress",
+    closed_lost: "Tender not won",
+    discontinued: "Opportunity discontinued",
   };
   const base = signals[status] ?? status;
   if (daysInStatus > 21 && !TENDER_TERMINAL.includes(status)) {
@@ -196,212 +226,50 @@ export interface Tender {
   probabilityPercent: number;
   assignedOwner: string;
   assignedTeamMembers: string[];
+  /** Internal tender process stage — stored in tenders.phase */
   status: TenderMilestone;
+  /** CRM Pipeline stage — stored in tenders.crm_pipeline_stage */
+  crmPipelineStage: TenderMilestone;
   source: TenderSource;
   region: Region;
+  /** Tender Execution Scope — operational delivery geography (manual capture from RFQ/SOW) */
+  executionRegions: string[];
+  targetSites: { name: string; type: string }[];
+  executionType: string;
+  geographicComplexity: string;
+  siteCount: number;
+  executionNotes: string;
   createdAt: string;
   updatedAt: string;
   daysInStatus: number;
   notes: string;
   crmSynced?: boolean;
+  /** Structured Scope of Work data — persisted in type_details.sow_data */
+  sowData?: SowData;
+  /** Structured Customer Fit Qualification data — persisted in type_details.customer_fit_data */
+  customerFitData?: Record<string, any>;
+  /** Structured SOW Qualification data — persisted in type_details.sow_qualification_data */
+  sowQualificationData?: Record<string, any>;
+  /** Structured Technical Qualification data — persisted in type_details.technical_qualification_data */
+  technicalQualificationData?: Record<string, any>;
+  /** Structured Risk Snapshot data — persisted in type_details.risk_snapshot_data */
+  riskSnapshotData?: Record<string, any>;
+  /** Structured Bid / No-Bid data — persisted in type_details.bid_no_bid_data */
+  bidNoBidData?: Record<string, any>;
+  /** Structured Solution Design data — persisted in type_details.solution_design_data */
+  solutionDesignData?: Record<string, any>;
+  /** Structured P&L / Pricing data - persisted in type_details.pricing */
+  pricingData?: TenderPricingData;
+  /** Structured Tender Drafting data — persisted in type_details.tender_drafting */
+  tenderDraftingData?: Record<string, any>;
 }
-
-// ─── MOCK DATA ─────────────────────────────────────────────
+// ─── TENDER DATA — SUPABASE ONLY ───────────────────────────
+// No hardcoded tenders. All data comes from the tenders table in Supabase.
+// If no data exists, components show "Unknown" / "Not available".
 
 let tenderIdCounter = 10;
 
-export const tenders: Tender[] = [
-  {
-    id: "tn-001",
-    linkedWorkspaceId: "w1",
-    customerId: "c2",
-    customerName: "Ma'aden",
-    title: "Ma'aden Jubail Expansion — Logistics RFP",
-    submissionDeadline: "2026-05-20",
-    estimatedValue: 3400000,
-    targetGpPercent: 22,
-    probabilityPercent: 60,
-    assignedOwner: "Ra'ed",
-    assignedTeamMembers: ["Ra'ed", "Yazan", "Finance"],
-    status: "preparing_submission",
-    source: "CRM",
-    region: "East",
-    createdAt: "2026-01-15",
-    updatedAt: "2026-02-14",
-    daysInStatus: 8,
-    notes: "Linked to workspace w1. Technical draft in progress.",
-    crmSynced: false,
-  },
-  {
-    id: "tn-002",
-    linkedWorkspaceId: null,
-    customerId: "c1",
-    customerName: "SABIC",
-    title: "SABIC National Warehousing Services Tender",
-    submissionDeadline: "2026-06-01",
-    estimatedValue: 15000000,
-    targetGpPercent: 25,
-    probabilityPercent: 45,
-    assignedOwner: "Ra'ed",
-    assignedTeamMembers: ["Ra'ed", "Albert", "Yazan", "Finance", "Legal"],
-    status: "identified",
-    source: "Direct",
-    region: "East",
-    createdAt: "2026-02-01",
-    updatedAt: "2026-02-15",
-    daysInStatus: 14,
-    notes: "Large strategic tender. Committee formation pending.",
-    crmSynced: false,
-  },
-  {
-    id: "tn-003",
-    linkedWorkspaceId: "w6",
-    customerId: "c1",
-    customerName: "Aramco Services",
-    title: "Aramco Dhahran VAS Expansion Tender",
-    submissionDeadline: "2026-04-30",
-    estimatedValue: 12000000,
-    targetGpPercent: 28,
-    probabilityPercent: 75,
-    assignedOwner: "Ra'ed",
-    assignedTeamMembers: ["Ra'ed", "Hano", "Finance"],
-    status: "submitted",
-    source: "CRM",
-    region: "East",
-    createdAt: "2025-12-20",
-    updatedAt: "2026-02-10",
-    daysInStatus: 5,
-    notes: "Submitted on time. Awaiting evaluation committee review.",
-    crmSynced: false,
-  },
-  {
-    id: "tn-004",
-    linkedWorkspaceId: "w5",
-    customerId: "c3",
-    customerName: "Almarai",
-    title: "Almarai Riyadh Phase 2 — Cold Chain Tender",
-    submissionDeadline: "2026-04-15",
-    estimatedValue: 8500000,
-    targetGpPercent: 30,
-    probabilityPercent: 70,
-    assignedOwner: "Hano",
-    assignedTeamMembers: ["Hano", "Yazan", "Finance"],
-    status: "commercial_review",
-    source: "CRM",
-    region: "Central",
-    createdAt: "2026-01-20",
-    updatedAt: "2026-02-16",
-    daysInStatus: 5,
-    notes: "High-value strategic account. Technical analysis complete.",
-    crmSynced: false,
-  },
-  {
-    id: "tn-005",
-    linkedWorkspaceId: null,
-    customerId: "c8",
-    customerName: "Nestlé KSA",
-    title: "Nestlé Jeddah Cold Chain Partnership",
-    submissionDeadline: "2026-05-01",
-    estimatedValue: 6200000,
-    targetGpPercent: 26,
-    probabilityPercent: 55,
-    assignedOwner: "Hano",
-    assignedTeamMembers: ["Hano", "Albert"],
-    status: "technical_review",
-    source: "Referral",
-    region: "West",
-    createdAt: "2025-11-15",
-    updatedAt: "2026-02-12",
-    daysInStatus: 12,
-    notes: "Evaluation ongoing. Shortlisted with 2 competitors.",
-    crmSynced: false,
-  },
-  {
-    id: "tn-006",
-    linkedWorkspaceId: "w2",
-    customerId: "c4",
-    customerName: "Sadara Chemical",
-    title: "Sadara Contract Renewal Tender 2025",
-    submissionDeadline: "2026-05-28",
-    estimatedValue: 2800000,
-    targetGpPercent: 24,
-    probabilityPercent: 85,
-    assignedOwner: "Albert",
-    assignedTeamMembers: ["Albert", "Ra'ed"],
-    status: "negotiation",
-    source: "CRM",
-    region: "East",
-    createdAt: "2025-10-15",
-    updatedAt: "2026-02-14",
-    daysInStatus: 3,
-    notes: "Renewal tender. Strong relationship. High probability.",
-    crmSynced: false,
-  },
-  {
-    id: "tn-007",
-    linkedWorkspaceId: null,
-    customerId: "c3",
-    customerName: "Almarai",
-    title: "Almarai Dammam Distribution Center",
-    submissionDeadline: "2025-12-15",
-    estimatedValue: 4500000,
-    targetGpPercent: 27,
-    probabilityPercent: 0,
-    assignedOwner: "Hano",
-    assignedTeamMembers: ["Hano", "Yazan"],
-    status: "awarded",
-    source: "Direct",
-    region: "East",
-    createdAt: "2025-08-01",
-    updatedAt: "2025-12-20",
-    daysInStatus: 58,
-    notes: "Won. Contract signed. Handover initiated.",
-    crmSynced: true,
-  },
-  {
-    id: "tn-008",
-    linkedWorkspaceId: null,
-    customerId: "c6",
-    customerName: "Unilever Arabia",
-    title: "Unilever Riyadh Expansion RFP",
-    submissionDeadline: "2025-11-30",
-    estimatedValue: 3200000,
-    targetGpPercent: 20,
-    probabilityPercent: 0,
-    assignedOwner: "Albert",
-    assignedTeamMembers: ["Albert"],
-    status: "lost",
-    source: "CRM",
-    region: "Central",
-    createdAt: "2025-07-15",
-    updatedAt: "2025-12-05",
-    daysInStatus: 73,
-    notes: "Lost to competitor. Price was 12% higher.",
-    crmSynced: true,
-  },
-  // TND-010: Linde SIGAS — registered here for Pipeline/Board/Dashboard visibility
-  {
-    id: "tn-linde-001",
-    linkedWorkspaceId: null,
-    customerId: "c-linde",
-    customerName: "Linde SIGAS",
-    title: "Linde SIGAS Transportation Tender",
-    submissionDeadline: "2026-05-07",
-    estimatedValue: 55600000,
-    targetGpPercent: 21,
-    probabilityPercent: 55,
-    assignedOwner: "Amin Al-Halabi",
-    assignedTeamMembers: ["Amin Al-Halabi", "Ra'ed", "Finance", "Legal", "Operations"],
-    status: "preparing_submission" as const,
-    source: "Direct" as const,
-    region: "East" as const,
-    createdAt: "2026-03-15",
-    updatedAt: "2026-04-28",
-    daysInStatus: 12,
-    notes: "Multi-pack transport tender. Internal master + Bulk + PGP external child packs.",
-    crmSynced: false,
-  },
-];
+export const tenders: Tender[] = [];
 
 // ─── TRANSITION TYPES ──────────────────────────────────────
 
@@ -501,7 +369,7 @@ export function moveTenderMilestone(
       success: false,
       message: "Tender not found.",
       nextStatus: null,
-      fromStatus: "identified",
+      fromStatus: "prospecting",
       validationErrors: ["Tender ID does not exist."],
     };
   }
@@ -601,7 +469,7 @@ function generateWorkspaceSuggestion(
   const workspace = workspaces.find(w => w.id === tender.linkedWorkspaceId);
   if (!workspace) return null;
 
-  if (newStatus === "awarded") {
+  if ((newStatus as string) === "awarded" || newStatus === "closed_won") {
     return {
       type: "advance_to_commercial_approved",
       workspaceId: workspace.id,
@@ -609,7 +477,7 @@ function generateWorkspaceSuggestion(
       message: `Tender awarded. Consider advancing workspace "${workspace.title}" to Commercial Approved.`,
     };
   }
-  if (newStatus === "lost") {
+  if ((newStatus as string) === "lost_withdrawn" || newStatus === "closed_lost") {
     return {
       type: "mark_closed_lost",
       workspaceId: workspace.id,
@@ -652,7 +520,7 @@ export interface TenderRevertResult {
 export function revertTenderStatus(tenderId: string): TenderRevertResult {
   const record = tenderUndoRecords.get(tenderId);
   if (!record) {
-    return { success: false, message: "No transition to undo.", revertedFrom: "identified", revertedTo: "identified" };
+    return { success: false, message: "No transition to undo.", revertedFrom: "prospecting", revertedTo: "prospecting" };
   }
 
   const tender = tenders.find(t => t.id === tenderId);
@@ -727,13 +595,13 @@ export function getRegisteredTenderRules(): readonly TenderTransitionRule[] {
 export function getTenderMetrics(liveTenders?: Tender[]) {
   const src = liveTenders ?? tenders;
   const open = src.filter(t => !TENDER_TERMINAL.includes(t.status));
-  const awarded = src.filter(t => t.status === "awarded");
-  const lost = src.filter(t => t.status === "lost");
+  const awarded = src.filter(t => t.status === "closed_won");
+  const lost = src.filter(t => t.status === "closed_lost");
   const decided = awarded.length + lost.length;
   const winRate = decided > 0 ? (awarded.length / decided) * 100 : 0;
 
   const submitted = src.filter(t =>
-    ["submitted", "clarification", "technical_review", "commercial_review", "negotiation", "awarded", "lost"].includes(t.status)
+    ["qualified", "proposal_sent", "shortlisted", "contract_negotiation", "closed_won", "contract_signed", "actual_go_live", "closed_lost", "discontinued"].includes(t.status)
   );
   const avgCycleDays = submitted.length > 0
     ? submitted.reduce((sum, t) => {

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * CW-004: Customer Score / ECR Decomposition Panel
  * Mock-only — no real ECR engine, no CRM sync, no grade override.
  * SUPA-004: Actions now write to Supabase.
@@ -185,7 +185,7 @@ export default function CommercialCustomerScorePanel({ score, gpPercent, workspa
         {showEscalation && (
           <div className="p-2 rounded border border-red-200 bg-red-50 text-xs text-red-800 flex items-center gap-2">
             <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-            Customer Risk Signal — Mock escalation created. Low GP ({gpPercent?.toFixed(1)}%) + Grade {score.overallGrade} customer. Testing may continue.
+            Customer Risk Signal — Advisory escalation created. Low GP ({gpPercent?.toFixed(1)}%) + Grade {score.overallGrade} customer. Testing may continue.
           </div>
         )}
 
@@ -209,7 +209,7 @@ export default function CommercialCustomerScorePanel({ score, gpPercent, workspa
                   beforeState: score.overallGrade, afterState: 'Mock Reviewed', severity: 'Info' }
               );
               if (result.success) { toast.success("Customer score review saved to Supabase."); onActionComplete?.(); }
-              else { toast.error(`Mock action could not be saved: ${result.error}`); }
+              else { toast.error(`Advisory action could not be saved: ${result.error}`); }
             } else { toast.info("Customer score reviewed (mock). No backend update."); }
           }}>
             <Eye className="w-3 h-3" /> Review Score Mock
@@ -226,7 +226,7 @@ export default function CommercialCustomerScorePanel({ score, gpPercent, workspa
                   beforeState: 'Not Reviewed', afterState: 'Mock Reviewed', severity: 'Info' }
               );
               if (result.success) { toast.success("ECR review saved to Supabase."); onActionComplete?.(); }
-              else { toast.error(`Mock action could not be saved: ${result.error}`); }
+              else { toast.error(`Advisory action could not be saved: ${result.error}`); }
             } else { toast.info("ECR marked reviewed (mock). No backend update."); }
           }}>
             <ShieldCheck className="w-3 h-3" /> Mark ECR Reviewed
@@ -243,7 +243,7 @@ export default function CommercialCustomerScorePanel({ score, gpPercent, workspa
                   beforeState: score.overallGrade, afterState: 'Testing Bypass', severity: 'Info' }
               );
               if (result.success) { toast.success("Testing bypass saved to Supabase."); onActionComplete?.(); }
-              else { toast.error(`Mock action could not be saved: ${result.error}`); }
+              else { toast.error(`Advisory action could not be saved: ${result.error}`); }
             } else { toast.info("Continue for testing — no enforcement applied."); }
           }}>
             <Play className="w-3 h-3" /> Continue

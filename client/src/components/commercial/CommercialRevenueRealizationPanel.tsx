@@ -1,4 +1,4 @@
-/**
+﻿/**
  * CW-006: Revenue Realization Timing Panel
  * Mock-only — no real finance integration.
  * SUPA-004: Actions now write to Supabase.
@@ -77,7 +77,7 @@ export default function CommercialRevenueRealizationPanel({ r, workspaceId, onAc
       { workspaceId, eventCode: code, eventName: title, description: desc, category: 'REVENUE_TIMING', actor, entityType: 'Revenue Realization', entityName: r.budgetImpactTiming, beforeState: r.realizationConfidence, afterState: after, severity: 'Info' }
     );
     if (result.success) { toast.success(`${title} saved to Supabase.`); onActionComplete?.(); }
-    else { toast.error(`Mock action could not be saved: ${result.error}`); }
+    else { toast.error(`Advisory action could not be saved: ${result.error}`); }
   };
   return (
     <Card className="border shadow-none">

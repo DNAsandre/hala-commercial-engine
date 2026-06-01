@@ -50,8 +50,8 @@ import { generateBlockContent } from "@/lib/ai-runs";
 
 const DOC_TYPES = ["quote", "proposal", "sla", "msa", "tender", "renewal", "service_order_transport", "service_order_warehouse"];
 const PROVIDERS = [
-  { value: "openai", label: "OpenAI", models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"] },
-  { value: "google", label: "Google AI", models: ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash"] },
+  { value: "openai", label: "OpenAI", models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-5.1", "gpt-5.1-mini", "gpt-5.5"] },
+  { value: "google", label: "Google AI", models: ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-pro", "gemini-2.5-flash"] },
 ];
 
 const ICON_OPTIONS = [

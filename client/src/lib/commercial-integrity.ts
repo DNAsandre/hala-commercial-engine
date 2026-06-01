@@ -818,9 +818,7 @@ export function computeRevenueExposure(gpThreshold: number = 18): RevenueExposur
     .map(b => {
       // Check if customer has any ECR score data
       // Simplified check — in production would query ECR scores
-      const hasEcr = ["SABIC", "Ma'aden", "Almarai", "Nestlé KSA", "Al-Rajhi Steel"].some(name =>
-        b.customerName.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(b.customerName.toLowerCase())
-      );
+      const hasEcr = false;
       return { id: b.id, customerName: b.customerName, hasEcr };
     })
     .filter(b => !b.hasEcr)
@@ -848,38 +846,4 @@ export function computeRevenueExposure(gpThreshold: number = 18): RevenueExposur
   };
 }
 
-// ============================================================
-// SEED DATA — Initial override records for demo
-// ============================================================
-
-commercialOverrideRecords.push(
-  {
-    id: "cor-1",
-    gateKey: "scope_drift_gate",
-    gateName: "Scope Drift Gate",
-    entityType: "renewal",
-    entityId: "rw-maaden-1",
-    workspaceId: "rw-maaden-1",
-    rule_set_version_id: "rs-2@v2",
-    ecr_rule_version_id: "rs-2@v2",
-    previous_result: "warn",
-    overridden_by: "Mohammed Al-Qahtani",
-    overridden_by_role: "director",
-    overridden_at: "2026-01-16T09:00:00Z",
-    reason: "Scope expansion is aligned with strategic growth plan for Ma'aden. Additional scope items are covered by rate increase.",
-    requires_second_approval: false,
-    second_approval_by: null,
-    second_approval_role: null,
-    second_approval_at: null,
-    second_approval_status: null,
-    is_final: true,
-    superseded: false,
-  },
-);
-
-// Update existing renewal gate evaluations to include rule_set_version_id
-renewalGateEvaluations.forEach(e => {
-  if (!e.ruleSetVersionId) {
-    e.ruleSetVersionId = "rs-2@v2";
-  }
-});
+// Renewal gate evaluations are loaded from real sources only.

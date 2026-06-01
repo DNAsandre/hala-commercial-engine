@@ -1,7 +1,7 @@
 /**
  * EscalationAttentionPanel — Dashboard surface for the escalation engine.
  *
- * Reads DIRECTLY from escalation_events (same source as GlobalEscalations page).
+ * Reads from commercial_escalations through the global escalation engine.
  * Shows only open/acknowledged events, highest priority first.
  * Replaces the old EscalationPanel which read from the Signal[] mock table.
  *

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * CW-006: Pricing Posture Panel
  * Mock-only — no real pricing engine.
  * SUPA-004: Actions now write to Supabase.
@@ -70,7 +70,7 @@ export default function CommercialPricingPosturePanel({ p, workspaceId, onAction
       { workspaceId, eventCode: code, eventName: title, description: desc, category: 'PRICING_POSTURE', actor, entityType: 'Pricing Posture', entityName: p.posture, beforeState: p.posture, afterState: after, severity: 'Info' }
     );
     if (result.success) { toast.success(`${title} saved to Supabase.`); onActionComplete?.(); }
-    else { toast.error(`Mock action could not be saved: ${result.error}`); }
+    else { toast.error(`Advisory action could not be saved: ${result.error}`); }
   };
   const pc = postureColors[p.posture];
   const isRed = p.severity === "High" || p.severity === "Critical";
@@ -138,7 +138,7 @@ export default function CommercialPricingPosturePanel({ p, workspaceId, onAction
         {isRed && p.mockEscalationCreated && (
           <div className="p-2 rounded border border-red-200 bg-red-50 text-xs text-red-800 flex items-center gap-2">
             <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-            {p.severity === "Critical" ? "Critical Pricing Posture" : "High Pricing Risk"} — Mock escalation created. Testing may continue.
+            {p.severity === "Critical" ? "Critical Pricing Posture" : "High Pricing Risk"} — Advisory escalation created. Testing may continue.
           </div>
         )}
         {!isRed && p.severity === "Medium" && (

@@ -2,6 +2,21 @@
 // HALA COMMERCIAL ENGINE — GOVERNANCE ENGINE
 // Shell Rules Doctrine Implementation
 // ============================================================
+// ⚠️ FUTURE WIRE — GOVERNANCE DATA IS IN-MEMORY MOCK
+// ════════════════════════════════════════════════════
+// Policy gate configs, audit logs, override records, and versioned
+// entities are all in-memory arrays. Nothing persists across reloads.
+// The governance LOGIC is production-ready; the DATA needs Supabase.
+//
+// TARGET WIRING:
+//   policyGateConfigs[]     → Supabase `governance_policies` table
+//   governanceAuditLog[]    → Supabase `governance_audit_log` table
+//   overrideRecords[]       → Supabase `governance_overrides` table
+//   versionedEntities[]     → Supabase `versioned_entities` table
+//   Role permissions        → Supabase `user_roles` / `role_permissions`
+//
+// DO NOT add more hardcoded policies. Wire to Supabase when ready.
+// ============================================================
 // This module implements ALL 9 compliance points:
 // 1. Policy Gate Enforcement Structure
 // 2. Override ("Break Glass") Doctrine
@@ -874,14 +889,4 @@ export function getComplianceStatus(): Record<string, { status: "implemented" | 
   };
 }
 
-// Seed some initial governance audit entries
-governanceAuditLog.push(
-  { id: "ga1", category: "admin_change", action: "system_initialized", entityType: "system", entityId: "global", userId: "u1", userName: "Amin Al-Rashid", timestamp: "2026-01-01T00:00:00Z", details: "Governance Engine initialized. All 8 policy gates configured.", metadata: { gateCount: 8 } },
-  { id: "ga2", category: "gate_evaluation", action: "gate_blocked", entityType: "quote", entityId: "q3", userId: "u3", userName: "Albert Fernandez", timestamp: "2026-02-06T09:00:00Z", details: "Commercial Approval Gate BLOCKED: Quote q3 GP% at 15.2% — requires Director approval", metadata: { gateId: "pg1", gpPercent: 15.2, ruleVersion: 1 } },
-  { id: "ga3", category: "approval_decision", action: "approved", entityType: "quote", entityId: "q2", userId: "u2", userName: "Ra'ed Al-Harbi", timestamp: "2026-01-22T10:30:00Z", details: "Quote q2 approved by Regional Sales Head — Margin acceptable for renewal", metadata: { gpPercent: 24.5, palletVolume: 1200 } },
-  { id: "ga4", category: "stage_control", action: "stage_transition_approved", entityType: "workspace", entityId: "w2", userId: "u3", userName: "Albert Fernandez", timestamp: "2026-02-14T09:00:00Z", details: "Stage transition: proposal_active → negotiation", metadata: { fromStage: "proposal_active", toStage: "negotiation" } },
-  { id: "ga5", category: "write_action", action: "quote_created", entityType: "quote", entityId: "q1", userId: "u2", userName: "Ra'ed Al-Harbi", timestamp: "2026-02-10T11:30:00Z", details: "Quote v1 created for Ma'aden Jubail Expansion 2500PP", metadata: { version: 1, workspaceId: "w1" } },
-  { id: "ga6", category: "versioning", action: "version_locked", entityType: "proposal", entityId: "p2", userId: "u6", userName: "Mohammed Al-Qahtani", timestamp: "2026-01-18T16:45:00Z", details: "Proposal v3 locked as immutable — Aramco VAS Expansion", metadata: { version: 3, hasPricingSnapshot: true } },
-  { id: "ga7", category: "ai_restriction", action: "ai_action_blocked", entityType: "system", entityId: "global", userId: "system", userName: "AI Agent", timestamp: "2026-02-12T08:00:00Z", details: "AI attempted to modify pricing on quote q1 — BLOCKED by hard-coded restriction", metadata: { attemptedAction: "modify_pricing", restriction: "air3" } },
-  { id: "ga8", category: "override", action: "override_executed", entityType: "quote", entityId: "q3", userId: "u6", userName: "Mohammed Al-Qahtani", timestamp: "2026-02-07T11:00:00Z", details: "Override EXECUTED for Commercial Approval Gate — Reason: Strategic client, volume growth expected in Q3", metadata: { gateId: "pg1", ruleVersion: 1 } },
-);
+// Governance audit entries are runtime/database truth only.

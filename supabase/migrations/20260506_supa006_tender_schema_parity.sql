@@ -111,9 +111,9 @@ ALTER TABLE tender_packs
   ADD COLUMN IF NOT EXISTS approvals_complete       INTEGER DEFAULT 0,
   ADD COLUMN IF NOT EXISTS mock_warnings            JSONB DEFAULT '[]'::JSONB,
   ADD COLUMN IF NOT EXISTS mock_actions             JSONB DEFAULT '[]'::JSONB,
-  ADD COLUMN IF NOT EXISTS tender_type              TEXT DEFAULT 'Multi-Pack Transport Tender',
-  ADD COLUMN IF NOT EXISTS readiness_score          INTEGER DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS risk_level               TEXT DEFAULT 'amber',
+  ADD COLUMN IF NOT EXISTS tender_type              TEXT,
+  ADD COLUMN IF NOT EXISTS readiness_score          INTEGER,
+  ADD COLUMN IF NOT EXISTS risk_level               TEXT,
   ADD COLUMN IF NOT EXISTS crm_sync_status          TEXT DEFAULT 'not_synced',
   ADD COLUMN IF NOT EXISTS submission_model         TEXT DEFAULT 'multi_pack';
 
@@ -184,9 +184,9 @@ ALTER TABLE tender_submission_gates
   ADD COLUMN IF NOT EXISTS gate_description        TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS severity                TEXT DEFAULT 'medium',
   ADD COLUMN IF NOT EXISTS category                TEXT DEFAULT '',
-  ADD COLUMN IF NOT EXISTS enforcement_mode        TEXT DEFAULT 'mock_only',
-  ADD COLUMN IF NOT EXISTS runtime_mode            TEXT DEFAULT 'development_marker',
-  ADD COLUMN IF NOT EXISTS is_mock                 BOOLEAN DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS enforcement_mode        TEXT DEFAULT 'warn_future',
+  ADD COLUMN IF NOT EXISTS runtime_mode            TEXT DEFAULT 'warning_only',
+  ADD COLUMN IF NOT EXISTS is_mock                 BOOLEAN DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS would_block             BOOLEAN DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS would_block_reason      TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS allow_test_bypass       BOOLEAN DEFAULT TRUE,
@@ -213,7 +213,7 @@ ALTER TABLE tender_activity_events
   ADD COLUMN IF NOT EXISTS role         TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS related_pack TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS related_module TEXT DEFAULT '',
-  ADD COLUMN IF NOT EXISTS mock         BOOLEAN DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS mock         BOOLEAN DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS description  TEXT DEFAULT '';
 
 -- ────────────────────────────────────────────────────────────────
@@ -228,7 +228,7 @@ ALTER TABLE tender_audit_events
   ADD COLUMN IF NOT EXISTS before_state  TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS after_state   TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS severity      TEXT DEFAULT 'info',
-  ADD COLUMN IF NOT EXISTS mock          BOOLEAN DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS mock          BOOLEAN DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS action        TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS entity_type   TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS entity_id     TEXT DEFAULT '',
@@ -249,7 +249,7 @@ CREATE TABLE IF NOT EXISTS tender_split_checks (
   status                   TEXT DEFAULT 'not_checked',
   severity                 TEXT DEFAULT 'medium',
   would_block_in_production BOOLEAN DEFAULT FALSE,
-  mock_resolution          TEXT DEFAULT '',
+  advisory_resolution      TEXT DEFAULT '',
   notes                    TEXT DEFAULT ''
 );
 
@@ -269,13 +269,13 @@ CREATE TABLE IF NOT EXISTS tender_pack_outputs (
   output_type                  TEXT DEFAULT '',
   format                       TEXT DEFAULT 'PDF',
   version                      TEXT DEFAULT 'v1',
-  status                       TEXT DEFAULT 'draft_mock',
+  status                       TEXT,
   generated_by                 TEXT DEFAULT '',
   generated_at                 TIMESTAMPTZ DEFAULT NOW(),
-  watermark                    TEXT DEFAULT 'TEST OUTPUT — NOT FOR CLIENT SUBMISSION',
-  is_test_output               BOOLEAN DEFAULT TRUE,
+  watermark                    TEXT,
+  is_test_output               BOOLEAN,
   would_be_submittable_in_production BOOLEAN DEFAULT FALSE,
-  mock_warnings_count          INTEGER DEFAULT 0,
+  mock_warnings_count          INTEGER,
   notes                        TEXT DEFAULT ''
 );
 
@@ -297,7 +297,7 @@ CREATE TABLE IF NOT EXISTS tender_submission_emails (
   subject              TEXT DEFAULT '',
   body                 TEXT DEFAULT '',
   attachment_size_mb   NUMERIC DEFAULT 0,
-  status               TEXT DEFAULT 'draft_mock',
+  status               TEXT,
   simulated            BOOLEAN DEFAULT FALSE,
   submitted_by         TEXT DEFAULT '',
   submitted_at         TIMESTAMPTZ,
@@ -320,7 +320,7 @@ CREATE TABLE IF NOT EXISTS tender_submission_email_attachments (
   format        TEXT DEFAULT 'PDF',
   required      BOOLEAN DEFAULT FALSE,
   included      BOOLEAN DEFAULT FALSE,
-  status        TEXT DEFAULT 'ready_mock',
+  status        TEXT,
   size_mb       NUMERIC DEFAULT 0,
   notes         TEXT DEFAULT ''
 );

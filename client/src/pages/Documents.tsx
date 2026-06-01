@@ -44,12 +44,6 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
-  workspaces,
-  customers,
-  quotes,
-  proposals,
-} from "@/lib/store";
-import {
   generateQuotePDF,
   generateProposalPDF,
   generatePnLPDF,
@@ -70,16 +64,11 @@ interface GeneratedDoc {
   crmExported: boolean;
 }
 
-const mockGeneratedDocs: GeneratedDoc[] = [
-  { id: "d1", name: "Unilever Arabia — Warehousing Quote v1", type: "quote", workspace: "Unilever Dammam New SOW", customer: "Unilever Arabia", date: "2026-02-08", version: 1, crmExported: true },
-  { id: "d2", name: "Aramco Services — VAS Expansion Proposal v3", type: "proposal", workspace: "Aramco Dhahran VAS Expansion", customer: "Aramco Services", date: "2026-01-15", version: 3, crmExported: true },
-  { id: "d3", name: "Sadara Chemical — Quote v2", type: "quote", workspace: "Sadara Contract Renewal 2025", customer: "Sadara Chemical", date: "2026-01-20", version: 2, crmExported: false },
-  { id: "d4", name: "Ma'aden Jubail — P&L Summary", type: "pnl", workspace: "Ma'aden Jubail Expansion 2500PP", customer: "Ma'aden", date: "2026-02-10", version: 1, crmExported: false },
-  { id: "d5", name: "Nestlé KSA — SLA Draft v1", type: "sla", workspace: "Nestlé Jeddah Cold Chain", customer: "Nestlé KSA", date: "2026-02-11", version: 1, crmExported: false },
-  { id: "d6", name: "SABIC — ECR Scorecard", type: "ecr_scorecard", customer: "SABIC", date: "2026-02-12", version: 1, crmExported: false },
-  { id: "d7", name: "Almarai — ECR Scorecard", type: "ecr_scorecard", customer: "Almarai", date: "2026-02-12", version: 1, crmExported: false },
-  { id: "d8", name: "Bayer Middle East — Proposal v1", type: "proposal", workspace: "Bayer Pharma Logistics", customer: "Bayer Middle East", date: "2026-02-09", version: 1, crmExported: true },
-];
+const generatedDocs: GeneratedDoc[] = [];
+const workspaces: any[] = [];
+const customers: any[] = [];
+const quotes: any[] = [];
+const proposals: any[] = [];
 
 const typeIcons: Record<PDFDocumentType, React.ElementType> = {
   quote: FileText,
@@ -113,7 +102,7 @@ export default function Documents() {
   const [selectedType, setSelectedType] = useState<PDFDocumentType>("quote");
   const [selectedWorkspace, setSelectedWorkspace] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState("");
-  const [docs] = useState(mockGeneratedDocs);
+  const [docs] = useState(generatedDocs);
 
   // In-app PDF preview state (replaces window.open + print)
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -424,8 +413,8 @@ export default function Documents() {
                 <AlertTriangle className="w-4 h-4 text-muted-foreground" />
                 <span className="text-sm font-medium">CRM Status</span>
               </div>
-              <div className="text-sm font-medium mt-1">Mock Mode</div>
-              <p className="text-xs text-muted-foreground mt-1">Connect Zoho API to enable live export</p>
+              <div className="text-sm font-medium mt-1">Not connected</div>
+              <p className="text-xs text-muted-foreground mt-1">Connect Zoho API before enabling live export</p>
             </div>
           </div>
         </CardContent>

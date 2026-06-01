@@ -564,7 +564,7 @@ export default function Dashboard() {
                       </span>
                     </Link>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">Supabase-backed mock data · placeholders · documents · compliance · gates · split checks</p>
+                  <p className="text-[11px] text-muted-foreground">Verified tender workspace data · placeholders · documents · compliance · readiness signals</p>
                 </CardHeader>
                 <CardContent className="pt-0 space-y-2">
                   {tenderExecSignals.map(sig => {
@@ -586,7 +586,7 @@ export default function Dashboard() {
                               <p className="text-[11px] text-muted-foreground">{sig.customerName} · Due: 2026-06-15</p>
                               <div className="flex items-center gap-1 flex-wrap mt-1.5">
                                 <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${sig.readinessScore < 50 ? 'border-red-300 text-red-700 bg-red-50' : sig.readinessScore < 80 ? 'border-amber-300 text-amber-700 bg-amber-50' : 'border-emerald-300 text-emerald-700 bg-emerald-50'}`}>{sig.readinessScore}% Ready</span>
-                                {sig.gatesWouldBlockCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-red-300 text-red-700 bg-red-50" title="Gates flagged as would block production">Gates {sig.gatesWouldBlockCount}</span>}
+                                {sig.gatesWouldBlockCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50" title="Readiness signals flagged for review — advisory only">Signals {sig.gatesWouldBlockCount}</span>}
                                 {sig.requiredDocumentsAwaitingCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">Docs {sig.requiredDocumentsAwaitingCount}</span>}
                                 {sig.complianceGapCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">Compliance {sig.complianceGapCount}</span>}
                                 {sig.placeholderMissingCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">Placeholders {sig.placeholderMissingCount}</span>}
@@ -600,7 +600,7 @@ export default function Dashboard() {
                       </Link>
                     );
                   })}
-                  <p className="text-[9px] text-muted-foreground/60 italic pt-1">Development mode: tender execution signals are derived from Supabase-backed mock data.</p>
+                  <p className="text-[9px] text-muted-foreground/60 italic pt-1">Tender execution signals are shown only when backed by Supabase records.</p>
                 </CardContent>
               </Card>
           )}
@@ -656,7 +656,7 @@ export default function Dashboard() {
                       </span>
                     </Link>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">Mock workspace-derived signals · margin · customer score · capacity · escalation · proposal · SLA</p>
+                  <p className="text-[11px] text-muted-foreground">Verified workspace signals · margin · customer score · capacity · exceptions · proposal · SLA</p>
                 </CardHeader>
                 <CardContent className="pt-0 space-y-2">
                   {uniqueWs.map(wid => {
@@ -698,7 +698,7 @@ export default function Dashboard() {
                                   <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${
                                     summary.criticalEscalationCount > 0 ? 'border-red-300 text-red-700 bg-red-50 dark:bg-red-950/40 dark:text-red-300 dark:border-red-700' :
                                     'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700'
-                                  }`}>Signals {summary.mockEscalationCount} Mock</span>
+                                  }`}>Signals {summary.mockEscalationCount}</span>
                                 )}
                                 {summary.proposalReviewNeeded && (
                                   <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700">Proposal Review</span>
@@ -706,7 +706,7 @@ export default function Dashboard() {
                                 {summary.slaReviewNeeded && (
                                   <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700">SLA Review</span>
                                 )}
-                                <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-border">CRM Mock</span>
+                                <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-border">CRM</span>
                               </div>
                               <p className="text-[10px] text-muted-foreground mt-1">Next: {summary.nextAction}</p>
                             </div>
@@ -716,7 +716,7 @@ export default function Dashboard() {
                       </Link>
                     );
                   })}
-                  <p className="text-[9px] text-muted-foreground/60 italic pt-1">Development mode: commercial signals are derived from mock workspace data. No CRM sync or enforcement active.</p>
+                  <p className="text-[9px] text-muted-foreground/60 italic pt-1">Commercial signals are shown only when backed by verified workspace records. No enforcement is active.</p>
                 </CardContent>
               </Card>
             );

@@ -65,7 +65,7 @@ export default function OverrideDialog({ open, gateName, details, onOverride, on
         {/* Footer */}
         <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
           <p className="text-[10px] text-gray-500">
-            Override logged under: <strong>Amin Al-Rashid</strong> (Director)
+            Override will be logged under the current authenticated user.
           </p>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={onCancel} className="text-xs">

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * CW-003: P&L Snapshot + Margin Authority Panels
  * Mock-only — no real P&L engine, no approval enforcement.
  * SUPA-004: Actions now write to Supabase.
@@ -179,7 +179,7 @@ export function PnlSnapshotPanel({ pnl, workspaceId, scenarioId, scenarioName, o
             if (workspaceId) {
               const result = await markPnlReviewedMock(scenarioId ?? 'unknown', workspaceId, scenarioName ?? 'Unknown Scenario', actor);
               if (result.success) { toast.success("P&L review saved to Supabase. No production approval triggered."); onActionComplete?.(); }
-              else { toast.error(`Mock action could not be saved to Supabase: ${result.error}`); }
+              else { toast.error(`Advisory action could not be saved to Supabase: ${result.error}`); }
             } else { toast.info("P&L review logged (mock). No backend update."); }
           }}>
             <Eye className="w-3 h-3" /> Review P&L Mock
@@ -226,7 +226,7 @@ export function MarginAuthorityPanel({ signal, workspaceId, scenarioName, onActi
             <p className={`text-[10px] mt-0.5 ${sev.text}`}>{signal.reason}</p>
             {signal.mockEscalationCreated && (
               <p className={`text-[10px] mt-1 font-medium ${sev.text}`}>
-                Mock escalation created — testing may continue.
+                Advisory escalation created — testing may continue.
               </p>
             )}
           </div>
@@ -283,7 +283,7 @@ export function MarginAuthorityPanel({ signal, workspaceId, scenarioName, onActi
                   beforeState: `${signal.gpPercent.toFixed(1)}% GP`, afterState: 'Mock Reviewed', severity: 'Info' }
               );
               if (result.success) { toast.success("Mock margin review saved to Supabase."); onActionComplete?.(); }
-              else { toast.error(`Mock action could not be saved: ${result.error}`); }
+              else { toast.error(`Advisory action could not be saved: ${result.error}`); }
             } else { toast.info("Margin authority reviewed (mock). No backend update."); }
           }}>
             <Eye className="w-3 h-3" /> Mark Margin Reviewed Mock
@@ -300,7 +300,7 @@ export function MarginAuthorityPanel({ signal, workspaceId, scenarioName, onActi
                   beforeState: `${signal.gpPercent.toFixed(1)}% GP`, afterState: 'Testing Bypass', severity: 'Info' }
               );
               if (result.success) { toast.success("Testing bypass saved to Supabase."); onActionComplete?.(); }
-              else { toast.error(`Mock action could not be saved: ${result.error}`); }
+              else { toast.error(`Advisory action could not be saved: ${result.error}`); }
             } else { toast.info("Continue for testing — no enforcement applied."); }
           }}>
             <Play className="w-3 h-3" /> Continue for Testing

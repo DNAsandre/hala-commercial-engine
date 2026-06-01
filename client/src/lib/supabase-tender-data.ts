@@ -18,6 +18,10 @@ import type {
   TenderPackSection,
   TenderPlaceholder,
   TenderRequiredDocument,
+  TenderDocument,
+  TenderDocumentCategory,
+  TenderDocumentStatus,
+  TenderStageRelevance,
   TenderComplianceItem,
   TenderMockGate,
   TenderActivityEvent,
@@ -48,6 +52,12 @@ import type {
   PackSectionStatus,
   PackSectionApproval,
 } from './tender-workspace-data';
+import {
+  TENDER_DOCUMENT_CATEGORIES,
+  TENDER_DOCUMENT_STATUSES,
+  TENDER_STAGE_RELEVANCE,
+} from './tender-workspace-data';
+import { normalizeTenderPricingData } from './tender-pricing-types';
 
 // ─── Bundle type ────────────────────────────────────────────
 
@@ -56,6 +66,7 @@ export interface TenderWorkspaceBundle {
   packs: TenderPack[];
   placeholders: TenderPlaceholder[];
   requiredDocuments: TenderRequiredDocument[];
+  documents: TenderDocument[];
   complianceItems: TenderComplianceItem[];
   mockGates: TenderMockGate[];
   activityEvents: TenderActivityEvent[];
@@ -89,8 +100,8 @@ function mapSection(row: any): TenderPackSection {
 function mapPack(row: any, sections: TenderPackSection[]): TenderPack {
   const packSections = sections.filter(s => s.packId === row.id);
   const rb = row.readiness_breakdown ?? row.total_readiness_percent
-    ? { sections: 0, placeholders: 0, required_documents: 0, compliance: 0, mock_gates: 0, outputs: 0 }
-    : { sections: 0, placeholders: 0, required_documents: 0, compliance: 0, mock_gates: 0, outputs: 0 };
+    ? { sections: 0, placeholders: 0, required_documents: 0, compliance: 0, readiness_signals: 0, outputs: 0 }
+    : { sections: 0, placeholders: 0, required_documents: 0, compliance: 0, readiness_signals: 0, outputs: 0 };
   let readinessBreakdown = rb;
   try {
     if (row.readiness_breakdown && typeof row.readiness_breakdown === 'object') {
@@ -208,10 +219,10 @@ function mapGate(row: any): TenderMockGate {
     status: (row.status ?? 'not_started') as MockGateStatus,
     severity: (row.severity ?? 'medium') as GateSeverity,
     category: (row.category ?? 'placeholder') as GateCategory,
-    enforcementMode: (row.enforcement_mode ?? 'mock_only') as GateEnforcement,
-    runtimeMode: (row.runtime_mode ?? 'development_marker') as GateRuntime,
+    enforcementMode: (row.enforcement_mode ?? 'warn_future') as GateEnforcement,
+    runtimeMode: (row.runtime_mode ?? 'warning_only') as GateRuntime,
     doctrineRequired: row.doctrine ?? false,
-    isMock: row.is_mock ?? true,
+    isMock: row.is_mock ?? false,
     wouldBlock: row.would_block ?? false,
     wouldBlockReason: row.would_block_reason ?? '',
     allowTestBypass: row.allow_test_bypass ?? true,
@@ -238,7 +249,7 @@ function mapActivityEvent(row: any): TenderActivityEvent {
     relatedPack: row.related_pack ?? undefined,
     relatedModule: row.related_module ?? undefined,
     severity: (row.severity ?? 'info') as EventSeverity,
-    mock: row.mock ?? true,
+    mock: row.mock ?? false,
     notes: undefined,
   };
 }
@@ -262,8 +273,47 @@ function mapAuditEntry(row: any): TenderAuditEntry {
     beforeState: row.before_state ?? undefined,
     afterState: row.after_state ?? undefined,
     severity: (row.severity ?? 'info') as EventSeverity,
-    mock: row.mock ?? true,
+    mock: row.mock ?? false,
     traceId: row.trace_id ?? undefined,
+    notes: undefined,
+  };
+}
+
+function mapTicketAuditToActivity(row: any): TenderActivityEvent {
+  return {
+    id: row.id,
+    tenderWorkspaceId: row.ticket_id,
+    eventType: row.field_changed ?? row.action ?? '',
+    title: row.field_changed ?? row.action ?? 'Ticket audit',
+    description: row.notes ?? '',
+    category: 'workspace',
+    userId: row.user_name ?? '',
+    userName: row.user_name ?? '',
+    timestamp: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+    severity: 'info',
+    mock: false,
+    notes: undefined,
+  };
+}
+
+function mapTicketAuditToAuditEntry(row: any): TenderAuditEntry {
+  return {
+    id: row.id,
+    tenderWorkspaceId: row.ticket_id,
+    action: row.action ?? '',
+    eventCode: row.field_changed ?? undefined,
+    eventName: row.field_changed ?? undefined,
+    entityType: 'commercial_ticket',
+    entityId: row.ticket_id,
+    category: 'SYSTEM',
+    userId: row.user_name ?? '',
+    userName: row.user_name ?? '',
+    timestamp: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+    details: row.notes ?? '',
+    beforeState: row.old_value ?? undefined,
+    afterState: row.new_value ?? undefined,
+    severity: 'info',
+    mock: false,
     notes: undefined,
   };
 }
@@ -281,9 +331,19 @@ function mapTender(row: any): Tender {
     probabilityPercent: row.probability_percent ?? 0,
     assignedOwner: row.assigned_owner ?? '',
     assignedTeamMembers: Array.isArray(row.assigned_team_members) ? row.assigned_team_members : [],
-    status: (row.phase ?? 'identified') as Tender['status'],
-    source: (row.source ?? 'Direct') as Tender['source'],
-    region: (row.region ?? 'East') as Tender['region'],
+    /** Internal tender process stage — read from tenders.phase */
+    status: (row.phase ?? '') as Tender['status'],
+    /** CRM Pipeline stage — read from tenders.crm_pipeline_stage (TND-003) */
+    crmPipelineStage: (row.crm_pipeline_stage ?? '') as Tender['crmPipelineStage'],
+    source: (row.source ?? '') as Tender['source'],
+    region: (row.region ?? '') as Tender['region'],
+    // Tender Execution Scope — operational delivery geography
+    executionRegions: Array.isArray(row.execution_regions) ? row.execution_regions : [],
+    targetSites: Array.isArray(row.target_sites) ? row.target_sites : [],
+    executionType: row.execution_type ?? '',
+    geographicComplexity: row.geographic_complexity ?? '',
+    siteCount: row.site_count ?? 0,
+    executionNotes: row.execution_notes ?? '',
     createdAt: row.created_at ? new Date(row.created_at).toISOString().slice(0, 10) : '',
     updatedAt: row.updated_at ? new Date(row.updated_at).toISOString().slice(0, 10) : '',
     daysInStatus: row.days_in_status ?? 0,
@@ -292,110 +352,309 @@ function mapTender(row: any): Tender {
   };
 }
 
+// ─── Stage normalizers (commercial_tickets → Tender types) ───
+
+const CRM_STAGE_MAP: Record<string, Tender['crmPipelineStage']> = {
+  'prospecting': 'prospecting',
+  'qualified': 'qualified',
+  'proposal sent': 'proposal_sent',
+  'proposal_sent': 'proposal_sent',
+  'shortlisted': 'shortlisted',
+  'contract negotiation': 'contract_negotiation',
+  'contract_negotiation': 'contract_negotiation',
+  'closed won': 'closed_won',
+  'closed_won': 'closed_won',
+  'contract signed': 'contract_signed',
+  'contract_signed': 'contract_signed',
+  'operational handover': 'operational_handover',
+  'operational_handover': 'operational_handover',
+  'closed lost': 'closed_lost',
+  'closed_lost': 'closed_lost',
+  'discontinued': 'discontinued',
+};
+
+function normalizeCrmStage(value: string | null | undefined): Tender['crmPipelineStage'] {
+  if (!value) return 'prospecting';
+  return CRM_STAGE_MAP[value.toLowerCase().trim()] ?? 'prospecting';
+}
+
+function normalizeInternalTenderStage(value: string | null | undefined): Tender['status'] {
+  // Tender.status is TenderMilestone — same union as crmPipelineStage.
+  // commercial_tickets.internal_stage may carry values like "identified",
+  // "qualification", "bid_no_bid" which are NOT in TenderMilestone.
+  // For compatibility, map to the closest valid milestone.
+  if (!value) return 'prospecting';
+  const lower = value.toLowerCase().trim();
+  const direct = CRM_STAGE_MAP[lower];
+  if (direct) return direct;
+  // Best-effort fallback for non-CRM internal stages
+  if (lower === 'identified' || lower === 'new') return 'prospecting';
+  if (lower === 'qualification' || lower === 'qualifying') return 'qualified';
+  if (lower.includes('bid')) return 'qualified';
+  if (lower.includes('submission') || lower.includes('preparing')) return 'proposal_sent';
+  if (lower.includes('review') || lower.includes('evaluation')) return 'shortlisted';
+  if (lower.includes('negotiation')) return 'contract_negotiation';
+  if (lower.includes('award') || lower.includes('won')) return 'closed_won';
+  if (lower.includes('lost')) return 'closed_lost';
+  if (lower.includes('withdrawn') || lower.includes('cancel')) return 'discontinued';
+  return 'prospecting';
+}
+
+const REGION_MAP: Record<string, Tender['region']> = {
+  'east': 'East',
+  'central': 'Central',
+  'west': 'West',
+  'global': 'Global',
+};
+
+function normalizeRegion(value: string | null | undefined): Tender['region'] {
+  if (!value) return 'East';
+  return REGION_MAP[value.toLowerCase().trim()] ?? 'East';
+}
+
+const SOURCE_MAP: Record<string, Tender['source']> = {
+  'crm': 'CRM',
+  'direct': 'Direct',
+  'referral': 'Referral',
+};
+
+function normalizeSource(value: string | null | undefined): Tender['source'] {
+  if (!value) return 'Direct';
+  return SOURCE_MAP[value.toLowerCase().trim()] ?? 'Direct';
+}
+
+function normalizeTenderDocumentCategory(value: unknown): TenderDocumentCategory {
+  return TENDER_DOCUMENT_CATEGORIES.includes(value as TenderDocumentCategory) ? value as TenderDocumentCategory : 'Generated';
+}
+
+function normalizeTenderDocumentStatus(value: unknown): TenderDocumentStatus {
+  return TENDER_DOCUMENT_STATUSES.includes(value as TenderDocumentStatus) ? value as TenderDocumentStatus : 'Uploaded';
+}
+
+function normalizeTenderStageRelevance(value: unknown): TenderStageRelevance[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is TenderStageRelevance => TENDER_STAGE_RELEVANCE.includes(item as TenderStageRelevance));
+}
+
+function normalizeTenderDocument(raw: any, tenderId: string): TenderDocument | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = typeof raw.id === 'string' && raw.id ? raw.id : null;
+  const name = typeof raw.document_name === 'string' && raw.document_name.trim() ? raw.document_name.trim() : '';
+  if (!id || !name) return null;
+  return {
+    id,
+    tender_id: typeof raw.tender_id === 'string' && raw.tender_id ? raw.tender_id : tenderId,
+    document_name: name,
+    document_category: normalizeTenderDocumentCategory(raw.document_category),
+    document_type: typeof raw.document_type === 'string' ? raw.document_type : '',
+    file_url: typeof raw.file_url === 'string' ? raw.file_url : '',
+    storage_path: typeof raw.storage_path === 'string' ? raw.storage_path : '',
+    version: typeof raw.version === 'string' ? raw.version : String(raw.version ?? ''),
+    status: normalizeTenderDocumentStatus(raw.status),
+    stage_relevance: normalizeTenderStageRelevance(raw.stage_relevance),
+    owner: typeof raw.owner === 'string' ? raw.owner : '',
+    uploaded_by: typeof raw.uploaded_by === 'string' ? raw.uploaded_by : '',
+    uploaded_at: typeof raw.uploaded_at === 'string' ? raw.uploaded_at : '',
+    received_date: typeof raw.received_date === 'string' ? raw.received_date : '',
+    expiry_date: typeof raw.expiry_date === 'string' ? raw.expiry_date : '',
+    required_for_submission: Boolean(raw.required_for_submission),
+    linked_requirement_id: typeof raw.linked_requirement_id === 'string' ? raw.linked_requirement_id : '',
+    linked_proposal_section: typeof raw.linked_proposal_section === 'string' ? raw.linked_proposal_section : '',
+    source_channel: typeof raw.source_channel === 'string' ? raw.source_channel : '',
+    buyer_reference_number: typeof raw.buyer_reference_number === 'string' ? raw.buyer_reference_number : '',
+    notes: typeof raw.notes === 'string' ? raw.notes : '',
+  };
+}
+
+function mapGeneratedRowToTenderDocument(row: any, tenderId: string): TenderDocument | null {
+  if (!row?.id || !row?.file_name) return null;
+  const statusMap: Record<string, TenderDocumentStatus> = {
+    final: 'Final',
+    archived: 'Superseded',
+    superseded: 'Superseded',
+    submitted: 'Submitted',
+  };
+  return {
+    id: row.id,
+    tender_id: tenderId,
+    document_name: row.file_name,
+    document_category: 'Generated',
+    document_type: row.document_type ?? '',
+    file_url: '',
+    storage_path: row.storage_path ?? '',
+    version: String(row.version_number ?? row.source_version ?? ''),
+    status: statusMap[String(row.status ?? '').toLowerCase()] ?? 'Uploaded',
+    stage_relevance: [],
+    owner: '',
+    uploaded_by: row.generated_by ?? '',
+    uploaded_at: row.generated_at ?? row.created_at ?? '',
+    received_date: '',
+    expiry_date: '',
+    required_for_submission: false,
+    linked_requirement_id: '',
+    linked_proposal_section: '',
+    source_channel: '',
+    buyer_reference_number: '',
+    notes: row.notes ?? '',
+  };
+}
+
+// ─── commercial_tickets → Tender mapper ──────────────────────
+
+function mapCommercialTicketToTender(row: any): Tender {
+  const typeDetails = (typeof row.type_details === 'object' && row.type_details) ? row.type_details : {};
+  return {
+    id: row.id,
+    linkedWorkspaceId: null,
+    customerId: row.customer_id ?? '',
+    customerName: row.customer_name ?? 'Not captured yet',
+    title: row.ticket_title ?? 'Not captured yet',
+    submissionDeadline: row.target_date ?? '',
+    estimatedValue: Number(row.estimated_value) || 0,
+    targetGpPercent: Number(row.target_gp_percent) || 0,
+    probabilityPercent: Number(row.probability_percent) || 0,
+    assignedOwner: row.owner ?? '',
+    assignedTeamMembers: Array.isArray(row.team_members) ? row.team_members : [],
+    status: normalizeInternalTenderStage(row.internal_stage),
+    crmPipelineStage: normalizeCrmStage(row.crm_pipeline_stage),
+    source: normalizeSource(typeDetails.source ?? row.source_type),
+    region: normalizeRegion(row.region),
+    executionRegions: Array.isArray(typeDetails.execution_regions) ? typeDetails.execution_regions : [],
+    targetSites: Array.isArray(typeDetails.target_sites) ? typeDetails.target_sites : [],
+    executionType: typeDetails.execution_type ?? '',
+    geographicComplexity: typeDetails.geographic_complexity ?? '',
+    siteCount: Array.isArray(typeDetails.target_sites) ? typeDetails.target_sites.length : 0,
+    executionNotes: row.notes ?? '',
+    createdAt: row.created_at ? new Date(row.created_at).toISOString().slice(0, 10) : '',
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString().slice(0, 10) : '',
+    daysInStatus: row.created_at
+      ? Math.max(0, Math.floor((Date.now() - new Date(row.created_at).getTime()) / 86400000))
+      : 0,
+    notes: row.notes ?? '',
+    crmSynced: false,
+    sowData: (typeDetails.sow_data && typeof typeDetails.sow_data === 'object') ? typeDetails.sow_data : undefined,
+    customerFitData: (typeDetails.customer_fit_data && typeof typeDetails.customer_fit_data === 'object') ? typeDetails.customer_fit_data : undefined,
+    sowQualificationData: (typeDetails.sow_qualification_data && typeof typeDetails.sow_qualification_data === 'object') ? typeDetails.sow_qualification_data : undefined,
+    technicalQualificationData: (typeDetails.technical_qualification_data && typeof typeDetails.technical_qualification_data === 'object') ? typeDetails.technical_qualification_data : undefined,
+    riskSnapshotData: (typeDetails.risk_snapshot_data && typeof typeDetails.risk_snapshot_data === 'object') ? typeDetails.risk_snapshot_data : undefined,
+    bidNoBidData: (typeDetails.bid_no_bid_data && typeof typeDetails.bid_no_bid_data === 'object') ? typeDetails.bid_no_bid_data : undefined,
+    solutionDesignData: (typeDetails.solution_design_data && typeof typeDetails.solution_design_data === 'object') ? typeDetails.solution_design_data : undefined,
+    pricingData: normalizeTenderPricingData(typeDetails.pricing),
+    tenderDraftingData: (typeDetails.tender_drafting && typeof typeDetails.tender_drafting === 'object') ? typeDetails.tender_drafting : undefined,
+  };
+}
+
 // ─── Fetch functions ─────────────────────────────────────────
 
 async function fetchTenderHeader(tenderId: string): Promise<Tender | null> {
-  const { data, error } = await supabase.from('tenders').select('*').eq('id', tenderId).maybeSingle();
-  if (error) { console.warn('[SUPA-006] fetchTenderHeader error:', error.message); return null; }
-  return data ? mapTender(data) : null;
+  const intake = await supabase
+    .from('commercial_tickets')
+    .select('*')
+    .eq('id', tenderId)
+    .eq('ticket_type', 'tender')
+    .eq('active', true)
+    .maybeSingle();
+
+  if (intake.error) {
+    console.warn('[SUPA-006] fetchTenderHeader commercial_tickets error:', intake.error.message);
+  }
+
+  if (intake.data) {
+    return mapCommercialTicketToTender(intake.data);
+  }
+
+  return null;
+}
+
+async function fetchTenderDocuments(tenderId: string): Promise<TenderDocument[]> {
+  const ticket = await supabase
+    .from('commercial_tickets')
+    .select('type_details')
+    .eq('id', tenderId)
+    .eq('ticket_type', 'tender')
+    .eq('active', true)
+    .maybeSingle();
+
+  if (ticket.error) console.warn('[SUPA-006] fetchTenderDocuments commercial_tickets error:', ticket.error.message);
+
+  const details = ticket.data?.type_details && typeof ticket.data.type_details === 'object' ? ticket.data.type_details as any : {};
+  const storedDocs = Array.isArray(details.documents)
+    ? details.documents.map((doc: any) => normalizeTenderDocument(doc, tenderId)).filter(Boolean) as TenderDocument[]
+    : [];
+
+  const generated = await supabase
+    .from('generated_documents')
+    .select('*')
+    .eq('source_type', 'tender')
+    .eq('source_id', tenderId)
+    .order('created_at', { ascending: false });
+
+  if (generated.error) {
+    console.warn('[SUPA-006] fetchTenderDocuments generated_documents error:', generated.error.message);
+    return storedDocs;
+  }
+
+  const storedIds = new Set(storedDocs.map(doc => doc.id));
+  const legacyDocs = (generated.data ?? [])
+    .map(row => mapGeneratedRowToTenderDocument(row, tenderId))
+    .filter((doc): doc is TenderDocument => !!doc && !storedIds.has(doc.id));
+
+  return [...storedDocs, ...legacyDocs];
 }
 
 async function fetchTenderPacks(tenderId: string): Promise<{ packs: TenderPack[]; sections: TenderPackSection[] }> {
-  const { data: packRows, error: packErr } = await supabase.from('tender_packs').select('*').eq('tender_workspace_id', tenderId);
-  if (packErr) { console.warn('[SUPA-006] fetchTenderPacks error:', packErr.message); return { packs: [], sections: [] }; }
-  if (!packRows?.length) return { packs: [], sections: [] };
-
-  const packIds = packRows.map(p => p.id);
-  const { data: sectionRows, error: secErr } = await supabase.from('tender_pack_sections').select('*').in('pack_id', packIds);
-  if (secErr) { console.warn('[SUPA-006] fetchTenderPackSections error:', secErr.message); }
-
-  const sections = (sectionRows ?? []).map(mapSection);
-  const packs = packRows.map(r => mapPack(r, sections));
-  return { packs, sections };
+  void tenderId;
+  return { packs: [], sections: [] };
 }
 
 async function fetchTenderPlaceholders(tenderId: string, packIds: string[]): Promise<TenderPlaceholder[]> {
-  if (!packIds.length) return [];
-  const { data, error } = await supabase.from('tender_placeholders').select('*').in('pack_id', packIds);
-  if (error) { console.warn('[SUPA-006] fetchTenderPlaceholders error:', error.message); return []; }
-  return (data ?? []).map(mapPlaceholder);
+  void tenderId; void packIds;
+  return [];
 }
 
 async function fetchTenderRequiredDocuments(packIds: string[]): Promise<TenderRequiredDocument[]> {
-  if (!packIds.length) return [];
-  const { data, error } = await supabase.from('tender_required_documents').select('*').in('pack_id', packIds);
-  if (error) { console.warn('[SUPA-006] fetchTenderRequiredDocuments error:', error.message); return []; }
-  return (data ?? []).map(mapRequiredDocument);
+  void packIds;
+  return [];
 }
 
 async function fetchTenderComplianceItems(packIds: string[]): Promise<TenderComplianceItem[]> {
-  if (!packIds.length) return [];
-  const { data, error } = await supabase.from('tender_compliance_items').select('*').in('pack_id', packIds);
-  if (error) { console.warn('[SUPA-006] fetchTenderComplianceItems error:', error.message); return []; }
-  return (data ?? []).map(mapComplianceItem);
+  void packIds;
+  return [];
 }
 
 async function fetchTenderGates(tenderId: string): Promise<TenderMockGate[]> {
-  const { data, error } = await supabase.from('tender_submission_gates').select('*');
-  if (error) { console.warn('[SUPA-006] fetchTenderGates error:', error.message); return []; }
-  // Filter by workspace_id if the column exists; otherwise return all gates linked to our pack ids
-  return (data ?? [])
-    .filter(r => r.tender_workspace_id === tenderId || r.tender_workspace_id === null || r.tender_workspace_id === '')
-    .map(r => ({ ...r, tender_workspace_id: tenderId }))
-    .map(mapGate);
+  void tenderId;
+  return [];
 }
 
 async function fetchTenderActivityEvents(tenderId: string): Promise<TenderActivityEvent[]> {
-  const { data, error } = await supabase.from('tender_activity_events').select('*').eq('workspace_id', tenderId).order('timestamp', { ascending: false });
-  if (error) { console.warn('[SUPA-006] fetchTenderActivityEvents error:', error.message); return []; }
-  return (data ?? []).map(mapActivityEvent);
+  const { data, error } = await supabase
+    .from('commercial_ticket_audit')
+    .select('*')
+    .eq('ticket_id', tenderId)
+    .order('created_at', { ascending: false });
+  if (error) { console.warn('[SUPA-006] fetchTenderActivityEvents commercial_ticket_audit error:', error.message); return []; }
+  return (data ?? []).map(mapTicketAuditToActivity);
 }
 
 async function fetchTenderAuditEntries(tenderId: string): Promise<TenderAuditEntry[]> {
-  const { data, error } = await supabase.from('tender_audit_events').select('*').eq('workspace_id', tenderId).order('timestamp', { ascending: false });
-  if (error) { console.warn('[SUPA-006] fetchTenderAuditEntries error:', error.message); return []; }
-  return (data ?? []).map(mapAuditEntry);
+  const { data, error } = await supabase
+    .from('commercial_ticket_audit')
+    .select('*')
+    .eq('ticket_id', tenderId)
+    .order('created_at', { ascending: false });
+  if (error) { console.warn('[SUPA-006] fetchTenderAuditEntries commercial_ticket_audit error:', error.message); return []; }
+  return (data ?? []).map(mapTicketAuditToAuditEntry);
 }
 
 async function fetchTenderSplitChecks(tenderId: string): Promise<TenderSplitCheck[]> {
-  const { data, error } = await supabase.from('tender_split_checks').select('*').eq('tender_workspace_id', tenderId);
-  if (error) { console.warn('[SUPA-006] fetchTenderSplitChecks error:', error.message); return []; }
-  return (data ?? []).map(row => ({
-    id: row.id,
-    checkName: row.check_name ?? '',
-    description: row.description ?? '',
-    category: row.category ?? 'cross_references',
-    sourcePackId: row.source_pack_id ?? '',
-    targetPackId: row.target_pack_id ?? '',
-    status: row.status ?? 'not_checked',
-    severity: row.severity ?? 'medium',
-    wouldBlockInProduction: row.would_block_in_production ?? false,
-    mockResolution: row.mock_resolution ?? '',
-    notes: row.notes ?? '',
-  }));
+  void tenderId;
+  return [];
 }
 
 async function fetchTenderPackOutputs(tenderId: string): Promise<TenderPackOutput[]> {
-  const { data, error } = await supabase.from('tender_pack_outputs').select('*').eq('tender_workspace_id', tenderId);
-  if (error) { console.warn('[SUPA-006] fetchTenderPackOutputs error:', error.message); return []; }
-  return (data ?? []).map(row => ({
-    id: row.id,
-    outputName: row.output_name ?? '',
-    tenderPackId: row.tender_pack_id ?? '',
-    packName: row.pack_name ?? '',
-    sourcePackId: row.source_pack_id ?? '',
-    outputType: row.output_type ?? '',
-    format: row.format ?? 'PDF',
-    version: row.version ?? 'v1',
-    status: row.status ?? 'draft_mock',
-    generatedBy: row.generated_by ?? '',
-    generatedAt: row.generated_at ? new Date(row.generated_at).toISOString() : '',
-    watermark: row.watermark ?? '',
-    isTestOutput: row.is_test_output ?? true,
-    wouldBeSubmittableInProduction: row.would_be_submittable_in_production ?? false,
-    mockWarningsCount: row.mock_warnings_count ?? 0,
-    notes: row.notes ?? '',
-  }));
+  void tenderId;
+  return [];
 }
 
 export async function insertTenderPackOutput(output: {
@@ -416,73 +675,13 @@ export async function insertTenderPackOutput(output: {
   mockWarningsCount: number;
   notes: string;
 }): Promise<boolean> {
-  const { error } = await supabase.from('tender_pack_outputs').insert({
-    id: output.id,
-    tender_workspace_id: output.tenderId,
-    tender_pack_id: output.tenderPackId,
-    pack_name: output.packName,
-    source_pack_id: output.sourcePackId,
-    output_name: `${output.packName} — TEST OUTPUT`,
-    output_type: output.outputType,
-    format: output.format,
-    version: output.version,
-    status: output.status,
-    generated_by: output.generatedBy,
-    generated_at: output.generatedAt,
-    watermark: output.watermark,
-    is_test_output: output.isTestOutput,
-    would_be_submittable_in_production: output.wouldBeSubmittableInProduction,
-    mock_warnings_count: output.mockWarningsCount,
-    notes: output.notes,
-  });
-  if (error) {
-    console.warn('[SUPA-006] insertTenderPackOutput error:', error.message);
-    return false;
-  }
-  return true;
+  console.warn('[SUPA-006] insertTenderPackOutput disabled. Use PDF Studio with verified document lineage before persisting outputs.', output.id);
+  return false;
 }
 
 async function fetchTenderSubmissionEmails(tenderId: string): Promise<TenderSubmissionEmail[]> {
-  const { data, error } = await supabase.from('tender_submission_emails').select('*').eq('tender_workspace_id', tenderId);
-  if (error) { console.warn('[SUPA-006] fetchTenderSubmissionEmails error:', error.message); return []; }
-  // Also fetch attachments for each email
-  const emails = data ?? [];
-  const emailIds = emails.map((e: any) => e.id);
-  let attachments: any[] = [];
-  if (emailIds.length > 0) {
-    const { data: attData } = await supabase.from('tender_submission_email_attachments').select('*').in('email_id', emailIds);
-    attachments = attData ?? [];
-  }
-  return emails.map((row: any) => ({
-    id: row.id,
-    tenderPackId: row.tender_pack_id ?? '',
-    packName: row.pack_name ?? '',
-    emailType: row.email_type ?? 'bulk_submission',
-    to: row.to_address ?? '',
-    ccExternal: row.cc_external ?? '',
-    ccInternal: row.cc_internal ?? '',
-    subject: row.subject ?? '',
-    body: row.body ?? '',
-    attachments: attachments.filter((a: any) => a.email_id === row.id).map((a: any) => ({
-      id: a.id,
-      fileName: a.file_name ?? '',
-      documentType: a.document_type ?? '',
-      format: a.format ?? 'PDF',
-      required: a.required ?? false,
-      included: a.included ?? false,
-      status: a.status ?? 'missing',
-      sizeMb: Number(a.size_mb ?? 0),
-      notes: a.notes ?? '',
-    })),
-    attachmentSizeMb: Number(row.attachment_size_mb ?? 0),
-    status: row.status ?? 'draft_mock',
-    simulated: row.simulated ?? false,
-    submittedBy: row.submitted_by ?? '',
-    submittedAt: row.submitted_at ?? null,
-    crmSyncStatus: row.crm_sync_status ?? 'not_synced',
-    warningsCount: row.warnings_count ?? 0,
-    notes: row.notes ?? '',
-  }));
+  void tenderId;
+  return [];
 }
 
 // ─── Bundle orchestrator ──────────────────────────────────────
@@ -499,9 +698,10 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
 
   const packIds = packs.map(p => p.id);
 
-  const [placeholders, requiredDocuments, complianceItems, mockGates, splitChecks, packOutputs, submissionEmails] = await Promise.all([
+  const [placeholders, requiredDocuments, documents, complianceItems, mockGates, splitChecks, packOutputs, submissionEmails] = await Promise.all([
     fetchTenderPlaceholders(tenderId, packIds),
     fetchTenderRequiredDocuments(packIds),
+    fetchTenderDocuments(tenderId),
     fetchTenderComplianceItems(packIds),
     fetchTenderGates(tenderId),
     fetchTenderSplitChecks(tenderId),
@@ -511,7 +711,7 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
 
   // Derive workspace-level fields from pack metadata (first pack with the fields)
   const anyPack = packs[0] as any;
-  const tenderType = (anyPack as any)?.tenderType ?? 'Multi-Pack Transport Tender';
+  const tenderType = (anyPack as any)?.tenderType ?? '';
   const readinessScore = packs.length > 0
     ? Math.round(packs.reduce((s, p) => s + p.readinessScore, 0) / packs.length)
     : 0;
@@ -525,6 +725,7 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
     packs,
     placeholders,
     requiredDocuments,
+    documents,
     complianceItems,
     mockGates,
     activityEvents,
@@ -535,7 +736,7 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
     tenderType,
     readinessScore,
     riskLevel,
-    crmSyncStatus: 'simulated',
+    crmSyncStatus: 'not_synced',
     submissionModel: packs.length > 1 ? 'multi_pack' : 'single_pack',
   };
 }
@@ -554,6 +755,7 @@ export function bundleToTenderWorkspace(bundle: TenderWorkspaceBundle): TenderWo
     packs: bundle.packs,
     placeholders: bundle.placeholders,
     requiredDocuments: bundle.requiredDocuments,
+    documents: bundle.documents,
     complianceItems: bundle.complianceItems,
     mockGates: bundle.mockGates,
     activityEvents: bundle.activityEvents,

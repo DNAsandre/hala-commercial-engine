@@ -10,6 +10,8 @@ import { getCurrentUser } from "./auth-state";
 import { supabase } from "./supabase";
 import { handleSupabaseError, setFetchError, clearFetchError } from "@/lib/supabase-error";
 import { optimisticUpdate } from "@/lib/optimistic-lock";
+import { fetchOperationalTicketsByType } from "./intake-save";
+import type { CommercialTicket } from "./unified-ticket-types";
 import type {
   User, Customer, Workspace, Quote, Proposal, ApprovalRecord,
   Signal, PolicyGate, PnLModel, HandoverTask, CRMSyncEvent, AuditEntry,
@@ -188,6 +190,31 @@ function mapProposal(row: any): Proposal {
     title: row.title,
     createdAt: row.created_at,
     sections: typeof row.sections === "string" ? JSON.parse(row.sections) : (row.sections || []),
+  };
+}
+
+function mapTicketStageToProposalState(stage?: string | null): Proposal["state"] {
+  const normalized = (stage ?? "").toLowerCase().trim();
+  if (normalized.includes("sent")) return "sent";
+  if (normalized.includes("negotiation")) return "negotiation_active";
+  if (normalized.includes("approval") || normalized.includes("signed")) return "commercial_approved";
+  if (normalized.includes("draft")) return "draft";
+  return "ready_for_crm";
+}
+
+function mapCommercialTicketToProposal(row: CommercialTicket): Proposal {
+  const details = (row.type_details && typeof row.type_details === "object")
+    ? row.type_details as Record<string, any>
+    : {};
+
+  return {
+    id: row.id,
+    workspaceId: row.legacy_workspace_id || details.linked_workspace_id || row.id,
+    version: Number(details.proposal_version ?? 1),
+    state: mapTicketStageToProposalState(row.internal_stage),
+    title: row.ticket_title || row.customer_name || "Not captured",
+    createdAt: row.created_at,
+    sections: [],
   };
 }
 
@@ -406,8 +433,8 @@ export async function fetchWorkspaces(): Promise<Workspace[]> {
 
 export async function fetchWorkspaceById(id: string): Promise<Workspace | null> {
   const { data, error } = await supabase.from("workspaces").select("*").eq("id", id).single();
-  if (error || !data) return null;
-  return mapWorkspace(data);
+  if (!error && data) return mapWorkspace(data);
+  return null;
 }
 
 export async function fetchWorkspacesByCustomer(customerId: string): Promise<Workspace[]> {
@@ -426,13 +453,29 @@ export async function fetchQuotesByWorkspace(workspaceId: string): Promise<Quote
 }
 
 export async function fetchProposals(): Promise<Proposal[]> {
-  const { data, error } = await supabase.from("proposals").select("*").order("created_at", { ascending: false });
-  return safeFetchList('fetchProposals', data, error, mapProposal, { silent: true });
+  const { data, error } = await fetchOperationalTicketsByType("proposal");
+  if (error) {
+    const err = { message: error };
+    handleSupabaseError("fetchProposals", err, { silent: true });
+    setFetchError("fetchProposals", err);
+    return [];
+  }
+  clearFetchError("fetchProposals");
+  return data.map(mapCommercialTicketToProposal);
 }
 
 export async function fetchProposalsByWorkspace(workspaceId: string): Promise<Proposal[]> {
-  const { data, error } = await supabase.from("proposals").select("*").eq("workspace_id", workspaceId);
-  return safeFetchList('fetchProposalsByWorkspace', data, error, mapProposal);
+  const { data, error } = await fetchOperationalTicketsByType("proposal");
+  if (error) {
+    const err = { message: error };
+    handleSupabaseError("fetchProposalsByWorkspace", err, { silent: true });
+    setFetchError("fetchProposalsByWorkspace", err);
+    return [];
+  }
+  clearFetchError("fetchProposalsByWorkspace");
+  return data
+    .map(mapCommercialTicketToProposal)
+    .filter(proposal => proposal.workspaceId === workspaceId || proposal.id === workspaceId);
 }
 
 export async function fetchApprovalRecords(): Promise<ApprovalRecord[]> {
@@ -529,18 +572,19 @@ export async function updateQuote(id: string, updates: Partial<Quote>, expectedU
 }
 
 export async function createProposal(proposal: Proposal): Promise<Proposal | null> {
-  const row = proposalToRow(proposal);
-  row.created_at = new Date().toISOString();
-  const { data, error } = await supabase.from("proposals").insert(row).select().single();
-  if (error) { handleSupabaseError('createProposal', error, { silent: true }); return null; }
-  return mapProposal(data);
+  handleSupabaseError("createProposal", {
+    message: "Legacy proposals table writes are disabled. Use the unified commercial_tickets intake path.",
+  }, { silent: true, entityId: proposal.id });
+  return null;
 }
 
 export async function updateProposal(id: string, updates: Partial<Proposal>, expectedUpdatedAt?: string): Promise<Proposal | null> {
-  const row = proposalToRow(updates);
-  const data = await optimisticUpdate("proposals", id, row, expectedUpdatedAt);
-  if (!data) return null;
-  return mapProposal(data);
+  handleSupabaseError("updateProposal", {
+    message: "Legacy proposals table updates are disabled. Use the unified commercial_tickets ticket update path.",
+  }, { silent: true, entityId: id });
+  void updates;
+  void expectedUpdatedAt;
+  return null;
 }
 
 export async function createApprovalRecord(record: ApprovalRecord): Promise<ApprovalRecord | null> {
@@ -767,29 +811,69 @@ export async function setPrimaryContact(contactId: string, customerId: string): 
 
 import type { Tender } from "./tender-engine";
 
-function mapTender(row: any): Tender {
+function normalizeTenderMilestone(value: unknown): Tender["status"] {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  const map: Record<string, Tender["status"]> = {
+    identified: "prospecting",
+    preparing_submission: "qualified",
+    submitted: "proposal_sent",
+    clarification: "shortlisted",
+    technical_review: "shortlisted",
+    commercial_review: "shortlisted",
+    negotiation: "contract_negotiation",
+    awarded: "closed_won",
+    won: "closed_won",
+    lost: "closed_lost",
+    withdrawn: "discontinued",
+    prospecting: "prospecting",
+    qualified: "qualified",
+    proposal_sent: "proposal_sent",
+    shortlisted: "shortlisted",
+    contract_negotiation: "contract_negotiation",
+    closed_won: "closed_won",
+    contract_signed: "contract_signed",
+    operational_handover: "operational_handover",
+    closed_lost: "closed_lost",
+    discontinued: "discontinued",
+  };
+  return map[normalized] ?? "prospecting";
+}
+
+function mapTender(row: CommercialTicket): Tender {
+  const details = (row.type_details && typeof row.type_details === "object" && !Array.isArray(row.type_details))
+    ? row.type_details as Record<string, any>
+    : {};
+
   return {
     id:                  row.id,
-    linkedWorkspaceId:   row.workspace_id ?? null,
+    linkedWorkspaceId:   row.legacy_workspace_id ?? details.linked_workspace_id ?? null,
     customerId:          row.customer_id ?? "",
     customerName:        row.customer_name ?? "",
-    title:               row.title ?? "",
-    submissionDeadline:  row.submission_deadline
-                           ? String(row.submission_deadline).slice(0, 10)
+    title:               row.ticket_title ?? "",
+    submissionDeadline:  details.submission_deadline || row.target_date
+                           ? String(details.submission_deadline || row.target_date).slice(0, 10)
                            : "",
-    estimatedValue:      Number(row.estimated_value) || 0,
-    targetGpPercent:     Number(row.target_gp_percent) || 0,
-    probabilityPercent:  Number(row.probability_percent) || 0,
+    estimatedValue:      row.estimated_value === null ? 0 : Number(row.estimated_value) || 0,
+    targetGpPercent:     row.target_gp_percent === null ? 0 : Number(row.target_gp_percent) || 0,
+    probabilityPercent:  row.probability_percent === null ? 0 : Number(row.probability_percent) || 0,
     assignedOwner:       row.owner ?? "",
-    assignedTeamMembers: Array.isArray(row.assigned_team_members)
-                           ? row.assigned_team_members
+    assignedTeamMembers: Array.isArray(row.team_members)
+                           ? row.team_members
                            : [],
-    status:              (row.phase ?? "identified") as Tender["status"],
-    source:              (row.source ?? "Direct") as Tender["source"],
+    status:              normalizeTenderMilestone(row.internal_stage),
+    /** CRM Pipeline stage — read from tenders.crm_pipeline_stage (TND-003) */
+    crmPipelineStage:    normalizeTenderMilestone(row.crm_pipeline_stage),
+    source:              row.source_type === "crm_opportunity" ? "CRM" : row.source_type === "customer_request" ? "Referral" : "Direct",
     region:              (row.region ?? "East") as Tender["region"],
     notes:               row.notes ?? "",
-    daysInStatus:        Number(row.days_in_status) || 0,
-    crmSynced:           Boolean(row.crm_synced),
+    daysInStatus:        row.created_at ? Math.max(0, Math.floor((Date.now() - new Date(row.created_at).getTime()) / 86400000)) : 0,
+    crmSynced:           false,
+    executionRegions:    Array.isArray(details.execution_regions) ? details.execution_regions : [],
+    targetSites:         Array.isArray(details.target_sites) ? details.target_sites : [],
+    executionType:       details.execution_type ?? "",
+    geographicComplexity: details.geographic_complexity ?? "",
+    siteCount:           Number(details.site_count) || 0,
+    executionNotes:      details.execution_notes ?? "",
     createdAt:           row.created_at
                            ? String(row.created_at).slice(0, 10)
                            : new Date().toISOString().slice(0, 10),
@@ -799,50 +883,96 @@ function mapTender(row: any): Tender {
   };
 }
 
+
 export async function fetchTenders(): Promise<Tender[]> {
   const { data, error } = await supabase
-    .from("tenders")
+    .from("commercial_tickets")
     .select("*")
+    .eq("ticket_type", "tender")
+    .eq("active", true)
     .order("created_at", { ascending: false });
   return safeFetchList('fetchTenders', data, error, mapTender, { silent: true });
 }
 
 export async function fetchTenderById(id: string): Promise<Tender | null> {
   const { data, error } = await supabase
-    .from("tenders").select("*").eq("id", id).maybeSingle();
+    .from("commercial_tickets")
+    .select("*")
+    .eq("id", id)
+    .eq("ticket_type", "tender")
+    .eq("active", true)
+    .maybeSingle();
   if (error) { handleSupabaseError("fetchTenderById", error, { silent: true }); return null; }
   return data ? mapTender(data) : null;
 }
 
 export async function fetchTendersByCustomer(customerId: string): Promise<Tender[]> {
   const { data, error } = await supabase
-    .from("tenders").select("*").eq("customer_id", customerId);
+    .from("commercial_tickets")
+    .select("*")
+    .eq("ticket_type", "tender")
+    .eq("customer_id", customerId)
+    .eq("active", true);
   return safeFetchList('fetchTendersByCustomer', data, error, mapTender, { silent: true });
 }
 
 export async function upsertTender(tender: Tender): Promise<void> {
-  const row = {
-    id:                    tender.id,
-    reference:             tender.id.toUpperCase(),
-    title:                 tender.title,
-    customer_id:           tender.customerId,
-    customer_name:         tender.customerName,
-    region:                tender.region,
-    phase:                 tender.status,
-    submission_deadline:   tender.submissionDeadline || null,
-    estimated_value:       tender.estimatedValue,
-    owner:                 tender.assignedOwner,
-    notes:                 tender.notes,
-    workspace_id:          tender.linkedWorkspaceId ?? null,
-    target_gp_percent:     tender.targetGpPercent,
-    probability_percent:   tender.probabilityPercent,
-    assigned_team_members: tender.assignedTeamMembers,
-    source:                tender.source,
-    days_in_status:        tender.daysInStatus,
-    crm_synced:            tender.crmSynced ?? false,
-    updated_at:            new Date().toISOString(),
+  const existing = await supabase
+    .from("commercial_tickets")
+    .select("id,type_details")
+    .eq("id", tender.id)
+    .eq("ticket_type", "tender")
+    .eq("active", true)
+    .maybeSingle();
+
+  if (existing.error) {
+    handleSupabaseError("upsertTender", existing.error, {});
+    return;
+  }
+  if (!existing.data) {
+    console.warn("[supabase-data] Legacy tender upsert blocked. Create tenders through commercial_tickets intake.", { tenderId: tender.id });
+    return;
+  }
+
+  const currentDetails =
+    existing.data.type_details && typeof existing.data.type_details === "object" && !Array.isArray(existing.data.type_details)
+      ? existing.data.type_details
+      : {};
+  const typeDetails = {
+    ...currentDetails,
+    submission_deadline: tender.submissionDeadline || null,
+    linked_workspace_id: tender.linkedWorkspaceId ?? null,
+    execution_regions: tender.executionRegions,
+    target_sites: tender.targetSites,
+    execution_type: tender.executionType,
+    geographic_complexity: tender.geographicComplexity,
+    site_count: tender.siteCount,
+    execution_notes: tender.executionNotes,
   };
-  const { error } = await supabase.from("tenders").upsert(row, { onConflict: "id" });
+
+  const row = {
+    ticket_title: tender.title,
+    customer_id: tender.customerId || null,
+    customer_name: tender.customerName || null,
+    region: tender.region || null,
+    internal_stage: tender.status,
+    crm_pipeline_stage: tender.crmPipelineStage,
+    target_date: tender.submissionDeadline || null,
+    estimated_value: Number.isFinite(tender.estimatedValue) ? tender.estimatedValue : null,
+    owner: tender.assignedOwner || null,
+    notes: tender.notes || null,
+    target_gp_percent: Number.isFinite(tender.targetGpPercent) ? tender.targetGpPercent : null,
+    probability_percent: Number.isFinite(tender.probabilityPercent) ? tender.probabilityPercent : null,
+    team_members: tender.assignedTeamMembers,
+    type_details: typeDetails,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase
+    .from("commercial_tickets")
+    .update(row)
+    .eq("id", tender.id)
+    .eq("ticket_type", "tender");
   if (error) handleSupabaseError("upsertTender", error, {});
 }
 

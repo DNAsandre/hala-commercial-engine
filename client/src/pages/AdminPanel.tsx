@@ -9,11 +9,11 @@ import { useState, useCallback, useEffect } from "react";
 import { Link } from "wouter";
 import {
   Users, Settings, Database, Link2, Bell, Shield, Key, Globe,
-  Plus, Edit3, Trash2, Check, RefreshCw, Server, HardDrive,
+  Plus, Edit3, Trash2, Check, RefreshCw, Server, HardDrive, Warehouse,
   Mail, Building2, UserPlus, Search, ChevronRight, X,
   Layers, Wrench, Star, Bot, Radio, Activity, BarChart3,
   FileText, Palette, BookOpen, Blocks, Variable, Eye, EyeOff,
-  RotateCcw, Lock, UserCheck, UserX, Brain, Zap,
+  RotateCcw, Lock, UserCheck, UserX, Brain, Zap, DollarSign,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -45,8 +45,14 @@ import {
   type AIProvider,
   type AIProviderName,
 } from "@/lib/ai-client";
+import { supabase } from "@/lib/supabase";
 import { api } from "@/lib/api-client";
 import { fetchEditorBots } from "@/lib/supabase-data";
+import FacilitiesAdmin from "@/pages/FacilitiesAdmin";
+
+function FacilitiesEmbed() {
+  return <FacilitiesAdmin />;
+}
 
 /* ─── AI Providers Embed (inline in Admin tab) ─── */
 function CRMSyncEmbed() {
@@ -151,6 +157,9 @@ function AIProvidersEmbed() {
   const [providers, setProviders] = useState<AIProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
+  const [showKeyInput, setShowKeyInput] = useState<Record<string, boolean>>({});
+  const [savingKeyId, setSavingKeyId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,7 +171,6 @@ function AIProvidersEmbed() {
     setProviders((ps) => ps.map((p) => (p.id === id ? { ...p, enabled } : p)));
     const result = await updateAIProvider(id, { enabled });
     if (!result) {
-      // Rollback single item instead of refetching entire list
       setProviders((ps) => ps.map((p) => (p.id === id ? { ...p, enabled: !enabled } : p)));
       toast.error("Failed to update provider — reverted");
       return;
@@ -195,6 +203,54 @@ function AIProvidersEmbed() {
     }
   };
 
+  const handleSaveApiKey = async (id: string) => {
+    const key = apiKeyInputs[id]?.trim();
+    if (!key) { toast.error("API key cannot be empty"); return; }
+    setSavingKeyId(id);
+    try {
+      // Store key in Supabase Vault via RPC (encrypted at rest, never in client-readable columns)
+      const { data, error } = await supabase.rpc('store_provider_secret', {
+        p_provider_id: id,
+        p_secret_key: key,
+      });
+      setSavingKeyId(null);
+      if (error) {
+        console.error('[AdminPanel] store_provider_secret error:', error.message, error.code, error.hint);
+        toast.error(`Failed to save API key: ${error.message}`);
+        return;
+      }
+      const last4 = data?.last4 || key.slice(-4);
+      const provider = providers.find(p => p.id === id);
+      const updatedConfig = { ...(provider?.config || {}), api_key_configured: true, api_key_last4: last4 };
+      setProviders(ps => ps.map(p => p.id === id ? { ...p, config: updatedConfig } : p));
+      setApiKeyInputs(prev => ({ ...prev, [id]: "" }));
+      setShowKeyInput(prev => ({ ...prev, [id]: false }));
+      toast.success("API key encrypted and stored securely");
+    } catch (err: any) {
+      setSavingKeyId(null);
+      console.error('[AdminPanel] store_provider_secret exception:', err);
+      toast.error(`Failed to save API key: ${err.message}`);
+    }
+  };
+
+  const handleClearApiKey = async (id: string) => {
+    if (!confirm("Remove the API key for this provider? AI calls will stop working.")) return;
+    try {
+      const { error } = await supabase.rpc('remove_provider_secret', { p_provider_id: id });
+      if (error) {
+        console.error('[AdminPanel] remove_provider_secret error:', error.message);
+        toast.error(`Failed to remove API key: ${error.message}`);
+        return;
+      }
+      const provider = providers.find(p => p.id === id);
+      const updatedConfig = { ...(provider?.config || {}), api_key_configured: false, api_key_last4: '' };
+      setProviders(ps => ps.map(p => p.id === id ? { ...p, config: updatedConfig } : p));
+      toast.success("API key removed from vault");
+    } catch (err: any) {
+      toast.error(`Failed to remove API key: ${err.message}`);
+    }
+  };
+
   if (loading) return <div className="flex justify-center py-8"><RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
 
   return (
@@ -203,6 +259,8 @@ function AIProvidersEmbed() {
         const colors = p.name === "openai"
           ? { gradient: "from-emerald-500 to-teal-600", icon: "\uD83E\uDD16", border: p.enabled ? "border-emerald-300" : "border-border" }
           : { gradient: "from-blue-500 to-indigo-600", icon: "\u2726", border: p.enabled ? "border-blue-300" : "border-border" };
+        const hasKey = p.config?.api_key_configured === true;
+        const keyLast4 = p.config?.api_key_last4 || "";
         return (
           <Card key={p.id} className={`border ${colors.border} transition-all ${!p.enabled ? "opacity-70" : ""}`}>
             <CardContent className="p-4 space-y-3">
@@ -218,6 +276,49 @@ function AIProvidersEmbed() {
                 </div>
                 <Switch checked={p.enabled} onCheckedChange={(v) => handleToggle(p.id, v)} />
               </div>
+
+              {/* API Key Status & Input */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <Key className="w-3 h-3" />
+                    {hasKey ? (
+                      <span className="text-emerald-700 font-medium">API key configured (•••• {keyLast4})</span>
+                    ) : (
+                      <span className="text-red-600 font-medium">No API key — AI calls will fail</span>
+                    )}
+                  </div>
+                  {hasKey ? (
+                    <Button variant="ghost" size="sm" className="h-6 text-[10px] text-red-500 hover:text-red-700 px-2" onClick={() => handleClearApiKey(p.id)}>
+                      Remove
+                    </Button>
+                  ) : null}
+                </div>
+
+                {showKeyInput[p.id] ? (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="password"
+                      placeholder={p.name === "openai" ? "sk-..." : "AIza..."}
+                      value={apiKeyInputs[p.id] || ""}
+                      onChange={(e) => setApiKeyInputs(prev => ({ ...prev, [p.id]: e.target.value }))}
+                      className="h-8 text-xs font-mono flex-1"
+                    />
+                    <Button size="sm" className="h-8 text-xs" disabled={savingKeyId === p.id} onClick={() => handleSaveApiKey(p.id)}>
+                      {savingKeyId === p.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : "Save"}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setShowKeyInput(prev => ({ ...prev, [p.id]: false }))}>
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <Button variant="outline" size="sm" className="h-7 text-xs w-full gap-1" onClick={() => setShowKeyInput(prev => ({ ...prev, [p.id]: true }))}>
+                    <Key className="w-3 h-3" />
+                    {hasKey ? "Update API Key" : "Add API Key"}
+                  </Button>
+                )}
+              </div>
+
               <div className="flex items-center gap-2">
                 <Select value={p.modelDefault} onValueChange={(v) => handleModelChange(p.id, v)}>
                   <SelectTrigger className="h-8 text-xs flex-1">
@@ -337,6 +438,7 @@ function SettingsTabContent() {
                   <SelectItem value="East">Eastern Province</SelectItem>
                   <SelectItem value="Central">Central Province</SelectItem>
                   <SelectItem value="West">Western Province</SelectItem>
+                  <SelectItem value="Global">Global</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -662,6 +764,7 @@ const automationLinks = [
   { path: "/bot-builder", label: "Bot Builder", desc: "Visual builder for creating and configuring AI bots", icon: Wrench, count: "Builder" },
   { path: "/signal-engine", label: "Signal Engine", desc: "Configure automated signals, alerts, and escalation triggers", icon: Radio, count: "Manage" },
   { path: "/bot-audit", label: "Bot Audit", desc: "Review all bot actions, decisions, and override attempts", icon: Activity, count: "Audit log" },
+  { path: "/ai-cost-ledger", label: "AI Cost Ledger", desc: "Track every AI call, token, and dollar — zero creep policy", icon: DollarSign, count: "Ledger" },
   { path: "/crm-sync", label: "CRM Sync", desc: "Manage CRM synchronization, field mapping, and sync status", icon: Link2, count: "Sync" },
 ];
 
@@ -701,36 +804,83 @@ function AdminLinkCard({ item }: { item: { path: string; label: string; desc: st
 
 /* ─── Role configuration ─── */
 const roleOptions = [
-  { value: "admin", label: "Admin (CEO/CFO)" },
+  { value: "admin", label: "Admin CEO/CFO" },
+  { value: "chief_commercial_officer", label: "Chief Commercial Officer" },
   { value: "commercial_director", label: "Commercial Director" },
   { value: "operations_director", label: "Operations Director" },
   { value: "regional_sales_head", label: "Regional Sales Head" },
   { value: "regional_ops_head", label: "Regional Ops Head" },
+  { value: "national_bdm", label: "National Business Development Manager" },
+  { value: "key_account_manager", label: "Key Account Manager" },
   { value: "salesman", label: "Salesman" },
+  { value: "control_tower_manager", label: "Control Tower Manager" },
+  { value: "control_tower_supervisor", label: "Control Tower Supervisor" },
+  { value: "control_tower_analyst", label: "Control Tower Analyst" },
+  { value: "warehouse_manager", label: "Warehouse Manager" },
+  { value: "transport_manager", label: "Transport Manager" },
+  { value: "compliance_manager", label: "Compliance Manager" },
+  { value: "quality_manager", label: "Quality Manager" },
+  { value: "hsse_manager", label: "HSSE Manager" },
   { value: "finance", label: "Finance" },
   { value: "legal", label: "Legal" },
+  { value: "it_admin", label: "IT / Systems Admin" },
+  { value: "tender_manager", label: "Tender Manager" },
+  { value: "bid_manager", label: "Bid Manager" },
+  { value: "proposal_specialist", label: "Proposal Specialist" },
+  { value: "pricing_analyst", label: "Pricing Analyst" },
+  { value: "customer_success_manager", label: "Customer Success Manager" },
+  { value: "viewer", label: "Read Only / Viewer" },
 ];
 
 const departmentOptions = [
-  "Management", "Sales", "Operations", "Finance", "Legal", "IT",
+  "Management", "Commercial", "Sales", "Operations", "Warehousing", "Transport",
+  "Control Tower", "Freight Forwarding", "Customs Clearance", "Finance", "Legal",
+  "Compliance", "Quality", "HSSE", "IT / Digital", "Tender / Bid Office",
+  "Customer Success", "HR / People",
 ];
 
 const regionOptions = [
-  { value: "All", label: "All Regions" },
-  { value: "East", label: "Eastern Province" },
   { value: "Central", label: "Central Province" },
   { value: "West", label: "Western Province" },
+  { value: "East", label: "Eastern Province" },
+  { value: "Nationwide", label: "Nationwide / KSA" },
+  { value: "Global", label: "Global" },
+];
+
+const officeOptions = [
+  "Riyadh", "Jeddah", "Dammam", "Jubail", "Al Khobar",
+  "Riyadh Tayba Warehouse", "Jeddah Modon 3A Warehouse",
 ];
 
 const roleColors: Record<string, string> = {
   admin: "bg-red-100 text-red-800",
+  chief_commercial_officer: "bg-violet-100 text-violet-800",
   commercial_director: "bg-violet-100 text-violet-800",
   operations_director: "bg-blue-100 text-blue-800",
   regional_sales_head: "bg-emerald-100 text-emerald-800",
   regional_ops_head: "bg-teal-100 text-teal-800",
+  national_bdm: "bg-emerald-100 text-emerald-800",
+  key_account_manager: "bg-emerald-100 text-emerald-800",
   salesman: "bg-gray-100 text-gray-700",
+  control_tower_manager: "bg-sky-100 text-sky-800",
+  control_tower_supervisor: "bg-sky-100 text-sky-800",
+  control_tower_analyst: "bg-sky-100 text-sky-800",
+  warehouse_manager: "bg-orange-100 text-orange-800",
+  transport_manager: "bg-orange-100 text-orange-800",
+  compliance_manager: "bg-rose-100 text-rose-800",
+  quality_manager: "bg-rose-100 text-rose-800",
+  hsse_manager: "bg-rose-100 text-rose-800",
   finance: "bg-amber-100 text-amber-800",
   legal: "bg-indigo-100 text-indigo-800",
+  it_admin: "bg-slate-100 text-slate-700",
+  tender_manager: "bg-cyan-100 text-cyan-800",
+  bid_manager: "bg-cyan-100 text-cyan-800",
+  proposal_specialist: "bg-cyan-100 text-cyan-800",
+  pricing_analyst: "bg-amber-100 text-amber-800",
+  customer_success_manager: "bg-lime-100 text-lime-800",
+  viewer: "bg-gray-100 text-gray-500",
+  director: "bg-violet-100 text-violet-800",
+  ceo_cfo: "bg-red-100 text-red-800",
 };
 
 /* ─── Edit User Modal ─── */
@@ -739,7 +889,8 @@ function EditUserModal({ user, onClose, onSaved }: { user: any; onClose: () => v
   const [email, setEmail] = useState(user.email);
   const [role, setRole] = useState(user.role);
   const [department, setDepartment] = useState(user.department || "");
-  const [region, setRegion] = useState(user.region || "All");
+  const [region, setRegion] = useState(user.region || "East");
+  const [office, setOffice] = useState(user.office || "");
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -756,6 +907,7 @@ function EditUserModal({ user, onClose, onSaved }: { user: any; onClose: () => v
       role,
       department,
       region,
+      office,
     });
     setSaving(false);
     if (result.success) {
@@ -791,12 +943,12 @@ function EditUserModal({ user, onClose, onSaved }: { user: any; onClose: () => v
               <Input type="email" value={email} onChange={e => setEmail(e.target.value)} />
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">Role</Label>
               <Select value={role} onValueChange={setRole}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-h-60">
                   {roleOptions.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -805,17 +957,28 @@ function EditUserModal({ user, onClose, onSaved }: { user: any; onClose: () => v
               <Label className="text-xs font-semibold">Department</Label>
               <Select value={department} onValueChange={setDepartment}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-h-60">
                   {departmentOptions.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">Region</Label>
               <Select value={region} onValueChange={setRegion}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {regionOptions.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Hala Office / Facility</Label>
+              <Select value={office} onValueChange={setOffice}>
+                <SelectTrigger><SelectValue placeholder="Select office..." /></SelectTrigger>
+                <SelectContent>
+                  {officeOptions.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -931,6 +1094,7 @@ export default function AdminPanel() {
   const [newUserRole, setNewUserRole] = useState("salesman");
   const [newUserDepartment, setNewUserDepartment] = useState("Sales");
   const [newUserRegion, setNewUserRegion] = useState("East");
+  const [newUserOffice, setNewUserOffice] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("Hala2026!");
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [addingUser, setAddingUser] = useState(false);
@@ -962,6 +1126,7 @@ export default function AdminPanel() {
       role: newUserRole,
       department: newUserDepartment,
       region: newUserRegion,
+      office: newUserOffice,
     });
     setAddingUser(false);
     if (result.success) {
@@ -974,12 +1139,13 @@ export default function AdminPanel() {
       setNewUserRole("salesman");
       setNewUserDepartment("Sales");
       setNewUserRegion("East");
+      setNewUserOffice("");
       setNewUserPassword("Hala2026!");
       refetch();
     } else {
       toast.error("Failed to create user", { description: result.error });
     }
-  }, [newUserName, newUserEmail, newUserPassword, newUserRole, newUserDepartment, newUserRegion, refetch]);
+  }, [newUserName, newUserEmail, newUserPassword, newUserRole, newUserDepartment, newUserRegion, newUserOffice, refetch]);
 
   const handleDeactivate = useCallback(async (user: any) => {
     if (user.id === appUser?.id) {
@@ -1040,6 +1206,7 @@ export default function AdminPanel() {
           <TabsTrigger value="editor-bots"><Zap className="w-3.5 h-3.5 mr-1.5" />Editor Bots</TabsTrigger>
           <TabsTrigger value="knowledgebase"><Database className="w-3.5 h-3.5 mr-1.5" />Knowledgebase</TabsTrigger>
           <TabsTrigger value="crm-sync"><Link2 className="w-3.5 h-3.5 mr-1.5" />CRM Sync</TabsTrigger>
+          <TabsTrigger value="facilities"><Warehouse className="w-3.5 h-3.5 mr-1.5" />Facilities</TabsTrigger>
         </TabsList>
 
         {/* ─── Document System Tab (navigationV1 only) ─── */}
@@ -1151,12 +1318,12 @@ export default function AdminPanel() {
                     </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-3 mt-3">
+                <div className="grid grid-cols-2 gap-3 mt-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs font-semibold">Role</Label>
                     <Select value={newUserRole} onValueChange={setNewUserRole}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="max-h-60">
                         {roleOptions.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
                       </SelectContent>
                     </Select>
@@ -1165,17 +1332,28 @@ export default function AdminPanel() {
                     <Label className="text-xs font-semibold">Department</Label>
                     <Select value={newUserDepartment} onValueChange={setNewUserDepartment}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="max-h-60">
                         {departmentOptions.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3 mt-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs font-semibold">Region</Label>
                     <Select value={newUserRegion} onValueChange={setNewUserRegion}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {regionOptions.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Hala Office / Facility</Label>
+                    <Select value={newUserOffice} onValueChange={setNewUserOffice}>
+                      <SelectTrigger><SelectValue placeholder="Select office..." /></SelectTrigger>
+                      <SelectContent>
+                        {officeOptions.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
@@ -1188,6 +1366,7 @@ export default function AdminPanel() {
                     setNewUserRole("salesman");
                     setNewUserDepartment("Sales");
                     setNewUserRegion("East");
+                    setNewUserOffice("");
                     setNewUserPassword("Hala2026!");
                   }}>Cancel</Button>
                   <Button size="sm" onClick={handleAddUser} disabled={addingUser}>
@@ -1376,6 +1555,11 @@ export default function AdminPanel() {
             </Link>
           </div>
           <CRMSyncEmbed />
+        </TabsContent>
+
+        {/* ─── Facilities Tab ─── */}
+        <TabsContent value="facilities" className="space-y-4">
+          <FacilitiesEmbed />
         </TabsContent>
       </Tabs>
 

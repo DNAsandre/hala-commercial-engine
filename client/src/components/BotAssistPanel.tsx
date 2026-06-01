@@ -78,12 +78,7 @@ export default function BotAssistPanel({ open, onClose, workspaceContext }: BotA
   const [bots, setBots] = useState<BotOption[]>([]);
   const [selectedBotId, setSelectedBotId] = useState("");
   const [inputText, setInputText] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    try {
-      const saved = sessionStorage.getItem('bot-assist-messages');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -110,11 +105,10 @@ export default function BotAssistPanel({ open, onClose, workspaceContext }: BotA
     }
   }, [messages]);
 
-  // Persist messages to sessionStorage so they survive panel close/reopen
+  // Chat messages are intentionally ephemeral; browser storage is not used here.
   useEffect(() => {
     try {
       if (messages.length > 0) {
-        sessionStorage.setItem('bot-assist-messages', JSON.stringify(messages));
       }
     } catch { /* quota exceeded — ignore */ }
   }, [messages]);

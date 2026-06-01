@@ -3,7 +3,7 @@
  *
  * Used by: WorkspaceDetail (Commercial), Tenders.tsx, Renewals.tsx
  *
- * Reads from escalation_events filtered to:
+ * Reads from commercial_escalations through the global escalation engine, filtered to:
  * - workspaceId (if workspace-level)
  * - customerId / entityId (for customer-level escalations related to this workspace)
  *
@@ -11,7 +11,7 @@
  * "Derived Context" that feeds escalation awareness — read-only, not stored.
  *
  * IMPORTANT: This does NOT store a separate signal system.
- * The escalation events are the single source. Derived context is display-only.
+ * The commercial escalation feed is the single source. Derived context is display-only.
  */
 
 import { useState, useEffect, useCallback } from "react";

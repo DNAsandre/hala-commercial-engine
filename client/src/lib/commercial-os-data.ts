@@ -26,6 +26,7 @@ export interface CommercialOpportunity {
   gpBasis: string;
   gpMarginPct: number;
   gpConfidenceStatus: string;
+  createdAt: string | null;
 }
 
 export interface CommercialOpportunityFlag {
@@ -234,8 +235,8 @@ function formulaComparison(row: any): FormulaComparison | null {
     calculated_value: nullableNum(source.calculated_value),
     variance: nullableNum(source.variance),
     variance_pct: nullableNum(source.variance_pct),
-    parity_status: oneOf(source.parity_status, parityStatuses, "Unavailable"),
-    source_type: oneOf(source.source_type, sourceTypes, ""),
+    parity_status: oneOf(source.parity_status, parityStatuses, "Unavailable") as FormulaParityStatus,
+    source_type: oneOf(source.source_type, sourceTypes, "") || null as any,
     source_detail: text(source.source_detail),
     governance_owner: text(source.governance_owner),
     risk_level: text(source.risk_level),
@@ -300,6 +301,7 @@ function mapOpportunity(row: any, flags: CommercialOpportunityFlag[]): Commercia
     gpBasis: text(row.gp_basis) || 'assumed_75pct',
     gpMarginPct: num(row.gp_margin_pct) || 25,
     gpConfidenceStatus: text(row.gp_confidence_status) || 'needs_finance_review',
+    createdAt: row.created_at || null,
   };
 }
 
@@ -1263,40 +1265,15 @@ function mapTransportationCustomerLink(row: any): TransportationCustomerLink {
 }
 
 export async function fetchTransportationOpportunities(): Promise<TransportationOpportunity[]> {
-  const { data, error } = await supabase
-    .from("transportation_opportunities")
-    .select("*")
-    .eq("active", true)
-    .order("expected_revenue", { ascending: false });
-  if (error) {
-    console.error("[commercial-os] Failed to fetch transportation opportunities:", error.message);
-    return [];
-  }
-  return (data ?? []).map(mapTransportationOpportunity);
+  return [];
 }
 
 export async function fetchTransportationMetrics(): Promise<TransportationMetric[]> {
-  const { data, error } = await supabase
-    .from("transportation_opportunity_metrics")
-    .select("*")
-    .order("metric_key");
-  if (error) {
-    console.error("[commercial-os] Failed to fetch transportation metrics:", error.message);
-    return [];
-  }
-  return (data ?? []).map(mapTransportationMetric);
+  return [];
 }
 
 export async function fetchTransportationCustomerLinks(): Promise<TransportationCustomerLink[]> {
-  const { data, error } = await supabase
-    .from("transportation_customer_links")
-    .select("*")
-    .order("source_customer_name");
-  if (error) {
-    console.error("[commercial-os] Failed to fetch transportation customer links:", error.message);
-    return [];
-  }
-  return (data ?? []).map(mapTransportationCustomerLink);
+  return [];
 }
 
 // ─── TND-002: Tender Customer Links (Read-Only) ───────────────
@@ -1335,43 +1312,66 @@ function mapTenderCustomerLink(row: any): TenderCustomerLink {
   };
 }
 
+function mapTicketToTenderCustomerLink(row: any): TenderCustomerLink {
+  const customerName = text(row.customer_name);
+  const customerId = text(row.customer_id);
+  return {
+    id: `ct-${text(row.id)}`,
+    tenderWorkspaceId: text(row.id),
+    customerId,
+    tenderCustomerName: customerName,
+    customerMasterName: customerName,
+    matchStatus: customerId ? 'matched' : 'needs_review',
+    matchConfidence: customerId ? 'explicit' : 'manual_review_required',
+    sourceType: text(row.source_type) || 'commercial_tickets',
+    truthStatus: text(row.lineage_status) || 'unverified',
+    confidenceTier: text(row.lineage_status) === 'verified' ? 1 : 3,
+    sourceLineage: 'commercial_tickets -> derived tender customer link',
+    notes: text(row.source_reference),
+    active: row.active !== false,
+  };
+}
+
 export async function fetchTenderCustomerLinks(): Promise<TenderCustomerLink[]> {
   const { data, error } = await supabase
-    .from("tender_customer_links")
-    .select("*")
+    .from("commercial_tickets")
+    .select("id, customer_id, customer_name, source_type, source_reference, lineage_status, active")
+    .eq("ticket_type", "tender")
     .eq("active", true)
-    .order("tender_customer_name");
+    .order("customer_name");
   if (error) {
     console.error("[commercial-os] Failed to fetch tender customer links:", error.message);
     return [];
   }
-  return (data ?? []).map(mapTenderCustomerLink);
+  return (data ?? []).map(mapTicketToTenderCustomerLink);
 }
 
 export async function getTenderLinksForCustomer(customerId: string): Promise<TenderCustomerLink[]> {
   const { data, error } = await supabase
-    .from("tender_customer_links")
-    .select("*")
+    .from("commercial_tickets")
+    .select("id, customer_id, customer_name, source_type, source_reference, lineage_status, active")
+    .eq("ticket_type", "tender")
     .eq("customer_id", customerId)
     .eq("active", true);
   if (error) {
     console.error("[commercial-os] Failed to fetch tender links for customer:", error.message);
     return [];
   }
-  return (data ?? []).map(mapTenderCustomerLink);
+  return (data ?? []).map(mapTicketToTenderCustomerLink);
 }
 
 export async function getCustomerLinkForTender(tenderWorkspaceId: string): Promise<TenderCustomerLink[]> {
   const { data, error } = await supabase
-    .from("tender_customer_links")
-    .select("*")
-    .eq("tender_workspace_id", tenderWorkspaceId)
+    .from("commercial_tickets")
+    .select("id, customer_id, customer_name, source_type, source_reference, lineage_status, active")
+    .eq("ticket_type", "tender")
+    .eq("id", tenderWorkspaceId)
     .eq("active", true);
   if (error) {
     console.error("[commercial-os] Failed to fetch customer link for tender:", error.message);
     return [];
   }
-  return (data ?? []).map(mapTenderCustomerLink);
+  return (data ?? []).map(mapTicketToTenderCustomerLink);
 }
 
 // ─── FCST-001: Forecast Engine (Read-Only Formula Intelligence) ───
@@ -1397,7 +1397,7 @@ export interface ForecastComponents {
   calculatedValue: number;
   variance: number;
   variancePct: number;
-  parityStatus: 'match' | 'rounded_difference' | 'formula_drift' | 'missing_input';
+  parityStatus: 'match' | 'rounded_difference' | 'formula_drift' | 'missing_input' | 'calculated';
   // Source notes
   sourceNotes: string[];
   confidenceStatus: 'verified' | 'calculated' | 'partial' | 'missing';

@@ -61,29 +61,29 @@ import { useTenderSignalSummary } from "@/hooks/useTenderWorkspaceSignals";
 const GP_THRESHOLD = 22;
 
 const STATUS_COLUMN_COLORS: Record<TenderMilestone, string> = {
-  identified: "border-t-slate-400",
-  preparing_submission: "border-t-blue-400",
-  submitted: "border-t-violet-400",
-  clarification: "border-t-amber-400",
-  technical_review: "border-t-cyan-400",
-  commercial_review: "border-t-indigo-400",
-  negotiation: "border-t-orange-400",
-  awarded: "border-t-emerald-400",
-  lost: "border-t-red-400",
-  withdrawn: "border-t-gray-400",
+  prospecting:          "border-t-slate-400",
+  qualified:            "border-t-blue-400",
+  proposal_sent:        "border-t-violet-400",
+  shortlisted:          "border-t-amber-400",
+  contract_negotiation: "border-t-orange-400",
+  closed_won:           "border-t-emerald-400",
+  contract_signed:      "border-t-teal-400",
+  operational_handover: "border-t-cyan-400",
+  closed_lost:          "border-t-red-400",
+  discontinued:         "border-t-gray-400",
 };
 
 const STATUS_HEADER_BG: Record<TenderMilestone, string> = {
-  identified: "bg-slate-50 dark:bg-slate-900/30",
-  preparing_submission: "bg-blue-50 dark:bg-blue-900/30",
-  submitted: "bg-violet-50 dark:bg-violet-900/30",
-  clarification: "bg-amber-50 dark:bg-amber-900/30",
-  technical_review: "bg-cyan-50 dark:bg-cyan-900/30",
-  commercial_review: "bg-indigo-50 dark:bg-indigo-900/30",
-  negotiation: "bg-orange-50 dark:bg-orange-900/30",
-  awarded: "bg-emerald-50 dark:bg-emerald-900/30",
-  lost: "bg-red-50 dark:bg-red-900/30",
-  withdrawn: "bg-gray-50 dark:bg-gray-900/30",
+  prospecting:          "bg-slate-50 dark:bg-slate-900/30",
+  qualified:            "bg-blue-50 dark:bg-blue-900/30",
+  proposal_sent:        "bg-violet-50 dark:bg-violet-900/30",
+  shortlisted:          "bg-amber-50 dark:bg-amber-900/30",
+  contract_negotiation: "bg-orange-50 dark:bg-orange-900/30",
+  closed_won:           "bg-emerald-50 dark:bg-emerald-900/30",
+  contract_signed:      "bg-teal-50 dark:bg-teal-900/30",
+  operational_handover: "bg-cyan-50 dark:bg-cyan-900/30",
+  closed_lost:          "bg-red-50 dark:bg-red-900/30",
+  discontinued:         "bg-gray-50 dark:bg-gray-900/30",
 };
 
 // ─── TYPES ─────────────────────────────────────────────────
@@ -278,6 +278,7 @@ export default function TenderBoard() {
               <SelectItem value="East">East</SelectItem>
               <SelectItem value="Central">Central</SelectItem>
               <SelectItem value="West">West</SelectItem>
+              <SelectItem value="Global">Global</SelectItem>
             </SelectContent>
           </Select>
 
@@ -443,7 +444,7 @@ function BoardRiskChips({ tenderId, packCount }: { tenderId: string; packCount: 
   return (
     <>
       <span className={`text-[8px] font-bold px-1 py-0.5 rounded border ${signal.readinessScore < 50 ? 'border-red-300 text-red-700 bg-red-50' : signal.readinessScore < 80 ? 'border-amber-300 text-amber-700 bg-amber-50' : 'border-emerald-300 text-emerald-700 bg-emerald-50'}`}>{signal.readinessScore}%</span>
-      {signal.gatesWouldBlockCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-red-300 text-red-700 bg-red-50" title="Gates flagged as would block production">G{signal.gatesWouldBlockCount}</span>}
+      {signal.gatesWouldBlockCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50" title="Readiness signals flagged for review — advisory only">S{signal.gatesWouldBlockCount}</span>}
       {signal.requiredDocumentsAwaitingCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">D{signal.requiredDocumentsAwaitingCount}</span>}
       {signal.complianceGapCount > 0 && <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">C{signal.complianceGapCount}</span>}
       <span className="text-[8px] font-bold px-1 py-0.5 rounded border border-border">P{packCount}</span>

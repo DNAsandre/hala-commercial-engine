@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS tender_stage_history (
   previous_phase        TEXT,
   new_phase             TEXT NOT NULL,
   reason                TEXT DEFAULT '',
-  mock_mode             BOOLEAN DEFAULT TRUE,
+  mock_mode             BOOLEAN DEFAULT FALSE,
   user_id               TEXT DEFAULT '',
   user_name             TEXT DEFAULT '',
   created_at            TIMESTAMPTZ DEFAULT NOW()
@@ -47,7 +47,7 @@ ALTER TABLE tender_activity_events
   ADD COLUMN IF NOT EXISTS action_label     TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS previous_value   TEXT,
   ADD COLUMN IF NOT EXISTS new_value        TEXT,
-  ADD COLUMN IF NOT EXISTS mock_mode        BOOLEAN DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS mock_mode        BOOLEAN DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS gate_code        TEXT,
   ADD COLUMN IF NOT EXISTS reason           TEXT,
   ADD COLUMN IF NOT EXISTS metadata         JSONB DEFAULT '{}'::JSONB,
@@ -58,7 +58,7 @@ ALTER TABLE tender_activity_events
   ADD COLUMN IF NOT EXISTS role             TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS related_pack     TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS related_module   TEXT DEFAULT '',
-  ADD COLUMN IF NOT EXISTS mock             BOOLEAN DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS mock             BOOLEAN DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS description      TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_tae_workspace ON tender_activity_events(workspace_id);
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS tender_audit_events (
 ALTER TABLE tender_audit_events
   ADD COLUMN IF NOT EXISTS previous_value   TEXT,
   ADD COLUMN IF NOT EXISTS new_value        TEXT,
-  ADD COLUMN IF NOT EXISTS mock_mode        BOOLEAN DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS mock_mode        BOOLEAN DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS gate_code        TEXT,
   ADD COLUMN IF NOT EXISTS reason           TEXT,
   ADD COLUMN IF NOT EXISTS metadata         JSONB DEFAULT '{}'::JSONB,
@@ -96,7 +96,7 @@ ALTER TABLE tender_audit_events
   ADD COLUMN IF NOT EXISTS user_name        TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS before_state     TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS after_state      TEXT DEFAULT '',
-  ADD COLUMN IF NOT EXISTS mock             BOOLEAN DEFAULT TRUE;
+  ADD COLUMN IF NOT EXISTS mock             BOOLEAN DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_taue_workspace ON tender_audit_events(workspace_id);
 

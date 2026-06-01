@@ -1,4 +1,4 @@
-/*
+﻿/*
  * CW-012: Commercial Workspace v2 Governance Config
  * Extracted component for the Governance Console.
  * SUPA-009: Now loads config from Supabase with inline fallback.
@@ -72,10 +72,10 @@ const SLA_RULES = [
 ];
 
 const ESCALATION_RULES = [
-  { signal: "Red signal (Critical/High)", behavior: "Mock escalation created — does not block testing", bypass: true },
+  { signal: "Red signal (Critical/High)", behavior: "Advisory escalation created — does not block testing", bypass: true },
   { signal: "Amber signal (Medium)", behavior: "Future review warning — testing may continue", bypass: true },
   { signal: "Green signal (Low)", behavior: "No escalation needed", bypass: false },
-  { signal: "Testing bypass", behavior: "Available on all mock escalations — logs bypass usage", bypass: true },
+  { signal: "Testing bypass", behavior: "Available on all advisory escalations — logs bypass usage", bypass: true },
 ];
 
 const RUNTIME_LADDER = [
@@ -257,7 +257,7 @@ function ProposalSlaRulesPanel() {
 function EscalationRulesPanel() {
   return (
     <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">Mock escalation engine rules. Red signals create mock escalations but never block testing.</p>
+      <p className="text-xs text-muted-foreground">Advisory escalation engine rules. Red signals create advisory escalations but never block testing.</p>
       <div className="overflow-x-auto">
         <table className="w-full text-xs border border-border rounded-lg overflow-hidden">
           <thead>

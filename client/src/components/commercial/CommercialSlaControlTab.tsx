@@ -1,4 +1,4 @@
-/**
+﻿/**
  * CW-009: SLA Control Mock Layer
  * Mock-only — no real SLA, PDF, CRM, approval, or document generation.
  * SUPA-003B: Now reads from Supabase via useCommercialWorkspaceData.
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FileText, AlertTriangle, Eye, Play, ShieldAlert, ChevronDown, ChevronRight, Link2, Info, ClipboardCheck, BarChart3, Scale, Loader2, Database } from "lucide-react";
 import { toast } from "sonner";
-import { type CommercialSlaDraft, getSlaDraftsForWorkspace, getSlaSections, getSlaKpis, getSlaPromiseGaps, getLinkedCommercialBasis } from "@/lib/commercial-workspace-data";
+import { type CommercialSlaDraft } from "@/lib/commercial-workspace-data";
 import { useCommercialWorkspaceData } from "@/hooks/useCommercialWorkspaceData";
 import type { SlaBundleForDraft } from "@/lib/supabase-commercial-data";
 import { logMockAction, markSlaReviewedMock, requestSlaOpsReviewMock, requestSlaLegalReviewMock, type ActionActor } from "@/lib/supabase-commercial-actions";
@@ -62,14 +62,20 @@ function SlaDetailPanel({ s, slaBundle, workspaceId, onActionComplete }: { s: Co
       { workspaceId, eventCode: code, eventName: title, description: desc, category: 'SLA', actor, entityType: 'SLA', entityName: s.slaName, beforeState: s.status, afterState: after, severity: 'Info' }
     );
     if (result.success) { toast.success(`${title} saved to Supabase.`); onActionComplete?.(); }
-    else { toast.error(`Mock action could not be saved: ${result.error}`); }
+    else { toast.error(`Advisory action could not be saved: ${result.error}`); }
   };
 
-  const basis = getLinkedCommercialBasis(s);
+  const basis = null as {
+    proposalName: string;
+    quoteName: string;
+    quoteGpPercent: number;
+    pricingPosture: string;
+    pnlConfidence: string;
+  } | null;
   // SUPA-003B: Use Supabase-backed section/kpi/gap data when available
-  const sections = slaBundle ? slaBundle.sections : getSlaSections(s.id);
-  const kpis = slaBundle ? slaBundle.kpis : getSlaKpis(s.id);
-  const gaps = slaBundle ? slaBundle.promiseGaps : getSlaPromiseGaps(s.id);
+  const sections = slaBundle?.sections ?? [];
+  const kpis = slaBundle?.kpis ?? [];
+  const gaps = slaBundle?.promiseGaps ?? [];
   const isCritical = s.riskLevel === "Critical";
   const isHigh = s.riskLevel === "High";
   return (
@@ -106,7 +112,7 @@ function SlaDetailPanel({ s, slaBundle, workspaceId, onActionComplete }: { s: Co
           )}
           {/* Critical SLA Warning */}
           {isCritical && (
-            <div className="p-2.5 rounded-lg border border-red-200 bg-red-50 flex items-start gap-2"><ShieldAlert className="w-4 h-4 text-red-600 shrink-0 mt-0.5" /><div><p className="text-xs font-semibold text-red-800">Critical SLA Risk — Mock escalation created. Production would require commercial, operations, legal, and executive review before finalization. Testing may continue.</p><p className="text-[10px] text-red-700 mt-0.5">No real SLA document will be generated.</p></div></div>
+            <div className="p-2.5 rounded-lg border border-red-200 bg-red-50 flex items-start gap-2"><ShieldAlert className="w-4 h-4 text-red-600 shrink-0 mt-0.5" /><div><p className="text-xs font-semibold text-red-800">Critical SLA Risk — Advisory escalation created. Production would require commercial, operations, legal, and executive review before finalization. Testing may continue.</p><p className="text-[10px] text-red-700 mt-0.5">No real SLA document will be generated.</p></div></div>
           )}
           {isHigh && !isCritical && (
             <div className="p-2.5 rounded-lg border border-amber-200 bg-amber-50 flex items-start gap-2"><AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" /><div><p className="text-xs font-semibold text-amber-800">Future Gate: SLA should reflect locked pricing and agreed commercial terms. Current mode: mock warning only.</p></div></div>
@@ -117,21 +123,21 @@ function SlaDetailPanel({ s, slaBundle, workspaceId, onActionComplete }: { s: Co
               if (workspaceId) {
                 const result = await markSlaReviewedMock(s.id, workspaceId, s.slaName, actor);
                 if (result.success) { toast.success("SLA review saved to Supabase."); onActionComplete?.(); }
-                else { toast.error(`Mock action could not be saved: ${result.error}`); }
+                else { toast.error(`Advisory action could not be saved: ${result.error}`); }
               } else { toast.info(`Mock SLA review logged for "${s.version}". No external action.`); }
             }}><Eye className="w-3.5 h-3.5" /> Review SLA Mock</Button>
             <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5" onClick={async () => {
               if (workspaceId) {
                 const result = await requestSlaOpsReviewMock(s.id, workspaceId, s.slaName, actor);
                 if (result.success) { toast.success("Ops review requested in Supabase."); onActionComplete?.(); }
-                else { toast.error(`Mock action could not be saved: ${result.error}`); }
+                else { toast.error(`Advisory action could not be saved: ${result.error}`); }
               } else { toast.info("Mock Ops review requested. No external action."); }
             }}><ClipboardCheck className="w-3.5 h-3.5" /> Request Ops Review Mock</Button>
             <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5" onClick={async () => {
               if (workspaceId) {
                 const result = await requestSlaLegalReviewMock(s.id, workspaceId, s.slaName, actor);
                 if (result.success) { toast.success("Legal review requested in Supabase."); onActionComplete?.(); }
-                else { toast.error(`Mock action could not be saved: ${result.error}`); }
+                else { toast.error(`Advisory action could not be saved: ${result.error}`); }
               } else { toast.info("Mock Legal review requested. No external action."); }
             }}><Scale className="w-3.5 h-3.5" /> Request Legal Review Mock</Button>
             <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5" onClick={() => mkAction('sla_preview_mock', 'SLA Preview Mock', `Mock SLA preview generated for "${s.version}". No real PDF.`, 'SLA_PREVIEW_MOCK', 'Preview Generated')}><FileText className="w-3.5 h-3.5" /> SLA Preview Mock</Button>
@@ -225,10 +231,7 @@ interface Props { workspaceId: string; customerName?: string; }
 export default function CommercialSlaControlTab({ workspaceId, customerName }: Props) {
   const { bundle, status, reload } = useCommercialWorkspaceData(workspaceId);
 
-  // SUPA-003B: Use Supabase-backed SLA data when available
-  const drafts = bundle && bundle.slaBundles.length > 0
-    ? bundle.slaBundles.map(sb => sb.draft)
-    : getSlaDraftsForWorkspace(workspaceId);
+  const drafts = bundle?.slaBundles.map(sb => sb.draft) ?? [];
   const isSupabaseBacked = bundle?.supabaseBacked && bundle.slaBundles.length > 0;
 
   const [selectedId, setSelectedId] = useState<string>(drafts[0]?.id || "");
@@ -248,16 +251,24 @@ export default function CommercialSlaControlTab({ workspaceId, customerName }: P
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div><h3 className="text-base font-serif font-bold flex items-center gap-2"><ClipboardCheck className="w-5 h-5 text-[var(--color-hala-navy)]" /> SLA Control</h3><p className="text-xs text-muted-foreground">Mock SLA drafts for {customerName || "this workspace"}</p></div>
+        <div><h3 className="text-base font-serif font-bold flex items-center gap-2"><ClipboardCheck className="w-5 h-5 text-[var(--color-hala-navy)]" /> SLA Control</h3><p className="text-xs text-muted-foreground">Verified SLA drafts for {customerName || "this workspace"}</p></div>
         <div className="flex items-center gap-2">
           {isSupabaseBacked && <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200"><Database className="w-3 h-3 mr-1" />Supabase-Backed</Badge>}
-          <Badge variant="outline" className="text-[10px] bg-slate-50 border-slate-200">CRM Sync: Mock / Not Connected</Badge><Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">Development Mode</Badge>
+          <Badge variant="outline" className="text-[10px] bg-slate-50 border-slate-200">CRM Sync: Not Connected</Badge>
         </div>
       </div>
-      <Card className="border-2 border-amber-200 shadow-none bg-amber-50/50"><CardContent className="p-3"><div className="flex items-start gap-3"><AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" /><div><div className="text-sm font-semibold text-amber-800 mb-0.5">Development mode: SLA controls are mock-only</div><p className="text-xs text-amber-700 leading-relaxed">Future gates show pricing-lock, Ops, and Legal review requirements but do not block testing or generate real SLA documents.</p></div></div></CardContent></Card>
+      <Card className="border shadow-none bg-muted/20"><CardContent className="p-3"><div className="flex items-start gap-3"><AlertTriangle className="w-5 h-5 text-muted-foreground shrink-0 mt-0.5" /><div><div className="text-sm font-semibold mb-0.5">SLA child data requires lineage</div><p className="text-xs text-muted-foreground leading-relaxed">Unverified SLA draft rows are hidden until they are migrated and linked to canonical commercial tickets.</p></div></div></CardContent></Card>
       <div className="space-y-3">
         <div className="flex items-center gap-2"><h4 className="text-sm font-semibold">SLA Drafts</h4><Badge variant="outline" className="text-[9px]">{drafts.length} draft{drafts.length!==1?"s":""}</Badge></div>
-        {drafts.map(d => <SlaCard key={d.id} s={d} selected={selectedId===d.id} onSelect={()=>setSelectedId(d.id)} />)}
+        {drafts.length > 0 ? (
+          drafts.map(d => <SlaCard key={d.id} s={d} selected={selectedId===d.id} onSelect={()=>setSelectedId(d.id)} />)
+        ) : (
+          <Card className="border shadow-none">
+            <CardContent className="p-4 text-sm text-muted-foreground">
+              No verified SLA drafts are linked to this workspace yet.
+            </CardContent>
+          </Card>
+        )}
       </div>
       {selected && (
         <div>
@@ -266,7 +277,7 @@ export default function CommercialSlaControlTab({ workspaceId, customerName }: P
         </div>
       )}
       <SlaComparisonSummary drafts={drafts} />
-      <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 flex items-start gap-2"><Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" /><p className="text-xs text-blue-800">All SLA controls are mock-only for development. SLA drafts, KPIs, promise gaps, and future gates show decision paths but do not generate real documents, sync with CRM, or enforce approvals.</p></div>
+      <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 flex items-start gap-2"><Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" /><p className="text-xs text-blue-800">SLA records must come from verified lineage. No mock SLA rows are displayed as operational truth.</p></div>
     </div>
   );
 }

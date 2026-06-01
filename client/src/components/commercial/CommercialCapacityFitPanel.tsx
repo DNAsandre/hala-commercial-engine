@@ -1,4 +1,4 @@
-/**
+﻿/**
  * CW-005: Capacity Fit + Warehouse Constraint Panel
  * Mock-only — no real WMS/LFS integration, no capacity engine.
  * SUPA-004: Actions now write to Supabase.
@@ -99,7 +99,7 @@ export default function CommercialCapacityFitPanel({ cap, workspaceId, onActionC
       { workspaceId, eventCode: code, eventName: title, description: desc, category: 'CAPACITY', actor, entityType: 'Capacity Fit', entityName: cap.customerName, beforeState: cap.capacityFitStatus, afterState: after, severity: 'Info' }
     );
     if (result.success) { toast.success(`${title} saved to Supabase.`); onActionComplete?.(); }
-    else { toast.error(`Mock action could not be saved: ${result.error}`); }
+    else { toast.error(`Advisory action could not be saved: ${result.error}`); }
   };
   const sc = statusColors[cap.capacityFitStatus];
   const isRed = cap.riskLevel === "High" || cap.riskLevel === "Critical";
@@ -214,7 +214,7 @@ export default function CommercialCapacityFitPanel({ cap, workspaceId, onActionC
         {isRed && cap.mockEscalationCreated && (
           <div className="p-2 rounded border border-red-200 bg-red-50 text-xs text-red-800 flex items-center gap-2">
             <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-            Red Capacity Signal — Mock escalation created for Operations / Commercial Director review. Testing may continue.
+            Red Capacity Signal — Advisory escalation created for Operations / Commercial Director review. Testing may continue.
           </div>
         )}
         {!isRed && cap.riskLevel === "Medium" && (

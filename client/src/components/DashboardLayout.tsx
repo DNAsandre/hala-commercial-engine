@@ -127,27 +127,40 @@ const allNavItems = [
 type NavItem = { path: string; label: string; icon: any; group: string; adminOnly?: boolean; children?: NavItem[] };
 const simplifiedNavItems: NavItem[] = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard, group: "core" },
-  { path: "/customers", label: "Customers", icon: Users, group: "core" },
   {
-    path: "/workspaces", label: "Commercial Ops", icon: Briefcase, group: "core",
+    path: "/intelligence", label: "Intelligence", icon: BarChart3, group: "core",
     children: [
-      { path: "/tenders", label: "Tenders", icon: Gavel, group: "core" },
-      { path: "/commercial", label: "Commercial", icon: Handshake, group: "core" },
-      { path: "/commercial-os", label: "Commercial OS", icon: FileSpreadsheet, group: "core" },
-      { path: "/proposals", label: "Proposals", icon: FileCheck, group: "core" },
-      { path: "/slas", label: "SLAs", icon: FileSignature, group: "core" },
-      { path: "/renewals", label: "Renewals", icon: RotateCcw, group: "core" },
+      { path: "/commercial-os", label: "Rolling Profitability", icon: FileSpreadsheet, group: "core" },
+      { path: "/escalations", label: "Escalations", icon: AlertTriangle, group: "core" },
     ],
   },
-  { path: "/tenders-overview", label: "Tenders Overview", icon: LayoutList, group: "core" },
-  { path: "/commercial-overview", label: "Commercial Overview", icon: LayoutList, group: "core" },
-  { path: "/renewals-overview", label: "Renewals Overview", icon: LayoutList, group: "core" },
-  { path: "/escalations", label: "Escalations", icon: AlertTriangle, group: "core" },
+  { path: "/crm_pipeline", label: "CRM Pipeline", icon: Kanban, group: "core" },
+  {
+    path: "/customers", label: "Customers", icon: Users, group: "core",
+    children: [
+      { path: "/customer-command", label: "Customer Command Centre", icon: LayoutList, group: "core" },
+      { path: "/tenders-overview", label: "Tender Overview", icon: Gavel, group: "core" },
+      { path: "/commercial-overview", label: "Proposal Overview", icon: Handshake, group: "core" },
+      { path: "/renewals-overview", label: "Renewals Overview", icon: RotateCcw, group: "core" },
+    ],
+  },
+  {
+    path: "/workspaces", label: "Workspaces", icon: Briefcase, group: "core",
+    children: [
+      { path: "/tenders", label: "Tender Portfolio Overview", icon: Gavel, group: "core" },
+      { path: "/commercial", label: "Proposal Portfolio View", icon: Handshake, group: "core" },
+      { path: "/renewals", label: "Renewals Workspace", icon: RotateCcw, group: "core" },
+    ],
+  },
   { path: "/pdf-studio", label: "PDF Studio", icon: Printer, group: "core" },
-  { path: "/document-vault", label: "Document Vault", icon: FolderOpen, group: "core" },
-  { path: "/admin", label: "Governance", icon: Settings, group: "system", adminOnly: true },
-  { path: "/admin-panel", label: "Admin", icon: Wrench, group: "system", adminOnly: true },
-  { path: "/audit", label: "Audit Trail", icon: ClipboardList, group: "system" },
+  {
+    path: "/system", label: "System", icon: Settings, group: "system",
+    children: [
+      { path: "/admin", label: "Governance", icon: Settings, group: "system", adminOnly: true },
+      { path: "/admin-panel", label: "Admin", icon: Wrench, group: "system", adminOnly: true },
+      { path: "/audit", label: "Audit Trail", icon: ClipboardList, group: "system" },
+    ],
+  },
 ];
 
 const allGroupLabels: Record<string, string> = {

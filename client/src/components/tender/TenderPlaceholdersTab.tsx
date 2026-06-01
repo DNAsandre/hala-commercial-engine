@@ -124,7 +124,7 @@ function PlaceholderReviewModal({
             <div className="p-2.5 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30">
               <p className="text-xs text-amber-800 flex items-center gap-1.5">
                 <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-                Mock Gate: This placeholder would block production submission.
+                Advisory signal: review recommended. This placeholder should be populated before submission. Override is always available.
               </p>
             </div>
           )}
@@ -212,7 +212,7 @@ export default function TenderPlaceholdersTab({ ws, tenderId, reload }: { ws: Te
         <div className="flex items-center gap-2.5">
           <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
           <p className="text-xs text-amber-700">
-            Development mode: placeholders are tracked as mock data. Missing placeholders would block production submission, but do not block testing.
+            Advisory signals only: placeholders are tracked as readiness indicators. Missing items escalate to review — they do not block testing or submission.
           </p>
         </div>
         <Badge variant="outline" className="text-[10px] border-emerald-400 text-emerald-700 bg-emerald-50 flex items-center gap-1 shrink-0"><Database className="w-2.5 h-2.5" />Supabase-Backed</Badge>
@@ -225,7 +225,7 @@ export default function TenderPlaceholdersTab({ ws, tenderId, reload }: { ws: Te
         <SummaryCard label="Needs Evidence" value={needsEvidenceCount} color="text-amber-600" />
         <SummaryCard label="In Review" value={inReviewCount} color="text-violet-600" />
         <SummaryCard label="Approved" value={approvedCount} color="text-emerald-600" />
-        <SummaryCard label="Would Block" value={wouldBlockCount} color="text-red-600" />
+        <SummaryCard label="Review Rec." value={wouldBlockCount} color="text-amber-600" />
       </div>
 
       {/* Filters */}
@@ -287,7 +287,7 @@ export default function TenderPlaceholdersTab({ ws, tenderId, reload }: { ws: Te
                 </td>
                 <td className="px-3 py-2 text-center">
                   {ph.wouldBlockInProduction && ph.status !== "approved" ? (
-                    <Badge variant="outline" className="text-[9px] text-amber-700 bg-amber-50 border-amber-200">Would Block</Badge>
+                    <Badge variant="outline" className="text-[9px] text-amber-700 bg-amber-50 border-amber-200">Review Rec.</Badge>
                   ) : ph.status === "approved" ? (
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mx-auto" />
                   ) : (

@@ -190,9 +190,11 @@ function ProviderCard({
         </div>
 
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1">
+          <span className={`flex items-center gap-1 ${provider.config?.api_key_configured ? 'text-emerald-600' : 'text-red-500'}`}>
             <Shield className="w-3 h-3" />
-            API key stored in Edge Function
+            {provider.config?.api_key_configured
+              ? `API key configured (•••• ${provider.config?.api_key_last4 || ''})`
+              : 'No API key — configure in Admin Panel'}
           </span>
           <span className="flex items-center gap-1">
             <Server className="w-3 h-3" />

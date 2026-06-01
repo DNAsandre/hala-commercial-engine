@@ -2,6 +2,19 @@
  * Sprint 14C — Arabic Translation Bot
  * 
  * Client-side translation engine for commercial/logistics documents.
+ *
+ * ⚠️ FUTURE WIRE — MOCK TRANSLATION ENGINE
+ * ════════════════════════════════════════════
+ * Uses a curated dictionary for offline domain-specific translation.
+ * No real translation API is connected. Dictionary is hardcoded.
+ *
+ * TARGET WIRING:
+ *   DICTIONARY[]        → Supabase `translation_dictionary` table
+ *   Translation engine  → Real translation API (Google Translate / Azure)
+ *   Translation memory  → Supabase `translation_memory` table
+ *
+ * DO NOT add more dictionary entries. Wire to API when ready.
+ *
  * Provides:
  * - Comprehensive logistics/supply-chain dictionary (EN→AR)
  * - Sentence-level translation using dictionary + pattern matching

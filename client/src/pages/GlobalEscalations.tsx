@@ -1,6 +1,6 @@
 /*
  * GlobalEscalations — Global Risk Console
- * Sprint 8 + 8b: Aggregates all escalation_events across workspaces
+ * Sprint 8 + 8b: Aggregates source-backed commercial escalations across workspaces
  * Sprint 8b: SLA countdown timers with urgency indicators
  *
  * Design: Swiss Precision Instrument

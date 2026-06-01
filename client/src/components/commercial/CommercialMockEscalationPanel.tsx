@@ -1,8 +1,8 @@
-/**
- * CW-007: Mock Escalation Engine Panel
+﻿/**
+ * CW-007: Advisory Escalation Engine Panel
  * Unified escalation register aggregating all red/amber signals.
- * Mock-only — no real workflow, approval, CRM, or notification.
- * SUPA-004: Actions now write to Supabase.
+ * Advisory-only: no real workflow, approval, CRM, or notification.
+ * Actions are disabled until a verified workflow table exists.
  */
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,7 +14,6 @@ import {
 import { toast } from "sonner";
 import {
   type CommercialMockEscalation, type EscalationSeverity,
-  getEscalationsForScenario, getEscalationSummary,
 } from "@/lib/commercial-workspace-data";
 import { markEscalationReviewedMock, markEscalationBypassMock, type ActionActor } from "@/lib/supabase-commercial-actions";
 import { useAuth } from "@/contexts/AuthContext";
@@ -73,7 +72,7 @@ function EscalationDetailModal({ esc, onClose, onMarkReviewed, onBypass }: {
             <Badge variant="outline" className={`text-[9px] ${sevBadge[esc.severity]}`}>{esc.severity}</Badge>
             <Badge variant="outline" className={`text-[9px] ${sourceBadge(esc.signalSource)}`}>{esc.signalSource}</Badge>
             <Badge variant="outline" className="text-[9px] bg-slate-50 border-slate-200">{esc.status}</Badge>
-            <Badge variant="outline" className="text-[9px] bg-blue-50 text-blue-700 border-blue-200">Mock</Badge>
+            <Badge variant="outline" className="text-[9px] bg-blue-50 text-blue-700 border-blue-200">Advisory</Badge>
           </div>
 
           {/* Detail grid */}
@@ -138,16 +137,16 @@ function EscalationDetailModal({ esc, onClose, onMarkReviewed, onBypass }: {
 
           {/* Dev warning */}
           <div className="text-[10px] text-muted-foreground bg-muted/20 rounded-lg p-2">
-            <span className="font-medium">Development mode:</span> This escalation is mock-only. No approval workflow, CRM update, or notification is triggered. Testing may continue regardless of severity.
+            <span className="font-medium">Advisory mode:</span> No approval workflow, CRM update, or notification is triggered yet. Client-facing progression still requires human review.
           </div>
 
           {/* Modal actions */}
           <div className="flex items-center gap-2 pt-2 border-t border-dashed">
             <Button variant="outline" size="sm" className="text-xs h-7 gap-1" onClick={() => { onMarkReviewed(esc.id); onClose(); }}>
-              <CheckCircle2 className="w-3 h-3" /> Mark Reviewed Mock
+              <CheckCircle2 className="w-3 h-3" /> Mark Reviewed
             </Button>
             <Button variant="outline" size="sm" className="text-xs h-7 gap-1 text-blue-700 border-blue-200" onClick={() => { onBypass(esc.id, esc.signalName); onClose(); }}>
-              <Play className="w-3 h-3" /> Continue for Testing
+              <Play className="w-3 h-3" /> Continue with Advisory Override
             </Button>
             <Button variant="outline" size="sm" className="text-xs h-7 gap-1" onClick={onClose}>
               Close
@@ -175,8 +174,8 @@ export default function CommercialMockEscalationPanel({ scenarioId, escalations:
   const { appUser } = useAuth();
   const actor: ActionActor = { name: appUser?.name ?? 'Development User', role: appUser?.role ?? 'Commercial Tester' };
 
-  // SUPA-003: Use Supabase-backed escalations if provided, else fall back to in-memory mock
-  const escalations = escalationsProp ?? getEscalationsForScenario(scenarioId);
+  void scenarioId;
+  const escalations = escalationsProp ?? [];
   const summary = {
     total: escalations.length,
     critical: escalations.filter(e => e.severity === 'Critical').length,
@@ -196,13 +195,13 @@ export default function CommercialMockEscalationPanel({ scenarioId, escalations:
       const esc = escalations.find(e => e.id === id);
       const result = await markEscalationReviewedMock(id, workspaceId, esc?.signalName ?? id, actor);
       if (result.success) {
-        toast.success("Mock review saved to Supabase. No production approval triggered.");
+        toast.success("Review save requested. No production approval triggered.");
         onActionComplete?.();
       } else {
-        toast.error(`Mock action could not be saved to Supabase: ${result.error}`);
+        toast.error(`Advisory action could not be saved to Supabase: ${result.error}`);
       }
     } else {
-      toast.info("Mock escalation marked as reviewed. No backend update.");
+      toast.info("Advisory escalation marked as reviewed. No backend update.");
     }
   };
 
@@ -210,13 +209,13 @@ export default function CommercialMockEscalationPanel({ scenarioId, escalations:
     if (workspaceId) {
       const result = await markEscalationBypassMock(id, workspaceId, name, actor);
       if (result.success) {
-        toast.success("Testing bypass saved to Supabase. No production approval triggered.");
+        toast.success("Advisory override requested. No production approval triggered.");
         onActionComplete?.();
       } else {
-        toast.error(`Mock action could not be saved to Supabase: ${result.error}`);
+        toast.error(`Advisory action could not be saved to Supabase: ${result.error}`);
       }
     } else {
-      toast.info("Mock testing bypass recorded. No production approval was triggered.");
+      toast.info("Advisory override requested. No production approval was triggered.");
     }
   };
 
@@ -233,7 +232,7 @@ export default function CommercialMockEscalationPanel({ scenarioId, escalations:
             >
               {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
               <CardTitle className="text-sm font-serif flex items-center gap-2">
-                <ShieldAlert className="w-4 h-4 text-[var(--color-hala-navy)]" /> Mock Escalations
+                <ShieldAlert className="w-4 h-4 text-[var(--color-hala-navy)]" /> Advisory Escalations
               </CardTitle>
             </button>
             <div className="flex items-center gap-1.5">
@@ -241,7 +240,7 @@ export default function CommercialMockEscalationPanel({ scenarioId, escalations:
               {summary.critical > 0 && <Badge variant="outline" className="text-[9px] text-red-700 bg-red-100 border-red-300 font-bold">{summary.critical} Critical</Badge>}
               {summary.high > 0 && <Badge variant="outline" className="text-[9px] text-red-600 bg-red-50 border-red-200">{summary.high} High</Badge>}
               {summary.medium > 0 && <Badge variant="outline" className="text-[9px] text-amber-700 bg-amber-50 border-amber-200">{summary.medium} Amber</Badge>}
-              <Badge variant="outline" className="text-[9px] bg-blue-50 text-blue-700 border-blue-200">Mock</Badge>
+              <Badge variant="outline" className="text-[9px] bg-blue-50 text-blue-700 border-blue-200">Advisory</Badge>
             </div>
           </div>
         </CardHeader>
@@ -255,11 +254,11 @@ export default function CommercialMockEscalationPanel({ scenarioId, escalations:
                 <div>
                   <p className="text-xs font-semibold text-red-800">
                     {summary.critical > 0
-                      ? "Critical commercial posture: future production would require executive review before client-facing progression. Current mode: mock only."
-                      : "Red Signal Detected — Mock escalation created for review. Testing may continue."}
+                      ? "Critical commercial posture: executive review is required before client-facing progression. Current mode: advisory only."
+                      : "Red signal detected. Advisory review is required before client-facing progression."}
                   </p>
                   <p className="text-[10px] text-red-700 mt-0.5">
-                    {summary.critical} critical · {summary.high} high · {summary.mockCreated} mock escalation{summary.mockCreated !== 1 ? "s" : ""} created · Testing bypass available
+                    {summary.critical} critical · {summary.high} high · {summary.mockCreated} advisory escalation{summary.mockCreated !== 1 ? "s" : ""} created · Advisory override available
                   </p>
                 </div>
               </div>
@@ -268,10 +267,10 @@ export default function CommercialMockEscalationPanel({ scenarioId, escalations:
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
                   <p className="text-xs font-semibold text-amber-800">
-                    Amber Review — future Commercial/Ops review would be required. Current mode: mock warning only.
+                    Amber review: Commercial/Ops review may be required. Current mode: advisory only.
                   </p>
                   <p className="text-[10px] text-amber-700 mt-0.5">
-                    {summary.medium} amber review{summary.medium !== 1 ? "s" : ""} · No mock escalation created · Testing may continue
+                    {summary.medium} amber review{summary.medium !== 1 ? "s" : ""} · No advisory escalation created
                   </p>
                 </div>
               </div>
@@ -284,8 +283,8 @@ export default function CommercialMockEscalationPanel({ scenarioId, escalations:
                 { label: "Critical", value: summary.critical, color: summary.critical > 0 ? "text-red-700 font-bold" : "" },
                 { label: "High", value: summary.high, color: summary.high > 0 ? "text-red-600" : "" },
                 { label: "Amber", value: summary.medium, color: summary.medium > 0 ? "text-amber-700" : "" },
-                { label: "Mock Created", value: summary.mockCreated, color: "" },
-                { label: "Bypass Available", value: summary.bypassAvailable, color: "text-blue-700" },
+                { label: "Advisory Created", value: summary.mockCreated, color: "" },
+                { label: "Override Available", value: summary.bypassAvailable, color: "text-blue-700" },
               ].map(m => (
                 <div key={m.label} className="bg-muted/30 rounded-lg p-1.5 text-center">
                   <p className="text-[8px] font-semibold uppercase tracking-wider text-muted-foreground">{m.label}</p>
@@ -296,7 +295,7 @@ export default function CommercialMockEscalationPanel({ scenarioId, escalations:
 
             {/* Dev copy */}
             <div className="text-[10px] text-muted-foreground bg-muted/20 rounded-lg p-2">
-              <span className="font-medium">Development mode:</span> Red signals create mock escalations only. No approval, notification, CRM update, or workflow is triggered. All escalations are advisory.
+              <span className="font-medium">Advisory mode:</span> Red signals create advisory escalations only. No approval, notification, CRM update, or workflow is triggered.
             </div>
 
             {/* Escalation register */}
@@ -330,7 +329,7 @@ export default function CommercialMockEscalationPanel({ scenarioId, escalations:
                       {/* Row actions */}
                       <div className="flex items-center gap-1.5 mt-2">
                         <Button variant="outline" size="sm" className="text-[10px] h-6 gap-1 px-2" onClick={() => setSelectedEsc(esc)}>
-                          <Eye className="w-3 h-3" /> Review Mock
+                          <Eye className="w-3 h-3" /> Review
                         </Button>
                         {!isReviewed && (
                           <Button variant="outline" size="sm" className="text-[10px] h-6 gap-1 px-2" onClick={() => markReviewed(esc.id)}>

@@ -225,16 +225,16 @@ export default function TrackerTab({ workspaces, customers, approvalRecords, ten
 
   const tenderStages = useMemo((): StageInfo[] => {
     const DISPLAY: Record<TenderMilestone, string> = {
-      identified:          "Identified",
-      preparing_submission: "Preparing",
-      submitted:           "Submitted",
-      clarification:       "Clarification",
-      technical_review:    "Tech Review",
-      commercial_review:   "Commercial",
-      negotiation:         "Negotiation",
-      awarded:             "Awarded",
-      lost:                "Lost",
-      withdrawn:           "Withdrawn",
+      prospecting:          "Prospecting",
+      qualified:            "Qualified",
+      proposal_sent:        "Proposal Sent",
+      shortlisted:          "Shortlisted",
+      contract_negotiation: "Negotiation",
+      closed_won:           "Won",
+      contract_signed:      "Signed",
+      operational_handover: "Handover",
+      closed_lost:          "Lost",
+      discontinued:         "Discontinued",
     };
 
     return TENDER_KANBAN_COLUMNS.map(milestone => {
@@ -251,7 +251,7 @@ export default function TrackerTab({ workspaces, customers, approvalRecords, ten
         return (days >= 0 && days <= 14) || t.daysInStatus > 14;
       }).length;
 
-      const isTerminal = ["awarded", "lost", "withdrawn"].includes(milestone);
+      const isTerminal = ["closed_won", "closed_lost", "discontinued"].includes(milestone);
       return {
         value: milestone,
         label: DISPLAY[milestone],
@@ -269,7 +269,7 @@ export default function TrackerTab({ workspaces, customers, approvalRecords, ten
     const items: FlaggedItem[] = [];
 
     for (const t of tenders.filter(
-      t => !["awarded", "lost", "withdrawn"].includes(t.status)
+      t => !["closed_won", "closed_lost", "discontinued"].includes(t.status)
     )) {
       const days = Math.ceil((new Date(t.submissionDeadline).getTime() - now) / 86400000);
       const isOverdue = days < 0;
@@ -306,9 +306,9 @@ export default function TrackerTab({ workspaces, customers, approvalRecords, ten
   }, [tenders]);
 
   const tenderSummary = useMemo(() => {
-    const active = tenders.filter(t => !["awarded", "lost", "withdrawn"].includes(t.status));
-    const stalled = tenders.filter(t => t.daysInStatus > 14 && !["awarded", "lost", "withdrawn"].includes(t.status));
-    const lowMargin = tenders.filter(t => t.targetGpPercent < 22 && !["awarded", "lost", "withdrawn"].includes(t.status));
+    const active = tenders.filter(t => !["closed_won", "closed_lost", "discontinued"].includes(t.status));
+    const stalled = tenders.filter(t => t.daysInStatus > 14 && !["closed_won", "closed_lost", "discontinued"].includes(t.status));
+    const lowMargin = tenders.filter(t => t.targetGpPercent < 22 && !["closed_won", "closed_lost", "discontinued"].includes(t.status));
     return `${active.length} active · ${stalled.length} stalled · ${lowMargin.length} below margin`;
   }, [tenders]);
 

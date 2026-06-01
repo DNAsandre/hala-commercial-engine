@@ -6,6 +6,7 @@
  */
 import { useState, useMemo, useEffect } from 'react';
 import { api } from '@/lib/api-client';
+import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -23,16 +24,18 @@ import { Link, useLocation, useSearch } from 'wouter';
 import {
   Bot, Save, ArrowLeft, Shield, Cpu, Database, FileText, Settings, Zap,
   Lock, Eye, Pencil, AlertTriangle, CheckCircle2, Info, History,
-  ChevronRight, Plus, Trash2, BookOpen, Table, Plug
+  ChevronRight, Plus, Trash2, BookOpen, Table, Plug, Link2
 } from 'lucide-react';
 import {
-  HARD_ACTION_DENY_LIST,
+  HARD_ACTION_DENY_LIST, mockBots, mockBotVersions,
+  type Bot as BotEntity, type BotVersion,
   type BotType as BotTypeEnum, type ActionBotMode, type MonitorBotOutput, type ConnectorType
 } from '@/lib/bot-governance';
+import { fetchAIProviders } from '@/lib/ai-client';
 
 const REGIONS = ['East', 'Central', 'West'];
-const ROLES = ['commercial_director', 'sales_head', 'salesman', 'ops_head', 'finance', 'ceo', 'cfo', 'legal'];
-const DOMAINS = ['proposals', 'quotes', 'slas', 'dashboard', 'customers', 'workspace', 'reports'];
+const ROLES = ['admin', 'manager', 'sales', 'ops', 'finance', 'viewer'];
+const DOMAINS = ['dashboard', 'crm_pipeline', 'customers', 'proposals', 'tenders', 'renewals', 'slas', 'pnl', 'documents', 'pdf_studio', 'commercial_os', 'approvals', 'escalations'];
 
 export default function BotBuilder() {
   const [, navigate] = useLocation();
@@ -90,6 +93,12 @@ export default function BotBuilder() {
           setCustomInstruction(mv.customInstruction); setSafetyRules(mv.safetyRules);
           setTemperature(mv.temperature); setMaxTokens(mv.maxTokens);
           setSelectedKB(mv.knowledgeBaseIds); setConnectorState(mv.connectorSnapshot);
+          // Load chain config
+          if (latest.chain_config && typeof latest.chain_config === 'object') {
+            setChainNextBotId(latest.chain_config.next_bot_id || 'none');
+            setChainPromptUser(latest.chain_config.prompt_user !== false);
+            setChainLabel(latest.chain_config.chain_label || 'Auto-draft all blocks');
+          }
           setVersionHistory(versRes.data.map((v: any) => ({
             id: v.id, version: v.version, changeNote: v.change_note || '',
             createdAt: v.created_at || '', createdBy: v.created_by || '',
@@ -100,22 +109,26 @@ export default function BotBuilder() {
     return () => { mounted = false; };
   }, [editId]);
 
-  // Load providers, connectors
+  // Load providers from Supabase (same path as Admin → AI Providers tab)
   useEffect(() => {
-    (async () => {
-      try {
-        const [provRes, connRes] = await Promise.all([
-          api.botGovernance.listProviders(),
-          api.botGovernance.listConnectors(),
-        ]);
-        setApiProviders((provRes.data || []).map((p: any) => ({
-          id: p.id, name: p.name, enabled: p.enabled, models: p.models || [],
-        })));
-        setApiConnectors((connRes.data || []).map((c: any) => ({
-          id: c.id, type: c.type, name: c.name, enabled: c.enabled, status: c.status || 'disconnected',
-        })));
-      } catch { /* empty */ }
-    })();
+    let mounted = true;
+    fetchAIProviders().then(provs => {
+      if (!mounted) return;
+      setApiProviders(provs.map(p => ({
+        id: p.id, name: p.displayName, enabled: p.enabled, models: p.models || [],
+      })));
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  // Load all bots for chain dropdown
+  useEffect(() => {
+    let mounted = true;
+    supabase.from('ai_bots').select('id, name, display_name, type, status, domains_allowed').order('name').then(({ data }) => {
+      if (!mounted || !data) return;
+      setAllBots(data);
+    });
+    return () => { mounted = false; };
   }, []);
 
   // Section 1: Identity
@@ -158,75 +171,129 @@ export default function BotBuilder() {
 
   const [changeNote, setChangeNote] = useState('');
 
+  // Section 7: Bot Chaining
+  const [chainNextBotId, setChainNextBotId] = useState('none');
+  const [chainPromptUser, setChainPromptUser] = useState(true);
+  const [chainLabel, setChainLabel] = useState('Auto-draft all blocks');
+  const [allBots, setAllBots] = useState<any[]>([]);
+
   const handleSave = async () => {
     if (!name.trim()) { toast.error('Bot name is required'); return; }
     if (!purpose.trim()) { toast.error('Bot purpose is required'); return; }
     if (roles.length === 0) { toast.error('At least one role must be selected'); return; }
-    if (!safetyRules.trim()) { toast.error('Safety/Refusal rules are mandatory'); return; }
     if (!changeNote.trim() && existingBot) { toast.error('Change note is required for version updates'); return; }
     if (maxTokens > 8000) { toast.error('Max tokens cannot exceed 8000'); return; }
     if (rateLimit > 100) { toast.error('Rate limit cannot exceed 100'); return; }
     if (costCap > 100) { toast.error('Cost cap cannot exceed $100'); return; }
 
-    try {
-      const currentActions = type === 'action' ? actionModes : monitorOutputs;
-      const botPayload = {
-        name: name.trim(),
-        type,
-        purpose: purpose.trim(),
-        domains_allowed: domains,
-        regions_allowed: regions,
-        roles_allowed: roles,
-        provider_id: providerId,
-        model,
-        rate_limit: rateLimit,
-        cost_cap: costCap,
-        timeout_sec: timeoutSec,
-      };
+    const currentActions = type === 'action' ? actionModes : monitorOutputs;
+    const now = new Date().toISOString();
 
+    const botPayload = {
+      name: name.trim(),
+      display_name: name.trim(),
+      type,
+      status: existingBot?.status || 'draft',
+      purpose: purpose.trim(),
+      domains_allowed: domains,
+      regions_allowed: regions,
+      roles_allowed: roles,
+      provider_id: providerId,
+      model,
+      rate_limit: rateLimit,
+      cost_cap: costCap,
+      timeout_sec: timeoutSec,
+      updated_at: now,
+    };
+
+    const versionPayload = {
+      system_instruction: baseSystemInstruction,
+      custom_instruction: customInstruction,
+      safety_rules: safetyRules,
+      temperature,
+      max_tokens: maxTokens,
+      allowed_actions: currentActions,
+      provider_id: providerId,
+      model,
+      connector_snapshot: Object.fromEntries(Object.entries(connectorState)),
+      permission_snapshot: { domainsAllowed: domains, regionsAllowed: regions, rolesAllowed: roles },
+      knowledge_base_ids: selectedKB,
+      change_note: changeNote || 'Initial version',
+      chain_config: chainNextBotId && chainNextBotId !== 'none' ? {
+        next_bot_id: chainNextBotId,
+        prompt_user: chainPromptUser,
+        chain_label: chainLabel || 'Auto-draft all blocks',
+      } : {},
+      created_at: now,
+      created_by: 'admin',
+    };
+
+    try {
       if (existingBot) {
-        await api.botGovernance.updateBot(existingBot.id, botPayload);
+        // Update existing bot in Supabase
+        const { error: botErr } = await supabase.from('ai_bots').update(botPayload).eq('id', existingBot.id);
+        if (botErr) throw botErr;
+
         // Create new version
-        await api.botGovernance.createVersion(existingBot.id, {
-          system_instruction: baseSystemInstruction,
-          custom_instruction: customInstruction,
-          safety_rules: safetyRules,
-          temperature,
-          max_tokens: maxTokens,
-          allowed_actions: currentActions,
-          provider_id: providerId,
-          model,
-          connector_snapshot: Object.fromEntries(Object.entries(connectorState)),
-          permission_snapshot: { domainsAllowed: domains, regionsAllowed: regions, rolesAllowed: roles },
-          knowledge_base_ids: selectedKB,
-          change_note: changeNote,
-        });
-        toast.success(`Bot "${name}" updated — new version published`);
-      } else {
-        const { data: newBot } = await api.botGovernance.createBot(botPayload);
-        // Create initial version
-        if (newBot?.id) {
-          await api.botGovernance.createVersion(newBot.id, {
-            system_instruction: baseSystemInstruction,
-            custom_instruction: customInstruction,
-            safety_rules: safetyRules,
-            temperature,
-            max_tokens: maxTokens,
-            allowed_actions: currentActions,
-            provider_id: providerId,
-            model,
-            connector_snapshot: Object.fromEntries(Object.entries(connectorState)),
-            permission_snapshot: { domainsAllowed: domains, regionsAllowed: regions, rolesAllowed: roles },
-            knowledge_base_ids: selectedKB,
-            change_note: changeNote || 'Initial version',
+        const nextVersion = (versionHistory[0]?.version || 0) + 1;
+        await supabase.from('ai_bot_versions').insert({ ...versionPayload, bot_id: existingBot.id, version: nextVersion });
+
+        // Also update mockBots for same-session fallback
+        const idx = mockBots.findIndex(b => b.id === existingBot.id);
+        if (idx >= 0) {
+          Object.assign(mockBots[idx], {
+            name: name.trim(), type, purpose: purpose.trim(),
+            domainsAllowed: domains, regionsAllowed: regions, rolesAllowed: roles,
+            providerId, model, rateLimit, costCap, timeout: timeoutSec, updatedAt: now,
           });
         }
+
+        toast.success(`Bot "${name}" updated (version ${nextVersion})`);
+      } else {
+        // Insert new bot to Supabase
+        const { data: newBot, error: botErr } = await supabase.from('ai_bots').insert({ ...botPayload, created_at: now, created_by: 'admin' }).select().single();
+        if (botErr) throw botErr;
+
+        const botId = newBot.id;
+        // Insert first version
+        const { data: newVer } = await supabase.from('ai_bot_versions').insert({ ...versionPayload, bot_id: botId, version: 1 }).select().single();
+
+        // Update current_version_id
+        if (newVer?.id) {
+          await supabase.from('ai_bots').update({ current_version_id: newVer.id }).eq('id', botId);
+        }
+
+        // Also push to mockBots for same-session fallback
+        const localBot: BotEntity = {
+          id: botId, name: name.trim(), type, status: 'draft', purpose: purpose.trim(),
+          domainsAllowed: domains, regionsAllowed: regions, rolesAllowed: roles,
+          currentVersionId: newVer?.id || '', providerId, model,
+          rateLimit, costCap, timeout: timeoutSec,
+          createdAt: now, updatedAt: now, lastRunAt: null,
+          errorRate: 0, costUsage: 0, totalInvocations: 0,
+        };
+        mockBots.push(localBot);
+
         toast.success(`Bot "${name}" created in Draft status`);
       }
     } catch (err: any) {
-      // Fallback — still show success but warn about persistence
-      toast.success(existingBot ? `Bot "${name}" updated (local only — run migration to persist)` : `Bot "${name}" created (local only — run migration to persist)`);
+      console.error('[BotBuilder] Supabase save failed:', err.message, err.code, err);
+      // Supabase write failed — save locally so it still appears in registry this session
+      const localId = existingBot?.id || `bot-${crypto.randomUUID().substring(0, 8)}`;
+      if (!existingBot) {
+        const localBot: BotEntity = {
+          id: localId, name: name.trim(), type, status: 'draft', purpose: purpose.trim(),
+          domainsAllowed: domains, regionsAllowed: regions, rolesAllowed: roles,
+          currentVersionId: '', providerId, model,
+          rateLimit, costCap, timeout: timeoutSec,
+          createdAt: now, updatedAt: now, lastRunAt: null,
+          errorRate: 0, costUsage: 0, totalInvocations: 0,
+        };
+        mockBots.push(localBot);
+      }
+      toast.warning(`Bot saved locally (Supabase write failed: ${err.message || 'unknown error'}). It will appear in the registry this session but may not persist on refresh.`);
     }
+
     navigate('/bot-registry');
   };
 
@@ -355,11 +422,11 @@ export default function BotBuilder() {
               </div>
               <div>
                 <Label className="flex items-center gap-2">
-                  Safety / Refusal Rules <span className="text-xs text-red-500 font-normal">(Mandatory)</span>
+                  Safety / Refusal Rules <span className="text-xs text-slate-400 font-normal">(Optional)</span>
                 </Label>
                 <Textarea value={safetyRules} onChange={e => setSafetyRules(e.target.value)}
                   placeholder="Define what this bot must NEVER do..." rows={4}
-                  className="border-red-200 focus:border-red-400" />
+                  />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -549,6 +616,49 @@ export default function BotBuilder() {
                   <Input type="number" value={timeoutSec} onChange={e => setTimeoutSec(Number(e.target.value))} min={5} max={120} />
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Section 7: Bot Chaining */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><Link2 className="w-4 h-4" /> 7. Bot Chaining Pipeline</CardTitle>
+              <CardDescription>Chain this bot to another bot. After this bot completes, the next bot runs automatically (with optional human approval).</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <Label>Next Bot in Chain</Label>
+                <Select value={chainNextBotId} onValueChange={setChainNextBotId}>
+                  <SelectTrigger><SelectValue placeholder="No chain — runs independently" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No chain — runs independently</SelectItem>
+                    {allBots
+                      .filter(b => b.id !== editId) // can't chain to self
+                      .map(b => (
+                        <SelectItem key={b.id} value={b.id}>
+                          {b.display_name || b.name} ({b.type}) {b.status !== 'active' ? `— ${b.status}` : ''}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[10px] text-slate-500 mt-1">When this bot finishes, the selected bot will be offered to run next.</p>
+              </div>
+              {chainNextBotId && chainNextBotId !== 'none' && (
+                <>
+                  <div className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium">Prompt user before chaining</p>
+                      <p className="text-[10px] text-slate-500">Show a dialog asking the user to confirm before running the next bot</p>
+                    </div>
+                    <Switch checked={chainPromptUser} onCheckedChange={setChainPromptUser} />
+                  </div>
+                  <div>
+                    <Label>Chain Button Label</Label>
+                    <Input value={chainLabel} onChange={e => setChainLabel(e.target.value)} placeholder="e.g., Auto-draft all blocks" />
+                    <p className="text-[10px] text-slate-500 mt-1">The text shown on the “run next bot” button in the chain dialog.</p>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 

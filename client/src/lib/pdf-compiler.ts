@@ -2,6 +2,20 @@
 // Generates professional Hala-branded PDF documents
 // Uses browser-native PDF generation via print-to-PDF approach
 // Documents: Proposals, Quotes, P&L Summaries, SLAs, ECR Scorecards
+//
+// ⚠️ FUTURE WIRE — PDF CONTENT BLOCKS USE MOCK DATA
+// ════════════════════════════════════════════════════
+// The PDF templates are real, but some content (scope of work, T&C,
+// SLA KPI targets, escalation matrix, cost breakdowns) is hardcoded.
+// The Composer-based PDF pipeline is production-ready and dynamic.
+//
+// TARGET WIRING:
+//   Cost breakdowns    → D365 Finance cost modules
+//   SLA KPI targets    → Supabase `sla_kpi_targets` table
+//   T&C clauses        → Document Vault / Supabase `legal_clauses`
+//   Variable resolution → `semantic_variables` table (partially wired)
+//
+// DO NOT add more hardcoded content blocks. Use Composer pipeline.
 
 import type { Customer, Workspace, Quote, Proposal, PnLModel } from "./store";
 import { formatSAR, formatPercent, getStageLabel, getApprovalRequirements, getRoleLabel, calculateECR } from "./store";

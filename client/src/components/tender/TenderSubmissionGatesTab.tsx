@@ -1,6 +1,7 @@
 /**
- * TND-006: Tender Submission Gates Tab
- * Extracted component — mock gate engine with summary, filters, table, review modal, and mock evaluation.
+ * TND-006: Tender Readiness Signals Tab
+ * Signal-only advisory panel — no blocking, no enforcement, no gates.
+ * Doctrine: flag → explain → recommend → allow override → log reason
  */
 import { useState, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -34,8 +35,8 @@ function GateReviewModal({ gate, onClose, onBypass }: { gate: TenderMockGate; on
         <div className="p-5 border-b">
           <div className="flex items-start justify-between">
             <div>
-              <h3 className="text-sm font-serif font-bold">Gate Review (Mock)</h3>
-              <p className="text-[10px] text-muted-foreground mt-0.5">Development mock — no enforcement applied.</p>
+              <h3 className="text-sm font-serif font-bold">Readiness Signal Review</h3>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Advisory signal only — no enforcement, no blocking applied.</p>
             </div>
             <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onClose}><XCircle className="w-4 h-4" /></Button>
           </div>
@@ -66,7 +67,7 @@ function GateReviewModal({ gate, onClose, onBypass }: { gate: TenderMockGate; on
             <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Owner</label><p className="text-xs mt-1">{gate.ownerName || "—"}</p></div>
           </div>
           {gate.wouldBlockReason && (
-            <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Would Block Reason</label><p className="text-xs mt-1 text-red-700">{gate.wouldBlockReason}</p></div>
+            <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Advisory Reason</label><p className="text-xs mt-1 text-amber-700">{gate.wouldBlockReason}</p></div>
           )}
           {gate.linkedSignal && (
             <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Linked Signal</label><p className="text-xs mt-1">{gate.linkedSignal}</p></div>
@@ -74,22 +75,22 @@ function GateReviewModal({ gate, onClose, onBypass }: { gate: TenderMockGate; on
           {gate.notes && (
             <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Notes</label><p className="text-xs mt-1 text-muted-foreground">{gate.notes}</p></div>
           )}
-          {gate.wouldBlock && gate.status !== "pass" && gate.status !== "mock_bypassed" && (
-            <div className="p-2.5 rounded-md border border-red-300 bg-red-50 dark:bg-red-950/30">
-              <p className="text-xs text-red-800 flex items-center gap-1.5"><ShieldAlert className="w-3.5 h-3.5 shrink-0" />Would block production submission. Testing bypass available.</p>
+          {(gate.needsReview ?? gate.wouldBlock) && gate.status !== "pass" && gate.status !== "mock_bypassed" && (
+            <div className="p-2.5 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30">
+              <p className="text-xs text-amber-800 flex items-center gap-1.5"><ShieldAlert className="w-3.5 h-3.5 shrink-0" />Review recommended before submission. You may continue — override is always available.</p>
             </div>
           )}
           <div className="p-2.5 rounded-md border border-blue-200 bg-blue-50/50">
-            <p className="text-[10px] text-blue-700 flex items-center gap-1.5"><Info className="w-3.5 h-3.5 shrink-0" />Mock gate only. Allow test bypass = {gate.allowTestBypass ? "Yes" : "No"}.</p>
+            <p className="text-[10px] text-blue-700 flex items-center gap-1.5"><Info className="w-3.5 h-3.5 shrink-0" />Advisory signal only. Override available = {gate.allowTestBypass ? "Yes" : "No"}.</p>
           </div>
         </div>
         <div className="p-5 border-t flex items-center gap-2 justify-end flex-wrap">
-          <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => { toast.info(`Mock evaluation: "${gate.gateName}" — no enforcement applied.`); onClose(); }}>
-            <Play className="w-3.5 h-3.5 mr-1" /> Run Mock Evaluation
+          <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => { toast.info(`Signal evaluated: "${gate.gateName}" — advisory only, no enforcement.`); onClose(); }}>
+            <Play className="w-3.5 h-3.5 mr-1" /> Evaluate Signal
           </Button>
-          {gate.wouldBlock && gate.status !== "pass" && gate.status !== "mock_bypassed" && (
+          {(gate.needsReview ?? gate.wouldBlock) && gate.status !== "pass" && gate.status !== "mock_bypassed" && (
             <Button variant="outline" size="sm" className="text-xs h-8 text-blue-700 border-blue-200" onClick={() => { onBypass(gate.id); onClose(); }}>
-              <Zap className="w-3.5 h-3.5 mr-1" /> Continue for Testing
+              <Zap className="w-3.5 h-3.5 mr-1" /> Override & Continue
             </Button>
           )}
           <Button variant="ghost" size="sm" className="text-xs h-8" onClick={onClose}>Close</Button>
@@ -127,7 +128,7 @@ export default function TenderSubmissionGatesTab({ ws, tenderId, reload }: { ws:
   // Counts
   const passCount = gates.filter(g => effectiveStatus(g) === "pass").length;
   const warningCount = gates.filter(g => effectiveStatus(g) === "warning").length;
-  const wouldBlockCount = gates.filter(g => effectiveStatus(g) === "would_block").length;
+  const needsReviewCount = gates.filter(g => effectiveStatus(g) === "would_block").length;
   const bypassedCount = gates.filter(g => effectiveStatus(g) === "mock_bypassed").length;
   const criticalCount = gates.filter(g => g.severity === "critical").length;
   const bypassAvailable = gates.filter(g => g.allowTestBypass && effectiveStatus(g) !== "pass" && effectiveStatus(g) !== "mock_bypassed").length;
@@ -153,37 +154,37 @@ export default function TenderSubmissionGatesTab({ ws, tenderId, reload }: { ws:
     { value: "all", label: "All Statuses" },
     { value: "pass", label: "Pass" },
     { value: "warning", label: "Warning" },
-    { value: "would_block", label: "Would Block" },
+    { value: "would_block", label: "Review Recommended" },
     { value: "not_started", label: "Not Started" },
-    { value: "mock_bypassed", label: "Mock Bypassed" },
-    { value: "fail", label: "Fail" },
+    { value: "mock_bypassed", label: "Overridden" },
+    { value: "fail", label: "Flagged" },
     { value: "not_applicable", label: "N/A" },
   ];
 
   async function handleBypass(id: string) {
     const gate = gates.find(g => g.id === id);
-    const result = await logMockBypass(tenderId, id, gate?.gateName ?? id, 'Testing bypass activated');
+    const result = await logMockBypass(tenderId, id, gate?.gateName ?? id, 'Advisory override activated');
     setBypassed(prev => new Set(prev).add(id));
     if (result.success) {
-      toast.info("Mock bypass logged and persisted.", { description: "Continue for Testing activated." });
+      toast.info("Advisory override logged and persisted.", { description: "Continue is allowed. No enforcement applied." });
       reload();
     } else {
-      toast.warning("Mock bypass logged locally. Supabase write failed.", { description: result.error });
+      toast.warning("Advisory override tracked locally. Supabase write failed.", { description: result.error });
     }
   }
 
   async function handleRunAll() {
     let successCount = 0;
     for (const gate of gates) {
-      const newStatus = gate.wouldBlock ? 'would_block' : 'pass';
+      const newStatus = (gate.needsReview ?? gate.wouldBlock) ? 'would_block' : 'pass';
       if (gate.status !== newStatus) {
-        const r = await updateGateStatus(tenderId, gate.id, gate.gateName, gate.status, newStatus, 'Bulk mock evaluation');
+        const r = await updateGateStatus(tenderId, gate.id, gate.gateName, gate.status, newStatus, 'Bulk signal evaluation');
         if (r.success) successCount++;
       } else {
         successCount++;
       }
     }
-    toast.info(`Mock evaluation complete. ${wouldBlockCount} gate(s) would block production.`, { description: `${successCount}/${gates.length} gates evaluated and persisted.` });
+    toast.info(`Readiness evaluation complete. ${needsReviewCount} signal(s) flagged for review — advisory only, no enforcement.`, { description: `${successCount}/${gates.length} signals evaluated.` });
     reload();
   }
 
@@ -193,11 +194,11 @@ export default function TenderSubmissionGatesTab({ ws, tenderId, reload }: { ws:
 
   return (
     <div className="space-y-4">
-      {/* Dev banner */}
-      <div className="p-3 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 flex items-center justify-between gap-2.5">
+      {/* Signal doctrine banner */}
+      <div className="p-3 rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/30 flex items-center justify-between gap-2.5">
         <div className="flex items-center gap-2.5">
-          <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
-          <p className="text-xs text-amber-700">Development mode: submission gates are mock controls only. They show what would block production submission, but they do not block testing.</p>
+          <Info className="w-4 h-4 text-blue-600 shrink-0" />
+          <p className="text-xs text-blue-700">Readiness signals are advisory only. All signals flag, explain, and recommend — nothing blocks movement or locks submission. Override is always available.</p>
         </div>
         <Badge variant="outline" className="text-[10px] border-emerald-400 text-emerald-700 bg-emerald-50 flex items-center gap-1 shrink-0"><Database className="w-2.5 h-2.5" />Supabase-Backed</Badge>
       </div>
@@ -205,18 +206,18 @@ export default function TenderSubmissionGatesTab({ ws, tenderId, reload }: { ws:
       {/* Summary + Run button */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="grid grid-cols-4 md:grid-cols-7 gap-2 flex-1">
-          <SummaryCard label="Total Gates" value={gates.length} color="text-foreground" />
+          <SummaryCard label="Total Signals" value={gates.length} color="text-foreground" />
           <SummaryCard label="Pass" value={passCount} color="text-emerald-600" />
           <SummaryCard label="Warnings" value={warningCount} color="text-amber-600" />
-          <SummaryCard label="Would Block" value={wouldBlockCount} color="text-red-600" />
-          <SummaryCard label="Bypassed" value={bypassedCount} color="text-blue-600" />
-          <SummaryCard label="Critical" value={criticalCount} color="text-red-600" />
-          <SummaryCard label="Bypass Avail." value={bypassAvailable} color="text-blue-600" />
+          <SummaryCard label="Review Rec." value={needsReviewCount} color="text-amber-600" />
+          <SummaryCard label="Overridden" value={bypassedCount} color="text-blue-600" />
+          <SummaryCard label="Critical" value={criticalCount} color="text-orange-600" />
+          <SummaryCard label="Can Override" value={bypassAvailable} color="text-blue-600" />
         </div>
       </div>
 
       <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5" onClick={handleRunAll}>
-        <Play className="w-3.5 h-3.5" /> Run Mock Gate Evaluation
+        <Play className="w-3.5 h-3.5" /> Evaluate Readiness Signals
       </Button>
 
       {/* Filters */}
@@ -245,13 +246,13 @@ export default function TenderSubmissionGatesTab({ ws, tenderId, reload }: { ws:
         <table className="w-full text-xs">
           <thead className="bg-muted/50">
             <tr>
-              <th className="px-3 py-2 text-left font-semibold">Gate</th>
+              <th className="px-3 py-2 text-left font-semibold">Signal</th>
               <th className="px-3 py-2 text-left font-semibold">Pack</th>
               <th className="px-3 py-2 text-left font-semibold">Category</th>
               <th className="px-3 py-2 text-left font-semibold">Status</th>
               <th className="px-3 py-2 text-center font-semibold">Severity</th>
-              <th className="px-3 py-2 text-center font-semibold">Block?</th>
-              <th className="px-3 py-2 text-left font-semibold">Runtime</th>
+              <th className="px-3 py-2 text-center font-semibold">Advisory</th>
+              <th className="px-3 py-2 text-left font-semibold">Mode</th>
               <th className="px-3 py-2 text-left font-semibold">Owner</th>
               <th className="px-3 py-2 text-left font-semibold">Evaluated</th>
               <th className="px-3 py-2 text-center font-semibold">Action</th>
@@ -266,15 +267,15 @@ export default function TenderSubmissionGatesTab({ ws, tenderId, reload }: { ws:
                 <tr key={gate.id} className={`border-t border-border hover:bg-muted/30 ${isBlock ? "bg-red-50/40 border-l-2 border-l-red-400" : es === "warning" ? "bg-amber-50/30 border-l-2 border-l-amber-300" : es === "mock_bypassed" ? "bg-blue-50/20 border-l-2 border-l-blue-300" : ""}`}>
                   <td className="px-3 py-2 max-w-[220px]">
                     <p className="font-medium leading-snug">{gate.gateName}</p>
-                    {isCritical && <Badge variant="outline" className="text-[8px] mt-0.5 border-red-300 text-red-700 bg-red-50">Critical Gate</Badge>}
+                    {isCritical && <Badge variant="outline" className="text-[8px] mt-0.5 border-orange-300 text-orange-700 bg-orange-50">Escalation Suggested</Badge>}
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">{gate.tenderPackId ? gate.tenderPackId.replace("tp-linde-", "").toUpperCase() : "Workspace"}</td>
                   <td className="px-3 py-2"><Badge variant="outline" className="text-[9px]">{getGateCategoryLabel(gate.category)}</Badge></td>
                   <td className="px-3 py-2"><Badge variant="outline" className={`text-[9px] ${getGateStatusColor(es)}`}>{getGateStatusLabel(es)}</Badge></td>
                   <td className="px-3 py-2 text-center"><Badge variant="outline" className={`text-[9px] ${getGateSeverityColor(gate.severity)}`}>{getRiskLabel(gate.severity)}</Badge></td>
                   <td className="px-3 py-2 text-center">
-                    {gate.wouldBlock && es !== "pass" && es !== "mock_bypassed" ? (
-                      <Badge variant="outline" className="text-[9px] text-amber-700 bg-amber-50 border-amber-200">Would Block</Badge>
+                    {(gate.needsReview ?? gate.wouldBlock) && es !== "pass" && es !== "mock_bypassed" ? (
+                      <Badge variant="outline" className="text-[9px] text-amber-700 bg-amber-50 border-amber-200">Review Rec.</Badge>
                     ) : es === "pass" || es === "mock_bypassed" ? (
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mx-auto" />
                     ) : <span className="text-muted-foreground">—</span>}
@@ -288,15 +289,15 @@ export default function TenderSubmissionGatesTab({ ws, tenderId, reload }: { ws:
                 </tr>
               );
             })}
-            {filtered.length === 0 && <tr><td colSpan={10} className="text-center py-8 text-muted-foreground">No gates match current filters.</td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={10} className="text-center py-8 text-muted-foreground">No signals match current filters.</td></tr>}
           </tbody>
         </table>
       </div>
 
-      {/* Future enforcement explanation */}
+      {/* Governance note */}
       <div className="p-3 rounded-lg border border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 flex items-center gap-2">
         <Info className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-        <p className="text-[10px] text-blue-700">Future production behavior: these gates can later be configured as Enforce / Warn / Off in Governance. Current runtime mode is development mock only.</p>
+        <p className="text-[10px] text-blue-700">Readiness signals are advisory during workflow validation. After the business confirms the process, signals can be promoted to escalation rules in Governance — never to submission blockers.</p>
       </div>
 
       {reviewGate && <GateReviewModal gate={reviewGate} onClose={() => setReviewGate(null)} onBypass={handleBypass} />}

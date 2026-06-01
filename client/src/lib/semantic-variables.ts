@@ -489,42 +489,7 @@ export const variableSetItems: VariableSetItem[] = [
 // DOC VARIABLE OVERRIDES — SEED DATA
 // ============================================================
 
-export const docVariableOverrides: DocVariableOverride[] = [
-  // SABIC proposal overrides
-  {
-    id: "dvo-001", doc_instance_id: "di-001", key: "customer.name",
-    value_json: "SABIC", created_by: "Faisal Al-Rashid", created_at: "2026-02-01",
-  },
-  {
-    id: "dvo-002", doc_instance_id: "di-001", key: "proposal.ref_number",
-    value_json: "HCS-PR-2026-001", created_by: "Faisal Al-Rashid", created_at: "2026-02-01",
-  },
-  {
-    id: "dvo-003", doc_instance_id: "di-001", key: "dates.document_date",
-    value_json: "2026-02-01", created_by: "Faisal Al-Rashid", created_at: "2026-02-01",
-  },
-  {
-    id: "dvo-004", doc_instance_id: "di-001", key: "contacts.prepared_by",
-    value_json: "Faisal Al-Rashid", created_by: "Faisal Al-Rashid", created_at: "2026-02-01",
-  },
-  {
-    id: "dvo-005", doc_instance_id: "di-001", key: "quote.monthly_total",
-    value_json: "539,000", created_by: "Faisal Al-Rashid", created_at: "2026-02-01",
-  },
-  // Ma'aden SLA overrides
-  {
-    id: "dvo-010", doc_instance_id: "di-002", key: "customer.name",
-    value_json: "Ma'aden", created_by: "Faisal Al-Rashid", created_at: "2026-02-05",
-  },
-  {
-    id: "dvo-011", doc_instance_id: "di-002", key: "sla.ref_number",
-    value_json: "HCS-SLA-2026-001", created_by: "Faisal Al-Rashid", created_at: "2026-02-05",
-  },
-  {
-    id: "dvo-012", doc_instance_id: "di-002", key: "dates.document_date",
-    value_json: "2026-02-05", created_by: "Faisal Al-Rashid", created_at: "2026-02-05",
-  },
-];
+export const docVariableOverrides: DocVariableOverride[] = [];
 
 // ============================================================
 // TOKEN RESOLUTION ENGINE — Deterministic Pipeline

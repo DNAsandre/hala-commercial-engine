@@ -1,0 +1,164 @@
+{
+  "tender_rfq_workflow": [
+    {
+      "step": 1,
+      "phase": "Tender Planning",
+      "objective": "Understand buyer’s process — why the RFQ exists.",
+      "bot_actions": [
+        "Explain buyer context",
+        "Highlight scope, budget, evaluation criteria"
+      ],
+      "deliverables": [
+        "Context briefing"
+      ]
+    },
+    {
+      "step": 2,
+      "phase": "Tender Issuance",
+      "objective": "Capture RFQ details.",
+      "bot_actions": [
+        "Register RFQ ID, title, deadlines, submission format"
+      ],
+      "deliverables": [
+        "RFQ intake log"
+      ]
+    },
+    {
+      "step": 3,
+      "phase": "Supplier Registration & Intent",
+      "objective": "Confirm participation.",
+      "bot_actions": [
+        "Track registration steps",
+        "Log eligibility documents"
+      ],
+      "deliverables": [
+        "Participation confirmation checklist"
+      ]
+    },
+    {
+      "step": 4,
+      "phase": "Document Review",
+      "objective": "Break RFQ into manageable requirements.",
+      "bot_actions": [
+        "Generate Compliance Matrix (requirement → plan → owner)",
+        "Export Compliance Matrix in Excel/CSV/JSON"
+      ],
+      "deliverables": [
+        "Compliance Matrix template (Excel/CSV/JSON)"
+      ]
+    },
+    {
+      "step": 5,
+      "phase": "Clarification Period",
+      "objective": "Resolve ambiguities.",
+      "bot_actions": [
+        "Collect unclear requirements from Compliance Matrix",
+        "Draft clarification questions",
+        "Update Clarification Log"
+      ],
+      "deliverables": [
+        "Clarification Log",
+        "Updated Compliance Matrix"
+      ]
+    },
+    {
+      "step": 6,
+      "phase": "Win Strategy & Bid/No-Bid",
+      "objective": "Decide participation, define win themes.",
+      "bot_actions": [
+        "Input differentiators",
+        "Generate 3–5 win themes linked to evaluation criteria"
+      ],
+      "deliverables": [
+        "Bid/No-Bid decision",
+        "Win Themes summary"
+      ]
+    },
+    {
+      "step": 7,
+      "phase": "Proposal Preparation",
+      "objective": "Draft Technical & Commercial proposals.",
+      "bot_actions": [
+        "Draft Technical Proposal: Exec summary → Methodology → Team → Experience → Risk → Compliance",
+        "Draft Commercial Proposal: Pricing → BOQ → Assumptions → Terms → Guarantees"
+      ],
+      "deliverables": [
+        "Draft technical volume (Markdown/Word/PDF)",
+        "Draft commercial volume (Excel/CSV)"
+      ]
+    },
+    {
+      "step": 8,
+      "phase": "Internal Review & Approval",
+      "objective": "Ensure compliance, accuracy, and approval.",
+      "bot_actions": [
+        "Run QA review using scoring rubric",
+        "Check mandatory forms and attachments"
+      ],
+      "deliverables": [
+        "QA review report",
+        "Completed scoring rubric (Excel)",
+        "Approval log"
+      ]
+    },
+    {
+      "step": 9,
+      "phase": "Submission",
+      "objective": "Deliver compliant package.",
+      "bot_actions": [
+        "Validate file formats, copies, bonds, labels",
+        "Create submission checklist"
+      ],
+      "deliverables": [
+        "Final submission checklist"
+      ]
+    },
+    {
+      "step": 10,
+      "phase": "Evaluation & Award",
+      "objective": "Understand how buyer will score.",
+      "bot_actions": [
+        "Remind team of technical/commercial weightings",
+        "Provide scoring rubric for evaluation tracking"
+      ],
+      "deliverables": [
+        "Monitoring notes",
+        "Lessons learned archive",
+        "Archived Compliance Matrix + Scoring Rubric"
+      ]
+    }
+  ],
+  "artifacts_mapping": {
+    "compliance_matrix": {
+      "linked_steps": [
+        4,
+        5,
+        10
+      ],
+      "formats": [
+        "xlsx",
+        "csv",
+        "json"
+      ],
+      "purpose": "Requirement tracking, clarifications, and compliance evidence."
+    },
+    "scoring_rubric": {
+      "linked_steps": [
+        8,
+        10
+      ],
+      "formats": [
+        "xlsx"
+      ],
+      "purpose": "Evaluation guidance, QA checks, and lessons learned archive."
+    },
+    "workflow_playbook": {
+      "linked_steps": "all",
+      "formats": [
+        "md",
+        "json"
+      ],
+      "purpose": "Master guidance for the entire tender/RFQ process."
+    }
+  }
+}

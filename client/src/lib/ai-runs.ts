@@ -2,6 +2,20 @@
  * AI Runs — Persistence layer for AI generation traceability
  * Sprint 10: Editor AI Pop-up + Bot Selector + Transcript Document Bots
  *
+ * ⚠️ FUTURE WIRE — EDITOR BOTS ARRAY IS HARDCODED FALLBACK
+ * ════════════════════════════════════════════════════════════
+ * The `editorBots[]` array (line ~89) is a hardcoded fallback used when
+ * Supabase `editor_bots` table is empty or unreachable. AI run execution
+ * is real (calls OpenAI/Google via Edge Functions), but bot definitions
+ * fall back to this array on DB failure.
+ *
+ * TARGET WIRING:
+ *   editorBots[]  → Remove once Supabase `editor_bots` table is always populated
+ *   AI execution  → Already wired to real providers via ai-client.ts
+ *   AI runs       → Already persisted to Supabase `ai_runs` table
+ *
+ * DO NOT add more hardcoded bots. Add to Supabase `editor_bots` table.
+ *
  * Tracks every AI generation action with full audit trail:
  *   - Which bot, which doc, which block(s)
  *   - Input prompt, transcript reference, output text
@@ -11,7 +25,8 @@
 
 import { syncAuditEntry } from "@/lib/supabase-sync";
 import { getCurrentUser } from "@/lib/auth-state";
-import { generateAI, type AIProviderName } from "@/lib/ai-client";
+import { generateAI, fetchAIProviders, type AIProviderName } from "@/lib/ai-client";
+import { supabase } from "@/lib/supabase";
 import {
   retrieveContext,
   formatRetrievedContext,
@@ -368,7 +383,79 @@ export function getAIRunById(runId: string): AIRun | null {
 // BOT QUERY HELPERS (async — reads from DB with fallback)
 // ============================================================
 
+// Governed domains — these read from ai_bots (Bot Builder) instead of editor_bots
+const GOVERNED_DOMAINS = ["tenders", "proposals", "documents"];
+
+/**
+ * Load a governed bot from ai_bots + ai_bot_versions (Bot Builder system).
+ * This is the ONLY path for tender AI generation.
+ * Returns null if no active bot found for the domain.
+ */
+async function loadGovernedBot(domain: string): Promise<EditorBot | null> {
+  try {
+    const { data: bots, error } = await supabase
+      .from("ai_bots")
+      .select("*, ai_bot_versions(*)")
+      .eq("status", "active")
+      .eq("type", "action")
+      .contains("domains_allowed", [domain])
+      .order("updated_at", { ascending: false });
+
+    if (error) {
+      console.error("[ai-runs] loadGovernedBot query error:", error.message);
+      return null;
+    }
+    if (!bots?.length) return null;
+
+    // Pick first active bot, get its latest version
+    const bot = bots[0];
+    const versions = Array.isArray(bot.ai_bot_versions)
+      ? [...bot.ai_bot_versions].sort((a: any, b: any) => (b.version || 0) - (a.version || 0))
+      : [];
+    const latestVersion = versions[0] as any;
+
+    // Resolve provider name from provider_id
+    let providerName: "openai" | "google" = "openai";
+    try {
+      const providers = await fetchAIProviders();
+      const matched = providers.find(p => p.id === (latestVersion?.provider_id || bot.provider_id));
+      if (matched?.name) providerName = matched.name as "openai" | "google";
+    } catch { /* keep default */ }
+
+    // Build system prompt: system_instruction + custom_instruction from the version
+    const systemParts = [
+      latestVersion?.system_instruction,
+      latestVersion?.custom_instruction,
+    ].filter(Boolean);
+    const systemPrompt = systemParts.join("\n\n") || "You are a helpful commercial assistant for Hala Supply Chain Services.";
+
+    return {
+      id: bot.id,
+      name: bot.display_name || bot.name,
+      bot_type: "block",
+      provider: providerName,
+      model: latestVersion?.model || bot.model || "gpt-4o",
+      system_prompt: systemPrompt,
+      knowledge_base_refs: latestVersion?.knowledge_base_ids || [],
+      allowed_doc_types: bot.domains_allowed || [],
+      allowed_block_types: null,
+      enabled: true,
+      description: bot.purpose || "",
+      icon: "Bot",
+    };
+  } catch (err) {
+    console.error("[ai-runs] loadGovernedBot exception:", err);
+    return null;
+  }
+}
+
 export async function getBlockBots(docType: string): Promise<EditorBot[]> {
+  // For governed domains (tenders, proposals, documents), read from Bot Builder
+  if (GOVERNED_DOMAINS.includes(docType)) {
+    const bot = await loadGovernedBot(docType);
+    return bot ? [bot] : [];
+  }
+  // For legacy doc types (quote, sla, msa), fall back to editor_bots
   const bots = await loadBots();
   return bots.filter(b =>
     b.bot_type === "block" &&
@@ -387,6 +474,41 @@ export async function getDocumentBots(docType: string): Promise<EditorBot[]> {
 }
 
 export async function getEditorBotById(botId: string): Promise<EditorBot | null> {
+  // Try governed bot first (for tender bots created in Bot Builder)
+  try {
+    const { data: bot } = await supabase
+      .from("ai_bots")
+      .select("*, ai_bot_versions(*)")
+      .eq("id", botId)
+      .single();
+    if (bot) {
+      const versions = Array.isArray(bot.ai_bot_versions)
+        ? [...bot.ai_bot_versions].sort((a: any, b: any) => (b.version || 0) - (a.version || 0))
+        : [];
+      const v = versions[0] as any;
+      let providerName: "openai" | "google" = "openai";
+      try {
+        const providers = await fetchAIProviders();
+        const matched = providers.find(p => p.id === (v?.provider_id || bot.provider_id));
+        if (matched?.name) providerName = matched.name as "openai" | "google";
+      } catch { /* keep default */ }
+      return {
+        id: bot.id,
+        name: (bot as any).display_name || bot.name,
+        bot_type: "block",
+        provider: providerName,
+        model: v?.model || (bot as any).model || "gpt-4o",
+        system_prompt: [v?.system_instruction, v?.custom_instruction].filter(Boolean).join("\n\n") || "",
+        knowledge_base_refs: v?.knowledge_base_ids || [],
+        allowed_doc_types: (bot as any).domains_allowed || [],
+        allowed_block_types: null,
+        enabled: (bot as any).status === "active",
+        description: (bot as any).purpose || "",
+        icon: "Bot",
+      };
+    }
+  } catch { /* fall through to legacy lookup */ }
+  // Fall back to editor_bots for legacy bots
   const bots = await loadBots();
   return bots.find(b => b.id === botId) || null;
 }
@@ -430,7 +552,27 @@ export async function generateBlockContent(
     console.warn("[ai-runs] KB retrieval failed:", (err as Error).message);
   }
 
-  // 2. Call real AI via Edge Functions — throws on failure, no silent fallback
+  // 2. Build system prompt with mandatory HTML output directive
+  const htmlDirective = `
+
+OUTPUT FORMAT — MANDATORY:
+You MUST output valid HTML only. Do NOT use markdown syntax.
+- Use <h2> and <h3> for headings (never # or ##)
+- Use <strong> for bold (never **)
+- Use <em> for italics (never *)
+- Use <ul><li> for bullet lists (never - or *)
+- Use <ol><li> for numbered lists (never 1. 2. 3.)
+- Use <table><thead><tbody><tr><th><td> for tables
+- Use <p> for paragraphs
+- Use <blockquote> for quotes
+- Structure with clear section headings using <h2> and <h3>
+- Number your sections in headings, e.g. <h2>1. Executive Summary</h2>
+- Do NOT wrap output in \`\`\`html code fences
+- Output raw HTML directly, starting with the first HTML tag`;
+
+  const fullSystemPrompt = bot.system_prompt + htmlDirective;
+
+  // 3. Call real AI via Edge Functions — throws on failure, no silent fallback
   const userPrompt = [
     prompt,
     blockContent ? `\n\nExisting block content:\n${blockContent.replace(/<[^>]*>/g, "")}` : "",
@@ -442,13 +584,33 @@ export async function generateBlockContent(
   const result = await generateAI({
     provider: bot.provider as AIProviderName,
     model: bot.model,
-    systemPrompt: bot.system_prompt,
+    systemPrompt: fullSystemPrompt,
     userPrompt,
     temperature: 0.7,
     action: "block_generate",
+    botId: bot.id,
+    botName: bot.name,
   });
 
-  // 3. Create bot_run trace
+  // Post-process: strip markdown code fences and convert stray markdown → HTML
+  let cleanContent = result.content;
+  // Strip ```html ... ``` wrappers
+  cleanContent = cleanContent.replace(/^```html\s*/i, "").replace(/\s*```$/i, "");
+  // Convert stray markdown headings → HTML (in case model ignores directive)
+  cleanContent = cleanContent.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+  cleanContent = cleanContent.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+  cleanContent = cleanContent.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+  // Convert stray **bold** → <strong>
+  cleanContent = cleanContent.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  // Convert stray *italic* → <em>
+  cleanContent = cleanContent.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
+  // Convert stray markdown bullets → list items (group consecutive lines)
+  cleanContent = cleanContent.replace(/(?:^|\n)(?:- (.+)\n?)+/g, (match) => {
+    const items = match.trim().split("\n").map(line => `<li>${line.replace(/^- /, "")}</li>`).join("");
+    return `<ul>${items}</ul>`;
+  });
+
+  // 4. Create bot_run trace
   createBotRun({
     bot_id: botId,
     bot_name: bot.name,
@@ -461,14 +623,14 @@ export async function generateBlockContent(
     model: bot.model,
     kb_collections: Array.from(new Set(retrievedChunks.map(c => c.collection_name))),
     retrieved_chunks: retrievedChunks,
-    output: { text: result.content },
+    output: { text: cleanContent },
     status: "draft",
   });
 
   const citations = extractCitationsFromChunks(retrievedChunks);
 
   return {
-    content: result.content,
+    content: cleanContent,
     tokens_input: result.tokensInput,
     tokens_output: result.tokensOutput,
     retrieved_chunks: retrievedChunks,
@@ -512,6 +674,8 @@ export async function generateDocumentContent(
     userPrompt,
     temperature: 0.5,
     action: `document_${runMode}`,
+    botId: bot.id,
+    botName: bot.name,
   });
 
   let parsed: unknown;
@@ -542,4 +706,148 @@ export async function generateDocumentContent(
     tokens_input: result.tokensInput,
     tokens_output: result.tokensOutput,
   };
+}
+
+// ============================================================
+// BOT CHAINING — Pipeline Configuration & Execution
+// ============================================================
+
+export interface BotChainConfig {
+  next_bot_id: string | null;
+  prompt_user: boolean;
+  chain_label: string;
+}
+
+/**
+ * Load chain config for a bot from its latest ai_bot_versions entry.
+ * Returns null if no chain config is set.
+ */
+export async function getBotChainConfig(botId: string): Promise<BotChainConfig | null> {
+  try {
+    const { data: versions, error } = await supabase
+      .from("ai_bot_versions")
+      .select("chain_config")
+      .eq("bot_id", botId)
+      .order("version", { ascending: false })
+      .limit(1);
+
+    if (error || !versions?.length) return null;
+
+    const cfg = versions[0].chain_config;
+    if (!cfg || typeof cfg !== "object" || !cfg.next_bot_id) return null;
+
+    return {
+      next_bot_id: cfg.next_bot_id || null,
+      prompt_user: cfg.prompt_user !== false, // default true
+      chain_label: cfg.chain_label || "Auto-draft all blocks",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export interface BlockChainProgress {
+  current: number;
+  total: number;
+  blockTitle: string;
+  status: "generating" | "completed" | "failed" | "cancelled";
+}
+
+export interface BlockChainResult {
+  completed: number;
+  failed: number;
+  cancelled: boolean;
+  results: Record<string, string>; // blockId → generated HTML content
+}
+
+/**
+ * Auto-draft all blocks sequentially using the section writer bot.
+ * Each block goes through generateBlockContent() which logs to the cost ledger.
+ *
+ * @param botId - The section writer bot ID
+ * @param blocks - Array of blocks to generate (must have id, title, block_key, etc.)
+ * @param tenderContext - Context string for the tender (built from workspace)
+ * @param onProgress - Called after each block with progress info
+ * @param abortSignal - Optional signal to cancel the pipeline
+ */
+export async function generateAllBlocksSequentially(
+  botId: string,
+  blocks: Array<{
+    id: string;
+    title: string;
+    block_key: string;
+    volume: string;
+    section_name: string;
+    source_stages: string;
+    required_source_data: string;
+    required_evidence: string;
+    editor_content?: string;
+    draft_content?: string;
+  }>,
+  tenderContext: string,
+  onProgress: (progress: BlockChainProgress) => void,
+  abortSignal?: AbortSignal,
+): Promise<BlockChainResult> {
+  const results: Record<string, string> = {};
+  let completed = 0;
+  let failed = 0;
+
+  for (let i = 0; i < blocks.length; i++) {
+    // Check abort
+    if (abortSignal?.aborted) {
+      return { completed, failed, cancelled: true, results };
+    }
+
+    const block = blocks[i];
+    onProgress({
+      current: i + 1,
+      total: blocks.length,
+      blockTitle: block.title || block.block_key,
+      status: "generating",
+    });
+
+    try {
+      const prompt = [
+        `## Block Metadata`,
+        `Title: ${block.title || "Untitled"}`,
+        `Volume: ${block.volume || "Not specified"}`,
+        `Section: ${block.section_name || "Not specified"}`,
+        `Source Stages: ${block.source_stages || "Not specified"}`,
+        `Required Source Data: ${block.required_source_data || "Not specified"}`,
+        `Required Evidence: ${block.required_evidence || "Not specified"}`,
+        ``,
+        tenderContext,
+      ].join("\n");
+
+      const existingContent = block.editor_content || block.draft_content || "";
+
+      const result = await generateBlockContent(
+        botId,
+        "commercial",
+        prompt,
+        existingContent,
+        null, // no transcript
+      );
+
+      results[block.id] = result.content;
+      completed++;
+      onProgress({
+        current: i + 1,
+        total: blocks.length,
+        blockTitle: block.title || block.block_key,
+        status: "completed",
+      });
+    } catch (err: any) {
+      console.error(`[ai-runs] Chain: block "${block.title}" failed:`, err.message);
+      failed++;
+      onProgress({
+        current: i + 1,
+        total: blocks.length,
+        blockTitle: block.title || block.block_key,
+        status: "failed",
+      });
+    }
+  }
+
+  return { completed, failed, cancelled: false, results };
 }

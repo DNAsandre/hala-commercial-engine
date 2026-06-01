@@ -27,6 +27,7 @@ export type DocType =
   | "proposal"
   | "sla"
   | "msa"
+  | "tender"
   | "service_order_transport"
   | "service_order_warehouse";
 
@@ -39,6 +40,7 @@ export const DOC_TYPE_CONFIG: Record<DocType, { label: string; family: DocTypeFa
   msa: { label: "Master Service Agreement", family: "legal", icon: "Scale" },
   service_order_transport: { label: "Service Order — Transport", family: "legal", icon: "Truck" },
   service_order_warehouse: { label: "Service Order — Warehouse", family: "legal", icon: "Warehouse" },
+  tender: { label: "Tender Proposal", family: "commercial", icon: "FileSearch" },
 };
 
 export type TemplateStatus = "draft" | "published" | "archived";
@@ -500,11 +502,11 @@ export const docTemplates: DocTemplate[] = [
         ],
         layout: { cover_page: true, cover_style: "hero_image", section_spacing: "normal", page_break_between_sections: false, annexure_section: false, toc_auto: false },
         published_at: "2026-01-20",
-        created_by: "Faisal Al-Rashid",
+        created_by: "Unknown user",
         created_at: "2026-01-15",
       },
     ],
-    created_by: "Faisal Al-Rashid",
+    created_by: "Unknown user",
     created_at: "2026-01-15",
     updated_at: "2026-01-20",
   },
@@ -538,11 +540,11 @@ export const docTemplates: DocTemplate[] = [
         ],
         layout: { cover_page: true, cover_style: "branded", section_spacing: "spacious", page_break_between_sections: true, annexure_section: true, toc_auto: true },
         published_at: "2026-01-25",
-        created_by: "Faisal Al-Rashid",
+        created_by: "Unknown user",
         created_at: "2026-01-20",
       },
     ],
-    created_by: "Faisal Al-Rashid",
+    created_by: "Unknown user",
     created_at: "2026-01-20",
     updated_at: "2026-01-25",
   },
@@ -572,11 +574,11 @@ export const docTemplates: DocTemplate[] = [
         ],
         layout: { cover_page: true, cover_style: "minimal", section_spacing: "normal", page_break_between_sections: true, annexure_section: true, toc_auto: true },
         published_at: "2026-02-01",
-        created_by: "Faisal Al-Rashid",
+        created_by: "Unknown user",
         created_at: "2026-01-25",
       },
     ],
-    created_by: "Faisal Al-Rashid",
+    created_by: "Unknown user",
     created_at: "2026-01-25",
     updated_at: "2026-02-01",
   },
@@ -604,11 +606,11 @@ export const docTemplates: DocTemplate[] = [
         ],
         layout: { cover_page: true, cover_style: "hero_image", section_spacing: "normal", page_break_between_sections: false, annexure_section: false, toc_auto: false },
         published_at: "2026-02-05",
-        created_by: "Faisal Al-Rashid",
+        created_by: "Unknown user",
         created_at: "2026-02-01",
       },
     ],
-    created_by: "Faisal Al-Rashid",
+    created_by: "Unknown user",
     created_at: "2026-02-01",
     updated_at: "2026-02-05",
   },
@@ -636,11 +638,11 @@ export const docTemplates: DocTemplate[] = [
         ],
         layout: { cover_page: true, cover_style: "branded", section_spacing: "spacious", page_break_between_sections: true, annexure_section: false, toc_auto: true },
         published_at: null,
-        created_by: "Faisal Al-Rashid",
+        created_by: "Unknown user",
         created_at: "2026-02-10",
       },
     ],
-    created_by: "Faisal Al-Rashid",
+    created_by: "Unknown user",
     created_at: "2026-02-10",
     updated_at: "2026-02-10",
   },
@@ -650,116 +652,13 @@ export const docTemplates: DocTemplate[] = [
 // DOCUMENT INSTANCES — SEED DATA
 // ============================================================
 
-export const docInstances: DocInstance[] = [
-  {
-    id: "di-001",
-    doc_type: "proposal",
-    template_version_id: "tplv-002-1",
-    status: "draft",
-    linked_entity_type: "proposal_version",
-    linked_entity_id: "prop-sabic-v3",
-    customer_id: "c1",
-    customer_name: "SABIC",
-    workspace_id: "ws-1",
-    workspace_name: "SABIC Jubail Warehousing",
-    current_version_id: "div-001-2",
-    versions: [
-      {
-        id: "div-001-1",
-        doc_instance_id: "di-001",
-        version_number: 1,
-        blocks: [
-          { block_key: "cover.hero", order: 1, content: `<div class="cover-hero"><h1>Commercial Proposal</h1><h2>Warehousing & Logistics Services</h2><p>Prepared for: SABIC</p><p>Ref: HCS-PR-2026-001 | Date: 2026-02-01</p></div>`, is_locked: false, is_ai_generated: false, config: {} },
-          { block_key: "confidentiality.locked", order: 2, content: `<div class="confidentiality"><p><strong>CONFIDENTIAL</strong></p><p>This document is the property of Hala Supply Chain Services and is intended solely for the use of SABIC. Unauthorized distribution is strictly prohibited.</p></div>`, is_locked: true, is_ai_generated: false, config: {} },
-          { block_key: "intro.narrative", order: 3, content: `<h2>Executive Summary</h2><p>Hala Supply Chain Services is pleased to present this comprehensive warehousing and logistics proposal for SABIC's Jubail operations. Our solution leverages state-of-the-art facilities and advanced WMS technology to deliver operational excellence.</p>`, is_locked: false, is_ai_generated: false, config: {} },
-          { block_key: "scope.list", order: 4, content: `<h2>Scope of Services</h2><ul><li><strong>Warehousing:</strong> 3,500 pallet positions in temperature-controlled facility</li><li><strong>Inbound:</strong> Container devanning with quality inspection</li><li><strong>Outbound:</strong> Same-day dispatch with carrier management</li><li><strong>VAS:</strong> Labeling, kitting, returns processing</li></ul>`, is_locked: false, is_ai_generated: false, config: {} },
-          { block_key: "pricing.table.single", order: 5, content: `<div class="pricing-table"><h2>Pricing Schedule</h2><table><thead><tr><th>Service</th><th>Unit</th><th>Rate (SAR)</th><th>Est. Volume</th><th>Monthly (SAR)</th></tr></thead><tbody><tr><td>Pallet Storage</td><td>Per pallet/day</td><td>3.80</td><td>3,500</td><td>399,000</td></tr><tr><td>Inbound Handling</td><td>Per pallet</td><td>18.00</td><td>3,500</td><td>63,000</td></tr><tr><td>Outbound Handling</td><td>Per pallet</td><td>22.00</td><td>3,500</td><td>77,000</td></tr></tbody></table><p><strong>Estimated Monthly Total: SAR 539,000</strong></p></div>`, is_locked: false, is_ai_generated: false, config: {} },
-          { block_key: "terms.standard", order: 6, content: `<h2>Terms & Conditions</h2><ul><li><strong>Payment Terms:</strong> Net 30 days</li><li><strong>Contract Duration:</strong> 24 months</li><li><strong>Rate Review:</strong> Annual CPI adjustment</li></ul>`, is_locked: false, is_ai_generated: false, config: {} },
-          { block_key: "signature.dual", order: 7, content: `<div class="signature-block"><h2>Acceptance</h2><p>Hala Supply Chain Services: _______________</p><p>SABIC: _______________</p></div>`, is_locked: false, is_ai_generated: false, config: {} },
-        ],
-        bindings: { pricing_snapshot_id: "ps-sabic-001", scope_snapshot_id: "ss-sabic-001", ecr_score_id: "ecr-sabic-001", sla_snapshot_id: null },
-        created_by: "Faisal Al-Rashid",
-        created_at: "2026-02-01",
-      },
-      {
-        id: "div-001-2",
-        doc_instance_id: "di-001",
-        version_number: 2,
-        blocks: [
-          { block_key: "cover.hero", order: 1, content: `<div class="cover-hero"><h1>Commercial Proposal</h1><h2>Warehousing & Logistics Services — Jubail Industrial City</h2><p>Prepared for: SABIC</p><p>Ref: HCS-PR-2026-001 | Date: 2026-02-10</p></div>`, is_locked: true, is_ai_generated: false, config: {} },
-          { block_key: "confidentiality.locked", order: 2, content: `<div class="confidentiality"><p><strong>CONFIDENTIAL</strong></p><p>This document is the property of Hala Supply Chain Services and is intended solely for the use of SABIC. Unauthorized distribution is strictly prohibited.</p></div>`, is_locked: true, is_ai_generated: false, config: {} },
-          { block_key: "intro.narrative", order: 3, content: `<h2>Executive Summary</h2><p>Hala Supply Chain Services is pleased to present this comprehensive warehousing and logistics proposal for SABIC's Jubail Industrial City operations. Our solution combines 25+ years of operational excellence with cutting-edge WMS technology to deliver measurable improvements in supply chain efficiency.</p><p>This proposal covers dedicated storage for 3,500 pallet positions, full inbound/outbound management, and value-added services tailored to SABIC's petrochemical logistics requirements.</p>`, is_locked: true, is_ai_generated: false, config: {} },
-          { block_key: "scope.list", order: 4, content: `<h2>Scope of Services</h2><ul><li><strong>Dedicated Warehousing:</strong> 3,500 pallet positions in temperature-controlled facility at Jubail</li><li><strong>Inbound Operations:</strong> Container devanning, goods receipt with ASN verification, quality inspection, WMS-directed putaway</li><li><strong>Outbound Operations:</strong> Wave-based order processing, pick-pack-ship, carrier management, POD tracking</li><li><strong>Value-Added Services:</strong> Labeling, kitting, co-packing, returns processing, custom reporting</li><li><strong>Technology:</strong> Real-time WMS portal access, inventory dashboards, automated alerts</li></ul>`, is_locked: false, is_ai_generated: false, config: {} },
-          { block_key: "pricing.table.single", order: 5, content: `<div class="pricing-table"><h2>Pricing Schedule</h2><table><thead><tr><th>Service</th><th>Unit</th><th>Rate (SAR)</th><th>Est. Volume</th><th>Monthly (SAR)</th></tr></thead><tbody><tr><td>Pallet Storage</td><td>Per pallet/day</td><td>3.80</td><td>3,500</td><td>399,000</td></tr><tr><td>Inbound Handling</td><td>Per pallet</td><td>18.00</td><td>3,500</td><td>63,000</td></tr><tr><td>Outbound Handling</td><td>Per pallet</td><td>22.00</td><td>3,500</td><td>77,000</td></tr><tr><td>VAS Bundle</td><td>Monthly</td><td>-</td><td>-</td><td>25,000</td></tr></tbody></table><p><strong>Estimated Monthly Total: SAR 564,000</strong></p><p><strong>Estimated Annual Total: SAR 6,768,000</strong></p></div>`, is_locked: false, is_ai_generated: false, config: {} },
-          { block_key: "terms.standard", order: 6, content: `<h2>Terms & Conditions</h2><ul><li><strong>Payment Terms:</strong> Net 30 days from invoice date</li><li><strong>Contract Duration:</strong> 24 months from commencement</li><li><strong>Rate Review:</strong> Annual review subject to CPI adjustment (capped at 5%)</li><li><strong>Minimum Commitment:</strong> 3,000 pallets per month</li><li><strong>Insurance:</strong> Standard warehouse liability + all-risk coverage</li></ul>`, is_locked: false, is_ai_generated: false, config: {} },
-          { block_key: "closing.note", order: 7, content: `<h2>Next Steps</h2><p>We look forward to the opportunity to serve SABIC's logistics needs. Our team is available for a detailed walkthrough of this proposal at your convenience.</p>`, is_locked: false, is_ai_generated: true, config: {} },
-          { block_key: "signature.dual", order: 8, content: `<div class="signature-block"><h2>Acceptance & Authorization</h2><p><strong>Hala Supply Chain Services</strong><br/>Name: _______________<br/>Title: _______________<br/>Date: _______________</p><p><strong>SABIC</strong><br/>Name: _______________<br/>Title: _______________<br/>Date: _______________</p></div>`, is_locked: false, is_ai_generated: false, config: {} },
-        ],
-        bindings: { pricing_snapshot_id: "ps-sabic-002", scope_snapshot_id: "ss-sabic-001", ecr_score_id: "ecr-sabic-001", sla_snapshot_id: null },
-        created_by: "Faisal Al-Rashid",
-        created_at: "2026-02-10",
-      },
-    ],
-    created_by: "Faisal Al-Rashid",
-    created_at: "2026-02-01",
-    updated_at: "2026-02-10",
-  },
-  {
-    id: "di-002",
-    doc_type: "quote",
-    template_version_id: "tplv-001-1",
-    status: "canon",
-    linked_entity_type: "quote_version",
-    linked_entity_id: "qt-maaden-v2",
-    customer_id: "c2",
-    customer_name: "Ma'aden",
-    workspace_id: "ws-2",
-    workspace_name: "Ma'aden Ras Al Khair",
-    current_version_id: "div-002-1",
-    versions: [
-      {
-        id: "div-002-1",
-        doc_instance_id: "di-002",
-        version_number: 1,
-        blocks: [
-          { block_key: "cover.hero", order: 1, content: `<div class="cover-hero"><h1>Commercial Quotation</h1><h2>Storage & Distribution Services</h2><p>Prepared for: Ma'aden</p><p>Ref: HCS-Q-2026-012 | Date: 2026-01-28</p></div>`, is_locked: true, is_ai_generated: false, config: {} },
-          { block_key: "confidentiality.locked", order: 2, content: `<div class="confidentiality"><p><strong>CONFIDENTIAL</strong></p><p>This document is the property of Hala Supply Chain Services.</p></div>`, is_locked: true, is_ai_generated: false, config: {} },
-          { block_key: "scope.list", order: 3, content: `<h2>Scope of Services</h2><ul><li>Ambient pallet storage — 2,800 positions</li><li>Full inbound/outbound management</li><li>Monthly reporting and KPI dashboards</li></ul>`, is_locked: true, is_ai_generated: false, config: {} },
-          { block_key: "pricing.table.single", order: 4, content: `<div class="pricing-table"><h2>Pricing</h2><table><thead><tr><th>Service</th><th>Rate (SAR)</th><th>Monthly</th></tr></thead><tbody><tr><td>Storage</td><td>3.50/pallet/day</td><td>294,000</td></tr><tr><td>Inbound</td><td>16.00/pallet</td><td>44,800</td></tr><tr><td>Outbound</td><td>20.00/pallet</td><td>56,000</td></tr></tbody></table><p><strong>Monthly Total: SAR 394,800</strong></p></div>`, is_locked: true, is_ai_generated: false, config: {} },
-          { block_key: "terms.standard", order: 5, content: `<h2>Terms</h2><ul><li>Net 30 days</li><li>12-month contract</li><li>Annual CPI review</li></ul>`, is_locked: true, is_ai_generated: false, config: {} },
-          { block_key: "signature.dual", order: 6, content: `<div class="signature-block"><h2>Acceptance</h2><p>Signed by both parties on 2026-01-30</p></div>`, is_locked: true, is_ai_generated: false, config: {} },
-        ],
-        bindings: { pricing_snapshot_id: "ps-maaden-001", scope_snapshot_id: "ss-maaden-001", ecr_score_id: "ecr-maaden-001", sla_snapshot_id: null },
-        created_by: "Nadia Al-Harbi",
-        created_at: "2026-01-28",
-      },
-    ],
-    created_by: "Nadia Al-Harbi",
-    created_at: "2026-01-28",
-    updated_at: "2026-01-30",
-  },
-];
+export const docInstances: DocInstance[] = [];
 
 // ============================================================
-// COMPILED OUTPUTS — SEED DATA
+// COMPILED OUTPUTS
 // ============================================================
 
-export const compiledDocuments: CompiledDocument[] = [
-  {
-    id: "cd-001",
-    doc_instance_version_id: "div-002-1",
-    output_type: "pdf",
-    file_asset_id: "fa-maaden-quote-pdf",
-    checksum: "sha256:a1b2c3d4e5f6",
-    compiled_at: "2026-01-30T14:30:00Z",
-    compiled_by: "Nadia Al-Harbi",
-    status: "success",
-    error_text: null,
-    branding_profile_id: "bp-001",
-    doc_instance_id: "di-002",
-    title: "Ma'aden Quotation — HCS-Q-2026-012",
-  },
-];
+export const compiledDocuments: CompiledDocument[] = [];
 
 // ============================================================
 // HELPER FUNCTIONS
@@ -906,10 +805,10 @@ export function resolveOrCreateDocInstance(params: {
       version_number: 1,
       blocks,
       bindings: { pricing_snapshot_id: null, scope_snapshot_id: null, ecr_score_id: null, sla_snapshot_id: null },
-      created_by: 'Amin Al-Rashid',
+      created_by: 'Unknown user',
       created_at: now,
     }],
-    created_by: 'Amin Al-Rashid',
+    created_by: 'Unknown user',
     created_at: now,
     updated_at: now,
   };
@@ -946,29 +845,7 @@ export interface VaultAsset {
   crm_export_at: string | null;
 }
 
-export const vaultAssets: VaultAsset[] = [
-  {
-    id: 'va-001',
-    doc_instance_id: 'di-002',
-    doc_instance_version_id: 'div-002-1',
-    compiled_document_id: 'cd-001',
-    title: "Ma'aden Quotation — HCS-Q-2026-012",
-    doc_type: 'quote',
-    customer_id: 'c2',
-    customer_name: "Ma'aden",
-    workspace_id: 'ws-2',
-    workspace_name: "Ma'aden Ras Al Khair",
-    status: 'final',
-    branding_profile_id: 'bp-001',
-    file_url: '/vault/maaden-quote-final.pdf',
-    checksum: 'sha256:a1b2c3d4e5f6',
-    created_by: 'Nadia Al-Harbi',
-    created_at: '2026-01-30T14:30:00Z',
-    sent_to_crm: true,
-    crm_export_status: 'sent',
-    crm_export_at: '2026-01-31T09:00:00Z',
-  },
-];
+export const vaultAssets: VaultAsset[] = [];
 
 export function saveToVault(params: {
   doc_instance_id: string;
@@ -989,7 +866,7 @@ export function saveToVault(params: {
     file_url: `/vault/${params.doc_instance_id}-${params.status}.pdf`,
     // B8 FIX: Use crypto.randomUUID for honest uniqueness (real SHA-256 requires async SubtleCrypto)
     checksum: `sha256:${crypto.randomUUID().replace(/-/g, '')}`,
-    created_by: 'Amin Al-Rashid',
+    created_by: 'Unknown user',
     created_at: new Date().toISOString(),
     sent_to_crm: false,
     crm_export_status: null,

@@ -23,6 +23,7 @@ import {
   type BotInvocation
 } from '@/lib/bot-governance';
 import { api } from '@/lib/api-client';
+import { fetchAIProviders } from '@/lib/ai-client';
 
 // Map DB snake_case to component camelCase
 function mapInvocation(row: any): BotInvocation {
@@ -56,21 +57,28 @@ export default function BotAudit() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Load from API
+  // Load from API — providers from Supabase, rest from API with graceful fallback
   useEffect(() => {
     let mounted = true;
     (async () => {
+      // Load providers from Supabase (real path)
       try {
-        const [invRes, botsRes, provRes] = await Promise.all([
+        const supaProviders = await fetchAIProviders();
+        if (mounted) setProviders(supaProviders.map(p => ({ id: p.id, name: p.displayName, enabled: p.enabled })));
+      } catch { /* empty */ }
+
+      // Try loading bots and invocations from API (may fail if backend is down)
+      try {
+        const [invRes, botsRes] = await Promise.all([
           api.botGovernance.listInvocations(),
           api.botGovernance.listBots(),
-          api.botGovernance.listProviders(),
         ]);
         if (!mounted) return;
         setInvocations((invRes.data || []).map(mapInvocation));
         setBots(botsRes.data || []);
-        setProviders(provRes.data || []);
-      } catch { /* empty state */ }
+      } catch {
+        // API unavailable — show honest empty state
+      }
     })();
     return () => { mounted = false; };
   }, []);

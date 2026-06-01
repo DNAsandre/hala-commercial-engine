@@ -1,4 +1,4 @@
-// Renewal Engine v1 — Baseline → Renewal → Locked
+﻿// Renewal Engine v1 â€” Baseline â†’ Renewal â†’ Locked
 // Immutable baselines, versioned renewal drafts, delta comparison, policy gates, audit trail
 // No AI creep: AI cannot lock, change pricing/SLA/decision
 
@@ -29,7 +29,6 @@ export interface ContractBaseline {
   createdAt: string;
   createdBy: string;
 }
-
 export interface PricingSnapshot {
   id: string;
   storageRate: number;
@@ -161,142 +160,19 @@ export const renewalGateConfigs: RenewalGateConfig[] = [
 ];
 
 // ============================================================
-// MOCK PRICING SNAPSHOTS
+// RUNTIME DATA
 // ============================================================
 
-const psSABIC: PricingSnapshot = { id: "ps-sabic-1", storageRate: 40, inboundRate: 7, outboundRate: 7, palletVolume: 2500, monthlyRevenue: 433333, annualRevenue: 5200000, gpPercent: 27.5, vasRevenue: 45000, slaScope: ["Ambient Storage", "Inbound Receiving", "Outbound Dispatch", "Inventory Management", "Monthly Reporting"], lanes: ["Jubail → Riyadh", "Jubail → Dammam"], assumptions: ["24/7 operations", "Max 3 shifts", "Client provides MHE insurance"] };
-const psMaaden: PricingSnapshot = { id: "ps-maaden-1", storageRate: 38, inboundRate: 7, outboundRate: 7, palletVolume: 1800, monthlyRevenue: 283333, annualRevenue: 3400000, gpPercent: 23.1, vasRevenue: 30000, slaScope: ["Ambient Storage", "Hazmat Handling", "Inbound Receiving", "Outbound Dispatch", "Inventory Management"], lanes: ["Jubail → Riyadh", "Jubail → Jeddah", "Jubail → Dammam"], assumptions: ["Hazmat-certified staff required", "Dedicated storage zone", "Monthly compliance audit"] };
-const psSadara: PricingSnapshot = { id: "ps-sadara-1", storageRate: 39, inboundRate: 7, outboundRate: 7, palletVolume: 1200, monthlyRevenue: 233333, annualRevenue: 2800000, gpPercent: 24.5, vasRevenue: 20000, slaScope: ["Ambient Storage", "Inbound Receiving", "Outbound Dispatch", "Quality Inspection"], lanes: ["Jubail → Dammam"], assumptions: ["Standard operations", "Client-owned pallets", "Quarterly review meetings"] };
-const psUnilever: PricingSnapshot = { id: "ps-unilever-1", storageRate: 36, inboundRate: 6, outboundRate: 6, palletVolume: 900, monthlyRevenue: 150000, annualRevenue: 1800000, gpPercent: 18.2, vasRevenue: 12000, slaScope: ["Ambient Storage", "Inbound Receiving", "Outbound Dispatch"], lanes: ["Dammam → Riyadh"], assumptions: ["FMCG handling standards", "FIFO rotation", "Seasonal volume spikes expected"] };
-const psAlRajhi: PricingSnapshot = { id: "ps-alrajhi-1", storageRate: 34, inboundRate: 5, outboundRate: 5, palletVolume: 400, monthlyRevenue: 66667, annualRevenue: 800000, gpPercent: 12.0, vasRevenue: 5000, slaScope: ["Ambient Storage", "Inbound Receiving", "Outbound Dispatch"], lanes: ["Jubail → Dammam"], assumptions: ["Minimal VAS", "Standard handling", "Payment terms net-60"] };
-
-// ============================================================
-// A) CONTRACT BASELINES
-// ============================================================
-
-export const contractBaselines: ContractBaseline[] = [
-  { id: "bl-sabic-1", customerId: "c1", customerName: "SABIC", opportunityId: null, baselineName: "SABIC Warehousing Contract 2024-2026", baselineStartDate: "2024-07-01", baselineEndDate: "2026-06-30", status: "active", proposalVersionId: "p-sabic-v2", slaVersionId: "sla-sabic-v1", pricingSnapshot: psSABIC, createdAt: "2024-06-15", createdBy: "Ra'ed Al-Harbi" },
-  { id: "bl-maaden-1", customerId: "c2", customerName: "Ma'aden", opportunityId: null, baselineName: "Ma'aden Logistics Contract 2024-2026", baselineStartDate: "2024-04-01", baselineEndDate: "2026-03-31", status: "active", proposalVersionId: "p-maaden-v1", slaVersionId: "sla-maaden-v1", pricingSnapshot: psMaaden, createdAt: "2024-03-20", createdBy: "Ra'ed Al-Harbi" },
-  { id: "bl-sadara-1", customerId: "c4", customerName: "Sadara Chemical", opportunityId: null, baselineName: "Sadara Chemical Storage Contract 2023-2025", baselineStartDate: "2023-10-01", baselineEndDate: "2025-09-30", status: "active", proposalVersionId: "p-sadara-v2", slaVersionId: "sla-sadara-v1", pricingSnapshot: psSadara, createdAt: "2023-09-15", createdBy: "Albert Fernandez" },
-  { id: "bl-unilever-1", customerId: "c6", customerName: "Unilever Arabia", opportunityId: null, baselineName: "Unilever Arabia Warehousing 2024-2025", baselineStartDate: "2024-07-01", baselineEndDate: "2025-06-30", status: "active", proposalVersionId: "p-unilever-v1", slaVersionId: "sla-unilever-v1", pricingSnapshot: psUnilever, createdAt: "2024-06-20", createdBy: "Albert Fernandez" },
-  { id: "bl-alrajhi-1", customerId: "c9", customerName: "Al-Rajhi Steel", opportunityId: null, baselineName: "Al-Rajhi Steel Emergency Storage 2024-2025", baselineStartDate: "2024-05-01", baselineEndDate: "2025-04-30", status: "active", proposalVersionId: "p-alrajhi-v1", slaVersionId: null, pricingSnapshot: psAlRajhi, createdAt: "2024-04-25", createdBy: "Albert Fernandez" },
-];
-
-// ============================================================
-// B) RENEWAL WORKSPACES
-// ============================================================
-
-export const renewalWorkspaces: RenewalWorkspace[] = [
-  { id: "rw-maaden-1", customerId: "c2", customerName: "Ma'aden", baselineId: "bl-maaden-1", renewalCycleName: "Ma'aden 2026-2028 Renewal", targetStartDate: "2026-04-01", targetEndDate: "2028-03-31", status: "under_review", renewalDecision: "renegotiate", ownerUserId: "u2", ownerName: "Ra'ed Al-Harbi", createdAt: "2025-12-01", updatedAt: "2026-02-10" },
-  { id: "rw-sadara-1", customerId: "c4", customerName: "Sadara Chemical", baselineId: "bl-sadara-1", renewalCycleName: "Sadara 2025-2028 Renewal", targetStartDate: "2025-10-01", targetEndDate: "2028-09-30", status: "approved", renewalDecision: "renew", ownerUserId: "u3", ownerName: "Albert Fernandez", createdAt: "2025-06-15", updatedAt: "2026-02-14" },
-  { id: "rw-unilever-1", customerId: "c6", customerName: "Unilever Arabia", baselineId: "bl-unilever-1", renewalCycleName: "Unilever 2025-2027 Renewal", targetStartDate: "2025-07-01", targetEndDate: "2027-06-30", status: "draft", renewalDecision: "pending", ownerUserId: "u3", ownerName: "Albert Fernandez", createdAt: "2026-01-15", updatedAt: "2026-02-12" },
-  { id: "rw-alrajhi-1", customerId: "c9", customerName: "Al-Rajhi Steel", baselineId: "bl-alrajhi-1", renewalCycleName: "Al-Rajhi 2025-2026 Renewal", targetStartDate: "2025-05-01", targetEndDate: "2026-04-30", status: "rejected", renewalDecision: "exit", ownerUserId: "u3", ownerName: "Albert Fernandez", createdAt: "2025-02-01", updatedAt: "2025-03-20" },
-];
-
-// ============================================================
-// C) RENEWAL DRAFT VERSIONS
-// ============================================================
-
-export const renewalVersions: RenewalVersion[] = [
-  { id: "rv-maaden-v1", workspaceId: "rw-maaden-1", versionNumber: 1, proposalVersionId: "p-maaden-v1", slaVersionId: "sla-maaden-v1", pricingSnapshot: { ...psMaaden, id: "ps-maaden-rv1" }, notes: "Cloned from baseline — no changes yet", createdAt: "2025-12-01", createdBy: "Ra'ed Al-Harbi" },
-  { id: "rv-maaden-v2", workspaceId: "rw-maaden-1", versionNumber: 2, proposalVersionId: "p-maaden-v2", slaVersionId: "sla-maaden-v2", pricingSnapshot: { id: "ps-maaden-rv2", storageRate: 41, inboundRate: 7.5, outboundRate: 7.5, palletVolume: 2200, monthlyRevenue: 340000, annualRevenue: 4080000, gpPercent: 25.8, vasRevenue: 42000, slaScope: ["Ambient Storage", "Hazmat Handling", "Inbound Receiving", "Outbound Dispatch", "Inventory Management", "Dedicated Account Manager"], lanes: ["Jubail → Riyadh", "Jubail → Jeddah", "Jubail → Dammam", "Jubail → Yanbu"], assumptions: ["Hazmat-certified staff required", "Dedicated storage zone", "Monthly compliance audit", "Quarterly business review"] }, notes: "Renegotiated: increased rate, added scope, expanded lanes. GP% improved.", createdAt: "2026-01-15", createdBy: "Ra'ed Al-Harbi" },
-  { id: "rv-sadara-v1", workspaceId: "rw-sadara-1", versionNumber: 1, proposalVersionId: "p-sadara-v2", slaVersionId: "sla-sadara-v1", pricingSnapshot: { ...psSadara, id: "ps-sadara-rv1" }, notes: "Cloned from baseline", createdAt: "2025-06-15", createdBy: "Albert Fernandez" },
-  { id: "rv-sadara-v2", workspaceId: "rw-sadara-1", versionNumber: 2, proposalVersionId: "p-sadara-v3", slaVersionId: "sla-sadara-v2", pricingSnapshot: { id: "ps-sadara-rv2", storageRate: 40, inboundRate: 7, outboundRate: 7, palletVolume: 1200, monthlyRevenue: 240000, annualRevenue: 2880000, gpPercent: 25.2, vasRevenue: 22000, slaScope: ["Ambient Storage", "Inbound Receiving", "Outbound Dispatch", "Quality Inspection"], lanes: ["Jubail → Dammam"], assumptions: ["Standard operations", "Client-owned pallets", "Quarterly review meetings"] }, notes: "Minor rate increase to SAR 40/pallet. GP% improved from 24.5% to 25.2%.", createdAt: "2026-01-20", createdBy: "Albert Fernandez" },
-  { id: "rv-unilever-v1", workspaceId: "rw-unilever-1", versionNumber: 1, proposalVersionId: "p-unilever-v1", slaVersionId: "sla-unilever-v1", pricingSnapshot: { ...psUnilever, id: "ps-unilever-rv1" }, notes: "Cloned from baseline — pending decision", createdAt: "2026-01-15", createdBy: "Albert Fernandez" },
-  { id: "rv-alrajhi-v1", workspaceId: "rw-alrajhi-1", versionNumber: 1, proposalVersionId: "p-alrajhi-v1", slaVersionId: null, pricingSnapshot: { ...psAlRajhi, id: "ps-alrajhi-rv1" }, notes: "Cloned from baseline. Decision: Exit due to payment risk and low margin.", createdAt: "2025-02-01", createdBy: "Albert Fernandez" },
-];
-
-// ============================================================
-// D) RENEWAL DELTAS
-// ============================================================
-
-export const renewalDeltas: RenewalDelta[] = [
-  {
-    id: "rd-maaden-v2", workspaceId: "rw-maaden-1", baselineId: "bl-maaden-1", renewalVersionId: "rv-maaden-v2",
-    deltaJson: [
-      { field: "Storage Rate", category: "pricing", baselineValue: 38, renewalValue: 41, changePercent: 7.9, direction: "increase", severity: "positive" },
-      { field: "Inbound Rate", category: "pricing", baselineValue: 7, renewalValue: 7.5, changePercent: 7.1, direction: "increase", severity: "positive" },
-      { field: "Outbound Rate", category: "pricing", baselineValue: 7, renewalValue: 7.5, changePercent: 7.1, direction: "increase", severity: "positive" },
-      { field: "Pallet Volume", category: "volume", baselineValue: 1800, renewalValue: 2200, changePercent: 22.2, direction: "increase", severity: "warning" },
-      { field: "Annual Revenue", category: "pricing", baselineValue: 3400000, renewalValue: 4080000, changePercent: 20.0, direction: "increase", severity: "positive" },
-      { field: "GP%", category: "pricing", baselineValue: 23.1, renewalValue: 25.8, changePercent: 11.7, direction: "increase", severity: "positive" },
-      { field: "VAS Revenue", category: "pricing", baselineValue: 30000, renewalValue: 42000, changePercent: 40.0, direction: "increase", severity: "positive" },
-      { field: "SLA Scope Items", category: "scope", baselineValue: 5, renewalValue: 6, changePercent: 20.0, direction: "increase", severity: "warning" },
-      { field: "Lanes", category: "scope", baselineValue: 3, renewalValue: 4, changePercent: 33.3, direction: "increase", severity: "neutral" },
-      { field: "Dedicated Account Manager", category: "sla", baselineValue: "No", renewalValue: "Yes", changePercent: null, direction: "added", severity: "warning" },
-    ],
-    riskFlagsJson: [
-      { key: "volume_increase", severity: "medium", message: "Pallet volume increasing 22.2% — verify ops capacity", gateKey: "ops_feasibility_gate" },
-      { key: "scope_increase", severity: "low", message: "SLA scope expanded with 1 new item — ensure pricing covers cost", gateKey: "scope_drift_gate" },
-    ],
-    computedAt: "2026-01-15",
-  },
-  {
-    id: "rd-sadara-v2", workspaceId: "rw-sadara-1", baselineId: "bl-sadara-1", renewalVersionId: "rv-sadara-v2",
-    deltaJson: [
-      { field: "Storage Rate", category: "pricing", baselineValue: 39, renewalValue: 40, changePercent: 2.6, direction: "increase", severity: "positive" },
-      { field: "Annual Revenue", category: "pricing", baselineValue: 2800000, renewalValue: 2880000, changePercent: 2.9, direction: "increase", severity: "positive" },
-      { field: "GP%", category: "pricing", baselineValue: 24.5, renewalValue: 25.2, changePercent: 2.9, direction: "increase", severity: "positive" },
-      { field: "VAS Revenue", category: "pricing", baselineValue: 20000, renewalValue: 22000, changePercent: 10.0, direction: "increase", severity: "positive" },
-    ],
-    riskFlagsJson: [],
-    computedAt: "2026-01-20",
-  },
-];
-
-// ============================================================
-// E) GATE EVALUATIONS
-// ============================================================
-
-export const renewalGateEvaluations: RenewalGateEvaluation[] = [
-  {
-    id: "rge-maaden-v2", workspaceId: "rw-maaden-1", renewalVersionId: "rv-maaden-v2", ruleSetVersionId: null, result: "warn",
-    gates: [
-      { gateKey: "ecr_gate", gateName: "ECR Gate", mode: "warn", result: "pass", reason: "ECR grade B — above minimum threshold C", overridable: true },
-      { gateKey: "margin_gate", gateName: "Margin Gate", mode: "enforce", result: "pass", reason: "GP% 25.8% — above minimum 18%. Improved from baseline 23.1%.", overridable: true },
-      { gateKey: "scope_drift_gate", gateName: "Scope Drift Gate", mode: "warn", result: "warn", reason: "SLA scope expanded from 5 to 6 items. Pricing increased — verify cost coverage.", overridable: true },
-      { gateKey: "ops_feasibility_gate", gateName: "Ops Feasibility Gate", mode: "warn", result: "warn", reason: "Volume increase 22.2% (1800→2200 pallets). Below 25% threshold but verify capacity.", overridable: true },
-      { gateKey: "contract_timing_gate", gateName: "Contract Timing Gate", mode: "warn", result: "pass", reason: "Renewal initiated 121 days before expiry — above 60-day minimum.", overridable: true },
-    ],
-    evaluatedAt: "2026-01-15",
-  },
-  {
-    id: "rge-sadara-v2", workspaceId: "rw-sadara-1", renewalVersionId: "rv-sadara-v2", ruleSetVersionId: null, result: "pass",
-    gates: [
-      { gateKey: "ecr_gate", gateName: "ECR Gate", mode: "warn", result: "pass", reason: "ECR grade B — above minimum threshold C", overridable: true },
-      { gateKey: "margin_gate", gateName: "Margin Gate", mode: "enforce", result: "pass", reason: "GP% 25.2% — above minimum 18%. Improved from baseline 24.5%.", overridable: true },
-      { gateKey: "scope_drift_gate", gateName: "Scope Drift Gate", mode: "warn", result: "pass", reason: "No scope changes detected.", overridable: true },
-      { gateKey: "ops_feasibility_gate", gateName: "Ops Feasibility Gate", mode: "warn", result: "pass", reason: "No volume change.", overridable: true },
-      { gateKey: "contract_timing_gate", gateName: "Contract Timing Gate", mode: "warn", result: "pass", reason: "Renewal initiated well before expiry.", overridable: true },
-    ],
-    evaluatedAt: "2026-01-20",
-  },
-];
-
-// ============================================================
-// F) RENEWAL OUTCOMES
-// ============================================================
-
-export const renewalOutcomes: RenewalOutcome[] = [
-  { id: "ro-sadara-1", workspaceId: "rw-sadara-1", approvedRenewalVersionId: "rv-sadara-v2", newBaselineId: "bl-sadara-2-pending", lockedAt: "2026-02-14", lockedBy: "Albert Fernandez" },
-];
-
-// ============================================================
-// G) AUDIT ENTRIES
-// ============================================================
-
-export const renewalAuditLog: RenewalAuditEntry[] = [
-  { id: "ra-1", entityType: "renewal_workspace", entityId: "rw-maaden-1", action: "created", userId: "u2", userName: "Ra'ed Al-Harbi", timestamp: "2025-12-01T09:00:00Z", details: "Renewal workspace created for Ma'aden 2026-2028" },
-  { id: "ra-2", entityType: "renewal_version", entityId: "rv-maaden-v1", action: "created", userId: "u2", userName: "Ra'ed Al-Harbi", timestamp: "2025-12-01T09:05:00Z", details: "Version 1 cloned from baseline" },
-  { id: "ra-3", entityType: "renewal_version", entityId: "rv-maaden-v2", action: "created", userId: "u2", userName: "Ra'ed Al-Harbi", timestamp: "2026-01-15T10:00:00Z", details: "Version 2 created — renegotiated pricing and scope" },
-  { id: "ra-4", entityType: "renewal_gate", entityId: "rge-maaden-v2", action: "evaluated", userId: "u2", userName: "Ra'ed Al-Harbi", timestamp: "2026-01-15T10:05:00Z", details: "Gate evaluation: 2 warnings (scope drift, ops feasibility)" },
-  { id: "ra-5", entityType: "renewal_workspace", entityId: "rw-maaden-1", action: "status_changed", userId: "u2", userName: "Ra'ed Al-Harbi", timestamp: "2026-01-15T10:10:00Z", details: "Status changed from draft to under_review" },
-  { id: "ra-6", entityType: "renewal_workspace", entityId: "rw-sadara-1", action: "created", userId: "u3", userName: "Albert Fernandez", timestamp: "2025-06-15T08:00:00Z", details: "Renewal workspace created for Sadara 2025-2028" },
-  { id: "ra-7", entityType: "renewal_workspace", entityId: "rw-sadara-1", action: "status_changed", userId: "u3", userName: "Albert Fernandez", timestamp: "2026-02-14T11:00:00Z", details: "Status changed to approved — all gates passed" },
-  { id: "ra-8", entityType: "renewal_outcome", entityId: "ro-sadara-1", action: "locked", userId: "u3", userName: "Albert Fernandez", timestamp: "2026-02-14T11:05:00Z", details: "Renewal locked. New baseline pending creation." },
-  { id: "ra-9", entityType: "renewal_workspace", entityId: "rw-alrajhi-1", action: "status_changed", userId: "u3", userName: "Albert Fernandez", timestamp: "2025-03-20T14:00:00Z", details: "Status changed to rejected — decision: exit. Low margin and payment risk." },
-  { id: "ra-10", entityType: "renewal_workspace", entityId: "rw-unilever-1", action: "created", userId: "u3", userName: "Albert Fernandez", timestamp: "2026-01-15T09:00:00Z", details: "Renewal workspace created for Unilever 2025-2027" },
-];
+// No seeded renewal records are allowed here. Renewal records must come
+// from Supabase-backed intake/workspace tables. Empty arrays mean the app
+// shows an empty state instead of invented SABIC/Ma'aden/Sadara/etc. data.
+export const contractBaselines: ContractBaseline[] = [];
+export const renewalWorkspaces: RenewalWorkspace[] = [];
+export const renewalVersions: RenewalVersion[] = [];
+export const renewalDeltas: RenewalDelta[] = [];
+export const renewalGateEvaluations: RenewalGateEvaluation[] = [];
+export const renewalOutcomes: RenewalOutcome[] = [];
+export const renewalAuditLog: RenewalAuditEntry[] = [];
 
 // ============================================================
 // HELPER FUNCTIONS
@@ -423,8 +299,8 @@ export function evaluateRenewalGates(workspace: RenewalWorkspace, version: Renew
 
     switch (gate.key) {
       case "ecr_gate": {
-        // Simplified: check if customer has ECR data — in real system would compare grades
-        reason = "ECR check completed — no grade degradation detected";
+        // Simplified: check if customer has ECR data â€” in real system would compare grades
+        reason = "ECR check completed â€” no grade degradation detected";
         break;
       }
       case "margin_gate": {
@@ -436,9 +312,9 @@ export function evaluateRenewalGates(workspace: RenewalWorkspace, version: Renew
           reason = `GP% ${rp.gpPercent}% is below minimum threshold ${minGp}%`;
         } else if (gpDecline > maxDecline) {
           result = gate.mode === "enforce" ? "block" : "warn";
-          reason = `GP% declined ${gpDecline.toFixed(1)}% from baseline (${bp.gpPercent}% → ${rp.gpPercent}%) — exceeds max decline ${maxDecline}%`;
+          reason = `GP% declined ${gpDecline.toFixed(1)}% from baseline (${bp.gpPercent}% â†’ ${rp.gpPercent}%) â€” exceeds max decline ${maxDecline}%`;
         } else {
-          reason = `GP% ${rp.gpPercent}% — above minimum ${minGp}%. ${rp.gpPercent >= bp.gpPercent ? "Improved" : "Slight decline"} from baseline ${bp.gpPercent}%.`;
+          reason = `GP% ${rp.gpPercent}% â€” above minimum ${minGp}%. ${rp.gpPercent >= bp.gpPercent ? "Improved" : "Slight decline"} from baseline ${bp.gpPercent}%.`;
         }
         break;
       }
@@ -450,7 +326,7 @@ export function evaluateRenewalGates(workspace: RenewalWorkspace, version: Renew
           reason = `${addedItems} new SLA scope item(s) added without revenue increase`;
         } else if (addedItems > 0) {
           result = "warn";
-          reason = `${addedItems} new SLA scope item(s) added. Revenue increased — verify cost coverage.`;
+          reason = `${addedItems} new SLA scope item(s) added. Revenue increased â€” verify cost coverage.`;
         } else {
           reason = "No scope changes detected.";
         }
@@ -461,9 +337,9 @@ export function evaluateRenewalGates(workspace: RenewalWorkspace, version: Renew
         const volumeChange = bp.palletVolume > 0 ? ((rp.palletVolume - bp.palletVolume) / bp.palletVolume) * 100 : 0;
         if (volumeChange > maxIncrease) {
           result = gate.mode === "enforce" ? "block" : "warn";
-          reason = `Volume increase ${volumeChange.toFixed(1)}% exceeds ${maxIncrease}% threshold (${bp.palletVolume} → ${rp.palletVolume} pallets)`;
+          reason = `Volume increase ${volumeChange.toFixed(1)}% exceeds ${maxIncrease}% threshold (${bp.palletVolume} â†’ ${rp.palletVolume} pallets)`;
         } else if (volumeChange > 0) {
-          reason = `Volume increase ${volumeChange.toFixed(1)}% — within threshold.`;
+          reason = `Volume increase ${volumeChange.toFixed(1)}% â€” within threshold.`;
         } else {
           reason = "No volume increase.";
         }
@@ -476,9 +352,9 @@ export function evaluateRenewalGates(workspace: RenewalWorkspace, version: Renew
         const daysBeforeExpiry = Math.floor((expiryDate.getTime() - createdDate.getTime()) / (1000 * 60 * 60 * 24));
         if (daysBeforeExpiry < minDays) {
           result = "warn";
-          reason = `Renewal initiated ${daysBeforeExpiry} days before expiry — below recommended ${minDays} days`;
+          reason = `Renewal initiated ${daysBeforeExpiry} days before expiry â€” below recommended ${minDays} days`;
         } else {
-          reason = `Renewal initiated ${daysBeforeExpiry} days before expiry — above ${minDays}-day minimum.`;
+          reason = `Renewal initiated ${daysBeforeExpiry} days before expiry â€” above ${minDays}-day minimum.`;
         }
         break;
       }
@@ -540,11 +416,11 @@ export function getDeltaSeverityColor(severity: DeltaDetail["severity"]): string
 
 export function getDeltaDirectionIcon(direction: DeltaDetail["direction"]): string {
   switch (direction) {
-    case "increase": return "↑";
-    case "decrease": return "↓";
-    case "unchanged": return "—";
+    case "increase": return "â†‘";
+    case "decrease": return "â†“";
+    case "unchanged": return "â€”";
     case "added": return "+";
-    case "removed": return "−";
+    case "removed": return "âˆ’";
   }
 }
 
@@ -635,7 +511,7 @@ export function overrideGate(
 
   // Cannot override a gate that already passed
   if (gate.result === "pass") {
-    return { success: false, error: "Gate already passed — no override needed" };
+    return { success: false, error: "Gate already passed â€” no override needed" };
   }
 
   // Already overridden

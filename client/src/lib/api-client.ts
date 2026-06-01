@@ -49,30 +49,45 @@ async function request<T>(
     // The server will return 401 and we'll handle it below
   }
 
-  const res = await fetch(url, {
-    ...options,
-    headers,
-  });
+  // Abort after 3 seconds — prevents pages hanging when localhost:3001 is not running
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3000);
 
-  // Handle 401 — session expired or not logged in
-  if (res.status === 401) {
-    const body = await res.json().catch(() => ({ code: 'AUTH_REQUIRED' }));
-    if (body.code === 'AUTH_REQUIRED' || body.code === 'AUTH_INVALID') {
-      // Redirect to login
-      window.location.href = '/login';
+  try {
+    const res = await fetch(url, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    // Handle 401 — session expired or not logged in
+    if (res.status === 401) {
+      const body = await res.json().catch(() => ({ code: 'AUTH_REQUIRED' }));
+      if (body.code === 'AUTH_REQUIRED' || body.code === 'AUTH_INVALID') {
+        // Redirect to login
+        window.location.href = '/login';
+      }
+      throw new Error(body.error || 'Authentication required');
     }
-    throw new Error(body.error || 'Authentication required');
-  }
 
-  if (!res.ok) {
-    const body: ApiError = await res.json().catch(() => ({
-      error: `HTTP ${res.status}`,
-      code: 'HTTP_ERROR',
-    }));
-    throw new Error(body.error || `API error: ${res.status}`);
-  }
+    if (!res.ok) {
+      const body: ApiError = await res.json().catch(() => ({
+        error: `HTTP ${res.status}`,
+        code: 'HTTP_ERROR',
+      }));
+      throw new Error(body.error || `API error: ${res.status}`);
+    }
 
-  return res.json();
+    return res.json();
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      // Fetch timed out — server not running
+      throw new Error('API server not reachable (timeout)');
+    }
+    throw err;
+  }
 }
 
 // ─── API Namespace ───────────────────────────────────────

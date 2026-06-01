@@ -10,7 +10,6 @@ import {
 } from "@/components/commercial-os/CommercialOsShell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Link } from "wouter";
 import {
   fetchTransportationOpportunities,
   fetchTransportationCustomerLinks,
@@ -147,7 +146,6 @@ export default function CommercialOsTransportation() {
               >
                 {opportunities.map(o => {
                   const links = linksByOpp.get(o.id) || [];
-                  const isLinde = o.customerName.toLowerCase().includes('linde');
                   return (
                     <tr key={o.id} className="text-xs">
                       <td className="px-3 py-2">
@@ -160,13 +158,7 @@ export default function CommercialOsTransportation() {
                         </div>
                       </td>
                       <td className="px-3 py-2">
-                        {isLinde ? (
-                          <Link href="/tenders/tn-linde-001">
-                            <span className="text-violet-700 hover:underline cursor-pointer">{o.opportunityName}</span>
-                          </Link>
-                        ) : (
-                          o.opportunityName || "--"
-                        )}
+                        {o.opportunityName || "--"}
                       </td>
                       <td className="px-3 py-2">{o.owner || "--"}</td>
                       <td className="px-3 py-2"><Badge variant="outline" className="text-[10px]">{o.stage}</Badge></td>

@@ -1,0 +1,99 @@
+1. JSON Workflow (machine-readable)
+{
+  "tender_workflow": [
+    {
+      "phase": "Intake & Registration",
+      "steps": [
+        "Log RFQ/RFP ID, title, buyer, submission deadline",
+        "Check submission portal/format requirements",
+        "Assign internal bid manager and team"
+      ]
+    },
+    {
+      "phase": "Document Review",
+      "steps": [
+        "Read entire RFQ/RFP without notes (high-level understanding)",
+        "Break down RFQ into sections: scope, compliance, evaluation, commercial, forms",
+        "Populate Compliance Matrix (requirement → response plan → owner → status)"
+      ]
+    },
+    {
+      "phase": "Clarifications & Questions",
+      "steps": [
+        "Identify unclear items (ambiguous requirements, missing data, contradictory instructions)",
+        "Draft clarification questions (one per item, with RFQ reference/page)",
+        "Verify submission channel for questions (email, portal, deadline)",
+        "Track Q&A log with dates and buyer responses"
+      ],
+      "outputs": [
+        "Clarification Question Log",
+        "Updated Compliance Matrix (after responses)"
+      ]
+    },
+    {
+      "phase": "Win Strategy",
+      "steps": [
+        "Define 3–5 win themes aligned with buyer’s evaluation criteria",
+        "Map your differentiators to requirements",
+        "Decide bid/no-bid if gaps are critical"
+      ]
+    },
+    {
+      "phase": "Drafting",
+      "steps": [
+        "Prepare Technical Proposal (exec summary → requirements → methodology → team → risk → compliance)",
+        "Prepare Commercial Proposal (pricing, assumptions, BOQ, terms)",
+        "Cross-check consistency between technical and commercial volumes"
+      ]
+    },
+    {
+      "phase": "Review & QA",
+      "steps": [
+        "Conduct Red Team review (independent compliance check)",
+        "Verify mandatory forms and attachments included",
+        "Check formatting, branding, bilingual if required"
+      ]
+    },
+    {
+      "phase": "Finalization & Submission",
+      "steps": [
+        "Package all documents as per RFQ (copies, file formats, labeling)",
+        "Verify bonds/guarantees included if required",
+        "Submit before deadline",
+        "Archive final submission and lessons learned"
+      ]
+    }
+  ]
+}
+2. Bot-Friendly Markdown Guide (for instruction prompts)
+# Tender / RFQ Response Methodology
+## Phase 1: Intake & Registration
+- Capture RFQ ID, title, buyer, deadlines.
+- Note submission format/portal.
+- Assign bid manager & team.
+## Phase 2: Document Review
+- Read full RFQ once (no notes).
+- Split into sections: scope, compliance, evaluation, commercial, forms.
+- Build **Compliance Matrix** (requirement → plan → owner → status).
+## Phase 3: Clarifications
+- Identify unclear/missing/contradictory items.
+- Draft **questions**: include RFQ reference/page.
+- Submit via correct channel before deadline.
+- Maintain **Clarification Log** and update compliance.
+## Phase 4: Win Strategy
+- Create 3–5 win themes linked to buyer evaluation.
+- Map strengths/differentiators to requirements.
+- Conduct **bid/no-bid** check.
+## Phase 5: Drafting
+- **Technical Volume**: Exec summary → Understanding → Methodology → Team → Risk/HSE/QA → Compliance → Deliverables.
+- **Commercial Volume**: Pricing summary → BOQ breakdown → Assumptions → Options → Terms.
+- Ensure consistency between technical & commercial.
+## Phase 6: Review & QA
+- Run Red Team (independent compliance review).
+- Confirm all mandatory forms attached.
+- Check formatting, branding, bilingual content.
+## Phase 7: Finalization & Submission
+- Package per RFQ rules (copies, labels, encryption).
+- Include bonds/guarantees if required.
+- Submit on time.
+- Archive submission + lessons learned.

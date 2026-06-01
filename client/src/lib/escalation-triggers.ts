@@ -2,7 +2,7 @@
  * Escalation Triggers — Global Exception Detection Layer
  *
  * Reads from: Customers, Workspaces, Renewals
- * Creates escalation_events via the existing engine.
+ * Creates source-backed rows through the commercial_escalations engine.
  *
  * Trigger functions:
  *   checkContractExpiry()     — contract expired or expiring soon
@@ -18,7 +18,7 @@
  *   Level 1 (signal)      → Account Owner
  *   Level 2 (managed)     → Account Owner
  *   Level 3 (escalation)  → Regional Head
- *   Level 4 (critical)    → Amin Al-Rashid
+ *   Level 4 (critical)    -> Unassigned fallback
  */
 
 import { createEscalation } from "./escalation-engine";
@@ -75,7 +75,7 @@ const REGIONAL_HEAD_MAP: Record<string, { id: string; name: string }> = {
 };
 
 /** Commercial Director — Level 4 only */
-const COMMERCIAL_DIRECTOR = { id: "u1", name: "Amin Al-Rashid" };
+const COMMERCIAL_DIRECTOR = { id: "", name: "Unassigned" };
 
 export interface RouteTarget {
   id: string;
@@ -150,12 +150,12 @@ async function hasOpenEscalation(
   triggerType: string
 ): Promise<boolean> {
   const { data } = await supabase
-    .from("escalation_events")
+    .from("commercial_escalations")
     .select("id")
-    .eq("entity_type", entityType)
-    .eq("entity_id", entityId)
-    .eq("trigger_type", triggerType)
-    .in("status", ["open", "acknowledged"])
+    .eq("active", true)
+    .ilike("source_lineage", `%${triggerType}%`)
+    .ilike("source_lineage", `%${entityType}:${entityId}%`)
+    .in("status", ["open", "monitoring", "under_review"])
     .limit(1);
 
   return (data && data.length > 0) || false;

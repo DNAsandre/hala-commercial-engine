@@ -131,57 +131,22 @@ export async function syncCustomerCreate(customer: Record<string, any>): Promise
 // ============================================================
 
 export async function syncTenderCreate(tender: Record<string, any>): Promise<void> {
-  const row: Record<string, any> = {
-    id:                    tender.id,
-    reference:             tender.id.toString().toUpperCase(),
-    title:                 tender.title || "",
-    customer_id:           tender.customerId || "",
-    customer_name:         tender.customerName || "",
-    region:                tender.region || "East",
-    phase:                 tender.status || "identified",
-    submission_deadline:   tender.submissionDeadline || null,
-    estimated_value:       tender.estimatedValue || 0,
-    owner:                 tender.assignedOwner || "",
-    notes:                 tender.notes || "",
-    workspace_id:          tender.linkedWorkspaceId || null,
-    target_gp_percent:     tender.targetGpPercent || 0,
-    probability_percent:   tender.probabilityPercent || 0,
-    assigned_team_members: JSON.stringify(tender.assignedTeamMembers || []),
-    source:                tender.source || "Direct",
-    days_in_status:        tender.daysInStatus || 0,
-    crm_synced:            tender.crmSynced || false,
-    created_at:            tender.createdAt || new Date().toISOString().slice(0, 10),
-    updated_at:            new Date().toISOString().slice(0, 10),
-  };
-  const { error } = await supabase.from("tenders").upsert(row, { onConflict: 'id' });
-  if (error) handleSupabaseError('syncTenderCreate', error, { entityId: tender.id });
+  console.warn("[supabase-sync] Legacy tenders write blocked. Use commercial_tickets intake instead.", {
+    entityId: tender.id,
+  });
+  return;
 }
 
 export async function syncTenderUpdate(
   tenderId: string,
   updates: Record<string, any>
 ): Promise<void> {
-  const row: Record<string, any> = { updated_at: new Date().toISOString().slice(0, 10) };
-  // Map camelCase → actual DB column names
-  const mapping: Record<string, string> = {
-    status:              "phase",
-    daysInStatus:        "days_in_status",
-    notes:               "notes",
-    probabilityPercent:  "probability_percent",
-    wonLostReason:       "notes",
-    assignedOwner:       "owner",
-    estimatedValue:      "estimated_value",
-    targetGpPercent:     "target_gp_percent",
-    submissionDeadline:  "submission_deadline",
-    linkedWorkspaceId:   "workspace_id",
-    source:              "source",
-    region:              "region",
-  };
-  for (const [key, val] of Object.entries(updates)) {
-    const dbKey = mapping[key] || key;
-    row[dbKey] = val;
-  }
-  await optimisticSyncUpdate("tenders", tenderId, row, 'syncTenderUpdate');
+  console.warn("[supabase-sync] Legacy tenders update blocked. Use commercial_tickets tender actions instead.", {
+    entityId: tenderId,
+    fields: Object.keys(updates),
+  });
+  return;
+
 }
 
 // ============================================================
@@ -275,25 +240,18 @@ export async function syncQuoteUpdate(quoteId: string, updates: Record<string, a
 // ============================================================
 
 export async function syncProposalCreate(proposal: Record<string, any>): Promise<void> {
-  const row = {
-    id: proposal.id,
-    workspace_id: proposal.workspaceId,
-    version: proposal.version,
-    state: proposal.state,
-    title: proposal.title,
-    sections: JSON.stringify(proposal.sections || []),
-    created_at: proposal.createdAt || new Date().toISOString(),
-  };
-  const { error } = await supabase.from("proposals").upsert(row, { onConflict: 'id' });
-  if (error) handleSupabaseError('syncProposalCreate', error, { entityId: proposal.id });
+  console.warn("[supabase-sync] Legacy proposals write blocked. Use commercial_tickets intake instead.", {
+    entityId: proposal.id,
+  });
+  return;
 }
 
 export async function syncProposalUpdate(proposalId: string, updates: Record<string, any>): Promise<void> {
-  const row: Record<string, any> = {};
-  if (updates.state !== undefined) row.state = updates.state;
-  if (updates.title !== undefined) row.title = updates.title;
-  if (updates.sections !== undefined) row.sections = JSON.stringify(updates.sections);
-  await optimisticSyncUpdate("proposals", proposalId, row, 'syncProposalUpdate');
+  console.warn("[supabase-sync] Legacy proposals update blocked. Use commercial_tickets ticket updates instead.", {
+    entityId: proposalId,
+    fields: Object.keys(updates),
+  });
+  return;
 }
 
 // ============================================================

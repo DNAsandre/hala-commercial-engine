@@ -1,7 +1,7 @@
-/**
+﻿/**
  * CW-001 through CW-007: Commercial Quote Control Tab
  * SUPA-003: Now reads from Supabase via useCommercialWorkspaceData hook.
- * Development mode only — no real pricing, no backend, no CRM sync.
+ * Advisory mode only: no real pricing engine, no CRM sync, and no workflow writes.
  */
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,11 +32,11 @@ function getStatusLabel(s: QuoteScenarioStatus): string {
     not_started: "Not Started",
     draft_scenario: "Draft Scenario",
     pnl_basis_added: "P&L Basis Added",
-    ready_for_review_mock: "Ready for Review (Mock)",
+    ready_for_review_mock: "Ready for Review",
     margin_risk_flagged: "Margin Risk Flagged",
-    mock_reviewed: "Mock Reviewed",
-    client_facing_draft_mock: "Client-Facing Draft (Mock)",
-    superseded_mock: "Superseded (Mock)",
+    mock_reviewed: "Reviewed",
+    client_facing_draft_mock: "Client-Facing Draft",
+    superseded_mock: "Superseded",
   })[s];
 }
 
@@ -114,7 +114,7 @@ function ScenarioCard({ s, selected, onSelect }: { s: QuoteScenario; selected: b
         {isRed && (
           <div className="mt-2 p-2 rounded-md border border-red-200 bg-red-50 flex items-center gap-2">
             <ShieldAlert className="w-3.5 h-3.5 text-red-600 shrink-0" />
-            <p className="text-[10px] text-red-700">Red Signal Detected — Mock escalation created for Commercial Director review. Testing may continue.</p>
+            <p className="text-[10px] text-red-700">Red signal detected. Advisory review is required before client-facing progression.</p>
           </div>
         )}
       </CardContent>
@@ -135,7 +135,7 @@ function ScenarioDetailPanel({ s, workspaceId, onActionComplete }: { s: QuoteSce
       { workspaceId, eventCode: code, eventName: title, description: desc, category: 'QUOTE', actor, entityType: 'Quote Scenario', entityName: s.name, beforeState: getStatusLabel(s.status), afterState: after, severity: 'Info' }
     );
     if (result.success) { toast.success(`${title} saved to Supabase.`); onActionComplete?.(); }
-    else { toast.error(`Mock action could not be saved: ${result.error}`); }
+    else { toast.error(`Advisory action could not be saved: ${result.error}`); }
   };
 
   const gpValue = s.revenue - s.cost;
@@ -184,7 +184,7 @@ function ScenarioDetailPanel({ s, workspaceId, onActionComplete }: { s: QuoteSce
            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />}
           <div>
             <p className={`text-xs font-semibold ${isRed ? "text-red-800" : s.gpPercent < 22 ? "text-amber-800" : "text-emerald-800"}`}>
-              {isRed ? "Mock Escalation Active" : s.gpPercent < 22 ? "Future Approval Required" : "Within Local Authority"}
+              {isRed ? "Advisory Escalation Active" : s.gpPercent < 22 ? "Future Approval Required" : "Within Local Authority"}
             </p>
             <p className={`text-[10px] mt-0.5 ${isRed ? "text-red-700" : s.gpPercent < 22 ? "text-amber-700" : "text-emerald-700"}`}>{s.mockEscalation}</p>
           </div>
@@ -194,16 +194,16 @@ function ScenarioDetailPanel({ s, workspaceId, onActionComplete }: { s: QuoteSce
           <div className="text-xs text-muted-foreground"><span className="font-medium">Notes:</span> {s.notes}</div>
         )}
 
-        {/* Mock actions */}
+        {/* Advisory actions */}
         <div className="flex items-center gap-2 pt-2 border-t border-dashed">
-          <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5" onClick={() => mkAction('quote_reviewed_mock', 'Quote Reviewed Mock', `Mock review logged for "${s.name}". No external action taken.`, 'QUOTE_REVIEWED_MOCK', 'Mock Reviewed')}>
-            <Eye className="w-3.5 h-3.5" /> Review Mock
+          <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5" onClick={() => mkAction('quote_review_requested', 'Quote Review Requested', `Advisory review requested for "${s.name}". No external action taken.`, 'QUOTE_REVIEW_REQUESTED', 'Review Requested')}>
+            <Eye className="w-3.5 h-3.5" /> Request Review
           </Button>
-          <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5" onClick={() => mkAction('quote_preview_mock', 'Quote Preview Mock', `Mock quote preview generated for "${s.name}". No real document created.`, 'QUOTE_PREVIEW_MOCK', 'Preview Generated')}>
-            <FileText className="w-3.5 h-3.5" /> Generate Quote Preview Mock
+          <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5" onClick={() => mkAction('quote_preview_requested', 'Quote Preview Requested', `Quote preview requested for "${s.name}". No real document created.`, 'QUOTE_PREVIEW_REQUESTED', 'Preview Requested')}>
+            <FileText className="w-3.5 h-3.5" /> Request Quote Preview
           </Button>
-          <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5 text-blue-700 border-blue-200" onClick={() => mkAction('quote_bypass_mock', 'Quote Testing Bypass', 'Continue for testing — no enforcement applied.', 'QUOTE_BYPASS_MOCK', 'Testing Bypass')}>
-            <Play className="w-3.5 h-3.5" /> Continue for Testing
+          <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5 text-blue-700 border-blue-200" onClick={() => mkAction('quote_advisory_override_requested', 'Quote Advisory Override Requested', 'Continue for analysis with advisory override logged. No enforcement applied.', 'QUOTE_ADVISORY_OVERRIDE_REQUESTED', 'Advisory Override Requested')}>
+            <Play className="w-3.5 h-3.5" /> Continue with Advisory Override
           </Button>
         </div>
       </CardContent>
@@ -259,8 +259,8 @@ export default function CommercialQuoteControlTab({ workspaceId, customerName, g
           <div className="flex items-start gap-3">
             <Info className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <div className="text-sm font-semibold text-amber-800 mb-1">Supabase seed data missing for workspace</div>
-              <p className="text-xs text-amber-700">No commercial quote scenarios found in Supabase for workspace {workspaceId}. Seed data may not have been inserted for this workspace.</p>
+              <div className="text-sm font-semibold text-amber-800 mb-1">No verified quote data for this workspace</div>
+              <p className="text-xs text-amber-700">Quote scenarios are hidden until they are backed by canonical ticket lineage and approved commercial source data.</p>
               <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={reload}>Retry</Button>
             </div>
           </div>
@@ -283,27 +283,27 @@ export default function CommercialQuoteControlTab({ workspaceId, customerName, g
             <DollarSign className="w-5 h-5 text-[var(--color-hala-navy)]" /> Quote Control
           </h3>
           <p className="text-xs text-muted-foreground">
-            Mock quote scenarios for {customerName || "this workspace"}
+            Verified quote scenarios for {customerName || "this workspace"}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">Supabase-Backed</Badge>
-          <Badge variant="outline" className="text-[10px] bg-slate-50 border-slate-200">CRM Sync: Mock / Not Connected</Badge>
-          <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">Development Mode</Badge>
+          <Badge variant="outline" className="text-[10px] bg-slate-50 border-slate-200">CRM Sync: Not Connected</Badge>
+          <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">Advisory Mode</Badge>
         </div>
       </div>
 
-      {/* Development banner */}
+      {/* Advisory banner */}
       <Card className="border-2 border-amber-200 shadow-none bg-amber-50/50">
         <CardContent className="p-3">
           <div className="flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <div className="text-sm font-semibold text-amber-800 mb-0.5">Development mode: quote controls and pricing lines are Supabase-backed mock data</div>
+              <div className="text-sm font-semibold text-amber-800 mb-0.5">Advisory mode: quote controls require verified source data before workflow writes</div>
               <p className="text-xs text-amber-700 leading-relaxed">
-                Red signals create mock escalations but do not block testing.
+                Red signals are advisory until the approval engine is fully wired.
                 No real pricing engine, CRM sync, or approval enforcement is active.
-                All values are Supabase-backed development-mode mock data. RLS is development-permissive.
+                Values must come from Supabase-backed verified data.
               </p>
             </div>
           </div>
@@ -355,7 +355,7 @@ export default function CommercialQuoteControlTab({ workspaceId, customerName, g
       {/* CW-006: Revenue Realization */}
       {bundle.revenueRealization[selected.id] && <CommercialRevenueRealizationPanel r={bundle.revenueRealization[selected.id]} />}
 
-      {/* CW-007: Mock Escalation Register */}
+      {/* CW-007: Advisory Escalation Register */}
       <CommercialMockEscalationPanel scenarioId={selected.id} escalations={bundle.escalations[selected.id]} />
 
       {/* Scenario Comparison (CW-002) */}
@@ -374,9 +374,9 @@ export default function CommercialQuoteControlTab({ workspaceId, customerName, g
       <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 flex items-start gap-2">
         <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
         <p className="text-xs text-blue-800">
-          All quote controls are Supabase-backed mock data for development. P&L, margin authority, customer scoring, capacity
-          fit, pricing posture, revenue realization, and mock escalations show future decision paths but do not
-          enforce approvals, block testing, or sync with CRM/Finance. RLS is development-permissive and requires production hardening later.
+          Quote controls are advisory until pricing, approval, CRM, and finance workflows are fully wired to verified source data.
+          P&L, margin authority, customer scoring, capacity fit, pricing posture, revenue realization, and advisory escalations
+          show decision paths but do not enforce approvals or sync with CRM/Finance yet.
         </p>
       </div>
     </div>

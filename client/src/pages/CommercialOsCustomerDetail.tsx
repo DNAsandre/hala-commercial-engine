@@ -400,17 +400,6 @@ export default function CommercialOsCustomerDetail() {
                       );
                     })}
                   </div>
-                ) : customerNameLower.includes('linde') ? (
-                  <div className="rounded border border-violet-100 bg-violet-50/20 px-3 py-2 text-xs">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700 text-[10px]">Tender Link</Badge>
-                      <span className="font-medium">Linde SIGAS Transportation Tender</span>
-                      <Link href="/tenders/tn-linde-001">
-                        <span className="text-blue-700 hover:underline cursor-pointer">Open Workspace →</span>
-                      </Link>
-                    </div>
-                    <p className="mt-1 text-muted-foreground">SAR 55.6M · Preparing Submission · Transport pipeline (separate from warehouse)</p>
-                  </div>
                 ) : (
                   <SectionEmpty label="tender / transport" />
                 )}

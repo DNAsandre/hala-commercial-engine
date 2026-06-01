@@ -28,6 +28,7 @@ export interface CreateUserParams {
   role: string;
   department?: string;
   region?: string;
+  office?: string;
 }
 
 export interface UpdateUserParams {
@@ -38,6 +39,7 @@ export interface UpdateUserParams {
   role?: string;
   department?: string;
   region?: string;
+  office?: string;
   status?: string;
 }
 
