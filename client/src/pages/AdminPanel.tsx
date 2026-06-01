@@ -28,7 +28,7 @@ import { useUsers } from "@/hooks/useSupabase";
 import { Loader2 } from "lucide-react";
 import { navigationV1 } from "@/components/DashboardLayout";
 import { fetchCollections, type KBCollection } from "@/lib/knowledgebase";
-import { fetchConnections, getSyncHealthStats, type CRMConnection } from "@/lib/crm-sync-engine";
+import { api } from "@/lib/api-client";
 import { toast } from "sonner";
 import {
   adminCreateUser,
@@ -45,52 +45,97 @@ import {
   type AIProvider,
   type AIProviderName,
 } from "@/lib/ai-client";
-import { api } from "@/lib/api-client";
 import { fetchEditorBots } from "@/lib/supabase-data";
 
 /* ─── AI Providers Embed (inline in Admin tab) ─── */
 function CRMSyncEmbed() {
-  const [crmConns, setCrmConns] = useState<CRMConnection[]>([]);
-  const [crmLoading, setCrmLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [connectionOk, setConnectionOk] = useState<boolean | null>(null);
+  const [latencyMs, setLatencyMs] = useState(0);
+  const [stats, setStats] = useState<any>(null);
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    fetchConnections().then((c) => { if (!cancelled) { setCrmConns(c); setCrmLoading(false); } });
+    (async () => {
+      try {
+        const [connRes, statusRes] = await Promise.all([
+          api.ghlSync.testConnection().catch(() => ({ data: { ok: false, latencyMs: 0 } })),
+          api.ghlSync.status().catch(() => ({ data: null })),
+        ]);
+        if (cancelled) return;
+        const conn = connRes.data || connRes;
+        setConnectionOk(conn.ok);
+        setLatencyMs(conn.latencyMs);
+        setStats(statusRes.data || statusRes);
+      } catch { /* handled */ }
+      if (!cancelled) setLoading(false);
+    })();
     return () => { cancelled = true; };
   }, []);
 
-  if (crmLoading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+  const handleTest = async () => {
+    setTesting(true);
+    try {
+      const res = await api.ghlSync.testConnection();
+      const d = res.data || res;
+      setConnectionOk(d.ok);
+      setLatencyMs(d.latencyMs);
+    } catch { setConnectionOk(false); }
+    setTesting(false);
+  };
 
-  const stats = getSyncHealthStats();
+  if (loading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+
+  const em = stats?.entityMap;
+  const act = stats?.recentActivity;
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-4 gap-3">
-        <Card><CardContent className="p-4"><div className="text-2xl font-bold text-[#1B2A4A]">{crmConns.length}</div><div className="text-xs text-muted-foreground">Connections</div></CardContent></Card>
-        <Card><CardContent className="p-4"><div className="text-2xl font-bold text-emerald-600">{stats.success}</div><div className="text-xs text-muted-foreground">Synced</div></CardContent></Card>
-        <Card><CardContent className="p-4"><div className="text-2xl font-bold text-red-600">{stats.failed}</div><div className="text-xs text-muted-foreground">Failed</div></CardContent></Card>
-        <Card><CardContent className="p-4"><div className="text-2xl font-bold text-amber-600">{stats.retrying}</div><div className="text-xs text-muted-foreground">Retrying</div></CardContent></Card>
+        <Card><CardContent className="p-4">
+          <div className={`text-2xl font-bold ${connectionOk ? "text-emerald-600" : "text-red-600"}`}>
+            {connectionOk ? "✓" : "✗"}
+          </div>
+          <div className="text-xs text-muted-foreground">{connectionOk ? "Connected" : "Disconnected"}</div>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <div className="text-2xl font-bold text-[#1B2A4A]">
+            {(em?.contacts?.active ?? 0) + (em?.opportunities?.active ?? 0)}
+          </div>
+          <div className="text-xs text-muted-foreground">Mapped Entities</div>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <div className="text-2xl font-bold text-emerald-600">{act?.success ?? 0}</div>
+          <div className="text-xs text-muted-foreground">Synced</div>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <div className="text-2xl font-bold text-red-600">{act?.failed ?? 0}</div>
+          <div className="text-xs text-muted-foreground">Failed</div>
+        </CardContent></Card>
       </div>
-      <div className="space-y-2">
-        {crmConns.map((c) => (
-          <Card key={c.id}>
-            <CardContent className="p-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-lg">{c.provider === "zoho" ? "\ud83d\udfe0" : "\ud83d\udfe2"}</span>
-                <div>
-                  <p className="text-sm font-medium">{c.name}</p>
-                  <p className="text-xs text-muted-foreground">{c.base_url}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge variant={c.health_status === "connected" ? "default" : c.health_status === "configuring" ? "outline" : "destructive"} className="text-xs">
-                  {c.health_status}
-                </Badge>
-                <Badge variant={c.enabled ? "default" : "secondary"} className="text-xs">{c.enabled ? "Active" : "Disabled"}</Badge>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <Card>
+        <CardContent className="p-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🟢</span>
+            <div>
+              <p className="text-sm font-medium">DNA Super Systems</p>
+              <p className="text-xs text-muted-foreground">services.leadconnectorhq.com — API v2023-02-21</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {latencyMs > 0 && (
+              <span className="text-xs text-muted-foreground">{latencyMs}ms</span>
+            )}
+            <Badge variant={connectionOk ? "default" : "destructive"} className="text-xs">
+              {connectionOk ? "Active" : "Offline"}
+            </Badge>
+            <Button variant="outline" size="sm" className="text-xs h-7" onClick={handleTest} disabled={testing}>
+              {testing ? <Loader2 className="w-3 h-3 animate-spin" /> : "Test"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -1365,7 +1410,7 @@ export default function AdminPanel() {
           <div className="flex items-center justify-between mb-2">
             <div>
               <h2 className="text-base font-semibold">CRM Sync Console</h2>
-              <p className="text-xs text-muted-foreground">Bi-directional CRM integration — Zoho CRM + DNA Supersystems</p>
+              <p className="text-xs text-muted-foreground">Bi-directional CRM integration — DNA Super Systems</p>
             </div>
             <Link href="/crm-sync-console">
               <Button variant="outline" size="sm" className="gap-1.5">

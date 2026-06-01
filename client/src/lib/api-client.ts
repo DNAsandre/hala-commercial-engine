@@ -421,4 +421,30 @@ export const api = {
     updateRuleSet: (id: string, payload: any) => request<any>(`/api/ecr/rule-sets/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
     updateWeights: (id: string, weights: any[]) => request<any>(`/api/ecr/rule-sets/${id}/weights`, { method: 'PUT', body: JSON.stringify({ weights }) }),
   },
+
+  // GHL CRM Sync (DNA Super Systems)
+  ghlSync: {
+    testConnection: () => request<{ ok: boolean; latencyMs: number; message: string }>('/api/ghl/sync/test-connection', { method: 'POST' }),
+    status: () => request<any>('/api/ghl/sync/status'),
+    entityMap: (filters?: { entityType?: string; status?: string; limit?: number }) => {
+      const params = new URLSearchParams();
+      if (filters?.entityType) params.set('entityType', filters.entityType);
+      if (filters?.status) params.set('status', filters.status);
+      if (filters?.limit) params.set('limit', String(filters.limit));
+      const qs = params.toString();
+      return request<any>(`/api/ghl/sync/entity-map${qs ? `?${qs}` : ''}`);
+    },
+    syncLog: (filters?: { direction?: string; status?: string; eventType?: string; limit?: number }) => {
+      const params = new URLSearchParams();
+      if (filters?.direction) params.set('direction', filters.direction);
+      if (filters?.status) params.set('status', filters.status);
+      if (filters?.eventType) params.set('eventType', filters.eventType);
+      if (filters?.limit) params.set('limit', String(filters.limit));
+      const qs = params.toString();
+      return request<any>(`/api/ghl/sync/log${qs ? `?${qs}` : ''}`);
+    },
+    pipelines: () => request<any>('/api/ghl/pipelines'),
+    pushWorkspace: (id: string) => request<any>(`/api/ghl/sync/push-workspace/${id}`, { method: 'POST' }),
+    pushCustomer: (id: string) => request<any>(`/api/ghl/sync/push-customer/${id}`, { method: 'POST' }),
+  },
 };
