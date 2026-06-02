@@ -234,19 +234,10 @@ export default function BotBuilder() {
         const { error: botErr } = await supabase.from('ai_bots').update(botPayload).eq('id', existingBot.id);
         if (botErr) throw botErr;
 
-        // Create new version
+        // Create new version — MUST check for errors
         const nextVersion = (versionHistory[0]?.version || 0) + 1;
-        await supabase.from('ai_bot_versions').insert({ ...versionPayload, bot_id: existingBot.id, version: nextVersion });
-
-        // Also update mockBots for same-session fallback
-        const idx = mockBots.findIndex(b => b.id === existingBot.id);
-        if (idx >= 0) {
-          Object.assign(mockBots[idx], {
-            name: name.trim(), type, purpose: purpose.trim(),
-            domainsAllowed: domains, regionsAllowed: regions, rolesAllowed: roles,
-            providerId, model, rateLimit, costCap, timeout: timeoutSec, updatedAt: now,
-          });
-        }
+        const { error: verErr } = await supabase.from('ai_bot_versions').insert({ ...versionPayload, bot_id: existingBot.id, version: nextVersion });
+        if (verErr) throw new Error(`Bot saved but version insert FAILED: ${verErr.message}`);
 
         toast.success(`Bot "${name}" updated (version ${nextVersion})`);
       } else {
@@ -255,43 +246,21 @@ export default function BotBuilder() {
         if (botErr) throw botErr;
 
         const botId = newBot.id;
-        // Insert first version
-        const { data: newVer } = await supabase.from('ai_bot_versions').insert({ ...versionPayload, bot_id: botId, version: 1 }).select().single();
+        // Insert first version — MUST check for errors
+        const { data: newVer, error: verErr } = await supabase.from('ai_bot_versions').insert({ ...versionPayload, bot_id: botId, version: 1 }).select().single();
+        if (verErr) throw new Error(`Bot created but version insert FAILED: ${verErr.message}. Bot ID: ${botId}`);
 
         // Update current_version_id
         if (newVer?.id) {
           await supabase.from('ai_bots').update({ current_version_id: newVer.id }).eq('id', botId);
         }
 
-        // Also push to mockBots for same-session fallback
-        const localBot: BotEntity = {
-          id: botId, name: name.trim(), type, status: 'draft', purpose: purpose.trim(),
-          domainsAllowed: domains, regionsAllowed: regions, rolesAllowed: roles,
-          currentVersionId: newVer?.id || '', providerId, model,
-          rateLimit, costCap, timeout: timeoutSec,
-          createdAt: now, updatedAt: now, lastRunAt: null,
-          errorRate: 0, costUsage: 0, totalInvocations: 0,
-        };
-        mockBots.push(localBot);
-
-        toast.success(`Bot "${name}" created in Draft status`);
+        toast.success(`Bot "${name}" created with version 1`);
       }
     } catch (err: any) {
-      console.error('[BotBuilder] Supabase save failed:', err.message, err.code, err);
-      // Supabase write failed — save locally so it still appears in registry this session
-      const localId = existingBot?.id || `bot-${crypto.randomUUID().substring(0, 8)}`;
-      if (!existingBot) {
-        const localBot: BotEntity = {
-          id: localId, name: name.trim(), type, status: 'draft', purpose: purpose.trim(),
-          domainsAllowed: domains, regionsAllowed: regions, rolesAllowed: roles,
-          currentVersionId: '', providerId, model,
-          rateLimit, costCap, timeout: timeoutSec,
-          createdAt: now, updatedAt: now, lastRunAt: null,
-          errorRate: 0, costUsage: 0, totalInvocations: 0,
-        };
-        mockBots.push(localBot);
-      }
-      toast.warning(`Bot saved locally (Supabase write failed: ${err.message || 'unknown error'}). It will appear in the registry this session but may not persist on refresh.`);
+      console.error('[BotBuilder] Supabase save FAILED:', err.message, err.code, err);
+      toast.error(`SAVE FAILED: ${err.message || 'Unknown database error'}. The bot was NOT saved. Check RLS policies on ai_bots / ai_bot_versions.`);
+      return; // Stay on page — do NOT navigate away
     }
 
     navigate('/bot-registry');
