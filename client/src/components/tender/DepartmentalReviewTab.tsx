@@ -1,22 +1,26 @@
 /**
- * DepartmentalReviewTab — Generic Reviewer Interface (Ops / Finance / Legal)
+ * DepartmentalReviewTab — Per-department block review with AI cross-referencing.
  *
- * Filtered view of proposal blocks for a specific department.
- * Read-only block content with AI flag display and Approve/Reject actions.
- * AI Review Sweep loads bot from DB and calls generateAI() with correct signature.
+ * Each department gets:
+ * - Department-specific briefing panel with context data availability
+ * - AI review that cross-references proposal blocks against previous stage data
+ * - Findings summary card after AI runs
+ * - Approve / Reject workflow per block
  *
+ * ONE SOURCE OF TRUTH: bots come from Bot Builder (ai_bots table).
  * No hardcoded bots. No mock data.
  */
-import { useMemo, useState, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { toast } from "sonner";
 import {
-  Bot, CheckCircle2, XCircle, ChevronDown, ChevronRight,
-  AlertTriangle, Loader2, RotateCcw, Shield, DollarSign, Scale,
+  Shield, DollarSign, Scale, CheckCircle2, XCircle, AlertTriangle, Bot,
+  Loader2, ChevronRight, ChevronDown, RotateCcw, Database, FileCheck2,
+  TrendingUp, Eye, Info,
 } from "lucide-react";
+import { toast } from "sonner";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { generateAI } from "@/lib/ai-client";
 import { loadGovernedBotByName } from "@/lib/ai-runs";
@@ -49,6 +53,42 @@ const DEPT_ICONS: Record<ReviewDepartment, typeof Shield> = {
   legal: Scale,
 };
 
+const DEPT_COLORS: Record<ReviewDepartment, { bg: string; border: string; text: string; light: string }> = {
+  ops: { bg: "bg-blue-600", border: "border-blue-200", text: "text-blue-700", light: "bg-blue-50" },
+  finance: { bg: "bg-emerald-600", border: "border-emerald-200", text: "text-emerald-700", light: "bg-emerald-50" },
+  legal: { bg: "bg-violet-600", border: "border-violet-200", text: "text-violet-700", light: "bg-violet-50" },
+};
+
+const DEPT_DESCRIPTIONS: Record<ReviewDepartment, string> = {
+  ops: "Validates operational feasibility — cross-references proposal blocks against Solution Design (HOP/HAM/HIP), SOW data, Risk Snapshot, and Technical Qualification to flag mismatches, unrealistic commitments, and missing coverage.",
+  finance: "Protects margins — cross-references proposal blocks against P&L pricing model, commercial terms, bid strategy, cost drivers, and target GP% to flag hidden costs, payment term mismatches, and financial exposure.",
+  legal: "Assesses legal exposure — cross-references all proposal blocks against risk snapshot, compliance matrix, commercial terms, and KSA law requirements to flag liabilities, missing protections, and compliance gaps.",
+};
+
+// What context data each department needs and checks for
+const DEPT_CONTEXT_SOURCES: Record<ReviewDepartment, { label: string; key: string; nested?: string }[]> = {
+  ops: [
+    { label: "Solution Design (HOP/HAM/HIP)", key: "solutionDesignData" },
+    { label: "SOW Data", key: "sowData" },
+    { label: "Risk Snapshot", key: "riskSnapshotData" },
+    { label: "Technical Qualification", key: "technicalQualificationData" },
+    { label: "SOW Qualification", key: "sowQualificationData" },
+  ],
+  finance: [
+    { label: "P&L / Pricing Model", key: "pricingData" },
+    { label: "Bid / No-Bid Decision", key: "bidNoBidData" },
+    { label: "Solution Design Cost Drivers", key: "solutionDesignData", nested: "cost_drivers" },
+    { label: "Target GP%", key: "targetGpPercent" },
+    { label: "Estimated Value", key: "estimatedValue" },
+  ],
+  legal: [
+    { label: "Risk Snapshot", key: "riskSnapshotData" },
+    { label: "Customer Fit", key: "customerFitData" },
+    { label: "Compliance Coverage", key: "tenderDraftingData", nested: "compliance_coverage" },
+    { label: "Commercial Terms", key: "pricingData", nested: "commercial_terms" },
+  ],
+};
+
 const severityColor = (s: string) => {
   if (s === "high") return "border-red-300 text-red-700 bg-red-50";
   if (s === "medium") return "border-amber-300 text-amber-700 bg-amber-50";
@@ -64,7 +104,9 @@ const statusBadge = (status: string) => {
 export default function DepartmentalReviewTab({ ws, department, requiredVolumes, reload }: Props) {
   const tenderId = ws.tender.id;
   const drafting = (ws.tender.tenderDraftingData ?? {}) as any;
+  const t = ws.tender as any;
   const Icon = DEPT_ICONS[department];
+  const colors = DEPT_COLORS[department];
 
   const filteredBlocks = useMemo(() => {
     const all = Array.isArray(drafting.proposal_blocks) ? drafting.proposal_blocks : [];
@@ -85,6 +127,47 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
   const reviewerKey = `${department}_reviewer`;
   const reviewedAtKey = `${department}_reviewed_at`;
 
+  // Context data availability check
+  const contextAvailability = useMemo(() => {
+    const sources = DEPT_CONTEXT_SOURCES[department];
+    return sources.map(s => {
+      let raw = t[s.key];
+      if (s.nested && raw && typeof raw === "object") raw = raw[s.nested];
+      const hasData = raw !== undefined && raw !== null && raw !== "" &&
+        !(typeof raw === "object" && Object.keys(raw).length === 0) &&
+        !(Array.isArray(raw) && raw.length === 0);
+      return { label: s.label, available: hasData };
+    });
+  }, [t, department]);
+
+  const availableCount = contextAvailability.filter(c => c.available).length;
+  const totalSources = contextAvailability.length;
+
+  // Aggregate stats
+  const approvedCount = filteredBlocks.filter((b: any) => b[statusKey] === "Approved").length;
+  const rejectedCount = filteredBlocks.filter((b: any) => b[statusKey] === "Rejected").length;
+  const pendingCount = filteredBlocks.length - approvedCount - rejectedCount;
+  const reviewPct = filteredBlocks.length > 0 ? Math.round((approvedCount / filteredBlocks.length) * 100) : 0;
+
+  // All AI flags for this department across all blocks
+  const deptFlags = useMemo(() => {
+    const flags: (AIReviewFlag & { blockTitle: string; blockSection: string })[] = [];
+    for (const b of filteredBlocks) {
+      if (Array.isArray(b.ai_flags)) {
+        for (const f of b.ai_flags) {
+          if (f.department === department) {
+            flags.push({ ...f, blockTitle: b.title || "Untitled", blockSection: b.section_number || "?" });
+          }
+        }
+      }
+    }
+    return flags;
+  }, [filteredBlocks, department]);
+
+  const highFlags = deptFlags.filter(f => f.severity === "high").length;
+  const mediumFlags = deptFlags.filter(f => f.severity === "medium").length;
+  const lowFlags = deptFlags.filter(f => f.severity === "low").length;
+
   const handleApprove = useCallback(async (blockId: string) => {
     setSaving(blockId);
     const res = await updateBlockReviewStatus(tenderId, blockId, department, "Approved", "");
@@ -98,32 +181,23 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
   }, [tenderId, department, reload]);
 
   const handleReject = useCallback(async (blockId: string) => {
-    if (!rejectComment.trim()) {
-      toast.error("Please provide a reason for rejection.");
-      return;
-    }
     setSaving(blockId);
-    const res = await updateBlockReviewStatus(tenderId, blockId, department, "Rejected", rejectComment.trim());
+    const res = await updateBlockReviewStatus(tenderId, blockId, department, "Rejected", rejectComment);
     if (res.success) {
-      toast.success("Block rejected — sent to Exceptions inbox.");
-      setRejectingId(null);
-      setRejectComment("");
+      toast.success("Block rejected — sent to Exceptions.");
       reload();
     } else {
       toast.error(res.error || "Failed to reject.");
     }
     setSaving(null);
+    setRejectingId(null);
+    setRejectComment("");
   }, [tenderId, department, rejectComment, reload]);
 
   const handleReset = useCallback(async (blockId: string) => {
     setSaving(blockId);
     const res = await updateBlockReviewStatus(tenderId, blockId, department, "Pending", "");
-    if (res.success) {
-      toast.success("Block reset to Pending.");
-      reload();
-    } else {
-      toast.error(res.error || "Failed to reset.");
-    }
+    if (res.success) { reload(); }
     setSaving(null);
   }, [tenderId, department, reload]);
 
@@ -141,7 +215,6 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
       }
 
       // 2. Prepare blocks + FULL CONTEXT from previous stages for cross-referencing
-      const t = ws.tender as any;
       const blocksForReview = filteredBlocks.map((b: any) => ({
         id: b.id,
         title: b.title,
@@ -251,43 +324,150 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
     );
   }
 
-  const approvedCount = filteredBlocks.filter((b: any) => b[statusKey] === "Approved").length;
-  const rejectedCount = filteredBlocks.filter((b: any) => b[statusKey] === "Rejected").length;
-
   return (
     <div className="space-y-4">
-      {/* Header Bar */}
-      <Card className="border-border shadow-none">
-        <CardHeader className="py-2 px-4 bg-muted/20 border-b border-border">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Icon className="w-3.5 h-3.5 text-indigo-600" />
-              <span className="text-xs font-semibold">{DEPARTMENT_LABELS[department]} Review</span>
-              <Badge variant="outline" className="text-[8px]">{filteredBlocks.length} blocks</Badge>
-              <Badge variant="outline" className="text-[8px] border-emerald-200 text-emerald-600">{approvedCount} approved</Badge>
-              {rejectedCount > 0 && (
-                <Badge variant="outline" className="text-[8px] border-red-200 text-red-600">{rejectedCount} rejected</Badge>
+      {/* ─── Department Briefing Panel ──────────────────────────── */}
+      <Card className={`border ${colors.border} shadow-none overflow-hidden`}>
+        <div className={`${colors.bg} px-4 py-3 flex items-center gap-3`}>
+          <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+            <Icon className="w-4 h-4 text-white" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-sm font-bold text-white">{DEPARTMENT_LABELS[department]} Review</h3>
+            <p className="text-[10px] text-white/80">{DEPT_DESCRIPTIONS[department]}</p>
+          </div>
+          <Button
+            size="sm"
+            className="h-8 text-[11px] gap-1.5 bg-white/20 hover:bg-white/30 text-white border-white/30"
+            variant="outline"
+            disabled={aiRunning}
+            onClick={handleRunAIReview}
+          >
+            {aiRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bot className="w-3.5 h-3.5" />}
+            {aiRunning ? "Analyzing..." : `Run AI ${DEPARTMENT_LABELS[department]} Review`}
+          </Button>
+        </div>
+
+        <CardContent className="p-4">
+          <div className="grid grid-cols-2 gap-4">
+            {/* Left: Context Data Availability */}
+            <div>
+              <div className="flex items-center gap-1.5 mb-2">
+                <Database className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Context Sources ({availableCount}/{totalSources} available)
+                </span>
+              </div>
+              <div className="space-y-1">
+                {contextAvailability.map(c => (
+                  <div key={c.label} className="flex items-center gap-2 text-[10px]">
+                    {c.available ? (
+                      <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
+                    ) : (
+                      <XCircle className="w-3 h-3 text-red-400 shrink-0" />
+                    )}
+                    <span className={c.available ? "text-foreground" : "text-muted-foreground line-through"}>
+                      {c.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {availableCount < totalSources && (
+                <div className="mt-2 flex items-start gap-1.5 text-[9px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+                  <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                  <span>Missing context data limits cross-referencing accuracy. Complete earlier stages for better results.</span>
+                </div>
               )}
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-[10px] gap-1"
-              disabled={aiRunning}
-              onClick={handleRunAIReview}
-            >
-              {aiRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Bot className="w-3 h-3" />}
-              Run AI {DEPARTMENT_LABELS[department]} Review
-            </Button>
+
+            {/* Right: Review Progress */}
+            <div>
+              <div className="flex items-center gap-1.5 mb-2">
+                <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Review Progress
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="text-center p-2 rounded-md bg-slate-50 border border-slate-200">
+                  <span className="text-lg font-bold text-slate-700">{pendingCount}</span>
+                  <p className="text-[9px] text-muted-foreground">Pending</p>
+                </div>
+                <div className="text-center p-2 rounded-md bg-emerald-50 border border-emerald-200">
+                  <span className="text-lg font-bold text-emerald-700">{approvedCount}</span>
+                  <p className="text-[9px] text-muted-foreground">Approved</p>
+                </div>
+                <div className="text-center p-2 rounded-md bg-red-50 border border-red-200">
+                  <span className="text-lg font-bold text-red-700">{rejectedCount}</span>
+                  <p className="text-[9px] text-muted-foreground">Rejected</p>
+                </div>
+              </div>
+              <div className="mt-2 h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 rounded-full transition-all"
+                  style={{ width: `${reviewPct}%` }}
+                />
+              </div>
+              <p className="text-[9px] text-muted-foreground mt-1 text-right">{reviewPct}% complete</p>
+            </div>
           </div>
-        </CardHeader>
+        </CardContent>
       </Card>
 
-      {/* Block List */}
+      {/* ─── AI Findings Summary (only if flags exist) ─────────── */}
+      {deptFlags.length > 0 && (
+        <Card className="border-amber-200 shadow-none">
+          <CardHeader className="py-2 px-4 bg-amber-50 border-b border-amber-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-3.5 h-3.5 text-amber-600" />
+                <span className="text-xs font-semibold text-amber-800">AI Findings Summary</span>
+                <Badge variant="outline" className="text-[8px] border-amber-300 text-amber-700">{deptFlags.length} total</Badge>
+              </div>
+              <div className="flex gap-2">
+                {highFlags > 0 && (
+                  <Badge variant="outline" className="text-[8px] border-red-300 text-red-700 bg-red-50 gap-0.5">
+                    <AlertTriangle className="w-2.5 h-2.5" /> {highFlags} Critical
+                  </Badge>
+                )}
+                {mediumFlags > 0 && (
+                  <Badge variant="outline" className="text-[8px] border-amber-300 text-amber-700 bg-amber-50">{mediumFlags} Medium</Badge>
+                )}
+                {lowFlags > 0 && (
+                  <Badge variant="outline" className="text-[8px] border-slate-200 text-slate-600">{lowFlags} Improvements</Badge>
+                )}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="p-3">
+            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              {deptFlags.map((f, i) => (
+                <div key={f.id || i} className={`flex items-start gap-2 text-[10px] rounded-md border px-3 py-2 ${severityColor(f.severity)}`}>
+                  <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <span className="font-semibold">§{f.blockSection} {f.blockTitle}:</span>{" "}
+                    <span>{f.issue}</span>
+                    {f.recommendation && <span className="text-muted-foreground ml-1">→ {f.recommendation}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ─── Block List ─────────────────────────────────────────── */}
+      <div className="flex items-center gap-1.5 px-1">
+        <FileCheck2 className="w-3.5 h-3.5 text-muted-foreground" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Proposal Blocks ({filteredBlocks.length})
+        </span>
+      </div>
+
       {filteredBlocks.map((block: any) => {
         const isExpanded = expandedId === block.id;
         const blockStatus = block[statusKey] || "Pending";
-        const deptFlags: AIReviewFlag[] = (block.ai_flags || []).filter((f: any) => f.department === department);
+        const blockFlags: AIReviewFlag[] = (block.ai_flags || []).filter((f: any) => f.department === department);
         const isRejecting = rejectingId === block.id;
         const isSaving = saving === block.id;
 
@@ -303,9 +483,9 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
                 <span className="text-xs font-semibold flex-1">{block.title || "Untitled"}</span>
                 <Badge variant="outline" className="text-[8px]">{block.volume}</Badge>
                 <Badge variant="outline" className={`text-[8px] ${statusBadge(blockStatus)}`}>{blockStatus}</Badge>
-                {deptFlags.length > 0 && (
+                {blockFlags.length > 0 && (
                   <Badge variant="outline" className="text-[8px] border-amber-200 text-amber-600 gap-0.5">
-                    <AlertTriangle className="w-2.5 h-2.5" /> {deptFlags.length}
+                    <AlertTriangle className="w-2.5 h-2.5" /> {blockFlags.length}
                   </Badge>
                 )}
               </div>
@@ -314,23 +494,35 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
             {isExpanded && (
               <CardContent className="p-4 pt-0 space-y-3">
                 {/* AI Flags for this department */}
-                {deptFlags.length > 0 && (
+                {blockFlags.length > 0 && (
                   <div className="space-y-1.5">
-                    {deptFlags.map((f, i) => (
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Bot className="w-3 h-3 text-amber-600" />
+                      <span className="text-[9px] font-semibold uppercase tracking-wider text-amber-700">AI Flags ({blockFlags.length})</span>
+                    </div>
+                    {blockFlags.map((f, i) => (
                       <div key={f.id || i} className={`flex items-start gap-2 text-[10px] rounded-md border px-3 py-2 ${severityColor(f.severity)}`}>
                         <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
                         <div>
                           <span className="font-semibold">{f.issue}</span>
-                          {f.recommendation && <span className="text-muted-foreground ml-1">— {f.recommendation}</span>}
+                          {f.recommendation && <span className="text-muted-foreground ml-1">→ {f.recommendation}</span>}
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
 
+                {blockFlags.length === 0 && (
+                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground bg-muted/30 rounded-md px-3 py-2 border border-border">
+                    <Info className="w-3 h-3 shrink-0" />
+                    <span>No AI flags for this block. Run the AI review to analyze.</span>
+                  </div>
+                )}
+
                 {/* Read-only block content */}
                 <div className="rounded-md border border-border bg-muted/10 p-3">
-                  <div className="prose prose-sm max-w-none text-xs whitespace-pre-wrap">
+                  <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Block Content</div>
+                  <div className="prose prose-sm max-w-none text-xs whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
                     {block.content || block.editor_content || "No content drafted yet."}
                   </div>
                 </div>
