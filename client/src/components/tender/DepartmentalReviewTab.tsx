@@ -739,9 +739,14 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
                 {/* Read-only block content */}
                 <div className="rounded-md border border-border bg-muted/10 p-3">
                   <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Block Content</div>
-                  <div className="prose prose-sm max-w-none text-xs whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
-                    {block.content || block.editor_content || "No content drafted yet."}
-                  </div>
+                  {(block.content || block.editor_content) ? (
+                    <div
+                      className="prose prose-sm max-w-none text-xs leading-relaxed max-h-64 overflow-y-auto"
+                      dangerouslySetInnerHTML={{ __html: block.content || block.editor_content }}
+                    />
+                  ) : (
+                    <div className="text-xs text-muted-foreground italic">No content drafted yet.</div>
+                  )}
                 </div>
 
                 {/* Previous review info */}

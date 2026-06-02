@@ -508,7 +508,7 @@ async function callEdgeFunction(
     const edgeResult = await Promise.race([
       supabase.functions.invoke(functionName, { body: payload }),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("edge_timeout")), 15_000)
+        setTimeout(() => reject(new Error("edge_timeout")), 90_000)
       ),
     ]);
 
