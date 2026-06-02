@@ -603,7 +603,7 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
                 <div key={f.id || i} className={`flex items-start gap-2 text-[10px] rounded-md border px-3 py-2 ${severityColor(f.severity)}`}>
                   <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
                   <div className="flex-1">
-                    <span className="font-semibold">§{f.blockSection} {f.blockTitle}:</span>{" "}
+                    <span className="font-semibold">{f.blockTitle}:</span>{" "}
                     <span>{f.issue}</span>
                     {f.recommendation && <span className="text-muted-foreground ml-1">→ {f.recommendation}</span>}
                   </div>
@@ -654,7 +654,7 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
             >
               <div className="flex items-center gap-2">
                 {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                <span className="text-xs font-mono text-muted-foreground">§{block.section_number || "?"}</span>
+                <span className="text-xs font-mono text-muted-foreground">{block.section_number || ""}</span>
                 <span className="text-xs font-semibold flex-1">{block.title || "Untitled"}</span>
                 <Badge variant="outline" className="text-[8px]">{block.volume}</Badge>
                 {isDrafted ? (
