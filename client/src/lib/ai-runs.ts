@@ -265,6 +265,63 @@ export function getAIRunById(runId: string): AIRun | null {
 const GOVERNED_DOMAINS = ["tenders", "proposals", "documents"];
 
 /**
+ * Load a governed bot from ai_bots by display_name.
+ * ONE SOURCE OF TRUTH: all bots come from Bot Builder (ai_bots table).
+ * Returns the bot with its latest version's system prompt resolved.
+ * Works for both 'action' and 'monitor' bot types.
+ */
+export async function loadGovernedBotByName(
+  botName: string,
+): Promise<{ id: string; name: string; provider: "openai" | "google"; model: string; system_prompt: string } | null> {
+  try {
+    const { data: bots, error } = await supabase
+      .from("ai_bots")
+      .select("*, ai_bot_versions(*)")
+      .or(`display_name.ilike.${botName},name.ilike.${botName}`)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      console.error("[ai-runs] loadGovernedBotByName query error:", error.message);
+      return null;
+    }
+    if (!bots?.length) return null;
+
+    const bot = bots[0];
+    const versions = Array.isArray(bot.ai_bot_versions)
+      ? [...bot.ai_bot_versions].sort((a: any, b: any) => (b.version || 0) - (a.version || 0))
+      : [];
+    const latestVersion = versions[0] as any;
+
+    // Resolve provider
+    let providerName: "openai" | "google" = "openai";
+    try {
+      const providers = await fetchAIProviders();
+      const matched = providers.find(p => p.id === (latestVersion?.provider_id || bot.provider_id));
+      if (matched?.name) providerName = matched.name as "openai" | "google";
+    } catch { /* keep default */ }
+
+    // Build system prompt from version
+    const systemParts = [
+      latestVersion?.system_instruction,
+      latestVersion?.custom_instruction,
+    ].filter(Boolean);
+    const systemPrompt = systemParts.join("\n\n") || "";
+
+    return {
+      id: bot.id,
+      name: bot.display_name || bot.name,
+      provider: providerName,
+      model: latestVersion?.model || bot.model || "gpt-4o",
+      system_prompt: systemPrompt,
+    };
+  } catch (err) {
+    console.error("[ai-runs] loadGovernedBotByName exception:", err);
+    return null;
+  }
+}
+
+/**
  * Load a governed bot from ai_bots + ai_bot_versions (Bot Builder system).
  * This is the ONLY path for tender AI generation.
  * Returns null if no active bot found for the domain.

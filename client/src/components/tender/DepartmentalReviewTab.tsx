@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { generateAI } from "@/lib/ai-client";
-import { fetchEditorBots } from "@/lib/supabase-data";
+import { loadGovernedBotByName } from "@/lib/ai-runs";
 import { updateBlockReviewStatus, saveBlockAIFlags } from "@/lib/supabase-tender-actions";
 import {
   ensureReviewFields,
@@ -35,10 +35,12 @@ interface Props {
   reload: () => void;
 }
 
-const BOT_IDS: Record<ReviewDepartment, string> = {
-  ops: "ebot-ops-reviewer",
-  finance: "ebot-finance-reviewer",
-  legal: "ebot-legal-reviewer",
+// Bot names must match display_name in ai_bots table (Bot Builder).
+// ONE SOURCE OF TRUTH: all bots come from Bot Builder → ai_bots.
+const BOT_NAMES: Record<ReviewDepartment, string> = {
+  ops: "Operations Technical Reviewer",
+  finance: "Finance & Commercial Reviewer",
+  legal: "Legal Risk & Compliance Reviewer",
 };
 
 const DEPT_ICONS: Record<ReviewDepartment, typeof Shield> = {
@@ -129,12 +131,11 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
   const handleRunAIReview = useCallback(async () => {
     setAiRunning(true);
     try {
-      // 1. Load bots from DB — NEVER hardcode
-      const allBots = await fetchEditorBots();
-      const botId = BOT_IDS[department];
-      const bot = allBots.find(b => b.id === botId);
+      // 1. Load bot from ai_bots (Bot Builder) — ONE SOURCE OF TRUTH
+      const botName = BOT_NAMES[department];
+      const bot = await loadGovernedBotByName(botName);
       if (!bot) {
-        toast.error(`Review bot "${botId}" not found. Create it in the Editor Bot Builder first.`);
+        toast.error(`Review bot "${botName}" not found in Bot Builder. Create it in Admin → Bot Registry → Create New Bot.`);
         setAiRunning(false);
         return;
       }
