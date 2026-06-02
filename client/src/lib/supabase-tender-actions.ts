@@ -1176,3 +1176,106 @@ export async function logEmailSimulation(
   console.warn('[SUPA-008] logEmailSimulation disabled. No submission event was written.', { tenderId, emailType, packName });
   return { success: false, error: 'Submission simulation is disabled until a verified submission workflow exists.' };
 }
+
+
+/**
+ * 10. Internal Review — Update block review status per department
+ *
+ * Fetches the current proposal_blocks array, patches the target block's
+ * department-specific review fields, and writes back via updateTenderDraftingData.
+ *
+ * Does NOT move tender stage. Does NOT touch any other type_details key.
+ */
+export async function updateBlockReviewStatus(
+  tenderId: string,
+  blockId: string,
+  department: "ops" | "finance" | "legal",
+  status: "Pending" | "Approved" | "Rejected",
+  comment: string,
+  reviewerName: string = "System",
+): Promise<ActionResult> {
+  const existing = await supabase
+    .from('commercial_tickets')
+    .select('id,type_details')
+    .eq('id', tenderId)
+    .eq('ticket_type', 'tender')
+    .eq('active', true)
+    .maybeSingle();
+
+  if (existing.error) return { success: false, error: existing.error.message };
+  if (!existing.data) return { success: false, error: 'Tender not found.' };
+
+  const currentDetails =
+    existing.data.type_details && typeof existing.data.type_details === 'object' && !Array.isArray(existing.data.type_details)
+      ? existing.data.type_details
+      : {};
+  const currentDrafting = (currentDetails as any).tender_drafting ?? {};
+  const blocks = Array.isArray(currentDrafting.proposal_blocks) ? currentDrafting.proposal_blocks : [];
+
+  const updatedBlocks = blocks.map((b: any) => {
+    if (b.id !== blockId) return b;
+    return {
+      ...b,
+      [`${department}_status`]: status,
+      [`${department}_comment`]: comment,
+      [`${department}_reviewer`]: reviewerName,
+      [`${department}_reviewed_at`]: new Date().toISOString(),
+    };
+  });
+
+  return updateTenderDraftingData(tenderId, "proposal_blocks", updatedBlocks, `${department} review: ${status} on block ${blockId}`);
+}
+
+
+/**
+ * 11. Internal Review — Save AI-generated review flags to blocks
+ *
+ * Distributes parsed AI flags to the correct blocks based on block_id.
+ * Replaces existing flags from the same department (idempotent re-runs).
+ */
+export async function saveBlockAIFlags(
+  tenderId: string,
+  department: "ops" | "finance" | "legal",
+  flags: Array<{ block_id: string; severity: string; issue: string; recommendation: string }>,
+  botId: string,
+): Promise<ActionResult> {
+  const existing = await supabase
+    .from('commercial_tickets')
+    .select('id,type_details')
+    .eq('id', tenderId)
+    .eq('ticket_type', 'tender')
+    .eq('active', true)
+    .maybeSingle();
+
+  if (existing.error) return { success: false, error: existing.error.message };
+  if (!existing.data) return { success: false, error: 'Tender not found.' };
+
+  const currentDetails =
+    existing.data.type_details && typeof existing.data.type_details === 'object' && !Array.isArray(existing.data.type_details)
+      ? existing.data.type_details
+      : {};
+  const currentDrafting = (currentDetails as any).tender_drafting ?? {};
+  const blocks = Array.isArray(currentDrafting.proposal_blocks) ? currentDrafting.proposal_blocks : [];
+
+  const updatedBlocks = blocks.map((b: any) => {
+    const blockFlags = flags
+      .filter(f => f.block_id === b.id)
+      .map(f => ({
+        id: `flag-${crypto.randomUUID().substring(0, 8)}`,
+        department,
+        bot_id: botId,
+        block_id: f.block_id,
+        severity: f.severity,
+        issue: f.issue,
+        recommendation: f.recommendation,
+        created_at: new Date().toISOString(),
+      }));
+    if (blockFlags.length === 0) return b;
+    const existingFlags = Array.isArray(b.ai_flags) ? b.ai_flags : [];
+    // Remove old flags from same department, add new ones (idempotent re-run)
+    const cleaned = existingFlags.filter((f: any) => f.department !== department);
+    return { ...b, ai_flags: [...cleaned, ...blockFlags] };
+  });
+
+  return updateTenderDraftingData(tenderId, "proposal_blocks", updatedBlocks, `AI ${department} review flags saved`);
+}

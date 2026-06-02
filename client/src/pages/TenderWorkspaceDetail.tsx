@@ -55,6 +55,7 @@ import SolutionConfigurationTab from "@/components/tender/SolutionConfigurationT
 import PnlPricingStage, { PnlPricingStageHeader } from "@/components/tender/PnlPricingStage";
 import TenderPnLCalculatorPanel from "@/components/tender/TenderPnLCalculatorPanel";
 import TenderDraftingStage, { TenderDraftingStageHeader } from "@/components/tender/TenderDraftingStage";
+import InternalReviewStage from "@/components/tender/InternalReviewStage";
 
 // â”€â”€â”€ CRM PIPELINE STAGES (10) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const CRM_PIPELINE_STAGES: { value: TenderMilestone; label: string; short: string }[] = [
@@ -802,6 +803,11 @@ export default function TenderWorkspaceDetail() {
                       // ─── Stage 6: Tender Drafting tabs ────────────────
                       if (["proposal_architecture_toc", "proposal_block_workbench", "technical_volume", "commercial_volume", "compliance_coverage", "appendices_evidence", "pdf_studio_handoff"].includes(tabId)) {
                         return <TenderDraftingStage ws={ws} activeTab={tabId} reload={reload} onOpenDocuments={() => setDocumentDrawerOpen(true)} />;
+                      }
+
+                      // ─── Stage 7: Internal Review tabs ─────────────────
+                      if (["review_dashboard", "operations_review", "finance_review", "legal_review", "exceptions"].includes(tabId)) {
+                        return <InternalReviewStage ws={ws} activeTab={tabId} reload={reload} />;
                       }
 
                       // Identified Workbench Tabs
