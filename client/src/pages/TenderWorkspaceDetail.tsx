@@ -620,6 +620,7 @@ export default function TenderWorkspaceDetail() {
                       solution_configuration: Wrench, hop_operations_model: Truck, ham_manpower_model: Users, hip_systems_ip_model: Database, scope_matrix: ClipboardList, sla_kpi_model: Target, assumptions_dependencies: FileText,
                       proposal_architecture_toc: ClipboardList, proposal_block_workbench: Layers, technical_volume: BookOpen, commercial_volume: DollarSign, appendices_evidence: FolderOpen, pdf_studio_handoff: FileOutput,
                       submission_readiness: CheckCircle2, activity: Activity, decision_log: ClipboardList, clarification_log: MessageSquare, negotiation_log: MessageSquare, submission_log: Send, response_history: Clock, audit_trail: Clock, approval_record: CheckCircle2,
+                      review_dashboard: BarChart3, operations_review: Shield, finance_review: DollarSign, legal_review: Scale, exceptions: AlertTriangle,
                     };
                     const Icon = icons[tabId] ?? FileText;
                     return (
