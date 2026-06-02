@@ -51,60 +51,85 @@ export default function BotBuilder() {
   const [apiKnowledgeBase, setApiKnowledgeBase] = useState<any[]>([]);
   const [versionHistory, setVersionHistory] = useState<any[]>([]);
 
-  // Load from API when editing
+  // Load from Supabase directly when editing (same path as save)
   useEffect(() => {
     if (!editId) return;
     let mounted = true;
     (async () => {
       try {
-        const [botRes, versRes] = await Promise.all([
-          api.botGovernance.getBot(editId),
-          api.botGovernance.listVersions(editId),
-        ]);
-        if (!mounted) return;
-        if (botRes.data) {
-          const b = botRes.data;
-          const mapped = {
-            id: b.id, name: b.display_name || b.name, type: b.type || 'action', status: b.status || 'draft',
-            purpose: b.purpose || '', domainsAllowed: b.domains_allowed || [], regionsAllowed: b.regions_allowed || [],
-            rolesAllowed: b.roles_allowed || [], currentVersionId: b.current_version_id || '', providerId: b.provider_id || 'prov-openai',
-            model: b.model || 'gpt-4o', rateLimit: b.rate_limit || 20, costCap: b.cost_cap || 10, timeout: b.timeout_sec || 30,
-            createdAt: b.created_at || '', updatedAt: b.updated_at || '', lastRunAt: null, errorRate: 0, costUsage: 0, totalInvocations: 0,
-          } as any;
-          setExistingBot(mapped);
-          setName(mapped.name); setType(mapped.type); setPurpose(mapped.purpose);
-          setDomains(mapped.domainsAllowed); setRegions(mapped.regionsAllowed); setRoles(mapped.rolesAllowed);
-          setProviderId(mapped.providerId); setModel(mapped.model); setRateLimit(mapped.rateLimit);
-          setCostCap(mapped.costCap); setTimeoutSec(mapped.timeout);
+        // Load bot from Supabase directly — NOT from localhost:3001 API
+        const { data: botData, error: botErr } = await supabase
+          .from('ai_bots')
+          .select('*')
+          .eq('id', editId)
+          .single();
+
+        if (botErr || !botData) {
+          console.error('[BotBuilder] Failed to load bot from Supabase:', botErr?.message);
+          return;
         }
-        if (versRes.data?.length) {
-          const latest = versRes.data[0];
-          const mv = {
-            id: latest.id, botId: editId, version: latest.version, systemInstruction: latest.system_instruction || '',
-            customInstruction: latest.custom_instruction || '', safetyRules: latest.safety_rules || '',
-            temperature: latest.temperature || 0.7, maxTokens: latest.max_tokens || 2000,
-            allowedActions: latest.allowed_actions || ['suggest'], providerId: latest.provider_id || 'prov-openai',
-            model: latest.model || 'gpt-4o', connectorSnapshot: latest.connector_snapshot || {},
-            permissionSnapshot: latest.permission_snapshot || { domainsAllowed: [], regionsAllowed: [], rolesAllowed: [] },
-            knowledgeBaseIds: latest.knowledge_base_ids || [], createdAt: latest.created_at || '',
-            createdBy: latest.created_by || '', changeNote: latest.change_note || '',
-          } as any;
-          setExistingVersion(mv);
-          setCustomInstruction(mv.customInstruction); setSafetyRules(mv.safetyRules);
-          setTemperature(mv.temperature); setMaxTokens(mv.maxTokens);
-          setSelectedKB(mv.knowledgeBaseIds); setConnectorState(mv.connectorSnapshot);
+        if (!mounted) return;
+
+        const b = botData;
+        const mapped = {
+          id: b.id, name: b.display_name || b.name, type: b.type || 'action', status: b.status || 'draft',
+          purpose: b.purpose || '', domainsAllowed: b.domains_allowed || [], regionsAllowed: b.regions_allowed || [],
+          rolesAllowed: b.roles_allowed || [], currentVersionId: b.current_version_id || '', providerId: b.provider_id || '',
+          model: b.model || 'gpt-4o', rateLimit: b.rate_limit || 20, costCap: b.cost_cap || 10, timeout: b.timeout_sec || 30,
+          createdAt: b.created_at || '', updatedAt: b.updated_at || '', lastRunAt: null, errorRate: 0, costUsage: 0, totalInvocations: 0,
+        } as any;
+        setExistingBot(mapped);
+        setName(mapped.name); setType(mapped.type); setPurpose(mapped.purpose);
+        setDomains(mapped.domainsAllowed); setRegions(mapped.regionsAllowed); setRoles(mapped.rolesAllowed);
+        setProviderId(mapped.providerId); setModel(mapped.model); setRateLimit(mapped.rateLimit);
+        setCostCap(mapped.costCap); setTimeoutSec(mapped.timeout);
+
+        // Load versions from Supabase
+        const { data: versData, error: versErr } = await supabase
+          .from('ai_bot_versions')
+          .select('*')
+          .eq('bot_id', editId)
+          .order('version', { ascending: false });
+
+        if (versErr) {
+          console.error('[BotBuilder] Failed to load versions from Supabase:', versErr.message);
+        }
+
+        if (versData?.length) {
+          const latest = versData[0];
+          setExistingVersion({
+            id: latest.id, botId: editId, version: latest.version,
+            systemInstruction: latest.system_instruction || '',
+            customInstruction: latest.custom_instruction || '',
+            safetyRules: latest.safety_rules || '',
+            temperature: latest.temperature || 0.7,
+            maxTokens: latest.max_tokens || 2000,
+          });
+          setCustomInstruction(latest.custom_instruction || '');
+          setSafetyRules(latest.safety_rules || '');
+          setTemperature(latest.temperature ?? 0.7);
+          setMaxTokens(latest.max_tokens ?? 2000);
+          setSelectedKB(latest.knowledge_base_ids || []);
+          if (latest.connector_snapshot && typeof latest.connector_snapshot === 'object') {
+            setConnectorState(latest.connector_snapshot as any);
+          }
           // Load chain config
           if (latest.chain_config && typeof latest.chain_config === 'object') {
-            setChainNextBotId(latest.chain_config.next_bot_id || 'none');
-            setChainPromptUser(latest.chain_config.prompt_user !== false);
-            setChainLabel(latest.chain_config.chain_label || 'Auto-draft all blocks');
+            setChainNextBotId((latest.chain_config as any).next_bot_id || 'none');
+            setChainPromptUser((latest.chain_config as any).prompt_user !== false);
+            setChainLabel((latest.chain_config as any).chain_label || 'Auto-draft all blocks');
           }
-          setVersionHistory(versRes.data.map((v: any) => ({
+          setVersionHistory(versData.map((v: any) => ({
             id: v.id, version: v.version, changeNote: v.change_note || '',
             createdAt: v.created_at || '', createdBy: v.created_by || '',
           })));
+          console.info(`[BotBuilder] Loaded bot "${b.display_name}" with ${versData.length} version(s). Custom instruction: ${(latest.custom_instruction || '').length} chars.`);
+        } else {
+          console.warn(`[BotBuilder] Bot "${b.display_name}" has NO versions in ai_bot_versions.`);
         }
-      } catch { /* keep defaults */ }
+      } catch (err: any) {
+        console.error('[BotBuilder] Load failed:', err.message);
+      }
     })();
     return () => { mounted = false; };
   }, [editId]);
