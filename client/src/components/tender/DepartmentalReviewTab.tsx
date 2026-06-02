@@ -214,16 +214,40 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
         return;
       }
 
-      // 2. Prepare blocks + FULL CONTEXT from previous stages for cross-referencing
-      const blocksForReview = filteredBlocks.map((b: any) => ({
+      // 2. Split blocks: only blocks WITH actual content can be AI-reviewed.
+      //    Empty blocks get auto-flagged as NOT DRAFTED.
+      const allBlocks = filteredBlocks.map((b: any) => ({
         id: b.id,
         title: b.title,
         volume: b.volume,
         section_number: b.section_number,
-        content: b.content || b.editor_content || "",
+        content: (b.content || b.editor_content || "").trim(),
       }));
 
-      if (blocksForReview.length === 0) {
+      const draftedBlocks = allBlocks.filter((b: any) => b.content.length > 50); // needs meaningful content
+      const emptyBlocks = allBlocks.filter((b: any) => b.content.length <= 50);
+
+      // Auto-flag empty blocks — the system does NOT lie about these
+      const emptyFlags: any[] = emptyBlocks.map((b: any) => ({
+        block_id: b.id,
+        severity: "high",
+        issue: `BLOCK NOT DRAFTED — this block has no content (or less than 50 characters). Cannot perform cross-reference review on empty blocks.`,
+        recommendation: `Draft this block in the Tender Drafting stage before running the ${DEPARTMENT_LABELS[department]} review. Without content, no validation is possible.`,
+        department,
+      }));
+
+      if (draftedBlocks.length === 0 && emptyBlocks.length > 0) {
+        // ALL blocks are empty — save empty-flags and warn user
+        const res = await saveBlockAIFlags(tenderId, department, emptyFlags, bot.id);
+        if (res.success) {
+          toast.warning(`${emptyBlocks.length} block(s) have NO content — flagged as NOT DRAFTED. Draft blocks first, then run the AI review.`);
+          reload();
+        }
+        setAiRunning(false);
+        return;
+      }
+
+      if (draftedBlocks.length === 0) {
         toast.error("No blocks to review.");
         setAiRunning(false);
         return;
@@ -239,26 +263,22 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
       };
 
       if (department === "ops") {
-        // Ops needs: Solution Design, SOW, Risk Snapshot, SLAs
         contextData.solution_design = t.solutionDesignData ?? {};
         contextData.sow_data = t.sowData ?? {};
         contextData.risk_snapshot = t.riskSnapshotData ?? {};
         contextData.technical_qualification = t.technicalQualificationData ?? {};
         contextData.sow_qualification = t.sowQualificationData ?? {};
       } else if (department === "finance") {
-        // Finance needs: P&L/Pricing, Bid/No-Bid, Commercial terms
         contextData.pricing_data = t.pricingData ?? {};
         contextData.bid_no_bid_data = t.bidNoBidData ?? {};
         contextData.solution_design_cost_drivers = (t.solutionDesignData ?? {}).cost_drivers ?? {};
       } else if (department === "legal") {
-        // Legal needs: Risk Snapshot, Customer Fit, Compliance, SOW terms
         contextData.risk_snapshot = t.riskSnapshotData ?? {};
         contextData.customer_fit = t.customerFitData ?? {};
         contextData.compliance_coverage = (t.tenderDraftingData ?? {}).compliance_coverage ?? {};
         contextData.pricing_commercial_terms = ((t.pricingData ?? {}).commercial_terms) ?? {};
       }
 
-      // Include uploaded document metadata (names + types, not full content)
       const docs = ws.documents ?? [];
       contextData.uploaded_documents = docs.map((d: any) => ({
         name: d.document_name,
@@ -267,8 +287,9 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
         status: d.status,
       }));
 
+      // ONLY send blocks WITH content to the AI — never empty blocks
       const fullPayload = {
-        proposal_blocks: blocksForReview,
+        proposal_blocks: draftedBlocks,
         tender_context: contextData,
       };
 
@@ -286,27 +307,33 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
       });
 
       // 4. Parse JSON response
-      let flags: any[] = [];
+      let aiFlags: any[] = [];
       try {
         const cleaned = result.content.replace(/```json\n?/g, "").replace(/```/g, "").trim();
-        flags = JSON.parse(cleaned);
+        aiFlags = JSON.parse(cleaned);
       } catch {
         toast.error("AI returned invalid JSON. Check the bot's system prompt in Bot Builder.");
         setAiRunning(false);
         return;
       }
 
-      // 5. Save flags to Supabase
-      if (Array.isArray(flags) && flags.length > 0) {
-        const res = await saveBlockAIFlags(tenderId, department, flags, bot.id);
+      // 5. Merge: AI flags for drafted blocks + auto-flags for empty blocks
+      const allFlags = [...(Array.isArray(aiFlags) ? aiFlags : []), ...emptyFlags];
+
+      if (allFlags.length > 0) {
+        const res = await saveBlockAIFlags(tenderId, department, allFlags, bot.id);
         if (res.success) {
-          toast.success(`AI found ${flags.length} issue(s). Review the flags below.`);
+          const aiCount = Array.isArray(aiFlags) ? aiFlags.length : 0;
+          const parts: string[] = [];
+          if (aiCount > 0) parts.push(`${aiCount} issue(s) found in ${draftedBlocks.length} drafted block(s)`);
+          if (emptyBlocks.length > 0) parts.push(`${emptyBlocks.length} block(s) flagged as NOT DRAFTED`);
+          toast.success(parts.join(". ") + ".");
           reload();
         } else {
           toast.error(res.error || "Failed to save AI flags.");
         }
       } else {
-        toast.success("AI review complete — no issues found.");
+        toast.success(`AI reviewed ${draftedBlocks.length} drafted block(s) — no issues found.`);
       }
     } catch (err: any) {
       toast.error(err.message || "AI review failed.");
@@ -457,12 +484,20 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
       )}
 
       {/* ─── Block List ─────────────────────────────────────────── */}
-      <div className="flex items-center gap-1.5 px-1">
-        <FileCheck2 className="w-3.5 h-3.5 text-muted-foreground" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Proposal Blocks ({filteredBlocks.length})
-        </span>
-      </div>
+      {(() => {
+        const drafted = filteredBlocks.filter((b: any) => ((b.content || b.editor_content || "").trim()).length > 50).length;
+        const empty = filteredBlocks.length - drafted;
+        return (
+          <div className="flex items-center gap-2 px-1">
+            <FileCheck2 className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Proposal Blocks ({filteredBlocks.length})
+            </span>
+            <Badge variant="outline" className="text-[8px] border-emerald-200 text-emerald-600">{drafted} drafted</Badge>
+            {empty > 0 && <Badge variant="outline" className="text-[8px] border-red-200 text-red-600">{empty} empty</Badge>}
+          </div>
+        );
+      })()}
 
       {filteredBlocks.map((block: any) => {
         const isExpanded = expandedId === block.id;
@@ -470,6 +505,9 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
         const blockFlags: AIReviewFlag[] = (block.ai_flags || []).filter((f: any) => f.department === department);
         const isRejecting = rejectingId === block.id;
         const isSaving = saving === block.id;
+        const contentLen = ((block.content || block.editor_content || "").trim()).length;
+        const isDrafted = contentLen > 50;
+        const hasNotDraftedFlag = blockFlags.some(f => f.issue?.includes("NOT DRAFTED"));
 
         return (
           <Card key={block.id} className="border-border shadow-none">
@@ -482,9 +520,18 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
                 <span className="text-xs font-mono text-muted-foreground">§{block.section_number || "?"}</span>
                 <span className="text-xs font-semibold flex-1">{block.title || "Untitled"}</span>
                 <Badge variant="outline" className="text-[8px]">{block.volume}</Badge>
+                {isDrafted ? (
+                  <Badge variant="outline" className="text-[8px] border-emerald-200 text-emerald-600 gap-0.5">
+                    <CheckCircle2 className="w-2.5 h-2.5" /> Drafted
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[8px] border-red-300 text-red-600 bg-red-50 gap-0.5">
+                    <XCircle className="w-2.5 h-2.5" /> Empty
+                  </Badge>
+                )}
                 <Badge variant="outline" className={`text-[8px] ${statusBadge(blockStatus)}`}>{blockStatus}</Badge>
                 {blockFlags.length > 0 && (
-                  <Badge variant="outline" className="text-[8px] border-amber-200 text-amber-600 gap-0.5">
+                  <Badge variant="outline" className={`text-[8px] gap-0.5 ${hasNotDraftedFlag ? 'border-red-300 text-red-600 bg-red-50' : 'border-amber-200 text-amber-600'}`}>
                     <AlertTriangle className="w-2.5 h-2.5" /> {blockFlags.length}
                   </Badge>
                 )}
