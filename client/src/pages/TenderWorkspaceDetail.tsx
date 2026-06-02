@@ -56,6 +56,7 @@ import PnlPricingStage, { PnlPricingStageHeader } from "@/components/tender/PnlP
 import TenderPnLCalculatorPanel from "@/components/tender/TenderPnLCalculatorPanel";
 import TenderDraftingStage, { TenderDraftingStageHeader } from "@/components/tender/TenderDraftingStage";
 import InternalReviewStage from "@/components/tender/InternalReviewStage";
+import ApprovalMatrixStage from "@/components/tender/ApprovalMatrixStage";
 
 // â”€â”€â”€ CRM PIPELINE STAGES (10) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const CRM_PIPELINE_STAGES: { value: TenderMilestone; label: string; short: string }[] = [
@@ -621,6 +622,7 @@ export default function TenderWorkspaceDetail() {
                       proposal_architecture_toc: ClipboardList, proposal_block_workbench: Layers, technical_volume: BookOpen, commercial_volume: DollarSign, appendices_evidence: FolderOpen, pdf_studio_handoff: FileOutput,
                       submission_readiness: CheckCircle2, activity: Activity, decision_log: ClipboardList, clarification_log: MessageSquare, negotiation_log: MessageSquare, submission_log: Send, response_history: Clock, audit_trail: Clock, approval_record: CheckCircle2,
                       review_dashboard: BarChart3, operations_review: Shield, finance_review: DollarSign, legal_review: Scale, exceptions: AlertTriangle,
+                      approval_matrix: Shield, signoff_tracker: CheckCircle2, exception_notes: AlertTriangle, governance_log: Clock,
                     };
                     const Icon = icons[tabId] ?? FileText;
                     return (
@@ -809,6 +811,11 @@ export default function TenderWorkspaceDetail() {
                       // ─── Stage 7: Internal Review tabs ─────────────────
                       if (["review_dashboard", "operations_review", "finance_review", "legal_review", "exceptions"].includes(tabId)) {
                         return <InternalReviewStage ws={ws} activeTab={tabId} reload={reload} />;
+                      }
+
+                      // ─── Stage 8: Approval Matrix tabs ──────────────────
+                      if (["approval_matrix", "signoff_tracker", "exception_notes", "governance_log"].includes(tabId)) {
+                        return <ApprovalMatrixStage ws={ws} activeTab={tabId} reload={reload} />;
                       }
 
                       // Identified Workbench Tabs
