@@ -269,15 +269,22 @@ const GOVERNED_DOMAINS = ["tenders", "proposals", "documents"];
  * ONE SOURCE OF TRUTH: all bots come from Bot Builder (ai_bots table).
  * Returns the bot with its latest version's system prompt resolved.
  * Works for both 'action' and 'monitor' bot types.
+ *
+ * IMPORTANT: Returns null (with console error) if:
+ * - Bot not found by name
+ * - Bot has no published version
+ * - Bot version has an empty system prompt
  */
 export async function loadGovernedBotByName(
   botName: string,
 ): Promise<{ id: string; name: string; provider: "openai" | "google"; model: string; system_prompt: string } | null> {
   try {
-    const { data: bots, error } = await supabase
+    // Query by display_name first, then fallback to name
+    // NOTE: cannot use .or() with ilike because & in bot names breaks PostgREST filter parsing
+    let { data: bots, error } = await supabase
       .from("ai_bots")
       .select("*, ai_bot_versions(*)")
-      .or(`display_name.ilike.${botName},name.ilike.${botName}`)
+      .eq("display_name", botName)
       .order("updated_at", { ascending: false })
       .limit(1);
 
@@ -285,12 +292,41 @@ export async function loadGovernedBotByName(
       console.error("[ai-runs] loadGovernedBotByName query error:", error.message);
       return null;
     }
-    if (!bots?.length) return null;
+
+    // Fallback: try by name column if display_name didn't match
+    if (!bots?.length) {
+      const fallback = await supabase
+        .from("ai_bots")
+        .select("*, ai_bot_versions(*)")
+        .eq("name", botName)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+      if (fallback.error) {
+        console.error("[ai-runs] loadGovernedBotByName fallback query error:", fallback.error.message);
+        return null;
+      }
+      bots = fallback.data;
+    }
+
+    if (!bots?.length) {
+      console.error(`[ai-runs] loadGovernedBotByName: NO BOT FOUND with name "${botName}". Check Bot Builder.`);
+      return null;
+    }
 
     const bot = bots[0];
+    console.info(`[ai-runs] loadGovernedBotByName: Found bot "${bot.display_name || bot.name}" (id: ${bot.id}, status: ${bot.status})`);
+
     const versions = Array.isArray(bot.ai_bot_versions)
       ? [...bot.ai_bot_versions].sort((a: any, b: any) => (b.version || 0) - (a.version || 0))
       : [];
+
+    console.info(`[ai-runs] loadGovernedBotByName: Bot has ${versions.length} version(s)`);
+
+    if (versions.length === 0) {
+      console.error(`[ai-runs] loadGovernedBotByName: Bot "${bot.display_name}" has NO PUBLISHED VERSIONS. Save the bot in Bot Builder to create a version.`);
+      return null;
+    }
+
     const latestVersion = versions[0] as any;
 
     // Resolve provider
@@ -307,6 +343,13 @@ export async function loadGovernedBotByName(
       latestVersion?.custom_instruction,
     ].filter(Boolean);
     const systemPrompt = systemParts.join("\n\n") || "";
+
+    console.info(`[ai-runs] loadGovernedBotByName: system_instruction length: ${(latestVersion?.system_instruction || "").length}, custom_instruction length: ${(latestVersion?.custom_instruction || "").length}, combined prompt length: ${systemPrompt.length}`);
+
+    if (systemPrompt.length < 50) {
+      console.error(`[ai-runs] loadGovernedBotByName: Bot "${bot.display_name}" has EMPTY or very short system prompt (${systemPrompt.length} chars). The bot will not produce useful results. Update Custom Instruction in Bot Builder.`);
+      // Don't return null — let it fail visibly so the user knows
+    }
 
     return {
       id: bot.id,

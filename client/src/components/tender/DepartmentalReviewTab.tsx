@@ -293,6 +293,13 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
         tender_context: contextData,
       };
 
+      console.info(`[DeptReview] ${department}: Bot "${bot.name}" (id: ${bot.id}), system_prompt length: ${bot.system_prompt.length}, sending ${draftedBlocks.length} drafted blocks`);
+      if (bot.system_prompt.length < 50) {
+        toast.error(`Bot "${bot.name}" has NO system prompt (${bot.system_prompt.length} chars). Update the Custom Instruction in Bot Builder.`);
+        setAiRunning(false);
+        return;
+      }
+
       // 3. Call generateAI — all bot config comes from DB
       const result = await generateAI({
         provider: bot.provider || "openai",
@@ -305,6 +312,9 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
         botId: bot.id,
         botName: bot.name,
       });
+
+      console.info(`[DeptReview] ${department}: AI response length: ${result.content?.length || 0}`);
+      console.info(`[DeptReview] ${department}: AI raw response (first 500 chars):`, result.content?.substring(0, 500));
 
       // 4. Parse JSON response
       let aiFlags: any[] = [];
