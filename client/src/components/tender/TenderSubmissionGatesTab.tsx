@@ -1,306 +1,199 @@
 /**
- * TND-006: Tender Readiness Signals Tab
- * Signal-only advisory panel — no blocking, no enforcement, no gates.
- * Doctrine: flag → explain → recommend → allow override → log reason
+ * TenderSubmissionGatesTab.tsx
+ * ─────────────────────────────
+ * Submission Readiness — Informational Panel
+ *
+ * Gates & submission locks are deferred to the Hardening Phase.
+ * For now this tab shows real compliance + document readiness
+ * derived from Supabase data, with a clear label that gate
+ * enforcement will be configured here in a future sprint.
+ *
+ * Doctrine: No blocking. No locks. No enforcement. Advisory only.
+ * ⚠️ HARDENING PHASE REMINDER: Wire real submission gates here.
  */
-import { useState, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ShieldAlert, Eye, CheckCircle2, XCircle, AlertTriangle, Clock, Play, Info, Zap, Database } from "lucide-react";
-import { toast } from "sonner";
-import { logMockBypass, updateGateStatus } from "@/lib/supabase-tender-actions";
-import {
-  type TenderMockGate,
-  type TenderWorkspace,
-  type MockGateStatus,
-  getGateStatusLabel,
-  getGateStatusColor,
-  getGateSeverityColor,
-  getGateCategoryLabel,
-  getGateEnforcementLabel,
-  getGateRuntimeLabel,
-  getRiskLabel,
-  GATE_CATEGORIES,
-  GATE_SEVERITIES,
-} from "@/lib/tender-workspace-data";
+import { Construction, CheckCircle2, AlertTriangle, FileText, ShieldCheck, Info } from "lucide-react";
+import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 
-// ─── GATE REVIEW MODAL ──────────────────────────────────────
+// ─── SUMMARY ROW ────────────────────────────────────────────────
+function ReadinessRow({
+  label,
+  value,
+  total,
+  status,
+}: {
+  label: string;
+  value: number;
+  total: number;
+  status: "ok" | "warn" | "gap";
+}) {
+  const color =
+    status === "ok" ? "text-emerald-700" : status === "warn" ? "text-amber-700" : "text-red-700";
+  const bg =
+    status === "ok" ? "bg-emerald-50 border-emerald-200" : status === "warn" ? "bg-amber-50 border-amber-200" : "bg-red-50 border-red-200";
+  const Icon = status === "ok" ? CheckCircle2 : AlertTriangle;
 
-function GateReviewModal({ gate, onClose, onBypass }: { gate: TenderMockGate; onClose: () => void; onBypass: (id: string) => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-background rounded-xl border shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="p-5 border-b">
-          <div className="flex items-start justify-between">
-            <div>
-              <h3 className="text-sm font-serif font-bold">Readiness Signal Review</h3>
-              <p className="text-[10px] text-muted-foreground mt-0.5">Advisory signal only — no enforcement, no blocking applied.</p>
-            </div>
-            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onClose}><XCircle className="w-4 h-4" /></Button>
-          </div>
-        </div>
-        <div className="p-5 space-y-4">
-          <div>
-            <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Gate Name</label>
-            <p className="text-xs font-medium mt-1">{gate.gateName}</p>
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Description</label>
-            <p className="text-xs mt-1 text-muted-foreground">{gate.gateDescription}</p>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Pack</label><p className="text-xs mt-1">{gate.tenderPackId ? gate.tenderPackId.replace("tp-linde-", "").toUpperCase() : "Workspace"}</p></div>
-            <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Category</label><p className="text-xs mt-1">{getGateCategoryLabel(gate.category)}</p></div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Status</label><div className="mt-1"><Badge variant="outline" className={`text-[9px] ${getGateStatusColor(gate.status)}`}>{getGateStatusLabel(gate.status)}</Badge></div></div>
-            <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Severity</label><div className="mt-1"><Badge variant="outline" className={`text-[9px] ${getGateSeverityColor(gate.severity)}`}>{getRiskLabel(gate.severity)}</Badge></div></div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Enforcement</label><p className="text-xs mt-1">{getGateEnforcementLabel(gate.enforcementMode)}</p></div>
-            <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Runtime</label><p className="text-xs mt-1">{getGateRuntimeLabel(gate.runtimeMode)}</p></div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Doctrine Required</label><p className="text-xs mt-1">{gate.doctrineRequired ? "Yes" : "No"}</p></div>
-            <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Owner</label><p className="text-xs mt-1">{gate.ownerName || "—"}</p></div>
-          </div>
-          {gate.wouldBlockReason && (
-            <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Advisory Reason</label><p className="text-xs mt-1 text-amber-700">{gate.wouldBlockReason}</p></div>
-          )}
-          {gate.linkedSignal && (
-            <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Linked Signal</label><p className="text-xs mt-1">{gate.linkedSignal}</p></div>
-          )}
-          {gate.notes && (
-            <div><label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Notes</label><p className="text-xs mt-1 text-muted-foreground">{gate.notes}</p></div>
-          )}
-          {(gate.needsReview ?? gate.wouldBlock) && gate.status !== "pass" && gate.status !== "mock_bypassed" && (
-            <div className="p-2.5 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30">
-              <p className="text-xs text-amber-800 flex items-center gap-1.5"><ShieldAlert className="w-3.5 h-3.5 shrink-0" />Review recommended before submission. You may continue — override is always available.</p>
-            </div>
-          )}
-          <div className="p-2.5 rounded-md border border-blue-200 bg-blue-50/50">
-            <p className="text-[10px] text-blue-700 flex items-center gap-1.5"><Info className="w-3.5 h-3.5 shrink-0" />Advisory signal only. Override available = {gate.allowTestBypass ? "Yes" : "No"}.</p>
-          </div>
-        </div>
-        <div className="p-5 border-t flex items-center gap-2 justify-end flex-wrap">
-          <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => { toast.info(`Signal evaluated: "${gate.gateName}" — advisory only, no enforcement.`); onClose(); }}>
-            <Play className="w-3.5 h-3.5 mr-1" /> Evaluate Signal
-          </Button>
-          {(gate.needsReview ?? gate.wouldBlock) && gate.status !== "pass" && gate.status !== "mock_bypassed" && (
-            <Button variant="outline" size="sm" className="text-xs h-8 text-blue-700 border-blue-200" onClick={() => { onBypass(gate.id); onClose(); }}>
-              <Zap className="w-3.5 h-3.5 mr-1" /> Override & Continue
-            </Button>
-          )}
-          <Button variant="ghost" size="sm" className="text-xs h-8" onClick={onClose}>Close</Button>
-        </div>
+    <div className={`flex items-center justify-between p-3 rounded-lg border ${bg}`}>
+      <div className="flex items-center gap-2">
+        <Icon className={`w-4 h-4 ${color}`} />
+        <span className="text-xs font-medium">{label}</span>
       </div>
+      <span className={`text-xs font-bold font-mono ${color}`}>
+        {total > 0 ? `${value} / ${total}` : value === 0 ? "None" : String(value)}
+      </span>
     </div>
   );
 }
 
-// ─── SUMMARY CARD ────────────────────────────────────────────
+export default function TenderSubmissionGatesTab({
+  ws,
+}: {
+  ws: TenderWorkspace;
+  tenderId: string;
+  reload: () => void;
+}) {
+  // Derive real readiness signals from Supabase-backed data
+  const complianceTotal = ws.complianceItems.length;
+  const complianceCompliant = ws.complianceItems.filter(c => c.status === "compliant").length;
+  const complianceGaps = ws.complianceItems.filter(
+    c => c.status === "non_compliant" || c.status === "clarification_required"
+  ).length;
+  const compliancePartial = ws.complianceItems.filter(c => c.status === "partial").length;
 
-function SummaryCard({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div className="rounded-lg border p-3 text-center">
-      <p className={`text-lg font-bold font-mono ${color}`}>{value}</p>
-      <p className="text-[10px] text-muted-foreground mt-0.5">{label}</p>
-    </div>
-  );
-}
+  const docsTotal = ws.packs.reduce((s, p) => s + p.documentsTotal, 0);
+  const docsReady = ws.packs.reduce((s, p) => s + p.documentsReady, 0);
 
-// ─── MAIN COMPONENT ──────────────────────────────────────────
+  const placeholdersTotal = ws.packs.reduce((s, p) => s + p.placeholdersTotal, 0);
+  const placeholdersFilled = ws.packs.reduce((s, p) => s + p.placeholdersPopulated, 0);
+  const placeholdersMissing = placeholdersTotal - placeholdersFilled;
 
-export default function TenderSubmissionGatesTab({ ws, tenderId, reload }: { ws: TenderWorkspace; tenderId: string; reload: () => void }) {
-  const [packFilter, setPackFilter] = useState<string>("all");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [severityFilter, setSeverityFilter] = useState<string>("all");
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
-  const [reviewGate, setReviewGate] = useState<TenderMockGate | null>(null);
-  const [bypassed, setBypassed] = useState<Set<string>>(new Set());
+  const drafting = (ws.tender as any).tenderDraftingData ?? {};
+  const blocks: any[] = Array.isArray(drafting.proposal_blocks) ? drafting.proposal_blocks : [];
+  const blocksApproved = blocks.filter((b: any) => b.approval_status === "Approved").length;
 
-  const gates = ws.mockGates;
-
-  const effectiveStatus = (g: TenderMockGate): MockGateStatus => bypassed.has(g.id) ? "mock_bypassed" : g.status;
-
-  // Counts
-  const passCount = gates.filter(g => effectiveStatus(g) === "pass").length;
-  const warningCount = gates.filter(g => effectiveStatus(g) === "warning").length;
-  const needsReviewCount = gates.filter(g => effectiveStatus(g) === "would_block").length;
-  const bypassedCount = gates.filter(g => effectiveStatus(g) === "mock_bypassed").length;
-  const criticalCount = gates.filter(g => g.severity === "critical").length;
-  const bypassAvailable = gates.filter(g => g.allowTestBypass && effectiveStatus(g) !== "pass" && effectiveStatus(g) !== "mock_bypassed").length;
-
-  const filtered = useMemo(() => {
-    return gates.filter(g => {
-      if (packFilter === "workspace" && g.tenderPackId !== null) return false;
-      if (packFilter !== "all" && packFilter !== "workspace" && g.tenderPackId !== packFilter) return false;
-      const es = effectiveStatus(g);
-      if (statusFilter !== "all" && es !== statusFilter) return false;
-      if (severityFilter !== "all" && g.severity !== severityFilter) return false;
-      if (categoryFilter !== "all" && g.category !== categoryFilter) return false;
-      return true;
-    });
-  }, [gates, packFilter, statusFilter, severityFilter, categoryFilter, bypassed]);
-
-  const packOptions = useMemo(() => {
-    const packs = ws.packs.map(p => ({ value: p.id, label: p.packName }));
-    return [{ value: "all", label: "All Packs" }, { value: "workspace", label: "Workspace-level" }, ...packs];
-  }, [ws.packs]);
-
-  const statusOptions = [
-    { value: "all", label: "All Statuses" },
-    { value: "pass", label: "Pass" },
-    { value: "warning", label: "Warning" },
-    { value: "would_block", label: "Review Recommended" },
-    { value: "not_started", label: "Not Started" },
-    { value: "mock_bypassed", label: "Overridden" },
-    { value: "fail", label: "Flagged" },
-    { value: "not_applicable", label: "N/A" },
-  ];
-
-  async function handleBypass(id: string) {
-    const gate = gates.find(g => g.id === id);
-    const result = await logMockBypass(tenderId, id, gate?.gateName ?? id, 'Advisory override activated');
-    setBypassed(prev => new Set(prev).add(id));
-    if (result.success) {
-      toast.info("Advisory override logged and persisted.", { description: "Continue is allowed. No enforcement applied." });
-      reload();
-    } else {
-      toast.warning("Advisory override tracked locally. Supabase write failed.", { description: result.error });
-    }
-  }
-
-  async function handleRunAll() {
-    let successCount = 0;
-    for (const gate of gates) {
-      const newStatus = (gate.needsReview ?? gate.wouldBlock) ? 'would_block' : 'pass';
-      if (gate.status !== newStatus) {
-        const r = await updateGateStatus(tenderId, gate.id, gate.gateName, gate.status, newStatus, 'Bulk signal evaluation');
-        if (r.success) successCount++;
-      } else {
-        successCount++;
-      }
-    }
-    toast.info(`Readiness evaluation complete. ${needsReviewCount} signal(s) flagged for review — advisory only, no enforcement.`, { description: `${successCount}/${gates.length} signals evaluated.` });
-    reload();
-  }
-
-  if (gates.length === 0) {
-    return <p className="text-sm text-muted-foreground py-8 text-center">No submission gates configured yet.</p>;
-  }
+  const overallOk = complianceGaps === 0 && docsTotal > 0 && docsReady === docsTotal && placeholdersMissing === 0;
 
   return (
-    <div className="space-y-4">
-      {/* Signal doctrine banner */}
-      <div className="p-3 rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/30 flex items-center justify-between gap-2.5">
-        <div className="flex items-center gap-2.5">
-          <Info className="w-4 h-4 text-blue-600 shrink-0" />
-          <p className="text-xs text-blue-700">Readiness signals are advisory only. All signals flag, explain, and recommend — nothing blocks movement or locks submission. Override is always available.</p>
-        </div>
-        <Badge variant="outline" className="text-[10px] border-emerald-400 text-emerald-700 bg-emerald-50 flex items-center gap-1 shrink-0"><Database className="w-2.5 h-2.5" />Supabase-Backed</Badge>
-      </div>
-
-      {/* Summary + Run button */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="grid grid-cols-4 md:grid-cols-7 gap-2 flex-1">
-          <SummaryCard label="Total Signals" value={gates.length} color="text-foreground" />
-          <SummaryCard label="Pass" value={passCount} color="text-emerald-600" />
-          <SummaryCard label="Warnings" value={warningCount} color="text-amber-600" />
-          <SummaryCard label="Review Rec." value={needsReviewCount} color="text-amber-600" />
-          <SummaryCard label="Overridden" value={bypassedCount} color="text-blue-600" />
-          <SummaryCard label="Critical" value={criticalCount} color="text-orange-600" />
-          <SummaryCard label="Can Override" value={bypassAvailable} color="text-blue-600" />
+    <div className="space-y-5">
+      {/* Hardening Phase Reminder Banner */}
+      <div className="p-4 rounded-lg border-2 border-dashed border-amber-300 bg-amber-50 dark:bg-amber-950/20 flex items-start gap-3">
+        <Construction className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+        <div>
+          <p className="text-sm font-semibold text-amber-800">
+            ⚠️ Hardening Phase — Submission Gates Not Yet Active
+          </p>
+          <p className="text-xs text-amber-700 mt-1">
+            Submission gate enforcement, locking rules, and mandatory approval checks are deferred
+            to the Hardening &amp; Testing phase. This tab currently shows readiness signals
+            only — all advisory, nothing blocks.
+          </p>
+          <p className="text-[10px] text-amber-600 mt-2 font-mono">
+            TODO (Hardening): Define gate rules → wire enforcement → test with real submission cycle.
+          </p>
         </div>
       </div>
 
-      <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5" onClick={handleRunAll}>
-        <Play className="w-3.5 h-3.5" /> Evaluate Readiness Signals
-      </Button>
+      {/* Real Readiness Data from Supabase */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <ShieldCheck className="w-4 h-4 text-slate-500" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Current Readiness Signals (Live from Supabase)
+          </span>
+          {overallOk && (
+            <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700 bg-emerald-50">
+              ✓ All Clear
+            </Badge>
+          )}
+        </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Select value={packFilter} onValueChange={setPackFilter}>
-          <SelectTrigger size="sm" className="w-[180px] text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>{packOptions.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}</SelectContent>
-        </Select>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger size="sm" className="w-[170px] text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>{statusOptions.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}</SelectContent>
-        </Select>
-        <Select value={severityFilter} onValueChange={setSeverityFilter}>
-          <SelectTrigger size="sm" className="w-[160px] text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>{GATE_SEVERITIES.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}</SelectContent>
-        </Select>
-        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-          <SelectTrigger size="sm" className="w-[180px] text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>{GATE_CATEGORIES.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}</SelectContent>
-        </Select>
-        <span className="text-[10px] text-muted-foreground ml-1">{filtered.length} of {gates.length} shown</span>
+        <div className="space-y-2">
+          <ReadinessRow
+            label="Compliance Matrix"
+            value={complianceCompliant}
+            total={complianceTotal}
+            status={complianceGaps > 0 ? "gap" : compliancePartial > 0 ? "warn" : "ok"}
+          />
+          <ReadinessRow
+            label="Required Documents Ready"
+            value={docsReady}
+            total={docsTotal}
+            status={docsTotal === 0 ? "warn" : docsReady < docsTotal ? "warn" : "ok"}
+          />
+          <ReadinessRow
+            label="Placeholders Populated"
+            value={placeholdersFilled}
+            total={placeholdersTotal}
+            status={placeholdersMissing > 3 ? "gap" : placeholdersMissing > 0 ? "warn" : "ok"}
+          />
+          {blocks.length > 0 && (
+            <ReadinessRow
+              label="Proposal Blocks Approved"
+              value={blocksApproved}
+              total={blocks.length}
+              status={blocksApproved < blocks.length ? "warn" : "ok"}
+            />
+          )}
+        </div>
       </div>
 
-      {/* Gate table */}
-      <div className="border rounded-lg overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead className="bg-muted/50">
-            <tr>
-              <th className="px-3 py-2 text-left font-semibold">Signal</th>
-              <th className="px-3 py-2 text-left font-semibold">Pack</th>
-              <th className="px-3 py-2 text-left font-semibold">Category</th>
-              <th className="px-3 py-2 text-left font-semibold">Status</th>
-              <th className="px-3 py-2 text-center font-semibold">Severity</th>
-              <th className="px-3 py-2 text-center font-semibold">Advisory</th>
-              <th className="px-3 py-2 text-left font-semibold">Mode</th>
-              <th className="px-3 py-2 text-left font-semibold">Owner</th>
-              <th className="px-3 py-2 text-left font-semibold">Evaluated</th>
-              <th className="px-3 py-2 text-center font-semibold">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map(gate => {
-              const es = effectiveStatus(gate);
-              const isBlock = es === "would_block" || es === "fail";
-              const isCritical = gate.severity === "critical";
-              return (
-                <tr key={gate.id} className={`border-t border-border hover:bg-muted/30 ${isBlock ? "bg-red-50/40 border-l-2 border-l-red-400" : es === "warning" ? "bg-amber-50/30 border-l-2 border-l-amber-300" : es === "mock_bypassed" ? "bg-blue-50/20 border-l-2 border-l-blue-300" : ""}`}>
-                  <td className="px-3 py-2 max-w-[220px]">
-                    <p className="font-medium leading-snug">{gate.gateName}</p>
-                    {isCritical && <Badge variant="outline" className="text-[8px] mt-0.5 border-orange-300 text-orange-700 bg-orange-50">Escalation Suggested</Badge>}
-                  </td>
-                  <td className="px-3 py-2 text-muted-foreground">{gate.tenderPackId ? gate.tenderPackId.replace("tp-linde-", "").toUpperCase() : "Workspace"}</td>
-                  <td className="px-3 py-2"><Badge variant="outline" className="text-[9px]">{getGateCategoryLabel(gate.category)}</Badge></td>
-                  <td className="px-3 py-2"><Badge variant="outline" className={`text-[9px] ${getGateStatusColor(es)}`}>{getGateStatusLabel(es)}</Badge></td>
-                  <td className="px-3 py-2 text-center"><Badge variant="outline" className={`text-[9px] ${getGateSeverityColor(gate.severity)}`}>{getRiskLabel(gate.severity)}</Badge></td>
-                  <td className="px-3 py-2 text-center">
-                    {(gate.needsReview ?? gate.wouldBlock) && es !== "pass" && es !== "mock_bypassed" ? (
-                      <Badge variant="outline" className="text-[9px] text-amber-700 bg-amber-50 border-amber-200">Review Rec.</Badge>
-                    ) : es === "pass" || es === "mock_bypassed" ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mx-auto" />
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="px-3 py-2 text-muted-foreground text-[10px]">{getGateRuntimeLabel(gate.runtimeMode)}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{gate.ownerName || "—"}</td>
-                  <td className="px-3 py-2 text-muted-foreground text-[10px]">{gate.evaluatedAt ? new Date(gate.evaluatedAt).toLocaleDateString() : "—"}</td>
-                  <td className="px-3 py-2 text-center">
-                    <Button variant="ghost" size="sm" className="h-7 text-[10px] gap-1" onClick={() => setReviewGate(gate)}><Eye className="w-3 h-3" /> Review</Button>
-                  </td>
+      {/* What will go here */}
+      <div className="p-3 rounded-lg border border-slate-200 bg-slate-50 dark:bg-slate-900/20">
+        <div className="flex items-start gap-2">
+          <Info className="w-3.5 h-3.5 text-slate-500 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-slate-600">What goes here in the Hardening Phase:</p>
+            <ul className="text-[10px] text-slate-500 space-y-0.5 list-disc list-inside">
+              <li>Configurable gate rules per tender type</li>
+              <li>Mandatory sign-off checklist before submission</li>
+              <li>Advisory escalation for non-compliant items</li>
+              <li>Final submission readiness score with pass/warn thresholds</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      {/* Document status reference */}
+      {ws.documents && ws.documents.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <FileText className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Linked Documents ({ws.documents.length})
+            </span>
+          </div>
+          <div className="border rounded-lg overflow-hidden">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="px-3 py-2 text-left font-semibold">Document</th>
+                  <th className="px-3 py-2 text-left font-semibold">Category</th>
+                  <th className="px-3 py-2 text-left font-semibold">Status</th>
                 </tr>
-              );
-            })}
-            {filtered.length === 0 && <tr><td colSpan={10} className="text-center py-8 text-muted-foreground">No signals match current filters.</td></tr>}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Governance note */}
-      <div className="p-3 rounded-lg border border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 flex items-center gap-2">
-        <Info className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-        <p className="text-[10px] text-blue-700">Readiness signals are advisory during workflow validation. After the business confirms the process, signals can be promoted to escalation rules in Governance — never to submission blockers.</p>
-      </div>
-
-      {reviewGate && <GateReviewModal gate={reviewGate} onClose={() => setReviewGate(null)} onBypass={handleBypass} />}
+              </thead>
+              <tbody>
+                {ws.documents.slice(0, 10).map(doc => (
+                  <tr key={doc.id} className="border-t border-border hover:bg-muted/30">
+                    <td className="px-3 py-2 font-medium max-w-[240px] truncate">{doc.document_name}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{doc.document_category}</td>
+                    <td className="px-3 py-2">
+                      <Badge variant="outline" className="text-[9px]">{doc.status}</Badge>
+                    </td>
+                  </tr>
+                ))}
+                {ws.documents.length > 10 && (
+                  <tr className="border-t">
+                    <td colSpan={3} className="px-3 py-2 text-center text-[10px] text-muted-foreground">
+                      + {ws.documents.length - 10} more documents — view in Document Library
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

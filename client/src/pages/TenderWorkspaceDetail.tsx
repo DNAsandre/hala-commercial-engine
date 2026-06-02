@@ -14,6 +14,7 @@ import { getPackStatusLabel, getPackTypeLabel, getGateStatusLabel, getSectionSta
 import { useTenderWorkspaceData } from "@/hooks/useTenderWorkspaceData";
 import { toast } from "sonner";
 import { updateTenderPhase, updateTenderCrmStage } from "@/lib/supabase-tender-actions";
+import { mapDbStageToInternalCognitionStage } from "@/lib/supabase-tender-data";
 import { getCustomerLinkForTender, type TenderCustomerLink } from "@/lib/commercial-os-data";
 import { LifecycleLight, getLightState } from "@/components/LifecycleLight";
 import TenderPlaceholdersTab from "@/components/tender/TenderPlaceholdersTab";
@@ -285,10 +286,15 @@ export default function TenderWorkspaceDetail() {
   // SUPA-006: Supabase-backed data load
   const { ws, status, errorMessage, reload } = useTenderWorkspaceData(id!);
 
-  // Sync cognition panel to real tender stage once ws loads (must be before any early returns)
+  // Sync cognition panel to the DB internal process stage when ws loads
+  // Uses mapDbStageToInternalCognitionStage so e.g. 'proposal_preparation' → 'tender_drafting'
   useEffect(() => {
-    if (ws?.tender?.status) setCognitionStage(ws.tender.status);
-  }, [ws?.tender?.status]);
+    if (ws?.tender?.internalStageRaw) {
+      setCognitionStage(mapDbStageToInternalCognitionStage(ws.tender.internalStageRaw));
+    } else if (ws?.tender?.status) {
+      setCognitionStage(ws.tender.status);
+    }
+  }, [ws?.tender?.internalStageRaw, ws?.tender?.status]);
 
   const activeStageConfig = ws ? buildStageConfig(ws, cognitionStage) : null;
   const activeTabs = activeStageConfig?.tabs || ["Overview", "Activity"];
@@ -332,7 +338,10 @@ export default function TenderWorkspaceDetail() {
 
   const t = ws.tender;
   const daysLeft = Math.ceil((new Date(t.submissionDeadline).getTime() - Date.now()) / 86400000);
-  const signalCount = ws.mockGates.filter(g => g.wouldBlock).length;
+  // Signal count derived from real compliance data — no mock gates
+  const signalCount = ws.complianceItems.filter(c =>
+    c.status === 'non_compliant' || c.status === 'clarification_required'
+  ).length;
   const selectedPack = ws.packs.find(p => p.id === selectedPackId) ?? (ws.packs.length > 0 ? ws.packs[0] : null);
   const crmStageIdx = CRM_PIPELINE_STAGES.findIndex(s => s.value === (t.crmPipelineStage ?? 'prospecting'));
   const internalStageIdx = INTERNAL_TENDER_STAGES.findIndex(s => s.value === t.status);

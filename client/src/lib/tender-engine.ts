@@ -262,6 +262,8 @@ export interface Tender {
   pricingData?: TenderPricingData;
   /** Structured Tender Drafting data — persisted in type_details.tender_drafting */
   tenderDraftingData?: Record<string, any>;
+  /** Raw internal_stage value from commercial_tickets — used to open workspace at the correct process stage */
+  internalStageRaw?: string;
 }
 // ─── TENDER DATA — SUPABASE ONLY ───────────────────────────
 // No hardcoded tenders. All data comes from the tenders table in Supabase.

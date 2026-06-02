@@ -502,32 +502,6 @@ export default function ProposalArchitectureTOCTab({ ws, reload }: Props) {
     setChainProgress(null);
   }, []);
 
-  const handleDraftManually = useCallback(async () => {
-    setShowChainDialog(false);
-    // Just create blocks from TOC without AI drafting
-    await createBlocksFromTOC(existingBlocks.length > 0 ? "add_missing" : "replace_all");
-  }, [createBlocksFromTOC, existingBlocks.length]);
-
-  // ─── Save TOC ──────────────────────────────────────────────
-  const handleSave = useCallback(async () => {
-    setSaving(true);
-    try {
-      const payload = {
-        active_toc_id: activeVersion.id,
-        status: tocStatus,
-        toc_versions: tocVersions.map((v, i) =>
-          i === tocVersions.length - 1 ? { ...v, status: tocStatus, updated_at: new Date().toISOString() } : v
-        ),
-      };
-      const res = await updateTenderDraftingData(tenderId, "proposal_architecture", payload, "TOC saved");
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Proposal Architecture / TOC saved.");
-      setDirty(false);
-      reload();
-    } catch (e: any) { toast.error(e.message || "Save failed."); }
-    finally { setSaving(false); }
-  }, [tocVersions, tocStatus, tenderId, reload, activeVersion.id]);
-
   // ─── Create Blocks from TOC ────────────────────────────────
   const [showBlockConfirm, setShowBlockConfirm] = useState(false);
 
@@ -638,6 +612,12 @@ export default function ProposalArchitectureTOCTab({ ws, reload }: Props) {
     finally { setSaving(false); }
   }, [sections, existingBlocks, tenderId, tocVersions, tocStatus, activeVersion.id, reload]);
 
+  const handleDraftManually = useCallback(async () => {
+    setShowChainDialog(false);
+    // Just create blocks from TOC without AI drafting
+    await createBlocksFromTOC(existingBlocks.length > 0 ? "add_missing" : "replace_all");
+  }, [createBlocksFromTOC, existingBlocks.length]);
+
   const handleCreateBlocks = () => {
     if (existingBlocks.length > 0) {
       setShowBlockConfirm(true);
@@ -645,6 +625,27 @@ export default function ProposalArchitectureTOCTab({ ws, reload }: Props) {
       createBlocksFromTOC("replace_all");
     }
   };
+
+  // ─── Save TOC ──────────────────────────────────────────
+  const handleSave = useCallback(async () => {
+    setSaving(true);
+    try {
+      const payload = {
+        active_toc_id: activeVersion.id,
+        status: tocStatus,
+        toc_versions: tocVersions.map((v, i) =>
+          i === tocVersions.length - 1 ? { ...v, status: tocStatus, updated_at: new Date().toISOString() } : v
+        ),
+      };
+      const res = await updateTenderDraftingData(tenderId, "proposal_architecture", payload, "TOC saved");
+      if (!res.success) { toast.error(res.error || "Save failed."); return; }
+      toast.success("Proposal Architecture / TOC saved.");
+      setDirty(false);
+      reload();
+    } catch (e: any) { toast.error(e.message || "Save failed."); }
+    finally { setSaving(false); }
+  }, [tocVersions, tocStatus, tenderId, reload, activeVersion.id]);
+
 
   // ─── Summary ───────────────────────────────────────────────
   const includedCount = sections.filter(s => s.include_in_proposal).length;

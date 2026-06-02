@@ -47,7 +47,7 @@ export async function getTenderWorkspaceSignalSummaryFromSupabase(
   const bundle = await fetchTenderWorkspaceBundleFromSupabase(tenderId);
   if (!bundle.tender) return null;
 
-  const { tender, packs, placeholders, requiredDocuments, complianceItems, mockGates, splitChecks, submissionEmails } = bundle;
+  const { tender, packs, placeholders, requiredDocuments, complianceItems, splitChecks, submissionEmails } = bundle;
 
   const packCount = packs.length;
 
@@ -69,9 +69,11 @@ export async function getTenderWorkspaceSignalSummaryFromSupabase(
       c.status === 'clarification_required'
   ).length;
 
-  // Advisory signals — items flagged for review, never blocking
-  const readinessSignalCount = mockGates.filter(g => g.needsReview === true || g.wouldBlock === true).length;
-  const criticalSignalCount = mockGates.filter(g => g.severity === 'critical').length;
+  // Advisory signal counts — derived from real compliance data (no mock gates)
+  const readinessSignalCount = complianceItems.filter(
+    c => c.status === 'non_compliant' || c.status === 'clarification_required' || c.status === 'partial'
+  ).length;
+  const criticalSignalCount = complianceItems.filter(c => c.status === 'non_compliant').length;
 
   const splitCheckWarningCount = splitChecks.filter(
     c => c.status === 'warning' || c.status === 'would_block'

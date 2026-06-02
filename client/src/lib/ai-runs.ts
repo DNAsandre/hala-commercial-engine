@@ -2,15 +2,12 @@
  * AI Runs — Persistence layer for AI generation traceability
  * Sprint 10: Editor AI Pop-up + Bot Selector + Transcript Document Bots
  *
- * ⚠️ FUTURE WIRE — EDITOR BOTS ARRAY IS HARDCODED FALLBACK
- * ════════════════════════════════════════════════════════════
- * The `editorBots[]` array (line ~89) is a hardcoded fallback used when
- * Supabase `editor_bots` table is empty or unreachable. AI run execution
- * is real (calls OpenAI/Google via Edge Functions), but bot definitions
- * fall back to this array on DB failure.
+ * All bots are governed through the Admin Panel:
+ *  - editor_bots (Supabase table) — managed via EditorBotBuilder admin page
+ *  - ai_bots + ai_bot_versions — managed via Bot Builder (new governed system)
  *
- * TARGET WIRING:
- *   editorBots[]  → Remove once Supabase `editor_bots` table is always populated
+ * GOVERNANCE RULE: No hardcoded bots. No in-memory fallback arrays.
+ * If a bot is not in Supabase, it does not exist. Period.
  *   AI execution  → Already wired to real providers via ai-client.ts
  *   AI runs       → Already persisted to Supabase `ai_runs` table
  *
@@ -98,128 +95,10 @@ export interface BlockGenerateResult {
 }
 
 // ============================================================
-// MOCK EDITOR BOTS — Block + Document types
-// ============================================================
-
-export const editorBots: EditorBot[] = [
-  // Block bots
-  {
-    id: "ebot-proposal-writer",
-    name: "Proposal Section Writer",
-    bot_type: "block",
-    provider: "openai",
-    model: "gpt-4o",
-    system_prompt: "You are a commercial proposal writer for Hala Supply Chain Services, a leading 3PL provider in Saudi Arabia. Write professional, client-focused content for the specified section. Use Hala brand voice — solution-oriented, confident, specific. Reference operational capabilities when relevant. Output HTML-formatted text suitable for a TipTap editor.",
-    knowledge_base_refs: ["kb-1", "kb-4"],
-    allowed_doc_types: ["proposal", "quote"],
-    allowed_block_types: null,
-    enabled: true,
-    description: "Writes professional proposal sections using Hala brand voice and knowledge base",
-    icon: "PenTool",
-  },
-  {
-    id: "ebot-sla-clause-writer",
-    name: "SLA Clause Drafter",
-    bot_type: "block",
-    provider: "openai",
-    model: "gpt-4o",
-    system_prompt: "You are an SLA clause drafting assistant for Hala Supply Chain Services. Draft clear, enforceable SLA clauses with specific KPIs, measurement methods, penalty structures, and escalation procedures. Follow Saudi commercial law conventions. Output HTML-formatted text.",
-    knowledge_base_refs: ["kb-2"],
-    allowed_doc_types: ["sla"],
-    allowed_block_types: null,
-    enabled: true,
-    description: "Drafts SLA clauses with KPIs, penalties, and escalation procedures",
-    icon: "Shield",
-  },
-  {
-    id: "ebot-executive-summary",
-    name: "Executive Summary Generator",
-    bot_type: "block",
-    provider: "openai",
-    model: "gpt-4o-mini",
-    system_prompt: "You generate concise executive summaries for commercial documents. Summarize the key value proposition, scope of services, commercial terms, and expected outcomes in 2-3 paragraphs. Use professional business English. Output HTML-formatted text.",
-    knowledge_base_refs: ["kb-1", "kb-3"],
-    allowed_doc_types: ["proposal", "quote", "sla"],
-    allowed_block_types: ["intro.narrative", "intro.executive_summary"],
-    enabled: true,
-    description: "Generates concise executive summaries from document context",
-    icon: "FileText",
-  },
-  {
-    id: "ebot-legal-clause",
-    name: "Legal Clause Assistant",
-    bot_type: "block",
-    provider: "google",
-    model: "gemini-1.5-pro",
-    system_prompt: "You are a legal clause drafting assistant specializing in Saudi Arabian commercial contracts for logistics and supply chain services. Draft legally sound clauses covering liability, indemnification, force majeure, dispute resolution, and governing law. Follow KSA commercial law. Output HTML-formatted text.",
-    knowledge_base_refs: ["kb-2"],
-    allowed_doc_types: ["proposal", "sla", "msa"],
-    allowed_block_types: ["legal.terms", "legal.liability", "legal.governing_law"],
-    enabled: true,
-    description: "Drafts legal clauses following Saudi commercial law conventions",
-    icon: "Scale",
-  },
-  // Document bots
-  {
-    id: "ebot-transcript-filler",
-    name: "Transcript → Document Filler",
-    bot_type: "document",
-    provider: "openai",
-    model: "gpt-4o",
-    system_prompt: "You are a document assembly assistant. Given a meeting transcript and a document structure with existing blocks, extract relevant information from the transcript and generate content for each block. Return a JSON array of objects with {block_id, block_key, block_name, suggested_text} for each block that should be updated. The suggested_text must be HTML-formatted. Only include blocks where the transcript contains relevant information. Preserve existing content for blocks not mentioned in the transcript.",
-    knowledge_base_refs: ["kb-1", "kb-3", "kb-4"],
-    allowed_doc_types: ["proposal", "quote", "sla"],
-    allowed_block_types: null,
-    enabled: true,
-    description: "Fills document blocks from meeting transcripts — extracts and maps content automatically",
-    icon: "FileText",
-  },
-  {
-    id: "ebot-legal-reviewer",
-    name: "Legal Review Pass",
-    bot_type: "document",
-    provider: "openai",
-    model: "gpt-4o",
-    system_prompt: "You are a legal review assistant for commercial documents. Review all blocks for legal risks, ambiguous language, missing protections, and compliance issues under Saudi commercial law. For each block that needs attention, suggest improved text. Return a JSON array of objects with {block_id, block_key, block_name, suggested_text} for blocks that need legal improvements. Only include blocks that require changes.",
-    knowledge_base_refs: ["kb-2"],
-    allowed_doc_types: ["proposal", "sla", "msa"],
-    allowed_block_types: null,
-    enabled: true,
-    description: "Reviews all document blocks for legal risks and suggests improvements",
-    icon: "Shield",
-  },
-  {
-    id: "ebot-spellcheck",
-    name: "Spellcheck & Grammar Pass",
-    bot_type: "document",
-    provider: "google",
-    model: "gemini-1.5-flash",
-    system_prompt: "You are a proofreading assistant. Review all document blocks for spelling errors, grammar issues, inconsistent formatting, and style problems. For each block that needs corrections, provide the corrected text. Return a JSON array of objects with {block_id, block_key, block_name, suggested_text} for blocks that need corrections. Preserve HTML formatting. Only include blocks that have actual errors.",
-    knowledge_base_refs: [],
-    allowed_doc_types: ["proposal", "quote", "sla", "msa", "service_order_transport", "service_order_warehouse"],
-    allowed_block_types: null,
-    enabled: true,
-    description: "Checks spelling, grammar, and formatting across all document blocks",
-    icon: "CheckCircle",
-  },
-  {
-    id: "ebot-rewriter",
-    name: "Full Document Rewriter",
-    bot_type: "document",
-    provider: "openai",
-    model: "gpt-4o",
-    system_prompt: "You are a professional document rewriter for Hala Supply Chain Services. Rewrite all document blocks to improve clarity, professionalism, and persuasiveness while maintaining the original meaning and structure. Use Hala brand voice. Return a JSON array of objects with {block_id, block_key, block_name, suggested_text} for every block with improved text. The suggested_text must be HTML-formatted.",
-    knowledge_base_refs: ["kb-1", "kb-4"],
-    allowed_doc_types: ["proposal", "quote"],
-    allowed_block_types: null,
-    enabled: true,
-    description: "Rewrites all blocks for improved clarity and professionalism",
-    icon: "RefreshCw",
-  },
-];
-
-// ============================================================
-// SUPABASE-BACKED STORE (with in-memory fallback)
+// SUPABASE-BACKED STORE — All bots come from the database.
+// Admin Panel (EditorBotBuilder) manages editor_bots.
+// Bot Builder manages ai_bots + ai_bot_versions.
+// GOVERNANCE: No hardcoded bots. No in-memory bot arrays.
 // ============================================================
 
 import {
@@ -239,15 +118,14 @@ async function loadBots(): Promise<EditorBot[]> {
   if (_botCache !== null && Date.now() - _botCacheTime < BOT_CACHE_TTL) return _botCache;
   try {
     const live = await fetchEditorBots();
-    // Cache the result even if empty — empty is a valid state (admin disabled all bots)
+    // Empty is a valid state — admin has no bots configured yet
     _botCache = live;
     _botCacheTime = Date.now();
     return live;
   } catch (err) {
-    console.warn('[ai-runs] loadBots Supabase fallback:', err);
-    // Only fall back to hardcoded bots on actual network/DB error
-    if (_botCache !== null) return _botCache; // use stale cache if available
-    return editorBots; // hardcoded fallback as last resort
+    console.error('[ai-runs] loadBots: Supabase unavailable. Returning empty — bots must be configured in Admin Panel.', err);
+    // Return stale cache if available; otherwise empty. NO hardcoded fallback.
+    return _botCache ?? [];
   }
 }
 
@@ -450,12 +328,27 @@ async function loadGovernedBot(domain: string): Promise<EditorBot | null> {
 }
 
 export async function getBlockBots(docType: string): Promise<EditorBot[]> {
-  // For governed domains (tenders, proposals, documents), read from Bot Builder
+  // For governed domains (tenders, proposals, documents), prefer Bot Builder (ai_bots)
   if (GOVERNED_DOMAINS.includes(docType)) {
     const bot = await loadGovernedBot(docType);
-    return bot ? [bot] : [];
+    if (bot) return [bot];
+    // Bot Builder has no active bot for this domain yet — fall back to editor_bots.
+    // This allows the seeded ebot-tender-proposal-writer to work until an admin
+    // creates a dedicated bot in Bot Builder.
+    // Normalize 'tenders' → 'tender' (editor_bots uses singular doc type).
+    const legacyDocType = docType === "tenders" ? "tender" : docType;
+    const bots = await loadBots();
+    const fallback = bots.filter(b =>
+      b.bot_type === "block" &&
+      b.enabled &&
+      b.allowed_doc_types.includes(legacyDocType)
+    );
+    if (fallback.length > 0) {
+      console.info(`[ai-runs] getBlockBots(${docType}): no Bot Builder bot found, using editor_bots fallback (${fallback.map(b => b.id).join(", ")})`);
+    }
+    return fallback;
   }
-  // For legacy doc types (quote, sla, msa), fall back to editor_bots
+  // For legacy doc types (quote, sla, msa), read from editor_bots
   const bots = await loadBots();
   return bots.filter(b =>
     b.bot_type === "block" &&

@@ -30,8 +30,15 @@ import {
 import { cn } from "@/lib/utils";
 import {
   type EditorBot, type EditorBotType,
-  editorBots, getBlockBots, getDocumentBots,
+  invalidateBotCache,
 } from "@/lib/ai-runs";
+import {
+  fetchEditorBots,
+  createEditorBot,
+  updateEditorBot,
+  deleteEditorBot,
+} from "@/lib/supabase-data";
+
 import {
   fetchCollections,
   fetchBotKBLinks,
@@ -479,7 +486,8 @@ function TestBotPanel({
 // ── Main Page ─────────────────────────────────────────────────
 
 export default function EditorBotBuilder() {
-  const [bots, setBots] = useState<EditorBot[]>([...editorBots]);
+  const [bots, setBots] = useState<EditorBot[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<"all" | EditorBotType>("all");
   const [showEditor, setShowEditor] = useState(false);
@@ -487,6 +495,16 @@ export default function EditorBotBuilder() {
   const [form, setForm] = useState<EditorBotFormData>({ ...emptyForm });
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   const [testBot, setTestBot] = useState<EditorBot | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Load bots from Supabase on mount
+  useEffect(() => {
+    fetchEditorBots()
+      .then(setBots)
+      .catch(() => toast.error("Failed to load bots from Admin Panel"))
+      .finally(() => setLoading(false));
+  }, []);
+
 
   const filteredBots = useMemo(() => {
     return bots.filter(b => {
@@ -524,54 +542,89 @@ export default function EditorBotBuilder() {
     setShowEditor(true);
   };
 
-  const handleDuplicate = (bot: EditorBot) => {
-    const newBot: EditorBot = {
+  const handleDuplicate = async (bot: EditorBot) => {
+    const newBot = {
       ...bot,
       id: `ebot-${crypto.randomUUID().substring(0, 8)}`,
       name: `${bot.name} (Copy)`,
     };
-    setBots(prev => [...prev, newBot]);
-    editorBots.push(newBot);
-    toast.success(`Duplicated "${bot.name}"`);
+    setSaving(true);
+    const created = await createEditorBot(newBot);
+    if (created) {
+      setBots(prev => [...prev, created]);
+      invalidateBotCache();
+      toast.success(`Duplicated "${bot.name}"`);
+    } else {
+      toast.error("Failed to duplicate bot — check Admin Panel connection");
+    }
+    setSaving(false);
   };
 
-  const handleSave = () => {
+
+  const handleSave = async () => {
     if (!form.name.trim()) { toast.error("Bot name is required"); return; }
     if (!form.system_prompt.trim()) { toast.error("System prompt is required"); return; }
     if (!form.description.trim()) { toast.error("Description is required"); return; }
     if (form.allowed_doc_types.length === 0) { toast.error("At least one document type must be selected"); return; }
 
+    setSaving(true);
     if (editingBotId) {
-      setBots(prev => prev.map(b => b.id === editingBotId ? { ...b, ...form } : b));
-      const idx = editorBots.findIndex(b => b.id === editingBotId);
-      if (idx >= 0) Object.assign(editorBots[idx], form);
-      toast.success(`Bot "${form.name}" updated`);
+      const updated = await updateEditorBot(editingBotId, form);
+      if (updated) {
+        setBots(prev => prev.map(b => b.id === editingBotId ? updated : b));
+        invalidateBotCache();
+        toast.success(`Bot "${form.name}" updated`);
+        setShowEditor(false);
+      } else {
+        toast.error("Failed to save bot — check Admin Panel connection");
+      }
     } else {
-      const newBot: EditorBot = {
-        ...form,
-        id: `ebot-${crypto.randomUUID().substring(0, 8)}`,
-      };
-      setBots(prev => [...prev, newBot]);
-      editorBots.push(newBot);
-      toast.success(`Bot "${form.name}" created`);
+      const created = await createEditorBot(form);
+      if (created) {
+        setBots(prev => [...prev, created]);
+        invalidateBotCache();
+        toast.success(`Bot "${form.name}" created`);
+        setShowEditor(false);
+      } else {
+        toast.error("Failed to create bot — check Admin Panel connection");
+      }
     }
-    setShowEditor(false);
+    setSaving(false);
   };
 
-  const handleDelete = (botId: string) => {
+
+  const handleDelete = async (botId: string) => {
     const bot = bots.find(b => b.id === botId);
-    setBots(prev => prev.filter(b => b.id !== botId));
-    const idx = editorBots.findIndex(b => b.id === botId);
-    if (idx >= 0) editorBots.splice(idx, 1);
-    toast.success(`Bot "${bot?.name}" deleted`);
+    setSaving(true);
+    const ok = await deleteEditorBot(botId);
+    if (ok) {
+      setBots(prev => prev.filter(b => b.id !== botId));
+      invalidateBotCache();
+      toast.success(`Bot "${bot?.name}" deleted`);
+    } else {
+      toast.error("Failed to delete bot — check Admin Panel connection");
+    }
+    setSaving(false);
     setShowDeleteConfirm(null);
   };
 
-  const handleToggleEnabled = (botId: string) => {
-    setBots(prev => prev.map(b => b.id === botId ? { ...b, enabled: !b.enabled } : b));
-    const bot = editorBots.find(b => b.id === botId);
-    if (bot) bot.enabled = !bot.enabled;
+
+  const handleToggleEnabled = async (botId: string) => {
+    const bot = bots.find(b => b.id === botId);
+    if (!bot) return;
+    const newEnabled = !bot.enabled;
+    // Optimistic UI update
+    setBots(prev => prev.map(b => b.id === botId ? { ...b, enabled: newEnabled } : b));
+    const updated = await updateEditorBot(botId, { enabled: newEnabled });
+    if (updated) {
+      invalidateBotCache();
+    } else {
+      // Revert on failure
+      setBots(prev => prev.map(b => b.id === botId ? { ...b, enabled: !newEnabled } : b));
+      toast.error("Failed to update bot — check Admin Panel connection");
+    }
   };
+
 
   const providerModels = PROVIDERS.find(p => p.value === form.provider)?.models || [];
 
@@ -589,13 +642,21 @@ export default function EditorBotBuilder() {
             <Bot className="w-6 h-6" /> Editor Bot Builder
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Manage AI bots used in the Document Composer for block and document-level content generation.
+            Manage AI bots used in the Document Composer. All bots are stored in Supabase and governed through this panel.
           </p>
         </div>
-        <Button className="bg-[#1B2A4A] hover:bg-[#2a3d66]" onClick={handleCreate}>
+        <Button className="bg-[#1B2A4A] hover:bg-[#2a3d66]" onClick={handleCreate} disabled={saving}>
           <Plus className="w-4 h-4 mr-2" /> Create Bot
         </Button>
       </div>
+
+      {/* Loading state */}
+      {loading && (
+        <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          <span className="text-sm">Loading bots from Admin Panel...</span>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
@@ -901,9 +962,10 @@ export default function EditorBotBuilder() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowEditor(false)}>Cancel</Button>
-            <Button className="bg-[#1B2A4A] hover:bg-[#2a3d66]" onClick={handleSave}>
-              <Save className="w-4 h-4 mr-2" /> {editingBotId ? "Update Bot" : "Create Bot"}
+            <Button variant="outline" onClick={() => setShowEditor(false)} disabled={saving}>Cancel</Button>
+            <Button className="bg-[#1B2A4A] hover:bg-[#2a3d66]" onClick={handleSave} disabled={saving}>
+              {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+              {editingBotId ? "Update Bot" : "Create Bot"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -919,9 +981,9 @@ export default function EditorBotBuilder() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteConfirm(null)}>Cancel</Button>
-            <Button variant="destructive" onClick={() => showDeleteConfirm && handleDelete(showDeleteConfirm)}>
-              <Trash2 className="w-4 h-4 mr-2" /> Delete
+            <Button variant="outline" onClick={() => setShowDeleteConfirm(null)} disabled={saving}>Cancel</Button>
+            <Button variant="destructive" disabled={saving} onClick={() => showDeleteConfirm && handleDelete(showDeleteConfirm)}>
+              {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />} Delete
             </Button>
           </DialogFooter>
         </DialogContent>

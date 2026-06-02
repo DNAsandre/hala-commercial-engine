@@ -391,6 +391,8 @@ function normalizeInternalTenderStage(value: string | null | undefined): Tender[
   if (lower === 'identified' || lower === 'new') return 'prospecting';
   if (lower === 'qualification' || lower === 'qualifying') return 'qualified';
   if (lower.includes('bid')) return 'qualified';
+  // Proposal preparation / drafting — map to proposal_sent (nearest CRM milestone)
+  if (lower === 'proposal_preparation' || lower === 'tender_drafting' || lower.includes('drafting')) return 'proposal_sent';
   if (lower.includes('submission') || lower.includes('preparing')) return 'proposal_sent';
   if (lower.includes('review') || lower.includes('evaluation')) return 'shortlisted';
   if (lower.includes('negotiation')) return 'contract_negotiation';
@@ -398,6 +400,31 @@ function normalizeInternalTenderStage(value: string | null | undefined): Tender[
   if (lower.includes('lost')) return 'closed_lost';
   if (lower.includes('withdrawn') || lower.includes('cancel')) return 'discontinued';
   return 'prospecting';
+}
+
+/**
+ * Maps a raw commercial_tickets.internal_stage value to the internal tender
+ * process tracker cognition stage used in TenderWorkspaceDetail.
+ * This is separate from TenderMilestone (CRM stage) — it drives which
+ * tab set the workspace opens at.
+ */
+export function mapDbStageToInternalCognitionStage(internal_stage: string | null | undefined): string {
+  if (!internal_stage) return 'identified';
+  const s = internal_stage.toLowerCase().trim();
+  if (s === 'identified' || s === 'new') return 'identified';
+  if (s === 'qualification' || s === 'qualifying') return 'qualification';
+  if (s.includes('bid_no_bid') || s.includes('bid no bid') || s === 'bid') return 'bid_no_bid';
+  if (s === 'solution_design' || s.includes('solution')) return 'solution_design';
+  if (s === 'pnl_pricing' || s.includes('pricing') || s.includes('pnl')) return 'pnl_pricing';
+  if (s === 'tender_drafting' || s === 'proposal_preparation' || s.includes('draft') || s.includes('proposal')) return 'tender_drafting';
+  if (s === 'internal_review' || s.includes('review')) return 'internal_review';
+  if (s === 'approval_matrix' || s.includes('approval')) return 'approval_matrix';
+  if (s === 'final_approved' || s.includes('approved')) return 'final_approved';
+  if (s === 'submitted' || s.includes('submit')) return 'submitted';
+  if (s === 'clarification' || s.includes('clarif')) return 'clarification';
+  if (s === 'awarded' || s.includes('award')) return 'awarded';
+  if (s.includes('lost') || s.includes('withdrawn')) return 'lost_withdrawn';
+  return 'identified';
 }
 
 const REGION_MAP: Record<string, Tender['region']> = {
@@ -541,6 +568,7 @@ function mapCommercialTicketToTender(row: any): Tender {
     solutionDesignData: (typeDetails.solution_design_data && typeof typeDetails.solution_design_data === 'object') ? typeDetails.solution_design_data : undefined,
     pricingData: normalizeTenderPricingData(typeDetails.pricing),
     tenderDraftingData: (typeDetails.tender_drafting && typeof typeDetails.tender_drafting === 'object') ? typeDetails.tender_drafting : undefined,
+    internalStageRaw: row.internal_stage ?? undefined,
   };
 }
 
@@ -715,10 +743,17 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
   const readinessScore = packs.length > 0
     ? Math.round(packs.reduce((s, p) => s + p.readinessScore, 0) / packs.length)
     : 0;
-  const wouldBlockCount = mockGates.filter(g => g.wouldBlock).length;
-  const riskLevel: 'green' | 'amber' | 'red' = wouldBlockCount > 5 ? 'red' : wouldBlockCount > 0 ? 'amber' : 'green';
-
-  console.log(`[SUPA-006] Bundle loaded: ${packs.length} packs, ${placeholders.length} placeholders, ${requiredDocuments.length} docs, ${complianceItems.length} compliance, ${mockGates.length} gates, ${activityEvents.length} activity, ${auditEntries.length} audit`);
+  // riskLevel derived from real compliance gaps and missing documents — no mock gates
+  const complianceGaps = complianceItems.filter(c =>
+    c.status === 'non_compliant' || c.status === 'clarification_required'
+  ).length;
+  const missingDocsCount = requiredDocuments.filter(d =>
+    d.status === 'awaiting' || d.nativeStatus === 'missing'
+  ).length;
+  const riskLevel: 'green' | 'amber' | 'red' =
+    complianceGaps > 5 || missingDocsCount > 5 ? 'red'
+    : complianceGaps > 0 || missingDocsCount > 0 ? 'amber'
+    : 'green';
 
   return {
     tender,

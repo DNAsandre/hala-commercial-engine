@@ -24,7 +24,6 @@ export interface StageConfig {
 
 export function buildSignals(ws: TenderWorkspace, stageValue: string): Signal[] {
   const signals: Signal[] = [];
-  const gates = ws.mockGates;
 
   const daysLeft = ws.tender && ws.tender.submissionDeadline
     ? Math.ceil((new Date(ws.tender.submissionDeadline).getTime() - Date.now()) / 86400000)
@@ -38,21 +37,24 @@ export function buildSignals(ws: TenderWorkspace, stageValue: string): Signal[] 
     });
   }
 
-  const criticalGates = gates.filter(g => g.severity === "critical" && g.status !== "pass" && g.status !== "mock_bypassed");
-  const warningGates = gates.filter(g => g.severity === "high" && g.status !== "pass" && g.status !== "mock_bypassed");
+  // Derive signals from real compliance and document data (not from gates)
+  const complianceGaps = ws.complianceItems.filter(c =>
+    c.status === "non_compliant" || c.status === "clarification_required"
+  ).length;
+  const missingDocs = ws.packs.reduce((s, p) => s + (p.documentsTotal - p.documentsReady), 0);
 
-  if (criticalGates.length > 0) {
+  if (complianceGaps > 0) {
     signals.push({
-      title: `${criticalGates.length} Critical Signal${criticalGates.length > 1 ? "s" : ""}`,
-      reason: criticalGates[0].gateName,
-      recommendation: "Review critical signals before proceeding",
-      severity: "critical",
+      title: `${complianceGaps} Compliance Gap${complianceGaps > 1 ? "s" : ""}`,
+      reason: "Non-compliant or clarification-required items in compliance matrix",
+      recommendation: "Resolve compliance gaps before submission",
+      severity: complianceGaps > 3 ? "high" : "warning",
     });
-  } else if (warningGates.length > 0) {
+  } else if (missingDocs > 0) {
     signals.push({
-      title: `${warningGates.length} Signal${warningGates.length > 1 ? "s" : ""} for Review`,
-      reason: warningGates[0].gateName,
-      recommendation: "Assess signals before next stage",
+      title: `${missingDocs} Document${missingDocs > 1 ? "s" : ""} Incomplete`,
+      reason: "Required documents not yet ready",
+      recommendation: "Complete outstanding required documents",
       severity: "warning",
     });
   }
@@ -96,9 +98,9 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
     const t = p.placeholdersTotal; const r = p.placeholdersPopulated;
     return s + (t > 0 ? Math.round((r / t) * 100) : 0);
   }, 0) / (ws.packs.length || 1);
-  const gates = ws.mockGates;
-  const criticalGates = gates.filter(g => g.severity === "critical" && g.status !== "pass" && g.status !== "mock_bypassed").length;
-  const warnGates = gates.filter(g => (g.severity === "high" || g.severity === "medium") && g.status !== "pass" && g.status !== "mock_bypassed").length;
+  // Real compliance/doc signals — no gate data used
+  const criticalGates = ws.complianceItems.filter(c => c.status === "non_compliant").length;
+  const warnGates = ws.complianceItems.filter(c => c.status === "partial" || c.status === "clarification_required").length;
   const docsPctColor = docsPct >= 80 ? "text-emerald-700" : docsPct >= 50 ? "text-amber-700" : "text-red-700";
   const compPctColor = compliancePct >= 80 ? "text-emerald-700" : compliancePct >= 50 ? "text-amber-700" : "text-red-700";
   const gpColor = targetGp >= 25 ? "text-emerald-700" : targetGp >= 18 ? "text-amber-700" : "text-red-700";
