@@ -1236,8 +1236,10 @@ export async function updateBlockReviewStatus(
 export async function saveBlockAIFlags(
   tenderId: string,
   department: "ops" | "finance" | "legal",
-  flags: Array<{ block_id: string; severity: string; issue: string; recommendation: string }>,
+  flags: Array<{ block_id: string; severity: string; issue: string; recommendation?: string; type?: string; source_field?: string; source_value?: string; block_value?: string }>,
   botId: string,
+  /** New: per-block quality scores from the AI */
+  blockScores?: Array<{ block_id: string; quality_score: number; score_rationale: string }>,
 ): Promise<ActionResult> {
   const existing = await supabase
     .from('commercial_tickets')
@@ -1266,16 +1268,31 @@ export async function saveBlockAIFlags(
         bot_id: botId,
         block_id: f.block_id,
         severity: f.severity,
+        type: f.type || 'general',
         issue: f.issue,
-        recommendation: f.recommendation,
+        recommendation: f.recommendation || '',
+        source_field: f.source_field || '',
+        source_value: f.source_value || '',
+        block_value: f.block_value || '',
         created_at: new Date().toISOString(),
       }));
-    if (blockFlags.length === 0) return b;
+
+    // Merge quality score if available
+    const scoreEntry = blockScores?.find(s => s.block_id === b.id);
+    const existingScores = b.quality_scores && typeof b.quality_scores === 'object' ? b.quality_scores : {};
+    const updatedScores = scoreEntry
+      ? { ...existingScores, [department]: { score: scoreEntry.quality_score, rationale: scoreEntry.score_rationale, updated_at: new Date().toISOString() } }
+      : existingScores;
+
     const existingFlags = Array.isArray(b.ai_flags) ? b.ai_flags : [];
     // Remove old flags from same department, add new ones (idempotent re-run)
     const cleaned = existingFlags.filter((f: any) => f.department !== department);
-    return { ...b, ai_flags: [...cleaned, ...blockFlags] };
+    return {
+      ...b,
+      ai_flags: [...cleaned, ...blockFlags],
+      quality_scores: updatedScores,
+    };
   });
 
-  return updateTenderDraftingData(tenderId, "proposal_blocks", updatedBlocks, `AI ${department} review flags saved`);
+  return updateTenderDraftingData(tenderId, "proposal_blocks", updatedBlocks, `AI ${department} review flags + quality scores saved`);
 }

@@ -168,6 +168,35 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
   const mediumFlags = deptFlags.filter(f => f.severity === "medium").length;
   const lowFlags = deptFlags.filter(f => f.severity === "low").length;
 
+  // ─── Quality Scores ────────────────────────────────────────
+  const blockQualityScores = useMemo(() => {
+    const scores: { blockId: string; score: number; rationale: string; title: string }[] = [];
+    for (const b of filteredBlocks) {
+      const qs = b.quality_scores;
+      if (qs && typeof qs === "object" && qs[department]) {
+        scores.push({
+          blockId: b.id,
+          score: qs[department].score ?? 0,
+          rationale: qs[department].rationale || "",
+          title: b.title || "Untitled",
+        });
+      }
+    }
+    return scores;
+  }, [filteredBlocks, department]);
+
+  const avgQualityScore = blockQualityScores.length > 0
+    ? Math.round(blockQualityScores.reduce((sum, s) => sum + s.score, 0) / blockQualityScores.length)
+    : null;
+
+  const scoreColor = (score: number) => {
+    if (score >= 90) return { ring: "stroke-emerald-500", text: "text-emerald-600", bg: "bg-emerald-50", label: "Excellent" };
+    if (score >= 70) return { ring: "stroke-blue-500", text: "text-blue-600", bg: "bg-blue-50", label: "Good" };
+    if (score >= 50) return { ring: "stroke-amber-500", text: "text-amber-600", bg: "bg-amber-50", label: "Fair" };
+    if (score >= 30) return { ring: "stroke-orange-500", text: "text-orange-600", bg: "bg-orange-50", label: "Poor" };
+    return { ring: "stroke-red-500", text: "text-red-600", bg: "bg-red-50", label: "Critical" };
+  };
+
   const handleApprove = useCallback(async (blockId: string) => {
     setSaving(blockId);
     const res = await updateBlockReviewStatus(tenderId, blockId, department, "Approved", "");
@@ -316,28 +345,79 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
       console.info(`[DeptReview] ${department}: AI response length: ${result.content?.length || 0}`);
       console.info(`[DeptReview] ${department}: AI raw response (first 500 chars):`, result.content?.substring(0, 500));
 
-      // 4. Parse JSON response
-      let aiFlags: any[] = [];
+      // 4. Parse JSON response — new format: array of per-block reports with quality_score + flags[]
+      let aiReports: any[] = [];
       try {
         const cleaned = result.content.replace(/```json\n?/g, "").replace(/```/g, "").trim();
-        aiFlags = JSON.parse(cleaned);
+        aiReports = JSON.parse(cleaned);
       } catch {
         toast.error("AI returned invalid JSON. Check the bot's system prompt in Bot Builder.");
         setAiRunning(false);
         return;
       }
 
-      // 5. Merge: AI flags for drafted blocks + auto-flags for empty blocks
-      const allFlags = [...(Array.isArray(aiFlags) ? aiFlags : []), ...emptyFlags];
+      console.info(`[DeptReview] ${department}: Parsed ${Array.isArray(aiReports) ? aiReports.length : 0} block report(s)`);
 
-      if (allFlags.length > 0) {
-        const res = await saveBlockAIFlags(tenderId, department, allFlags, bot.id);
+      // 5. Extract quality scores + flatten flags from new format
+      const blockScores: Array<{ block_id: string; quality_score: number; score_rationale: string }> = [];
+      let aiFlags: any[] = [];
+
+      if (Array.isArray(aiReports)) {
+        for (const report of aiReports) {
+          if (report.block_id && typeof report.quality_score === 'number') {
+            // New format: { block_id, quality_score, score_rationale, flags: [...] }
+            blockScores.push({
+              block_id: report.block_id,
+              quality_score: report.quality_score,
+              score_rationale: report.score_rationale || '',
+            });
+            // Flatten flags from nested array
+            if (Array.isArray(report.flags)) {
+              for (const flag of report.flags) {
+                aiFlags.push({
+                  block_id: report.block_id,
+                  severity: flag.severity || 'medium',
+                  type: flag.type || 'general',
+                  issue: flag.issue || '',
+                  recommendation: flag.recommendation || '',
+                  source_field: flag.source_field || '',
+                  source_value: flag.source_value || '',
+                  block_value: flag.block_value || '',
+                });
+              }
+            }
+          } else if (report.block_id && report.severity) {
+            // Old format fallback: { block_id, severity, issue, recommendation }
+            aiFlags.push(report);
+          }
+        }
+      }
+
+      console.info(`[DeptReview] ${department}: ${blockScores.length} quality scores, ${aiFlags.length} flags extracted`);
+
+      // 6. Merge: AI flags for drafted blocks + auto-flags for empty blocks
+      const allFlags = [...aiFlags, ...emptyFlags];
+
+      // Add score 0 for empty blocks
+      for (const eb of emptyBlocks) {
+        blockScores.push({
+          block_id: eb.id,
+          quality_score: 0,
+          score_rationale: 'Block has no content — cannot be scored',
+        });
+      }
+
+      if (allFlags.length > 0 || blockScores.length > 0) {
+        const res = await saveBlockAIFlags(tenderId, department, allFlags, bot.id, blockScores);
         if (res.success) {
-          const aiCount = Array.isArray(aiFlags) ? aiFlags.length : 0;
+          const avgScore = blockScores.length > 0
+            ? Math.round(blockScores.reduce((sum, s) => sum + s.quality_score, 0) / blockScores.length)
+            : null;
           const parts: string[] = [];
-          if (aiCount > 0) parts.push(`${aiCount} issue(s) found in ${draftedBlocks.length} drafted block(s)`);
-          if (emptyBlocks.length > 0) parts.push(`${emptyBlocks.length} block(s) flagged as NOT DRAFTED`);
-          toast.success(parts.join(". ") + ".");
+          if (avgScore !== null) parts.push(`Average quality: ${avgScore}%`);
+          if (aiFlags.length > 0) parts.push(`${aiFlags.length} issue(s) in ${draftedBlocks.length} block(s)`);
+          if (emptyBlocks.length > 0) parts.push(`${emptyBlocks.length} block(s) NOT DRAFTED`);
+          toast.success(parts.join(" · "));
           reload();
         } else {
           toast.error(res.error || "Failed to save AI flags.");
@@ -417,7 +497,7 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
               )}
             </div>
 
-            {/* Right: Review Progress */}
+            {/* Right: Review Progress + Quality Gauge */}
             <div>
               <div className="flex items-center gap-1.5 mb-2">
                 <Eye className="w-3.5 h-3.5 text-muted-foreground" />
@@ -425,27 +505,68 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
                   Review Progress
                 </span>
               </div>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="text-center p-2 rounded-md bg-slate-50 border border-slate-200">
-                  <span className="text-lg font-bold text-slate-700">{pendingCount}</span>
-                  <p className="text-[9px] text-muted-foreground">Pending</p>
-                </div>
-                <div className="text-center p-2 rounded-md bg-emerald-50 border border-emerald-200">
-                  <span className="text-lg font-bold text-emerald-700">{approvedCount}</span>
-                  <p className="text-[9px] text-muted-foreground">Approved</p>
-                </div>
-                <div className="text-center p-2 rounded-md bg-red-50 border border-red-200">
-                  <span className="text-lg font-bold text-red-700">{rejectedCount}</span>
-                  <p className="text-[9px] text-muted-foreground">Rejected</p>
+
+              <div className="flex gap-3">
+                {/* Quality Gauge */}
+                {avgQualityScore !== null ? (() => {
+                  const sc = scoreColor(avgQualityScore);
+                  const circumference = 2 * Math.PI * 30;
+                  const offset = circumference - (avgQualityScore / 100) * circumference;
+                  return (
+                    <div className={`flex flex-col items-center justify-center p-2 rounded-lg border ${sc.bg} border-slate-200 min-w-[80px]`}>
+                      <svg width="64" height="64" viewBox="0 0 64 64" className="-rotate-90">
+                        <circle cx="32" cy="32" r="26" fill="none" stroke="currentColor" strokeWidth="5" className="text-slate-200" />
+                        <circle cx="32" cy="32" r="26" fill="none" strokeWidth="5"
+                          className={sc.ring}
+                          strokeDasharray={`${2 * Math.PI * 26}`}
+                          strokeDashoffset={`${(2 * Math.PI * 26) - (avgQualityScore / 100) * (2 * Math.PI * 26)}`}
+                          strokeLinecap="round"
+                          style={{ transition: "stroke-dashoffset 0.5s ease-in-out" }}
+                        />
+                      </svg>
+                      <span className={`text-lg font-bold ${sc.text} -mt-11`}>{avgQualityScore}%</span>
+                      <span className={`text-[8px] font-semibold uppercase mt-5 ${sc.text}`}>{sc.label}</span>
+                      <span className="text-[8px] text-muted-foreground">Quality Score</span>
+                    </div>
+                  );
+                })() : (
+                  <div className="flex flex-col items-center justify-center p-2 rounded-lg border bg-slate-50 border-slate-200 min-w-[80px]">
+                    <span className="text-lg font-bold text-slate-400">—</span>
+                    <span className="text-[8px] text-muted-foreground mt-1">Run AI Review</span>
+                    <span className="text-[8px] text-muted-foreground">to get score</span>
+                  </div>
+                )}
+
+                {/* Block Status Counts */}
+                <div className="flex-1 space-y-1.5">
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <div className="text-center p-1.5 rounded-md bg-slate-50 border border-slate-200">
+                      <span className="text-sm font-bold text-slate-700">{pendingCount}</span>
+                      <p className="text-[8px] text-muted-foreground">Pending</p>
+                    </div>
+                    <div className="text-center p-1.5 rounded-md bg-emerald-50 border border-emerald-200">
+                      <span className="text-sm font-bold text-emerald-700">{approvedCount}</span>
+                      <p className="text-[8px] text-muted-foreground">Approved</p>
+                    </div>
+                    <div className="text-center p-1.5 rounded-md bg-red-50 border border-red-200">
+                      <span className="text-sm font-bold text-red-700">{rejectedCount}</span>
+                      <p className="text-[8px] text-muted-foreground">Rejected</p>
+                    </div>
+                  </div>
+                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 rounded-full transition-all"
+                      style={{ width: `${reviewPct}%` }}
+                    />
+                  </div>
+                  <p className="text-[8px] text-muted-foreground text-right">{reviewPct}% reviewed</p>
+
+                  {/* Scored blocks count */}
+                  {blockQualityScores.length > 0 && (
+                    <p className="text-[8px] text-muted-foreground text-right">{blockQualityScores.length}/{filteredBlocks.length} blocks scored</p>
+                  )}
                 </div>
               </div>
-              <div className="mt-2 h-2 bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-emerald-500 rounded-full transition-all"
-                  style={{ width: `${reviewPct}%` }}
-                />
-              </div>
-              <p className="text-[9px] text-muted-foreground mt-1 text-right">{reviewPct}% complete</p>
             </div>
           </div>
         </CardContent>
@@ -519,6 +640,12 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
         const isDrafted = contentLen > 50;
         const hasNotDraftedFlag = blockFlags.some(f => f.issue?.includes("NOT DRAFTED"));
 
+        // Per-block quality score
+        const blockQS = block.quality_scores?.[department];
+        const blockScore = blockQS?.score ?? null;
+        const blockRationale = blockQS?.rationale || "";
+        const blockSC = blockScore !== null ? scoreColor(blockScore) : null;
+
         return (
           <Card key={block.id} className="border-border shadow-none">
             <CardHeader
@@ -539,6 +666,12 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
                     <XCircle className="w-2.5 h-2.5" /> Empty
                   </Badge>
                 )}
+                {/* Per-block quality score badge */}
+                {blockScore !== null && blockSC && (
+                  <Badge variant="outline" className={`text-[8px] gap-0.5 ${blockSC.bg} ${blockSC.text} border-current/20`}>
+                    {blockScore}% {blockSC.label}
+                  </Badge>
+                )}
                 <Badge variant="outline" className={`text-[8px] ${statusBadge(blockStatus)}`}>{blockStatus}</Badge>
                 {blockFlags.length > 0 && (
                   <Badge variant="outline" className={`text-[8px] gap-0.5 ${hasNotDraftedFlag ? 'border-red-300 text-red-600 bg-red-50' : 'border-amber-200 text-amber-600'}`}>
@@ -550,6 +683,33 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
 
             {isExpanded && (
               <CardContent className="p-4 pt-0 space-y-3">
+                {/* ─── Quality Score Panel ─────────────────────────── */}
+                {blockScore !== null && blockSC && (
+                  <div className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 ${blockSC.bg}`}>
+                    {/* Mini circular gauge */}
+                    <div className="relative shrink-0">
+                      <svg width="40" height="40" viewBox="0 0 40 40" className="-rotate-90">
+                        <circle cx="20" cy="20" r="16" fill="none" stroke="currentColor" strokeWidth="3" className="text-white/50" />
+                        <circle cx="20" cy="20" r="16" fill="none" strokeWidth="3"
+                          className={blockSC.ring}
+                          strokeDasharray={`${2 * Math.PI * 16}`}
+                          strokeDashoffset={`${(2 * Math.PI * 16) - (blockScore / 100) * (2 * Math.PI * 16)}`}
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <span className={`absolute inset-0 flex items-center justify-center text-[10px] font-bold ${blockSC.text}`}>{blockScore}%</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-[10px] font-bold uppercase ${blockSC.text}`}>Quality: {blockSC.label}</span>
+                      </div>
+                      {blockRationale && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{blockRationale}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* AI Flags for this department */}
                 {blockFlags.length > 0 && (
                   <div className="space-y-1.5">
