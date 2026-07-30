@@ -106,64 +106,17 @@ export async function fetchPolicyGates(): Promise<SupabasePolicyGate[]> {
 export async function updatePolicyGateConfig(
   gateId: string,
   updates: { mode?: GateMode; overridable?: boolean },
-  reason: string = 'Admin Console change',
+  reason: string = "Admin Console change",
 ): Promise<ActionResult> {
-  // 1. Fetch current gate
-  const { data: current, error: fetchErr } = await supabase
-    .from('governance_policy_gates')
-    .select('*')
-    .eq('id', gateId)
-    .single();
-
-  if (fetchErr || !current) {
-    return { success: false, error: fetchErr?.message ?? 'Gate not found' };
-  }
-
-  const gate = current as SupabasePolicyGate;
-  const { userName } = actor();
-  const newVersion = gate.rule_version + 1;
-  const now = new Date().toISOString();
-
-  // 2. Build new version history entry
-  const historyEntry = {
-    version: newVersion,
-    mode: updates.mode ?? gate.mode,
-    overridable: updates.overridable ?? gate.overridable,
-    changedBy: userName,
-    changedAt: now,
-    reason,
+  // SC-01 Wave 02 boundary (SX-011): policy-gate configuration changes are
+  // excluded from this build. Zero writes, zero audit entries, no version
+  // bump - the refusal is returned honestly for the caller to display.
+  // Reads (fetchPolicyGates, fetchGovernanceAuditLog) remain real.
+  void gateId; void updates; void reason;
+  return {
+    success: false,
+    error: "Policy-gate configuration changes are not available in this build (deferred to Sprint X - SX-011).",
   };
-
-  const newHistory = [...(gate.rule_version_history || []), historyEntry];
-
-  // 3. Update gate
-  const { error: updateErr } = await supabase
-    .from('governance_policy_gates')
-    .update({
-      mode: updates.mode ?? gate.mode,
-      overridable: updates.overridable ?? gate.overridable,
-      rule_version: newVersion,
-      rule_version_history: newHistory,
-      updated_at: now,
-      updated_by: userName,
-    })
-    .eq('id', gateId);
-
-  if (updateErr) {
-    return { success: false, error: updateErr.message };
-  }
-
-  // 4. Log to governance audit
-  await insertGovernanceAuditEntry({
-    category: 'admin_change',
-    action: 'gate_config_updated',
-    entity_type: 'policy_gate',
-    entity_id: gateId,
-    details: `Gate "${gate.gate_name}" updated to v${newVersion} — Mode: ${updates.mode ?? gate.mode}, Overridable: ${updates.overridable ?? gate.overridable}. Reason: ${reason}`,
-    metadata: { newVersion, updates, reason, previousMode: gate.mode, previousOverridable: gate.overridable },
-  });
-
-  return { success: true };
 }
 
 // ─── Governance Audit Log ────────────────────────────────────
@@ -250,23 +203,16 @@ export async function fetchTenderGovernanceConfig(): Promise<GovernanceConfigEnt
 export async function upsertTenderGovernanceConfig(
   configKey: string,
   configValue: any,
-  category: string = '',
-  description: string = '',
+  category: string = "",
+  description: string = "",
 ): Promise<ActionResult> {
-  const { error } = await supabase
-    .from('tender_governance_config')
-    .upsert({
-      id: `tgc-${configKey}`,
-      config_key: configKey,
-      config_value: configValue,
-      category,
-      description,
-      is_active: true,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'config_key' });
-
-  if (error) return { success: false, error: error.message };
-  return { success: true };
+  // SC-01 Wave 02 boundary (SX-011): governance configuration writes are
+  // excluded from this build. Zero writes; honest refusal.
+  void configKey; void configValue; void category; void description;
+  return {
+    success: false,
+    error: "Governance configuration changes are not available in this build (deferred to Sprint X - SX-011).",
+  };
 }
 
 // ─── Commercial Governance Config ────────────────────────────
@@ -293,21 +239,14 @@ export async function fetchCommercialGovernanceConfig(): Promise<GovernanceConfi
 export async function upsertCommercialGovernanceConfig(
   configKey: string,
   configValue: any,
-  category: string = '',
-  description: string = '',
+  category: string = "",
+  description: string = "",
 ): Promise<ActionResult> {
-  const { error } = await supabase
-    .from('commercial_governance_config')
-    .upsert({
-      id: `cgc-${configKey}`,
-      config_key: configKey,
-      config_value: configValue,
-      category,
-      description,
-      is_active: true,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'config_key' });
-
-  if (error) return { success: false, error: error.message };
-  return { success: true };
+  // SC-01 Wave 02 boundary (SX-011): governance configuration writes are
+  // excluded from this build. Zero writes; honest refusal.
+  void configKey; void configValue; void category; void description;
+  return {
+    success: false,
+    error: "Governance configuration changes are not available in this build (deferred to Sprint X - SX-011).",
+  };
 }

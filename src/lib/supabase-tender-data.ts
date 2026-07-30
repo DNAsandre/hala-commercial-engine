@@ -23,7 +23,6 @@ import type {
   TenderDocumentStatus,
   TenderStageRelevance,
   TenderComplianceItem,
-  TenderMockGate,
   TenderActivityEvent,
   TenderAuditEntry,
   TenderSplitCheck,
@@ -32,11 +31,6 @@ import type {
   TenderWorkspace,
   TenderPackStatus,
   TenderPackType,
-  MockGateStatus,
-  GateSeverity,
-  GateCategory,
-  GateEnforcement,
-  GateRuntime,
   PlaceholderStatus,
   PlaceholderCategory,
   EvidenceStatus,
@@ -71,7 +65,6 @@ export interface TenderWorkspaceBundle {
   requiredDocuments: TenderRequiredDocument[];
   documents: TenderDocument[];
   complianceItems: TenderComplianceItem[];
-  mockGates: TenderMockGate[];
   activityEvents: TenderActivityEvent[];
   auditEntries: TenderAuditEntry[];
   splitChecks: TenderSplitCheck[];
@@ -93,7 +86,6 @@ function emptyTenderWorkspaceBundle(): TenderWorkspaceBundle {
     requiredDocuments: [],
     documents: [],
     complianceItems: [],
-    mockGates: [],
     activityEvents: [],
     auditEntries: [],
     splitChecks: [],
@@ -233,31 +225,6 @@ function mapComplianceItem(row: any): TenderComplianceItem {
   };
 }
 
-function mapGate(row: any): TenderMockGate {
-  return {
-    id: row.id,
-    tenderWorkspaceId: row.tender_workspace_id ?? '',
-    tenderPackId: row.pack_id ?? null,
-    gateCode: row.gate_code ?? '',
-    gateName: row.name ?? '',
-    gateDescription: row.gate_description ?? '',
-    status: (row.status ?? 'not_started') as MockGateStatus,
-    severity: (row.severity ?? 'medium') as GateSeverity,
-    category: (row.category ?? 'placeholder') as GateCategory,
-    enforcementMode: (row.enforcement_mode ?? 'warn_future') as GateEnforcement,
-    runtimeMode: (row.runtime_mode ?? 'warning_only') as GateRuntime,
-    doctrineRequired: row.doctrine ?? false,
-    isMock: row.is_mock ?? false,
-    wouldBlock: row.would_block ?? false,
-    wouldBlockReason: row.would_block_reason ?? '',
-    allowTestBypass: row.allow_test_bypass ?? true,
-    linkedSignal: row.linked_signal ?? '',
-    ownerId: row.owner_id ?? null,
-    ownerName: row.owner_name ?? null,
-    evaluatedAt: row.evaluated_at ?? null,
-    notes: row.notes ?? '',
-  };
-}
 
 function mapActivityEvent(row: any): TenderActivityEvent {
   return {
@@ -662,10 +629,6 @@ async function fetchTenderComplianceItems(packIds: string[]): Promise<TenderComp
   return [];
 }
 
-async function fetchTenderGates(tenderId: string): Promise<TenderMockGate[]> {
-  void tenderId;
-  return [];
-}
 
 async function fetchTenderActivityEvents(tenderId: string): Promise<TenderActivityEvent[]> {
   const { data, error } = await supabase
@@ -742,12 +705,11 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
 
   const packIds = packs.map(p => p.id);
 
-  const [placeholders, requiredDocuments, documents, complianceItems, mockGates, splitChecks, packOutputs, submissionEmails] = await Promise.all([
+  const [placeholders, requiredDocuments, documents, complianceItems, splitChecks, packOutputs, submissionEmails] = await Promise.all([
     fetchTenderPlaceholders(tenderId, packIds),
     fetchTenderRequiredDocuments(packIds),
     fetchTenderDocuments(tenderId),
     fetchTenderComplianceItems(packIds),
-    fetchTenderGates(tenderId),
     fetchTenderSplitChecks(tenderId),
     fetchTenderPackOutputs(tenderId),
     fetchTenderSubmissionEmails(tenderId),
@@ -778,7 +740,6 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
     requiredDocuments,
     documents,
     complianceItems,
-    mockGates,
     activityEvents,
     auditEntries,
     splitChecks,
@@ -808,7 +769,6 @@ export function bundleToTenderWorkspace(bundle: TenderWorkspaceBundle): TenderWo
     requiredDocuments: bundle.requiredDocuments,
     documents: bundle.documents,
     complianceItems: bundle.complianceItems,
-    mockGates: bundle.mockGates,
     activityEvents: bundle.activityEvents,
     auditEntries: bundle.auditEntries,
     // Extended fields — available when bundle is Supabase-backed

@@ -20,7 +20,6 @@ import {
   type DiscoveredBot,
 } from "@/lib/final-pack-bots";
 import { runBlockAIMicrobot, type BlockAIPreview } from "@/lib/final-pack-bot-runtime";
-import { logBlockAIAudit } from "@/lib/ai-client";
 import type { BlockAIDocContext } from "@/lib/final-pack-bot-context";
 import BlockAISparkleMenu from "./BlockAISparkleMenu";
 import BlockAIPreviewCard from "./BlockAIPreviewCard";
@@ -165,23 +164,9 @@ const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
     // Never awaited into the UI path — audit failure must never block an action.
     function auditAction(action: string) {
       if (!aiPreview) return;
-      void logBlockAIAudit({
-        provider: aiPreview.provider,
-        model: aiPreview.model,
-        tokensInput: aiPreview.tokens_input,
-        tokensOutput: aiPreview.tokens_output,
-        latencyMs: aiPreview.latency_ms,
-        status: aiPreview.status === "success" ? "success" : "error",
-        botId: aiPreview.bot_id,
-        botName: aiPreview.bot_name,
-        docInstanceId: docContext?.doc_instance_id,
-        blockId: block.id,
-        humanAction: action,
-        previewStatus:
-          aiPreview.validation?.status ?? (aiPreview.status === "error" ? "advisory" : undefined),
-        botKey: aiPreview.bot_id,
-        botCategory: aiPreview.bot_category,
-      });
+      // SC-01 (deferred to Sprint X - SX-001/SX-011): AI audit logging removed with AI execution;
+      // aiPreview can only exist after a successful run, which cannot occur here.
+      void action;
     }
 
     // ── FPS-008-12 human actions — the ONLY way AI text reaches the block.

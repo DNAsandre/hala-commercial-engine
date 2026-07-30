@@ -472,19 +472,11 @@ export default function ProposalArchitectureTOCTab({ ws, reload, onOpenDocuments
       created_at: new Date().toISOString(),
     }));
 
-    // Save blocks first
-    try {
-      const blockRes = await updateTenderDraftingData(tenderId, "proposal_blocks", newBlocks, "Blocks created from TOC (chain)");
-      if (!blockRes.success) {
-        toast.error(blockRes.error || "Failed to create blocks.");
-        setIsChaining(false);
-        return;
-      }
-    } catch (e: any) {
-      toast.error(e.message || "Failed to create blocks.");
-      setIsChaining(false);
-      return;
-    }
+    // NOTE (SX-011 correction): blocks are built in memory only at this point.
+    // Nothing is persisted until generation has actually succeeded — an
+    // unavailable Auto-draft action must refuse BEFORE any data write. The
+    // ordinary manual block-creation workflow is a separate action and is
+    // unaffected.
 
     // 2. Build tender context
     const t = ws.tender;
@@ -500,37 +492,56 @@ export default function ProposalArchitectureTOCTab({ ws, reload, onOpenDocuments
     const abortController = new AbortController();
     chainAbortRef.current = abortController;
 
-    const result = await generateAllBlocksSequentially(
-      chainConfig.next_bot_id!,
-      newBlocks,
-      tenderContext,
-      (progress) => setChainProgress(progress),
-      abortController.signal,
-    );
+    let result;
+    try {
+      result = await generateAllBlocksSequentially(
+        chainConfig.next_bot_id!,
+        newBlocks,
+        tenderContext,
+        (progress) => setChainProgress(progress),
+        abortController.signal,
+      );
+    } catch (err: any) {
+      // Honest refusal surfacing (SX-011): show the unavailable error and
+      // reset the chain UI instead of leaving it stuck mid-progress.
+      chainAbortRef.current = null;
+      setChainProgress(null);
+      setIsChaining(false);
+      toast.error(err?.message || "Auto-draft is not available.");
+      return;
+    }
 
     chainAbortRef.current = null;
 
-    // 4. Save AI-drafted content back to blocks
-    if (Object.keys(result.results).length > 0) {
-      const updatedBlocks = newBlocks.map(b => {
-        const aiContent = result.results[b.id];
-        if (aiContent) {
-          return {
-            ...b,
-            editor_content: aiContent,
-            draft_content: aiContent,
-            draft_status: "AI Drafted",
-            editor_stage: "draft" as const,
-          };
-        }
-        return b;
-      });
-
-      try {
-        await updateTenderDraftingData(tenderId, "proposal_blocks", updatedBlocks, "AI auto-drafted blocks via chain");
-      } catch (e: any) {
-        console.error("[TOC Chain] Failed to save AI-drafted blocks:", e.message);
+    // 4. Persist blocks + drafted content in ONE write, only after generation
+    // actually succeeded (SX-011: no scaffold write precedes a refusal).
+    const updatedBlocks = newBlocks.map(b => {
+      const aiContent = result.results[b.id];
+      if (aiContent) {
+        return {
+          ...b,
+          editor_content: aiContent,
+          draft_content: aiContent,
+          draft_status: "AI Drafted",
+          editor_stage: "draft" as const,
+        };
       }
+      return b;
+    });
+
+    try {
+      const saveRes = await updateTenderDraftingData(tenderId, "proposal_blocks", updatedBlocks, "Blocks created and AI auto-drafted via chain");
+      if (!saveRes.success) {
+        toast.error(saveRes.error || "Failed to save drafted blocks.");
+        setChainProgress(null);
+        setIsChaining(false);
+        return;
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Failed to save drafted blocks.");
+      setChainProgress(null);
+      setIsChaining(false);
+      return;
     }
 
     setChainResult(result);

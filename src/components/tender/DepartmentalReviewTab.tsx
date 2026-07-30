@@ -27,7 +27,10 @@ import {
   type TenderStageMetric,
   type TenderStageSectionTab,
 } from "./TenderStageTaskShell";
-import { generateAI } from "@/lib/ai-client";
+// SC-01 Wave 02 boundary (deferred to Sprint X - SX-001/SX-011): AI generation is excluded.
+function generateAIUnavailable(): { content: string; tokensInput: number; tokensOutput: number } {
+  throw new Error("AI departmental review is not available in this build (deferred to Sprint X - SX-001/SX-011).");
+}
 import { loadGovernedBotByName } from "@/lib/ai-runs";
 import { updateBlockReviewStatus, saveBlockAIFlags } from "@/lib/supabase-tender-actions";
 import {
@@ -370,17 +373,7 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
       }
 
       // 3. Call generateAI — all bot config comes from DB
-      const result = await generateAI({
-        provider: bot.provider || "openai",
-        model: bot.model || "gpt-4o",
-        systemPrompt: bot.system_prompt,
-        userPrompt: JSON.stringify(fullPayload),
-        temperature: 0.2,
-        workspaceId: tenderId,
-        action: `internal_review_${department}`,
-        botId: bot.id,
-        botName: bot.name,
-      });
+      const result = generateAIUnavailable();
 
       console.info(`[DeptReview] ${department}: AI response length: ${result.content?.length || 0}`);
       console.info(`[DeptReview] ${department}: AI raw response (first 500 chars):`, result.content?.substring(0, 500));
