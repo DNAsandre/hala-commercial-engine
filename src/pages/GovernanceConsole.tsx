@@ -5,7 +5,6 @@
  */
 import { useState, useEffect } from "react";
 import { Shield, Lock, Bot, GitBranch, Settings, Activity, AlertTriangle, CheckCircle, XCircle, Eye, EyeOff, ChevronDown, ChevronRight, History, Zap, Server, Users, RefreshCw, DollarSign, ExternalLink, ArrowLeft, FileText } from "lucide-react";
-import TenderGovernanceConfig from "@/components/tender/TenderGovernanceConfig";
 import CommercialGovernanceConfig from "@/components/commercial/CommercialGovernanceConfig";
 import { Link } from "wouter";
 import { cleanHref } from "@clean/lib/clean-routing";
@@ -21,14 +20,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import {
-  AI_RESTRICTIONS,
-  aiBotConfig,
-  automationGuard,
-  environmentConfig,
-  getComplianceStatus,
-  logAdminChange,
-} from "@/lib/governance";
+// SC-01 Wave 02 closure (SX-006/SX-011): lib/governance and
+// TenderGovernanceConfig are excluded. Panels below either show REAL records
+// (policy gates, governance audit log) or an honest deferred state. Nothing
+// here enforces workflow behavior - governance is advisory before Sprint X.
 import { type GateMode } from "@/lib/store";
 import { useCurrentUser } from "@/hooks/useSupabase";
 import { api } from "@/lib/api-client";
@@ -40,52 +35,26 @@ import {
   type SupabaseGovernanceAuditEntry,
 } from "@/lib/supabase-governance-data";
 
+/* ── Shared honest deferred panel ── */
+function DeferredGovernancePanel({ title, note }: { title: string; note?: string }) {
+  return (
+    <Card className="border border-dashed border-border">
+      <CardContent className="py-10 text-center space-y-2">
+        <Shield className="w-8 h-8 mx-auto text-muted-foreground opacity-40" />
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <p className="text-xs text-muted-foreground max-w-md mx-auto">
+          {note ?? "This capability is not configured in this build. It is deferred to Sprint X and does not restrict any manual workflow."}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 /* ── Compliance Dashboard ── */
 function ComplianceDashboard() {
-  const status = getComplianceStatus();
-  const entries = Object.entries(status);
-  const implemented = entries.filter(([, v]) => v.status === "implemented").length;
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-serif font-bold">Compliance Status</h3>
-          <p className="text-xs text-muted-foreground">Shell Rules Doctrine — 9-Point Verification</p>
-        </div>
-        <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
-          {implemented}/9 Implemented
-        </Badge>
-      </div>
-      <div className="space-y-2">
-        {entries.map(([key, val]) => {
-          const label = key.replace(/^\d+_/, "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-          const num = key.match(/^\d+/)?.[0] || "";
-          return (
-            <Card key={key} className="border border-border shadow-none">
-              <CardContent className="p-3">
-                <div className="flex items-start gap-3">
-                  <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${val.status === "implemented" ? "bg-emerald-100 text-emerald-700" : val.status === "partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
-                    {val.status === "implemented" ? <CheckCircle className="w-4 h-4" /> : val.status === "partial" ? <AlertTriangle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono text-muted-foreground">{num}.</span>
-                      <span className="text-sm font-medium">{label}</span>
-                      <Badge variant="outline" className={`text-[10px] ml-auto ${val.status === "implemented" ? "bg-emerald-50 text-emerald-700" : val.status === "partial" ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-700"}`}>
-                        {val.status}
-                      </Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{val.details}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-    </div>
-  );
+  // SX-006/SX-011: the old self-asserted 9-point compliance status came from
+  // the excluded governance module; honest deferred state instead.
+  return <DeferredGovernancePanel title="Compliance verification is not configured in this build" />;
 }
 
 /* ── Policy Gates ── */
@@ -225,111 +194,9 @@ function PolicyGatesPanel() {
 
 /* ── AI Restrictions ── */
 function AIRestrictionsPanel() {
-  const { data: currentUser } = useCurrentUser();
-  const [killSwitch, setKillSwitch] = useState(aiBotConfig.globalKillSwitch);
-  const [moduleAccess, setModuleAccess] = useState({ ...aiBotConfig.moduleAccess });
-
-  // Load settings from API on mount
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const res = await api.botGovernance.getSettings();
-        if (!mounted || !res.data) return;
-        setKillSwitch(res.data.global_kill_switch ?? aiBotConfig.globalKillSwitch);
-      } catch { /* keep in-memory defaults */ }
-    })();
-    return () => { mounted = false; };
-  }, []);
-
-  const toggleKillSwitch = async () => {
-    const newVal = !killSwitch;
-    setKillSwitch(newVal);
-    aiBotConfig.globalKillSwitch = newVal;
-    logAdminChange("ai_config", "global_kill_switch", newVal ? "kill_switch_activated" : "kill_switch_deactivated", currentUser.id, currentUser.name, `AI Global Kill Switch ${newVal ? "ACTIVATED" : "DEACTIVATED"}`, { newState: newVal });
-    toast[newVal ? "warning" : "success"](newVal ? "AI Kill Switch ACTIVATED — All AI disabled" : "AI Kill Switch deactivated — AI active within restrictions");
-    try {
-      await api.botGovernance.updateSettings({
-        global_kill_switch: newVal,
-        kill_switch_activated_by: newVal ? currentUser.name : null,
-        kill_switch_activated_at: newVal ? new Date().toISOString() : null,
-      });
-    } catch { /* fallback — already updated local state */ }
-  };
-
-  const toggleModule = (key: string) => {
-    const newVal = !(moduleAccess as Record<string, boolean>)[key];
-    setModuleAccess(prev => ({ ...prev, [key]: newVal }));
-    (aiBotConfig.moduleAccess as Record<string, boolean>)[key] = newVal;
-    logAdminChange("ai_config", key, newVal ? "module_enabled" : "module_disabled", currentUser.id, currentUser.name, `AI module "${key}" ${newVal ? "enabled" : "disabled"}`, { module: key, newState: newVal });
-    toast.success(`AI module "${key}" ${newVal ? "enabled" : "disabled"}`);
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-serif font-bold">AI Authority Restrictions</h3>
-          <p className="text-xs text-muted-foreground">Hard-coded constraints — AI/Bots permission boundary</p>
-        </div>
-      </div>
-
-      <Card className={`border shadow-none ${killSwitch ? "border-red-300 bg-red-50/50" : "border-emerald-200 bg-emerald-50/30"}`}>
-        <CardContent className="p-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${killSwitch ? "bg-red-100" : "bg-emerald-100"}`}>
-              <Zap className={`w-5 h-5 ${killSwitch ? "text-red-600" : "text-emerald-600"}`} />
-            </div>
-            <div>
-              <div className="text-sm font-bold">Global AI Kill Switch</div>
-              <div className="text-xs text-muted-foreground">{killSwitch ? "ALL AI functionality is DISABLED" : "AI active within defined restrictions"}</div>
-            </div>
-          </div>
-          <Switch checked={killSwitch} onCheckedChange={toggleKillSwitch} />
-        </CardContent>
-      </Card>
-
-      <Card className="border border-border shadow-none">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-serif flex items-center gap-2"><Lock className="w-4 h-4 text-red-600" /> Hard-Coded Restrictions (Immutable)</CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="space-y-1.5">
-            {AI_RESTRICTIONS.map(r => (
-              <div key={r.id} className="flex items-center justify-between p-2 rounded bg-red-50/50 border border-red-100">
-                <div className="flex items-center gap-2">
-                  <XCircle className="w-3.5 h-3.5 text-red-500" />
-                  <span className="text-xs">{r.description}</span>
-                </div>
-                <Badge variant="outline" className="text-[9px] bg-red-50 text-red-600 border-red-200">
-                  <Lock className="w-2.5 h-2.5 mr-0.5" /> HARD-CODED
-                </Badge>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="border border-border shadow-none">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-serif flex items-center gap-2"><Bot className="w-4 h-4" /> Per-Module AI Access Control</CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="space-y-1.5">
-            {Object.entries(moduleAccess).map(([key, enabled]) => (
-              <div key={key} className="flex items-center justify-between p-2 rounded border border-border">
-                <div className="flex items-center gap-2">
-                  {enabled ? <Eye className="w-3.5 h-3.5 text-emerald-500" /> : <EyeOff className="w-3.5 h-3.5 text-gray-400" />}
-                  <span className="text-xs font-medium">{key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</span>
-                </div>
-                <Switch checked={enabled as boolean} onCheckedChange={() => toggleModule(key)} className="scale-75" disabled={killSwitch} />
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
+  // SX-001/SX-006/SX-011: AI kill switch, module toggles and restriction
+  // config are AI-infrastructure controls - deferred, honest state only.
+  return <DeferredGovernancePanel title="AI restriction controls are not available in this build" />;
 }
 
 /* ── Override Log ── */
@@ -497,58 +364,9 @@ function GovernanceAuditPanel() {
 
 /* ── Environment & Automation ── */
 function EnvironmentPanel() {
-  return (
-    <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-serif font-bold">Environment & Automation Protection</h3>
-        <p className="text-xs text-muted-foreground">Environment guards, rate limiting, recursion protection</p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card className="border border-border shadow-none">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-serif flex items-center gap-2"><Server className="w-4 h-4" /> Environment Protection</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-2">
-            {[
-              { label: "Environment", value: environmentConfig.environment, ok: true },
-              { label: "Production Guard", value: environmentConfig.productionGuard ? "Active" : "Inactive", ok: environmentConfig.productionGuard },
-              { label: "Direct Schema Edits", value: environmentConfig.directSchemaEdits ? "Allowed" : "Blocked", ok: !environmentConfig.directSchemaEdits },
-              { label: "Migration Versioning", value: environmentConfig.migrationVersioning ? "Enforced" : "Disabled", ok: environmentConfig.migrationVersioning },
-              { label: "Destructive Cmd Protection", value: environmentConfig.destructiveCommandProtection ? "Active" : "Inactive", ok: environmentConfig.destructiveCommandProtection },
-              { label: "Migration Version", value: `v${environmentConfig.currentMigrationVersion}`, ok: true },
-            ].map(item => (
-              <div key={item.label} className="flex items-center justify-between p-2 rounded border border-border">
-                <span className="text-xs">{item.label}</span>
-                <Badge variant="outline" className={`text-[10px] ${item.ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>{item.value}</Badge>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card className="border border-border shadow-none">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-serif flex items-center gap-2"><Zap className="w-4 h-4" /> Automation Guards</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-2">
-            {[
-              { label: "Max Recursion Depth", value: String(automationGuard.maxRecursionDepth) },
-              { label: "API Rate Limit", value: `${automationGuard.apiRateLimit}/min` },
-              { label: "Idempotency Keys Active", value: String(automationGuard.webhookIdempotencyKeys.size) },
-              { label: "Max Concurrent Jobs", value: String(automationGuard.backgroundJobBounds.maxConcurrent) },
-              { label: "Max Job Duration", value: `${automationGuard.backgroundJobBounds.maxDuration / 1000}s` },
-              { label: "Auto-Trigger Protection", value: automationGuard.autoTriggerProtection ? "Active" : "Inactive" },
-            ].map(item => (
-              <div key={item.label} className="flex items-center justify-between p-2 rounded border border-border">
-                <span className="text-xs">{item.label}</span>
-                <span className="text-xs font-mono font-medium">{item.value}</span>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
+  // SX-006/SX-011: environment/automation guard values were self-asserted
+  // constants from the excluded governance module - honest deferred state.
+  return <DeferredGovernancePanel title="Environment guard status is not configured in this build" />;
 }
 
 /* ── Versioning & Immutability ── */
@@ -811,7 +629,7 @@ export default function AdminGovernance() {
         <TabsContent value="roles"><RolesPanel /></TabsContent>
         <TabsContent value="environment"><EnvironmentPanel /></TabsContent>
         <TabsContent value="audit"><GovernanceAuditPanel /></TabsContent>
-        <TabsContent value="tender_config"><TenderGovernanceConfig /></TabsContent>
+        <TabsContent value="tender_config"><DeferredGovernancePanel title="Tender governance configuration is not available in this build" /></TabsContent>
         <TabsContent value="commercial_config"><CommercialGovernanceConfig /></TabsContent>
       </Tabs>
     </div>

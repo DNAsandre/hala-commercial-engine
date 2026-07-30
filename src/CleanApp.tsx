@@ -1,12 +1,10 @@
 /**
  * CleanApp — route tree for the clean app surface.
  *
- * MOUNTED AT /clean VIA wouter's <Router base="/clean">.
- * Every path below is base-relative. This is the containment mechanism: a reused
- * component that emits <Link href="/tenders"> resolves to /clean/tenders and
- * therefore cannot escape into the legacy surface. Raw <a href> tags bypass the
- * base — the only two in the copied pages (TenderWorkspace "Final Pack Studio",
- * PdfStudio "Back to Tender") were converted to <Link> in the copies.
+ * SC-01.6 — MOUNTED AT THE APPLICATION ROOT. The standalone app owns its
+ * origin: routes are top-level (/dashboard, /tenders/:id, ...), no /clean
+ * prefix, no wouter base. The historical raw anchors were already converted
+ * to <Link> in these copies.
  *
  * NO-GATE DOCTRINE: no route here is conditional on readiness, completeness,
  * approval or score. Role guards on /system/* are ACCESS CONTROL only.
@@ -81,7 +79,7 @@ function CleanNotFound() {
 
 export default function CleanApp() {
   return (
-    <Router base="/clean">
+    <Router>
       <CleanLayout>
         <Switch>
           <Route path="/">{() => <Redirect to="/dashboard" />}</Route>

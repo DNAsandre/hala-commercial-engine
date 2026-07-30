@@ -14,7 +14,6 @@
 import { nanoid } from "nanoid";
 import type { Workspace, WorkspaceStage, UserRole, PnLModel, Quote } from "./store";
 import { getCurrentUser } from "./auth-state";
-import { STAGE_ORDER, getStageIndex, getStageDisplayName } from "./stage-transition";
 import { syncAuditEntry } from "./supabase-sync";
 import { supabase } from "./supabase";
 import { handleSupabaseError } from "./supabase-error";
@@ -29,25 +28,25 @@ import { handleSupabaseError } from "./supabase-error";
  * cannot be edited without an Admin override.
  */
 export const PRICING_LOCK_STAGE: WorkspaceStage = "sla_drafting";
-const PRICING_LOCK_INDEX = getStageIndex(PRICING_LOCK_STAGE);
 
 /**
  * Returns true when the workspace stage is at or beyond the pricing lock threshold.
  * Tender workspaces are excluded from pricing lock (they have their own governance).
  */
 export function isPricingLocked(workspace: Workspace): boolean {
-  if (workspace.type === "tender") return false;
-  const idx = getStageIndex(workspace.stage);
-  if (idx === -1) return false; // stage not in controlled sequence
-  return idx >= PRICING_LOCK_INDEX;
+  // SC-01 ruling R5 (SX-007/SX-011): pricing-lock controls are ABSENT before
+  // Sprint X and cannot block manual work. No lock in this build.
+  void workspace;
+  return false;
 }
 
 /**
  * Human-readable explanation of why pricing is locked.
  */
 export function getPricingLockReason(workspace: Workspace): string {
-  if (!isPricingLocked(workspace)) return "";
-  return `Pricing is locked because the workspace is at "${getStageDisplayName(workspace.stage)}" stage (lock threshold: ${getStageDisplayName(PRICING_LOCK_STAGE)}).`;
+  // R5: no pricing lock exists in this build; there is never a lock reason.
+  void workspace;
+  return "";
 }
 
 // ============================================================
@@ -381,7 +380,7 @@ export async function logOverrideAudit(payload: OverrideAuditPayload): Promise<v
     userId: user.id,
     userName: user.name,
     timestamp: new Date().toISOString(),
-    details: `[SLA Integrity Override] ${payload.action}: ${payload.reason}. Workspace: ${payload.workspaceId}, Stage: ${getStageDisplayName(payload.workspaceStage)}${payload.field ? `, Field: ${payload.field}` : ""}${payload.oldValue !== undefined ? `, Old: ${payload.oldValue}` : ""}${payload.newValue !== undefined ? `, New: ${payload.newValue}` : ""}`,
+    details: `[SLA Integrity Override] ${payload.action}: ${payload.reason}. Workspace: ${payload.workspaceId}, Stage: ${payload.workspaceStage}${payload.field ? `, Field: ${payload.field}` : ""}${payload.oldValue !== undefined ? `, Old: ${payload.oldValue}` : ""}${payload.newValue !== undefined ? `, New: ${payload.newValue}` : ""}`,
   };
 
   // Sync to Supabase

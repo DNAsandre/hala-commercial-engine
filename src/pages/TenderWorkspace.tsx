@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { formatSAR } from "@/lib/store";
 import { getTenderStatusDisplayName, getTenderStatusColor, type TenderMilestone } from "@/lib/tender-engine";
-import { getPackStatusLabel, getPackTypeLabel, getGateStatusLabel, getSectionStatusLabel, getSectionStatusColor, getSectionApprovalLabel, stageLabelFromInternalStage, type TenderStageRelevance, type TenderWorkspace, type TenderPack } from "@/lib/tender-workspace-data";
+import { getPackStatusLabel, getPackTypeLabel, getSectionStatusLabel, getSectionStatusColor, getSectionApprovalLabel, stageLabelFromInternalStage, type TenderStageRelevance, type TenderWorkspace, type TenderPack } from "@/lib/tender-workspace-data";
 import { useTenderWorkspaceData } from "@/hooks/useTenderWorkspaceData";
 import { toast } from "sonner";
 import { updateTenderPhase, updateTenderCrmStage } from "@/lib/supabase-tender-actions";
@@ -22,7 +22,6 @@ import {
   type TenderInternalStageDefinition,
 } from "@/lib/tender-stage-source-truth";
 
-import { LifecycleLight, getLightState } from "@/components/LifecycleLight";
 import TenderPlaceholdersTab from "@/components/tender/TenderPlaceholdersTab";
 import TenderRequiredDocumentsTab from "@/components/tender/TenderRequiredDocumentsTab";
 import TenderComplianceMatrixTab from "@/components/tender/TenderComplianceMatrixTab";

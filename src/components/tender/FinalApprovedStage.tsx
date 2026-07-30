@@ -32,7 +32,10 @@ import {
   type TenderStageMetric,
   type TenderStageSectionTab,
 } from "./TenderStageTaskShell";
-import { generateAI } from "@/lib/ai-client";
+// SC-01 Wave 02 boundary (deferred to Sprint X - SX-001/SX-011): AI generation is excluded.
+function generateAIUnavailable(): { content: string; tokensInput: number; tokensOutput: number } {
+  throw new Error("Final Approval AI check is not available in this build (deferred to Sprint X - SX-001/SX-011).");
+}
 import { supabase } from "@/lib/supabase";
 import { updateTenderDraftingData, updateTenderFinalApprovedData } from "@/lib/supabase-tender-actions";
 
@@ -413,7 +416,7 @@ function FinalPackTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalI
         "If the tender is ready, return ready_for_final_pack = true.",
       ].join(" ");
 
-      const aiResponse = await generateAI({ provider: "openai", model: botRow.model || "gpt-4o", systemPrompt: `${versionRow.system_instruction}\n\n${versionRow.custom_instruction}\n\n${discontinuedOutputNotice}`, userPrompt: JSON.stringify(payload, null, 2), temperature: versionRow.temperature ?? 0.15, action: "final_approval_check", workspaceId: tenderId, botId: "bot-final-approval", botName: "Final Approval Check" });
+      const aiResponse = generateAIUnavailable();
 
       let result: any;
       try { result = typeof aiResponse.content === "string" ? JSON.parse(aiResponse.content) : aiResponse.content; }

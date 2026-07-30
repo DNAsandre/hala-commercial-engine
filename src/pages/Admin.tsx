@@ -41,13 +41,36 @@ import {
   adminReactivateUser,
 } from "@/lib/admin-api";
 import { useAuth } from "@/contexts/AuthContext";
-import {
-  fetchAIProviders,
-  updateAIProvider,
-  testProviderConnection,
-  type AIProvider,
-  type AIProviderName,
-} from "@/lib/ai-client";
+// SC-01 Wave 02 closure (SX-001/SX-011): ai-client is excluded. Provider
+// records are read directly from the established ai_providers table; provider
+// enable/model/test controls are AI-infrastructure controls and refuse
+// honestly (deferred to Sprint X). Key storage keeps the established
+// store_provider_secret vault RPC.
+type AIProviderName = "openai" | "google";
+interface AIProvider {
+  id: string;
+  name: AIProviderName;
+  displayName: string;
+  modelDefault: string;
+  models: string[];
+  enabled: boolean;
+  config?: { api_key_configured?: boolean; api_key_last4?: string } & Record<string, unknown>;
+}
+const AI_PROVIDER_CONTROL_UNAVAILABLE =
+  "Provider controls are not available in this build (deferred to Sprint X - SX-011).";
+async function fetchProviderRowsAdmin(): Promise<AIProvider[]> {
+  const { data, error } = await supabase.from("ai_providers").select("*").order("name");
+  if (error) { console.warn("[AdminPanel] ai_providers read failed:", error.message); return []; }
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    name: (row.name === "google" ? "google" : "openai") as AIProviderName,
+    displayName: row.display_name ?? row.name ?? row.id,
+    modelDefault: row.model_default ?? row.modelDefault ?? "",
+    models: Array.isArray(row.models) ? row.models : [],
+    enabled: !!row.enabled,
+    config: row.config ?? {},
+  }));
+}
 import { supabase } from "@/lib/supabase";
 import { api } from "@/lib/api-client";
 import { fetchEditorBots } from "@/lib/supabase-data";
@@ -166,44 +189,23 @@ function AIProvidersEmbed() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchAIProviders(true).then((p) => { if (!cancelled) { setProviders(p); setLoading(false); } });
+    fetchProviderRowsAdmin().then((p) => { if (!cancelled) { setProviders(p); setLoading(false); } });
     return () => { cancelled = true; };
   }, []);
 
   const handleToggle = async (id: string, enabled: boolean) => {
-    setProviders((ps) => ps.map((p) => (p.id === id ? { ...p, enabled } : p)));
-    const result = await updateAIProvider(id, { enabled });
-    if (!result) {
-      setProviders((ps) => ps.map((p) => (p.id === id ? { ...p, enabled: !enabled } : p)));
-      toast.error("Failed to update provider — reverted");
-      return;
-    }
-    toast.success(`Provider ${enabled ? "enabled" : "disabled"}`);
+    void id; void enabled;
+    toast.error(AI_PROVIDER_CONTROL_UNAVAILABLE);
   };
 
   const handleModelChange = async (id: string, model: string) => {
-    setProviders((ps) => ps.map((p) => (p.id === id ? { ...p, modelDefault: model } : p)));
-    const result = await updateAIProvider(id, { modelDefault: model });
-    if (!result) {
-      fetchAIProviders(true).then(setProviders);
-      toast.error("Failed to update model");
-    }
+    void id; void model;
+    toast.error(AI_PROVIDER_CONTROL_UNAVAILABLE);
   };
 
   const handleTest = async (name: AIProviderName, id: string) => {
-    setTestingId(id);
-    try {
-      const result = await testProviderConnection(name);
-      if (result.success) {
-        toast.success(`Connection OK (${result.latencyMs}ms)`);
-      } else {
-        toast.error(result.error || "Connection failed");
-      }
-    } catch (err: any) {
-      toast.error(err.message);
-    } finally {
-      setTestingId(null);
-    }
+    void name; void id;
+    toast.error("Provider connection testing is not available in this build (deferred to Sprint X - SX-001/SX-011).");
   };
 
   const handleSaveApiKey = async (id: string) => {

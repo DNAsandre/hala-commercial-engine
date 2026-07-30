@@ -20,32 +20,46 @@ import {
   DollarSign, Activity, Shield, Eye, Pencil, AlertTriangle, Hash,
   Cpu, Database, User, ChevronDown, ChevronUp, BarChart3, Zap
 } from 'lucide-react';
-import {
-  type BotInvocation
-} from '@/lib/bot-governance';
-import { api } from '@/lib/api-client';
-import { fetchAIProviders } from '@/lib/ai-client';
+import { supabase } from "@/lib/supabase";
 
-// Map DB snake_case to component camelCase
-function mapInvocation(row: any): BotInvocation {
+// SC-01 Wave 02 closure (SX-001/SX-004/SX-011): bot-governance and ai-client
+// are excluded; the old-server API is never called. This page reads REAL
+// records: ai_bots, ai_providers, and the ai_usage_logs invocation history.
+// Fields the log table does not record are honestly defaulted, not invented.
+interface BotInvocation {
+  id: string; botId: string; botVersionId: string; userId: string; userRole: string;
+  timestamp: string; context: string; contextType: string; inputPayloadHash: string;
+  knowledgeSourcesUsed: string[]; connectorCallsMade: string[]; output: string;
+  accepted: boolean | null; edited: boolean; cost: number; latencyMs: number;
+  gateChecks: { globalKillSwitch: boolean; providerEnabled: boolean; botEnabled: boolean; connectorsEnabled: boolean; rbacPassed: boolean };
+}
+async function fetchProviderRows(): Promise<Array<{ id: string; displayName: string; enabled: boolean }>> {
+  const { data, error } = await supabase.from("ai_providers").select("*").order("name");
+  if (error) { console.warn("[BotAudit] ai_providers read failed:", error.message); return []; }
+  return (data ?? []).map((row) => ({ id: row.id, displayName: row.display_name ?? row.name ?? row.id, enabled: !!row.enabled }));
+}
+
+// Map an ai_usage_logs row to the display shape. Only recorded fields are
+// mapped; everything else is an honest default (never fabricated).
+function mapUsageLog(row: any): BotInvocation {
   return {
     id: row.id,
-    botId: row.bot_id || row.botId,
-    botVersionId: row.bot_version_id || row.botVersionId || '',
-    userId: row.user_id || row.userId,
-    userRole: row.user_role || row.userRole,
-    timestamp: row.invoked_at || row.timestamp,
-    context: row.context,
-    contextType: row.context_type || row.contextType || 'workspace',
-    inputPayloadHash: row.input_payload_hash || row.inputPayloadHash || '',
-    knowledgeSourcesUsed: row.knowledge_sources_used || row.knowledgeSourcesUsed || [],
-    connectorCallsMade: row.connector_calls_made || row.connectorCallsMade || [],
-    output: row.output,
-    accepted: row.accepted,
-    edited: row.edited ?? false,
-    cost: row.cost ?? 0,
-    latencyMs: row.latency_ms ?? row.latencyMs ?? 0,
-    gateChecks: row.gate_checks || row.gateChecks || { globalKillSwitch: false, providerEnabled: true, botEnabled: true, connectorsEnabled: true, rbacPassed: true },
+    botId: row.bot_id || "",
+    botVersionId: "",
+    userId: row.user_id || "",
+    userRole: "",
+    timestamp: row.created_at || "",
+    context: [row.action, row.workspace_id].filter(Boolean).join(" @ ") || "(not recorded)",
+    contextType: "workspace",
+    inputPayloadHash: "",
+    knowledgeSourcesUsed: [],
+    connectorCallsMade: [],
+    output: row.status === "error" ? ("ERROR: " + (row.error_message || "unknown")) : (row.status || ""),
+    accepted: null,
+    edited: false,
+    cost: Number(row.cost_usd ?? 0),
+    latencyMs: Number(row.latency_ms ?? 0),
+    gateChecks: { globalKillSwitch: false, providerEnabled: true, botEnabled: true, connectorsEnabled: true, rbacPassed: true },
   };
 }
 
@@ -64,21 +78,22 @@ export default function BotAudit() {
     (async () => {
       // Load providers from Supabase (real path)
       try {
-        const supaProviders = await fetchAIProviders();
+        const supaProviders = await fetchProviderRows();
         if (mounted) setProviders(supaProviders.map(p => ({ id: p.id, name: p.displayName, enabled: p.enabled })));
       } catch { /* empty */ }
-
-      // Try loading bots and invocations from API (may fail if backend is down)
+      // Real reads: ai_bots + ai_usage_logs (invocation history). Honest empty on error.
       try {
-        const [invRes, botsRes] = await Promise.all([
-          api.botGovernance.listInvocations(),
-          api.botGovernance.listBots(),
+        const [logsRes, botsRes] = await Promise.all([
+          supabase.from("ai_usage_logs").select("*").order("created_at", { ascending: false }).limit(200),
+          supabase.from("ai_bots").select("*").order("created_at", { ascending: false }),
         ]);
         if (!mounted) return;
-        setInvocations((invRes.data || []).map(mapInvocation));
-        setBots(botsRes.data || []);
-      } catch {
-        // API unavailable — show honest empty state
+        if (logsRes.error) console.warn("[BotAudit] ai_usage_logs read failed:", logsRes.error.message);
+        if (botsRes.error) console.warn("[BotAudit] ai_bots read failed:", botsRes.error.message);
+        setInvocations((logsRes.data ?? []).map(mapUsageLog));
+        setBots(botsRes.data ?? []);
+      } catch (e) {
+        console.warn("[BotAudit] load failed:", (e as Error).message);
       }
     })();
     return () => { mounted = false; };

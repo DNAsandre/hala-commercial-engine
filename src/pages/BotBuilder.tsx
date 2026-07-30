@@ -27,12 +27,23 @@ import {
   Lock, Eye, Pencil, AlertTriangle, CheckCircle2, Info, History,
   ChevronRight, Plus, Trash2, BookOpen, Table, Plug, Link2
 } from 'lucide-react';
-import {
-  HARD_ACTION_DENY_LIST, mockBots, mockBotVersions,
-  type Bot as BotEntity, type BotVersion,
-  type BotType as BotTypeEnum, type ActionBotMode, type MonitorBotOutput, type ConnectorType
-} from '@/lib/bot-governance';
-import { fetchAIProviders } from '@/lib/ai-client';
+// SC-01 Wave 02 closure (SX-001/SX-004/SX-011): bot-governance (mock) and
+// ai-client are excluded. UI value types are declared locally from this
+// page own literal values; providers are read directly from ai_providers.
+type BotTypeEnum = "action" | "monitor";
+type ActionBotMode = "suggest" | "draft" | "explain";
+type MonitorBotOutput = "signal_event" | "report_snapshot" | "dashboard_annotation";
+type ConnectorType = "finance" | "ops" | "tableau" | "crm" | "custom";
+async function fetchProviderRows(): Promise<Array<{ id: string; displayName: string; enabled: boolean; models: string[] }>> {
+  const { data, error } = await supabase.from("ai_providers").select("*").order("name");
+  if (error) { console.warn("[BotBuilder] ai_providers read failed:", error.message); return []; }
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    displayName: row.display_name ?? row.name ?? row.id,
+    enabled: !!row.enabled,
+    models: Array.isArray(row.models) ? row.models : [],
+  }));
+}
 
 const REGIONS = ['East', 'Central', 'West'];
 const ROLES = ['admin', 'manager', 'sales', 'ops', 'finance', 'viewer'];
@@ -138,7 +149,7 @@ export default function BotBuilder() {
   // Load providers from Supabase (same path as Admin → AI Providers tab)
   useEffect(() => {
     let mounted = true;
-    fetchAIProviders().then(provs => {
+    fetchProviderRows().then(provs => {
       if (!mounted) return;
       setApiProviders(provs.map(p => ({
         id: p.id, name: p.displayName, enabled: p.enabled, models: p.models || [],
@@ -491,7 +502,7 @@ export default function BotBuilder() {
               )}
               <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded">
                 <p className="text-xs text-red-700 font-medium flex items-center gap-1">
-                  <Shield className="w-3 h-3" /> {HARD_ACTION_DENY_LIST.length} actions are permanently blocked at system level for ALL bots.
+                  <Shield className="w-3 h-3" /> System-level action deny policies are not configured in this build (deferred to Sprint X).
                 </p>
               </div>
             </CardContent>
@@ -752,7 +763,7 @@ export default function BotBuilder() {
           <Card className="bg-red-50 border-red-200">
             <CardContent className="py-3">
               <p className="text-xs text-red-700 font-medium flex items-center gap-1">
-                <Shield className="w-3 h-3" /> {HARD_ACTION_DENY_LIST.length} actions permanently blocked
+                <Shield className="w-3 h-3" /> Action deny policies not configured in this build
               </p>
               <p className="text-xs text-red-600 mt-1">
                 No bot can: approve, override, modify pricing, change stages, trigger workflows, or deploy.

@@ -23,14 +23,34 @@ import {
   Filter, ToggleLeft, ToggleRight, Radio, Wifi, WifiOff, Shield,
   Copy, Archive, Upload, ChevronRight, AlertOctagon, Bot as BotIcon
 } from 'lucide-react';
-import {
-  toggleGlobalKillSwitch, toggleBotStatus, toggleProviderEnabled, toggleConnectorEnabled,
-  getTotalBotCost, HARD_ACTION_DENY_LIST, mockBots,
-  type Bot as BotType, type BotStatus
-} from '@/lib/bot-governance';
-import { fetchAIProviders } from '@/lib/ai-client';
+// SC-01 Wave 02 closure (SX-001/SX-004/SX-011): bot-governance (mock) and
+// ai-client are excluded from this build. This page shows REAL ai_bots /
+// ai_providers records or honest empty states; bot record management writes
+// go directly to Supabase; AI-infrastructure controls (kill switch, provider/
+// connector toggles, cloning) refuse honestly. No old-server calls.
+type BotStatus = 'draft' | 'active' | 'disabled' | 'archived';
+interface BotType {
+  id: string; name: string; type: string; status: BotStatus; purpose: string;
+  domainsAllowed: string[]; regionsAllowed: string[]; rolesAllowed: string[];
+  currentVersionId: string; providerId: string; model: string;
+  rateLimit: number; costCap: number; timeout: number;
+  createdAt: string; updatedAt: string; lastRunAt: string | null;
+  errorRate: number; costUsage: number; totalInvocations: number;
+}
 import { supabase } from '@/lib/supabase';
-import { api } from '@/lib/api-client';
+const AI_CONTROL_UNAVAILABLE =
+  "This control is not available in this build (deferred to Sprint X - SX-011).";
+/** Display-only read of the established ai_providers table. */
+async function fetchProviderRows(): Promise<Array<{ id: string; displayName: string; enabled: boolean; models: string[] }>> {
+  const { data, error } = await supabase.from('ai_providers').select('*').order('name');
+  if (error) { console.warn('[BotRegistry] ai_providers read failed:', error.message); return []; }
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    displayName: row.display_name ?? row.name ?? row.id,
+    enabled: !!row.enabled,
+    models: Array.isArray(row.models) ? row.models : [],
+  }));
+}
 
 const statusColors: Record<string, string> = {
   active: 'bg-emerald-100 text-emerald-800 border-emerald-200',
@@ -82,7 +102,7 @@ export default function BotRegistry() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [signalEvents, setSignalEvents] = useState<any[]>([]);
 
-  // Load from Supabase + mockBots fallback on mount
+  // Load real records from Supabase on mount (honest empty when none)
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -100,13 +120,11 @@ export default function BotRegistry() {
             }
           }
         } catch (e: any) { console.error('[BotRegistry] ai_bots fetch exception:', e.message); }
-        // Merge in-memory bots created before Supabase was wired
-        const supaIds = new Set(loadedBots.map((b: BotType) => b.id));
-        const localOnly = mockBots.filter(b => !supaIds.has(b.id));
-        if (mounted) setBots([...loadedBots, ...localOnly]);
+        // Honest state: Supabase records only — empty means empty.
+        if (mounted) setBots(loadedBots);
 
         // Load providers from Supabase (real path)
-        const supaProviders = await fetchAIProviders();
+        const supaProviders = await fetchProviderRows();
         if (mounted) {
           setProviders(supaProviders.map(p => ({
             id: p.id, name: p.displayName, enabled: p.enabled, apiEndpoint: '',
@@ -117,36 +135,21 @@ export default function BotRegistry() {
 
         // Connectors and signal events — not wired to Supabase yet
         // Show honest empty state (no fake data)
-      } catch {
-        if (mounted && mockBots.length > 0) {
-          setBots([...mockBots]);
-        }
+      } catch (e: any) {
+        console.error('[BotRegistry] load failed:', e?.message);
+        if (mounted) setBots([]);
       }
     })();
     return () => { mounted = false; };
   }, []);
 
   const handleKillSwitch = async (active: boolean) => {
-    if (active) {
-      if (!confirm('⚠️ ACTIVATING GLOBAL KILL SWITCH\n\nThis will immediately disable ALL bot invocations across the entire system.\n\nNo bot can run until this is deactivated.\n\nAre you sure?')) return;
-    }
-    toggleGlobalKillSwitch(active, 'Amin Al-Rashid');
-    setKillSwitch(active);
-    toast[active ? 'error' : 'success'](
-      active ? 'Global Kill Switch ACTIVATED — All bots disabled' : 'Global Kill Switch deactivated — Bots can now run'
-    );
-    try {
-      await api.botGovernance.updateSettings({
-        global_kill_switch: active,
-        kill_switch_activated_by: active ? 'Amin Al-Rashid' : null,
-        kill_switch_activated_at: active ? new Date().toISOString() : null,
-      });
-    } catch { /* API not available — in-memory already updated */ }
+    void active;
+    toast.error(AI_CONTROL_UNAVAILABLE);
   };
 
   const handleBotToggle = async (botId: string, currentStatus: BotStatus) => {
     const newStatus: BotStatus = currentStatus === 'active' ? 'disabled' : 'active';
-    toggleBotStatus(botId, newStatus);
     setBots(prev => prev.map(b => b.id === botId ? { ...b, status: newStatus, updatedAt: new Date().toISOString() } : b));
     try {
       // Write directly to Supabase (same as Bot Builder) — no dependency on Express API server
@@ -156,40 +159,19 @@ export default function BotRegistry() {
     } catch (err: any) {
       console.error('[BotRegistry] toggle failed:', err.message || err);
       // Rollback optimistic update
-      toggleBotStatus(botId, currentStatus);
       setBots(prev => prev.map(b => b.id === botId ? { ...b, status: currentStatus } : b));
       toast.error(`Failed to ${newStatus === 'active' ? 'enable' : 'disable'} bot — reverted`);
     }
   };
 
   const handleProviderToggle = async (providerId: string, enabled: boolean) => {
-    if (!enabled) {
-      const affectedBots = bots.filter(b => b.providerId === providerId && b.status === 'active');
-      if (affectedBots.length > 0 && !confirm(`Disabling this provider will prevent ${affectedBots.length} active bot(s) from running. Continue?`)) return;
-    }
-    toggleProviderEnabled(providerId, enabled);
-    setProviders(prev => prev.map(p => p.id === providerId ? { ...p, enabled } : p));
-    try {
-      await api.botGovernance.updateProvider(providerId, { enabled });
-      toast.success(`Provider ${enabled ? 'enabled' : 'disabled'}`);
-    } catch {
-      toggleProviderEnabled(providerId, !enabled);
-      setProviders(prev => prev.map(p => p.id === providerId ? { ...p, enabled: !enabled } : p));
-      toast.error(`Failed to update provider — reverted`);
-    }
+    void providerId; void enabled;
+    toast.error(AI_CONTROL_UNAVAILABLE);
   };
 
   const handleConnectorToggle = async (connectorId: string, enabled: boolean) => {
-    toggleConnectorEnabled(connectorId, enabled);
-    setConnectors(prev => prev.map(c => c.id === connectorId ? { ...c, enabled } : c));
-    try {
-      await api.botGovernance.updateConnector(connectorId, { enabled });
-      toast.success(`Connector ${enabled ? 'enabled' : 'disabled'}`);
-    } catch {
-      toggleConnectorEnabled(connectorId, !enabled);
-      setConnectors(prev => prev.map(c => c.id === connectorId ? { ...c, enabled: !enabled } : c));
-      toast.error(`Failed to update connector — reverted`);
-    }
+    void connectorId; void enabled;
+    toast.error(AI_CONTROL_UNAVAILABLE);
   };
 
   const filteredBots = bots.filter(b => {
@@ -201,7 +183,6 @@ export default function BotRegistry() {
 
   const activeCount = bots.filter(b => b.status === 'active').length;
   const signalCount = signalEvents.filter(e => !e.acknowledged).length;
-  const totalCost = getTotalBotCost();
 
   return (
     <div className="space-y-6">
@@ -294,7 +275,7 @@ export default function BotRegistry() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-slate-500 uppercase tracking-wider">Total Cost (USD)</p>
-                <p className="text-2xl font-bold text-slate-900 mt-1">${totalCost.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-slate-900 mt-1">\u2014</p>
                 <p className="text-xs text-slate-400">Cap: $50/day</p>
               </div>
               <DollarSign className="w-8 h-8 text-[#1B2A4A] opacity-40" />
@@ -306,8 +287,8 @@ export default function BotRegistry() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-slate-500 uppercase tracking-wider">Denied Actions</p>
-                <p className="text-2xl font-bold text-red-600 mt-1">{HARD_ACTION_DENY_LIST.length}</p>
-                <p className="text-xs text-slate-400">System-level blocks</p>
+                <p className="text-2xl font-bold text-slate-400 mt-1">\u2014</p>
+                <p className="text-xs text-slate-400">Not configured in this build</p>
               </div>
               <ShieldAlert className="w-8 h-8 text-red-400 opacity-60" />
             </div>
@@ -394,45 +375,26 @@ export default function BotRegistry() {
                         <Button variant="outline" size="sm" onClick={() => navigate(cleanHref(`/system/bot-builder?id=${bot.id}`))}>
                           <Pencil className="w-3 h-3 mr-1" /> Edit
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={async () => {
-                          try {
-                            const { data: cloned } = await api.botGovernance.createBot({
-                              name: `${bot.name} (Copy)`,
-                              type: bot.type,
-                              purpose: bot.purpose,
-                              domains_allowed: bot.domainsAllowed,
-                              regions_allowed: bot.regionsAllowed,
-                              roles_allowed: bot.rolesAllowed,
-                              provider_id: bot.providerId,
-                              model: bot.model,
-                              rate_limit: bot.rateLimit,
-                              cost_cap: bot.costCap,
-                              timeout_sec: bot.timeout,
-                            });
-                            if (cloned) {
-                              setBots(prev => [{ ...bot, id: cloned.id, name: `${bot.name} (Copy)`, status: 'draft' as const }, ...prev]);
-                              toast.success(`Bot "${bot.name}" cloned as draft`);
-                            }
-                          } catch {
-                            setBots(prev => [{ ...bot, id: `clone-${Date.now()}`, name: `${bot.name} (Copy)`, status: 'draft' as const }, ...prev]);
-                            toast.success(`Bot "${bot.name}" cloned (local only)`);
-                          }
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          toast.error("Bot cloning is not available in this build (deferred to Sprint X - SX-011).");
                         }}>
                           <Copy className="w-3 h-3" />
                         </Button>
                         <Button variant="ghost" size="sm" onClick={async () => {
+                          const { error } = await supabase.from('ai_bots').update({ status: 'archived', updated_at: new Date().toISOString() }).eq('id', bot.id);
+                          if (error) { toast.error(`Archive failed: ${error.message}`); return; }
                           setBots(prev => prev.map(b => b.id === bot.id ? { ...b, status: 'archived' as const } : b));
                           toast.success(`Bot "${bot.name}" archived`);
-                          try { await api.botGovernance.updateBot(bot.id, { status: 'archived' }); } catch { /* fallback */ }
                         }} disabled={bot.status === 'archived'}>
                           <Archive className="w-3 h-3" />
                         </Button>
                         {(bot.status === 'draft' || bot.status === 'disabled') && (
                           <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700" onClick={async () => {
                             if (!confirm(`Delete bot "${bot.name}"? This cannot be undone.`)) return;
+                            const { error } = await supabase.from('ai_bots').delete().eq('id', bot.id);
+                            if (error) { toast.error(`Delete failed: ${error.message}`); return; }
                             setBots(prev => prev.filter(b => b.id !== bot.id));
                             toast.success(`Bot "${bot.name}" deleted`);
-                            try { await api.botGovernance.deleteBot(bot.id); } catch { /* fallback */ }
                           }}>
                             <XCircle className="w-3 h-3" />
                           </Button>
@@ -555,15 +517,10 @@ export default function BotRegistry() {
                     </div>
                   </div>
                   {!event.acknowledged && (
-                    <Button variant="outline" size="sm" onClick={async () => {
-                      setSignalEvents(prev => prev.map(e => e.id === event.id ? { ...e, acknowledged: true, acknowledgedBy: 'Amin Al-Rashid', acknowledgedAt: new Date().toISOString() } : e));
-                      try {
-                        await api.botGovernance.acknowledgeSignal(event.id);
-                        toast.success('Signal acknowledged');
-                      } catch {
-                        setSignalEvents(prev => prev.map(e => e.id === event.id ? { ...e, acknowledged: false, acknowledgedBy: null, acknowledgedAt: null } : e));
-                        toast.error('Failed to acknowledge — reverted');
-                      }
+                    <Button variant="outline" size="sm" onClick={() => {
+                      // SC-01: signal events have no established store in this
+                      // build (list is honestly empty); no old-server call.
+                      toast.error(AI_CONTROL_UNAVAILABLE);
                     }}>
                       Acknowledge
                     </Button>
@@ -584,18 +541,9 @@ export default function BotRegistry() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-red-700 mb-4">
-                These actions are permanently blocked for ALL bots at the system level. This list cannot be modified, overridden, or bypassed.
-                Enforcement is at the API level, not UI level.
+              <p className="text-sm text-muted-foreground mb-4">
+                System-level action deny policies are not configured in this build (deferred to Sprint X).
               </p>
-              <div className="grid grid-cols-2 gap-2">
-                {HARD_ACTION_DENY_LIST.map(action => (
-                  <div key={action} className="flex items-center gap-2 py-2 px-3 bg-white rounded border border-red-200">
-                    <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
-                    <span className="text-sm font-mono text-red-800">{action}</span>
-                  </div>
-                ))}
-              </div>
               <div className="mt-4 p-3 bg-white rounded border border-red-200">
                 <p className="text-xs text-red-600 font-medium">
                   IMMUTABLE — This deny list is hardcoded and cannot be modified through any admin interface.

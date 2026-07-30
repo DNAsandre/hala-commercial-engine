@@ -32,11 +32,10 @@ import {
   useApprovalRecords, useAuditLog as useSupabaseAuditLog,
 } from "@/hooks/useSupabase";
 import { Loader2 } from "lucide-react";
-import {
-  advanceStage, getNextStage, getStageDisplayName, checkUndoEligibility, revertStage,
-  getStageHistory, preflightValidation, getWorkspaceOverrides, getLatestOverride,
-  getStrictMode, type TransitionResult, type ValidationFailure,
-} from "@/lib/stage-transition";
+// SC-01 rulings R3/R5 (SX-005/SX-011): the stage-transition gating engine is
+// excluded from this build. Stage movement is human-controlled, free and
+// non-gating; persistence goes through updateWorkspaceDB below. No validation
+// hard-blocks, no strict mode, no override machinery.
 import { toast } from "sonner";
 import { updateWorkspace as updateWorkspaceDB, createAuditEntry } from "@/lib/supabase-data";
 import { logAuditAction } from "@/hooks/useMutations";
@@ -57,10 +56,7 @@ import { DocumentViewer, UploadDialog } from "@/components/DocumentViewer";
 const navigationV1 = true;
 import { handleSupabaseError } from "@/lib/supabase-error";
 import { isPricingLocked, getPricingLockReason, canOverridePricingLock, logOverrideAudit, canEditCosts, type DeltaReport } from "@/lib/sla-integrity";
-import { PricingLockOverrideModal } from "@/components/PricingLockOverrideModal";
-import { SlaVerificationChecklistComponent } from "@/components/SlaVerificationChecklist";
 import { SlaVsPnlDeltaBanner } from "@/components/SlaVsPnlDeltaBanner";
-import { LifecycleLight, getLightState } from "@/components/LifecycleLight";
 import CRMSyncBadge from "@/components/CRMSyncBadge";
 import WorkspaceQuoteSection from "@/components/WorkspaceQuoteSection";
 import WorkspaceProposalSection from "@/components/WorkspaceProposalSection";
@@ -150,6 +146,52 @@ const cycleStatusConfig: Record<string, { color: string; label: string }> = {
   renewal_in_progress: { color: "bg-blue-100 text-blue-700", label: "Renewal In Progress" },
   closed: { color: "bg-gray-100 text-gray-500", label: "Closed" },
 };
+
+// ── Local free stage movement (SC-01 ruling R3: human-controlled, non-gating) ──
+type ValidationFailure = { ruleName: string; error: string };
+type TransitionResult = {
+  success: boolean;
+  fromStage: string;
+  nextStage: string | null;
+  message: string;
+  governanceOverride?: boolean;
+  validationErrors: ValidationFailure[];
+};
+const getStageDisplayName = (stage: string): string => getStageLabel(stage as never);
+function getNextStage(stage: string): string | null {
+  const i = WORKSPACE_STAGES.findIndex((st) => st.value === stage);
+  return i >= 0 && i < WORKSPACE_STAGES.length - 1 ? WORKSPACE_STAGES[i + 1].value : null;
+}
+function getPrevStage(stage: string): string | null {
+  const i = WORKSPACE_STAGES.findIndex((st) => st.value === stage);
+  return i > 0 ? WORKSPACE_STAGES[i - 1].value : null;
+}
+/** Free advance: the only "failure" is having no further stage. */
+function advanceStage(stage: string): TransitionResult {
+  const next = getNextStage(stage);
+  if (!next) return { success: false, fromStage: stage, nextStage: null, message: "Already at the final stage.", validationErrors: [] };
+  return { success: true, fromStage: stage, nextStage: next, message: "Stage advanced.", validationErrors: [] };
+}
+/** Free revert to the previous stage. */
+function revertStage(stage: string): TransitionResult {
+  const prev = getPrevStage(stage);
+  if (!prev) return { success: false, fromStage: stage, nextStage: null, message: "Already at the first stage.", validationErrors: [] };
+  return { success: true, fromStage: stage, nextStage: prev, message: "Stage reverted.", validationErrors: [] };
+}
+// The excluded module's history/override/strict-mode stores do not exist in
+// this build — honest empty values, never fabricated entries.
+type StageHistoryEntry = {
+  id: string; action: string;
+  fromStage: string; toStage: string; timestamp: string; userName: string;
+  overrideReason: string; overriddenRules: string[];
+  overrideRecord?: { overrideReason: string; overriddenRules: string[] };
+};
+const getStageHistory = (_id: string): StageHistoryEntry[] => [];
+const getWorkspaceOverrides = (_id: string): StageHistoryEntry[] => [];
+const getLatestOverride = (_id: string): StageHistoryEntry | null => null;
+const preflightValidation = (_id: string): ValidationFailure[] => [];
+const getStrictMode = (): boolean => false;
+const checkUndoEligibility = (_id: string): { eligible: boolean; remainingMs: number } => ({ eligible: false, remainingMs: 0 });
 
 export default function WorkspaceDetail() {
   const { id } = useParams<{ id: string }>();
@@ -371,51 +413,11 @@ export default function WorkspaceDetail() {
   };
 
   const executeTransition = () => {
-    // SLA Integrity Guard — checklist gate (sla_drafting → contract_ready)
-    if (ws.stage === "sla_drafting" && !slaChecklistComplete && !isAdminUser) {
-      toast.error("SLA Verification Checklist incomplete", {
-        description: "All required checklist items must be verified before advancing to Contract Ready.",
-      });
-      setShowConfirm(false);
-      return;
-    }
-    if (ws.stage === "sla_drafting" && !slaChecklistComplete && isAdminUser) {
-      // Admin can override — log it
-      logOverrideAudit({
-        action: "checklist_override",
-        entityType: "workspace",
-        entityId: ws.id,
-        workspaceId: ws.id,
-        reason: overrideReason.trim() || "Admin override — checklist incomplete",
-        workspaceStage: ws.stage,
-      });
-      toast.warning("Checklist override", { description: "Admin override recorded. Advancing despite incomplete checklist." });
-    }
-
-    // SLA Integrity Guard — delta gate (sla_drafting → contract_ready)
-    if (ws.stage === "sla_drafting" && deltaReport?.hasBlockingDelta && !isAdminUser) {
-      toast.error("SLA vs P&L delta exceeds threshold", {
-        description: deltaReport.summary,
-      });
-      setShowConfirm(false);
-      return;
-    }
-    if (ws.stage === "sla_drafting" && deltaReport?.hasBlockingDelta && isAdminUser) {
-      logOverrideAudit({
-        action: "delta_gate_override",
-        entityType: "workspace",
-        entityId: ws.id,
-        workspaceId: ws.id,
-        reason: overrideReason.trim() || "Admin override — delta exceeds threshold",
-        workspaceStage: ws.stage,
-      });
-      toast.warning("Delta gate override", { description: "Admin override recorded. Advancing despite P&L delta." });
-    }
+    // SC-01 ruling R5 (SX-007/SX-011): SLA checklist and delta gates are
+    // absent in this build and never block manual stage movement.
 
     setShowConfirm(false);
-    const opts = hasWarnings && !isStrictMode && overrideReason.trim()
-      ? { overrideReason: overrideReason.trim() } : undefined;
-    const result = advanceStage(ws.id, opts);
+    const result = advanceStage(ws.stage);
     setTransitionResult(result);
     setConfirmInput(""); setOverrideReason("");
     if (result.success) {
@@ -434,10 +436,10 @@ export default function WorkspaceDetail() {
   };
 
   const handleUndo = () => {
-    const result = revertStage(ws.id);
+    const result = revertStage(ws.stage);
     if (result.success) {
-      // Persist undo to Supabase
-      updateWorkspaceDB(ws.id, { stage: ws.stage } as any);
+      // Persist the reverted-to stage to Supabase
+      updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any);
       logAuditAction("workspace", ws.id, "stage_reverted", getCurrentUser().id, getCurrentUser().name, result.message);
       toast.success("Stage reverted", { description: result.message });
       setShowUndoBanner(false); setTransitionResult(null);
@@ -669,7 +671,7 @@ export default function WorkspaceDetail() {
                 {transitionResult.validationErrors.length > 1 && (
                   <ul className="mt-2 space-y-1">
                     {transitionResult.validationErrors.map((err, i) => (
-                      <li key={i} className="text-xs text-red-600 flex items-start gap-1.5"><span className="text-red-400 mt-0.5">•</span> {err}</li>
+                      <li key={i} className="text-xs text-red-600 flex items-start gap-1.5"><span className="text-red-400 mt-0.5">•</span> {err.error}</li>
                     ))}
                   </ul>
                 )}
@@ -1556,12 +1558,14 @@ export default function WorkspaceDetail() {
                     pnl={wsPnL}
                     onDeltaComputed={setDeltaReport}
                   />
-
-                  {/* SLA Verification Checklist */}
-                  <SlaVerificationChecklistComponent
-                    workspace={ws}
-                    onCompletionChange={setSlaChecklistComplete}
-                  />
+                  {/* SC-01 ruling R5: SLA verification checklist is not
+                      available in this build (deferred to Sprint X - SX-007).
+                      It never blocks manual work. */}
+                  <Card className="border border-dashed border-border shadow-none">
+                    <CardContent className="py-4 text-center">
+                      <p className="text-xs text-muted-foreground">SLA verification checklist is not available in this build (deferred to Sprint X). Manual SLA work is unrestricted.</p>
+                    </CardContent>
+                  </Card>
 
                   {/* SLA Summary in Contracts */}
                   {wsSLAs.length > 0 && (
@@ -2176,28 +2180,8 @@ export default function WorkspaceDetail() {
       </div>
 
       {/* ═══ TEMPLATE PICKER MODAL ═══ */}
-      {/* SLA Integrity Guard — Pricing Lock Override Modal */}
-      <PricingLockOverrideModal
-        open={pricingOverrideOpen}
-        onClose={() => setPricingOverrideOpen(false)}
-        onConfirm={async (reason) => {
-          await logOverrideAudit({
-            action: "pricing_lock_override",
-            entityType: "workspace",
-            entityId: ws.id,
-            workspaceId: ws.id,
-            field: pricingOverrideField,
-            reason,
-            workspaceStage: ws.stage,
-          });
-          toast.success("Pricing lock override recorded", {
-            description: "Override logged to audit trail. Escalation feeds are disconnected.",
-          });
-          setPricingOverrideOpen(false);
-        }}
-        fieldLabel={pricingOverrideField === "pricing_snapshot" ? "All Pricing Fields" : pricingOverrideField}
-        workspaceStage={getStageDisplayName(ws.stage)}
-      />
+      {/* SC-01 ruling R5: pricing lock is absent in this build (SX-007) — no
+          override modal exists and nothing blocks manual pricing work. */}
     </TooltipProvider>
   );
 }

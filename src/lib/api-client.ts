@@ -12,7 +12,11 @@
 import { supabase } from './supabase';
 import { getEmptyContractStatuses, getEmptySlaRecords, getSlaProcessIsolationReason } from './process-isolation';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+// SC-01 Wave 02 (Codex F-01 runtime finding): the old Hala Express server
+// (localhost:3001) is NEVER a permitted target. This client binds only to the
+// sibling clean server; endpoints it does not implement yet fail honestly
+// (registered in UNRESOLVED-RUNTIME-REGISTER.md for SC-01.4).
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5301';
 
 // ─── Request Helper ──────────────────────────────────────
 
