@@ -191,7 +191,10 @@ const getWorkspaceOverrides = (_id: string): StageHistoryEntry[] => [];
 const getLatestOverride = (_id: string): StageHistoryEntry | null => null;
 const preflightValidation = (_id: string): ValidationFailure[] => [];
 const getStrictMode = (): boolean => false;
-const checkUndoEligibility = (_id: string): { eligible: boolean; remainingMs: number } => ({ eligible: false, remainingMs: 0 });
+// Undo window: a genuine LOCAL session timer started only after a stage
+// advance has been confirmed persisted AND the workspace rehydrated. It is
+// UX convenience state, not a fabricated record and not a gate.
+const UNDO_WINDOW_MS = 10_000;
 
 export default function WorkspaceDetail() {
   const { id } = useParams<{ id: string }>();
@@ -255,7 +258,7 @@ export default function WorkspaceDetail() {
     return requestedTab || 'overview';
   }, []);
 
-  const { data: ws, loading: wsLoading } = useWorkspace(id!, isProposalRoute ? "proposal" : "workspace");
+  const { data: ws, loading: wsLoading, refetch: refetchWs } = useWorkspace(id!, isProposalRoute ? "proposal" : "workspace");
   const { data: wsQuotes, loading: qLoading } = useQuotesByWorkspace(id!);
   const { data: wsProposals, loading: pLoading } = useProposalsByWorkspace(id!);
   const { data: allApprovals, loading: appLoading } = useApprovalRecords();
@@ -389,18 +392,21 @@ export default function WorkspaceDetail() {
   // Supporting docs
   const wsSupportDocs = integrationEnabled ? getSupportingDocs(ws.id, showDocArchived) : [];
 
-  // ── Undo countdown timer ──
+  // ── Undo countdown timer (local window; starts only after confirmed,
+  //     rehydrated stage advance) ──
+  const lastAdvanceAtRef = useRef<number | null>(null);
   const startUndoTimer = () => {
     if (undoTimerRef.current) clearInterval(undoTimerRef.current);
     setShowUndoBanner(true);
     const tick = () => {
-      const eligibility = checkUndoEligibility(ws.id);
-      if (eligibility.remainingMs <= 0 || !eligibility.eligible) {
+      const started = lastAdvanceAtRef.current;
+      const remainingMs = started === null ? 0 : UNDO_WINDOW_MS - (Date.now() - started);
+      if (remainingMs <= 0) {
         setShowUndoBanner(false);
         if (undoTimerRef.current) clearInterval(undoTimerRef.current);
         return;
       }
-      setUndoCountdown(Math.ceil(eligibility.remainingMs / 1000));
+      setUndoCountdown(Math.ceil(remainingMs / 1000));
     };
     tick();
     undoTimerRef.current = setInterval(tick, 1000);
@@ -439,15 +445,19 @@ export default function WorkspaceDetail() {
       toast.error("Stage advance NOT saved", { description: err?.message || "Database write failed. The workspace stage is unchanged." });
       return;
     }
-    // Confirmed persisted — only now report success and write audit history.
+    // Confirmed persisted — REHYDRATE the workspace from Supabase so the
+    // displayed tracker and any subsequent Undo operate on the persisted
+    // stage, not the stale cached object. Only then report success, write
+    // audit history and open the undo window.
+    await refetchWs();
     setTransitionResult(result);
     logAuditAction("workspace", ws.id, "stage_advanced", getCurrentUser().id, getCurrentUser().name,
       `${getStageDisplayName(result.fromStage)} → ${getStageDisplayName(result.nextStage!)}`);
     toast.success(result.message, {
       description: `${getStageDisplayName(result.fromStage)} → ${getStageDisplayName(result.nextStage!)}`,
     });
+    lastAdvanceAtRef.current = Date.now();
     startUndoTimer();
-    forceUpdate(n => n + 1);
   };
 
   const handleUndo = async () => {
@@ -468,12 +478,14 @@ export default function WorkspaceDetail() {
       toast.error("Stage revert NOT saved", { description: err?.message || "Database write failed. The workspace stage is unchanged." });
       return;
     }
-    // Confirmed persisted — only now report success and write audit history.
+    // Confirmed persisted — rehydrate to the persisted stage before
+    // reporting; then close the undo window.
+    lastAdvanceAtRef.current = null;
+    await refetchWs();
     logAuditAction("workspace", ws.id, "stage_reverted", getCurrentUser().id, getCurrentUser().name, result.message);
     toast.success("Stage reverted", { description: result.message });
     setShowUndoBanner(false); setTransitionResult(null);
     if (undoTimerRef.current) clearInterval(undoTimerRef.current);
-    forceUpdate(n => n + 1);
   };
 
   const dismissResult = () => setTransitionResult(null);

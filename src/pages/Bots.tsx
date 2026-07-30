@@ -239,8 +239,8 @@ export default function BotRegistry() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-slate-500 uppercase tracking-wider">Total Cost (USD)</p>
-                <p className="text-2xl font-bold text-slate-900 mt-1">\u2014</p>
-                <p className="text-xs text-slate-400">Cap: $50/day</p>
+                <p className="text-2xl font-bold text-slate-400 mt-1">—</p>
+                <p className="text-xs text-slate-400">Not tracked in this build</p>
               </div>
               <DollarSign className="w-8 h-8 text-[#1B2A4A] opacity-40" />
             </div>
@@ -251,7 +251,7 @@ export default function BotRegistry() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-slate-500 uppercase tracking-wider">Denied Actions</p>
-                <p className="text-2xl font-bold text-slate-400 mt-1">\u2014</p>
+                <p className="text-2xl font-bold text-slate-400 mt-1">—</p>
                 <p className="text-xs text-slate-400">Not configured in this build</p>
               </div>
               <ShieldAlert className="w-8 h-8 text-red-400 opacity-60" />
@@ -417,7 +417,7 @@ export default function BotRegistry() {
               <div className="flex items-center gap-2 text-amber-800 text-sm">
                 <Shield className="w-4 h-4" />
                 <span className="font-medium">Monitor bots can only use connectors in read-only mode.</span>
-                <span className="text-amber-600">If a connector is disabled, no bot can access it regardless of individual bot permissions.</span>
+                <span className="text-muted-foreground">Connector records are shown read-only. No bot invocation path exists in this build, so connector settings do not restrict any active behavior (enforcement is deferred to Sprint X).</span>
               </div>
             </CardContent>
           </Card>
@@ -474,9 +474,10 @@ export default function BotRegistry() {
                 System-level action deny policies are not configured in this build (deferred to Sprint X).
               </p>
               <div className="mt-4 p-3 bg-white rounded border border-red-200">
-                <p className="text-xs text-red-600 font-medium">
-                  IMMUTABLE — This deny list is hardcoded and cannot be modified through any admin interface.
-                  Any bot attempt to execute these actions will be blocked and logged as a security event.
+                <p className="text-xs text-muted-foreground font-medium">
+                  No deny-list enforcement exists in this build: there is no
+                  bot invocation path to block. System-level deny policies are
+                  deferred to Sprint X.
                 </p>
               </div>
             </CardContent>

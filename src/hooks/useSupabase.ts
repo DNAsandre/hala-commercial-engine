@@ -25,7 +25,7 @@ interface UseQueryResult<T> {
   data: T;
   loading: boolean;
   error: string | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
 }
 
 /**

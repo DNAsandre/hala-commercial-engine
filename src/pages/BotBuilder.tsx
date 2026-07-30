@@ -363,7 +363,7 @@ export default function BotBuilder() {
                 </div>
               </div>
               <div>
-                <Label>Custom Instruction <span className="text-xs text-slate-400 font-normal">(Editable)</span></Label>
+                <Label>Custom Instruction <span className="text-xs text-slate-400 font-normal">(read-only in this build)</span></Label>
                 <Textarea value={customInstruction} onChange={e => setCustomInstruction(e.target.value)}
                   placeholder="Add specific instructions for this bot's behavior..." rows={4} />
               </div>
@@ -533,7 +533,7 @@ export default function BotBuilder() {
                   </Select>
                   {selectedProvider && !selectedProvider.enabled && (
                     <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3" /> Provider is currently disabled. Bot cannot run.
+                      <AlertTriangle className="w-3 h-3" /> Provider record is marked disabled.
                     </p>
                   )}
                 </div>
@@ -645,30 +645,16 @@ export default function BotBuilder() {
           </Card>
 
           {/* Runtime Flow */}
-          <Card>
+          <Card className="border border-dashed">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2"><Shield className="w-4 h-4" /> Runtime Invocation Flow</CardTitle>
+              <CardTitle className="text-sm flex items-center gap-2"><Shield className="w-4 h-4" /> Runtime Invocation</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-1">
-                {[
-                  '1. Check Global Kill Switch',
-                  '2. Check Provider Enabled',
-                  '3. Check Bot Enabled',
-                  '4. Check Connector Enabled',
-                  '5. Check RBAC',
-                  '6. Load immutable bot_version',
-                  '7. Enforce allowed actions',
-                  '8. Execute via provider adapter',
-                  '9. Log invocation',
-                  '10. Return output (human acceptance)',
-                ].map((step, i) => (
-                  <div key={i} className="flex items-center gap-2 text-xs text-slate-600 py-1">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />
-                    {step}
-                  </div>
-                ))}
-              </div>
+              <p className="text-xs text-muted-foreground">
+                No bot invocation or enforcement path exists in this build.
+                Runtime execution, permission checks and invocation logging are
+                deferred to Sprint X and are not active behavior here.
+              </p>
             </CardContent>
           </Card>
 
@@ -707,7 +693,8 @@ export default function BotBuilder() {
                 <Shield className="w-3 h-3" /> Action deny policies not configured in this build
               </p>
               <p className="text-xs text-red-600 mt-1">
-                No bot can: approve, override, modify pricing, change stages, trigger workflows, or deploy.
+                No bot invocation path exists in this build, so no bot can act
+                at all; deny policies arrive with Sprint X.
               </p>
             </CardContent>
           </Card>
