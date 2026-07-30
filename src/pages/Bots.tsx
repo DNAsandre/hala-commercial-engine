@@ -60,12 +60,6 @@ const statusColors: Record<string, string> = {
   archived: 'bg-slate-50 text-slate-400 border-slate-100',
 };
 
-const providerStatusColors: Record<string, string> = {
-  healthy: 'text-emerald-600',
-  degraded: 'text-amber-500',
-  offline: 'text-red-500',
-};
-
 // Map DB snake_case to component camelCase
 function mapBot(row: any): BotType {
   return {
@@ -127,10 +121,12 @@ export default function BotRegistry() {
         // Load providers from Supabase (real path)
         const supaProviders = await fetchProviderRows();
         if (mounted) {
+          // SC-01 boundary correction: recorded fields only — the enabled
+          // flag is NOT translated into a health claim, and no rate/cost
+          // numbers are invented.
           setProviders(supaProviders.map(p => ({
-            id: p.id, name: p.displayName, enabled: p.enabled, apiEndpoint: '',
-            models: p.models || [], costPerToken: 0, maxRatePerMinute: 30,
-            status: p.enabled ? 'healthy' : 'offline', lastHealthCheck: '',
+            id: p.id, name: p.displayName, enabled: p.enabled,
+            models: p.models || [],
           })));
         }
 
@@ -173,9 +169,8 @@ export default function BotRegistry() {
           <h1 className="text-2xl font-bold font-serif text-slate-900">Bots</h1>
           <p className="text-sm text-slate-500 mt-1">Human-First. AI assists. Humans decide. Bots have zero inherent authority.</p>
         </div>
-        <Button onClick={() => navigate(cleanHref('/system/bot-builder'))} className="bg-[#1B2A4A] hover:bg-[#2a3d66]">
-          <BotIcon className="w-4 h-4 mr-2" /> Create New Bot
-        </Button>
+        {/* SC-01 boundary correction: bot creation is a current-wave excluded
+            write path — no creation entry point exists on this page. */}
       </div>
 
       {/* Global Kill Switch Banner */}
@@ -195,16 +190,13 @@ export default function BotRegistry() {
               <div>
                 <h3 className="font-semibold text-lg">Global Bot Kill Switch</h3>
                 <p className="text-sm text-slate-500">
-                  {killSwitch
-                    ? `ACTIVE — All bot invocations blocked.`
-                    : 'Inactive — Bots can run according to their individual permissions'}
+                  Not configured in this build (deferred to Sprint X). This
+                  display does not control or describe live bot execution.
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <span className={`text-sm font-medium ${killSwitch ? 'text-red-600' : 'text-emerald-600'}`}>
-                {killSwitch ? 'ALL BOTS DISABLED' : 'System Active'}
-              </span>
+              <span className="text-sm font-medium text-muted-foreground">Read-only</span>
               <Switch
                 checked={killSwitch}
                 disabled
@@ -369,24 +361,16 @@ export default function BotRegistry() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2 text-sm">
+                    {/* SC-01 boundary correction: only recorded fields are
+                        shown. Health, rate limits and cost are not measured
+                        in this build and are not claimed. */}
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-500">Status</span>
-                      <span className={`font-medium flex items-center gap-1 ${providerStatusColors[provider.status]}`}>
-                        {provider.status === 'healthy' ? <CheckCircle2 className="w-3 h-3" /> : provider.status === 'degraded' ? <AlertTriangle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                        {provider.status}
-                      </span>
+                      <span className="text-slate-500">Enabled (recorded)</span>
+                      <span className="font-medium text-slate-700">{provider.enabled ? "Yes" : "No"}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-slate-500">Models</span>
-                      <span className="text-slate-700">{provider.models.length} available</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500">Rate Limit</span>
-                      <span className="text-slate-700">{provider.maxRatePerMinute}/min</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500">Cost/Token</span>
-                      <span className="text-slate-700">${provider.costPerToken}</span>
+                      <span className="text-slate-700">{provider.models.length} recorded</span>
                     </div>
                     <div className="pt-2 border-t">
                       <p className="text-xs text-slate-400">Models: {provider.models.join(', ')}</p>

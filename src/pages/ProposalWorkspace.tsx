@@ -412,42 +412,68 @@ export default function WorkspaceDetail() {
     setTimeout(() => inputRef.current?.focus(), 100);
   };
 
-  const executeTransition = () => {
+  const executeTransition = async () => {
     // SC-01 ruling R5 (SX-007/SX-011): SLA checklist and delta gates are
     // absent in this build and never block manual stage movement.
+    // Boundary correction: persistence is AWAITED — success and audit history
+    // are reported only after Supabase confirms the write; failures surface
+    // honestly and database truth is untouched (no local state to restore).
 
     setShowConfirm(false);
     const result = advanceStage(ws.stage);
-    setTransitionResult(result);
     setConfirmInput(""); setOverrideReason("");
-    if (result.success) {
-      // Persist stage change to Supabase
-      updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any);
-      logAuditAction("workspace", ws.id, "stage_advanced", getCurrentUser().id, getCurrentUser().name,
-        `${getStageDisplayName(result.fromStage)} → ${getStageDisplayName(result.nextStage!)}${result.governanceOverride ? " (governance override)" : ""}`);
-      toast.success(result.governanceOverride ? "Stage advanced with governance override" : result.message, {
-        description: `${getStageDisplayName(result.fromStage)} → ${getStageDisplayName(result.nextStage!)}`,
-      });
-      startUndoTimer();
-      forceUpdate(n => n + 1);
-    } else {
-      toast.error("Stage advance blocked", { description: result.message });
+    if (!result.success) {
+      setTransitionResult(result);
+      toast.error("Stage advance not possible", { description: result.message });
+      return;
     }
+    try {
+      const persisted = await updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any);
+      if (!persisted) {
+        toast.error("Stage advance NOT saved", {
+          description: "Supabase rejected the update (possibly a concurrent edit). The workspace stage is unchanged.",
+        });
+        return;
+      }
+    } catch (err: any) {
+      toast.error("Stage advance NOT saved", { description: err?.message || "Database write failed. The workspace stage is unchanged." });
+      return;
+    }
+    // Confirmed persisted — only now report success and write audit history.
+    setTransitionResult(result);
+    logAuditAction("workspace", ws.id, "stage_advanced", getCurrentUser().id, getCurrentUser().name,
+      `${getStageDisplayName(result.fromStage)} → ${getStageDisplayName(result.nextStage!)}`);
+    toast.success(result.message, {
+      description: `${getStageDisplayName(result.fromStage)} → ${getStageDisplayName(result.nextStage!)}`,
+    });
+    startUndoTimer();
+    forceUpdate(n => n + 1);
   };
 
-  const handleUndo = () => {
+  const handleUndo = async () => {
     const result = revertStage(ws.stage);
-    if (result.success) {
-      // Persist the reverted-to stage to Supabase
-      updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any);
-      logAuditAction("workspace", ws.id, "stage_reverted", getCurrentUser().id, getCurrentUser().name, result.message);
-      toast.success("Stage reverted", { description: result.message });
-      setShowUndoBanner(false); setTransitionResult(null);
-      if (undoTimerRef.current) clearInterval(undoTimerRef.current);
-      forceUpdate(n => n + 1);
-    } else {
-      toast.error("Undo blocked", { description: result.message });
+    if (!result.success) {
+      toast.error("Undo not possible", { description: result.message });
+      return;
     }
+    try {
+      const persisted = await updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any);
+      if (!persisted) {
+        toast.error("Stage revert NOT saved", {
+          description: "Supabase rejected the update. The workspace stage is unchanged.",
+        });
+        return;
+      }
+    } catch (err: any) {
+      toast.error("Stage revert NOT saved", { description: err?.message || "Database write failed. The workspace stage is unchanged." });
+      return;
+    }
+    // Confirmed persisted — only now report success and write audit history.
+    logAuditAction("workspace", ws.id, "stage_reverted", getCurrentUser().id, getCurrentUser().name, result.message);
+    toast.success("Stage reverted", { description: result.message });
+    setShowUndoBanner(false); setTransitionResult(null);
+    if (undoTimerRef.current) clearInterval(undoTimerRef.current);
+    forceUpdate(n => n + 1);
   };
 
   const dismissResult = () => setTransitionResult(null);

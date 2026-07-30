@@ -214,12 +214,36 @@ export default function BotBuilder() {
   const [chainLabel, setChainLabel] = useState('Auto-draft all blocks');
   const [allBots, setAllBots] = useState<any[]>([]);
 
-  const handleSave = async () => {
-    // SC-01 Wave 02 boundary correction (SX-011): bot record creation and
-    // mutation are current-wave excluded write paths. Bot configuration is
-    // displayed read-only; no ai_bots / ai_bot_versions write occurs here.
-    toast.error("Bot creation and editing are not available in this build (deferred to Sprint X - SX-011).");
-  };
+  // SC-01 boundary correction (SX-011): bot creation and editing are
+  // current-wave excluded write paths. Without an existing bot id there is
+  // nothing to view - show an honest unavailable state, never an editable
+  // creation form. With an id, the recorded configuration renders inside a
+  // disabled <fieldset>, which makes every native input, textarea, select,
+  // switch, checkbox, slider and button genuinely inert at the DOM level.
+  if (!editId) {
+    return (
+      <div className="space-y-6">
+        <div className="mb-4">
+          <Link href={cleanHref("/system/bots")}>
+            <Button variant="ghost" size="sm" className="text-slate-500 hover:text-slate-700">
+              <ArrowLeft className="w-4 h-4 mr-1" /> Back to Bots
+            </Button>
+          </Link>
+        </div>
+        <Card className="border border-dashed">
+          <CardContent className="py-12 text-center space-y-2">
+            <Bot className="w-8 h-8 mx-auto text-muted-foreground opacity-40" />
+            <h2 className="text-base font-semibold">Bot creation is not available in this build</h2>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto">
+              Creating and editing bots is deferred to Sprint X (SX-011). Open an
+              existing bot from the Bots page to view its recorded configuration
+              read-only.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -238,23 +262,22 @@ export default function BotBuilder() {
           </Button>
           <div>
             <h1 className="text-2xl font-bold font-serif text-slate-900">
-              {existingBot ? `Edit: ${existingBot.name}` : 'Create New Bot'}
+              {existingBot ? `View: ${existingBot.name}` : "Bot configuration"}
             </h1>
             <p className="text-sm text-slate-500">
-              {existingBot ? `Version ${versionHistory[0]?.version || 1} — Last updated ${new Date(existingBot.updatedAt).toLocaleDateString()}` : 'All new bots start in Draft status'}
+              {existingBot ? `Version ${versionHistory[0]?.version || 1} — read-only view; editing is deferred to Sprint X` : "Loading recorded configuration…"}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => navigate(cleanHref('/system/bots'))}>Cancel</Button>
-          <Button className="bg-[#1B2A4A] hover:bg-[#2a3d66]" onClick={handleSave}>
-            <Save className="w-4 h-4 mr-2" /> {existingBot ? 'Publish New Version' : 'Create Bot'}
-          </Button>
+          <Badge variant="outline" className="text-[10px] text-muted-foreground">Read-only in this build</Badge>
+          <Button variant="outline" onClick={() => navigate(cleanHref("/system/bots"))}>Back</Button>
         </div>
       </div>
 
+      <fieldset disabled aria-readonly="true" className="contents">
       <div className="grid grid-cols-3 gap-6">
-        {/* Main Form — 2 columns */}
+        {/* Main Form — 2 columns (read-only: disabled fieldset) */}
         <div className="col-span-2 space-y-6">
 
           {/* Section 1: Identity */}
@@ -690,6 +713,7 @@ export default function BotBuilder() {
           </Card>
         </div>
       </div>
+      </fieldset>
     </div>
   );
 }
