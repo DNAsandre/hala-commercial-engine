@@ -25,7 +25,7 @@ interface UseQueryResult<T> {
   data: T;
   loading: boolean;
   error: string | null;
-  refetch: () => Promise<void>;
+  refetch: () => Promise<boolean>;
 }
 
 /**
@@ -46,7 +46,7 @@ function useQuery<T>(fetcher: () => Promise<T>, defaultValue: T, deps: any[] = [
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<boolean> => {
     setLoading(true);
     setError(null);
     try {
@@ -54,11 +54,13 @@ function useQuery<T>(fetcher: () => Promise<T>, defaultValue: T, deps: any[] = [
       if (mountedRef.current) {
         setData(result);
       }
+      return true;
     } catch (err: any) {
       if (mountedRef.current) {
         console.warn("[useQuery] fetch failed:", err.message);
         setError(err.message || "Failed to fetch data");
       }
+      return false;
     } finally {
       if (mountedRef.current) {
         setLoading(false);

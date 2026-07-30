@@ -74,6 +74,8 @@ import ProposalOverviewPanel from "@/components/proposal-workspace/ProposalOverv
 import ProposalSnapshotCard from "@/components/proposal-workspace/ProposalSnapshotCard";
 import CrmPipelineStrip, { getCrmStageLabel } from "@/components/proposal-workspace/CrmPipelineStrip";
 import { getProposalStageLabel } from "@/components/proposal-workspace/proposal-stages";
+import { supabase } from "@/lib/supabase";
+import { changeStage as changeTicketStage } from "@/lib/intake-save";
 import { createDefaultWorkspaceData, type ProposalWorkspaceData, logProposalAudit, calcQualificationReadiness, calcDiscoveryCompleteness, calcSolutionReadiness, calcPricingConfidence } from "@/components/proposal-workspace/proposal-workspace-state";
 import {
   isWorkspaceIntegrationEnabled, updateRenewalOwner,
@@ -292,13 +294,28 @@ export default function WorkspaceDetail() {
   const workspaceEscalations: Array<{ status: string }> = [];
   const setWorkspaceEscalations = () => undefined;
 
-  // ── Sync CRM Pipeline Stage from ws.crmStage on first load ──
+  // ── Seed BOTH trackers from the recorded commercial_tickets row so the
+  //    displayed stages are the persisted stages and survive a page reload.
+  //    (crm_pipeline_stage / internal_stage are established columns.) ──
   useEffect(() => {
     if (ws?.crmStage && ws.crmStage !== crmPipelineStage) {
       setCrmPipelineStage(ws.crmStage);
     }
+    const ticketId = ws?.crmDealId;
+    if (!ticketId) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("commercial_tickets")
+        .select("internal_stage, crm_pipeline_stage")
+        .eq("id", ticketId)
+        .single();
+      if (cancelled || error || !data) return;
+      if (data.internal_stage) setProposalStage(data.internal_stage);
+    })();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ws?.id]);
+  }, [ws?.id, ws?.crmDealId]);
 
   // CLEAN APP: `diLoading` removed — it came from useDocInstances (doc_instances),
   // which was composer-only and has been severed.
@@ -324,9 +341,21 @@ export default function WorkspaceDetail() {
   const effectiveStage = getEffectiveStage(ws);
   const effectiveStageIdx = effectiveStages.findIndex(s => s.value === effectiveStage);
 
-  // ── CRM Stage handler (updates pipeline_stage ONLY, never internal stage) ──
-  const handleCrmStageChange = (newStage: import("@/lib/store").CRMStage) => {
+  // ── CRM Stage handler (updates crm_pipeline_stage ONLY, never internal
+  //    stage). Persists FIRST to the established commercial_tickets column;
+  //    state and success are reported only after the confirmed write. ──
+  const handleCrmStageChange = async (newStage: import("@/lib/store").CRMStage) => {
     const oldStage = crmPipelineStage;
+    const ticketId = ws.crmDealId;
+    if (!ticketId) {
+      toast.error("CRM stage not saved", { description: "No commercial ticket is linked to this workspace." });
+      return;
+    }
+    const { error } = await changeTicketStage(ticketId, "crm_pipeline_stage", oldStage, newStage, getCurrentUser().name);
+    if (error) {
+      toast.error("CRM stage NOT saved", { description: error + ". The displayed stage is unchanged." });
+      return;
+    }
     setCrmPipelineStage(newStage);
     logProposalAudit({
       workspaceId: ws.id,
@@ -338,12 +367,23 @@ export default function WorkspaceDetail() {
       newValue: newStage,
       details: `CRM Pipeline stage moved: ${getCrmStageLabel(oldStage as any)} → ${getCrmStageLabel(newStage)}`,
     });
-    toast.success(`CRM Pipeline → ${getCrmStageLabel(newStage)}`);
+    toast.success(`CRM Pipeline → ${getCrmStageLabel(newStage)}`, { description: "Saved to the commercial ticket." });
   };
 
-  // ── Proposal Stage handler (updates internal stage ONLY, never CRM pipeline) ──
-  const handleProposalStageChange = (newStage: string) => {
+  // ── Proposal Stage handler (updates internal_stage ONLY, never CRM
+  //    pipeline). Persists FIRST; state changes only after confirmed write. ──
+  const handleProposalStageChange = async (newStage: string) => {
     const oldStage = proposalStage;
+    const ticketId = ws.crmDealId;
+    if (!ticketId) {
+      toast.error("Internal stage not saved", { description: "No commercial ticket is linked to this workspace." });
+      return;
+    }
+    const { error } = await changeTicketStage(ticketId, "internal_stage", oldStage, newStage, getCurrentUser().name);
+    if (error) {
+      toast.error("Internal stage NOT saved", { description: error + ". The displayed stage is unchanged." });
+      return;
+    }
     setProposalStage(newStage);
     logProposalAudit({
       workspaceId: ws.id,
@@ -355,6 +395,7 @@ export default function WorkspaceDetail() {
       newValue: newStage,
       details: `Internal Proposal stage moved: ${getProposalStageLabel(oldStage)} → ${getProposalStageLabel(newStage)}`,
     });
+    toast.success(`Internal stage → ${getProposalStageLabel(newStage)}`, { description: "Saved to the commercial ticket." });
   };
   // We'll use a simple customer lookup from the workspace data for now
   // The full customer data is fetched via the CustomerDetail page
@@ -449,7 +490,13 @@ export default function WorkspaceDetail() {
     // displayed tracker and any subsequent Undo operate on the persisted
     // stage, not the stale cached object. Only then report success, write
     // audit history and open the undo window.
-    await refetchWs();
+    const refreshed = await refetchWs();
+    if (!refreshed) {
+      toast.warning("Stage saved, but the page could not refresh", {
+        description: "The change IS persisted in Supabase. Reload the page to see the current stage. Undo is unavailable until the display reflects the saved stage.",
+      });
+      return;
+    }
     setTransitionResult(result);
     logAuditAction("workspace", ws.id, "stage_advanced", getCurrentUser().id, getCurrentUser().name,
       `${getStageDisplayName(result.fromStage)} → ${getStageDisplayName(result.nextStage!)}`);
@@ -481,7 +528,15 @@ export default function WorkspaceDetail() {
     // Confirmed persisted — rehydrate to the persisted stage before
     // reporting; then close the undo window.
     lastAdvanceAtRef.current = null;
-    await refetchWs();
+    const undoRefreshed = await refetchWs();
+    if (!undoRefreshed) {
+      toast.warning("Stage reverted, but the page could not refresh", {
+        description: "The revert IS persisted in Supabase. Reload the page to see the current stage.",
+      });
+      setShowUndoBanner(false); setTransitionResult(null);
+      if (undoTimerRef.current) clearInterval(undoTimerRef.current);
+      return;
+    }
     logAuditAction("workspace", ws.id, "stage_reverted", getCurrentUser().id, getCurrentUser().name, result.message);
     toast.success("Stage reverted", { description: result.message });
     setShowUndoBanner(false); setTransitionResult(null);
