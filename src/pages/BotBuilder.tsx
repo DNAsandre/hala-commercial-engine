@@ -215,92 +215,10 @@ export default function BotBuilder() {
   const [allBots, setAllBots] = useState<any[]>([]);
 
   const handleSave = async () => {
-    if (!name.trim()) { toast.error('Bot name is required'); return; }
-    if (!purpose.trim()) { toast.error('Bot purpose is required'); return; }
-    if (roles.length === 0) { toast.error('At least one role must be selected'); return; }
-    if (!changeNote.trim() && existingBot) { toast.error('Change note is required for version updates'); return; }
-    if (maxTokens > 8000) { toast.error('Max tokens cannot exceed 8000'); return; }
-    if (rateLimit > 100) { toast.error('Rate limit cannot exceed 100'); return; }
-    if (costCap > 100) { toast.error('Cost cap cannot exceed $100'); return; }
-
-    const currentActions = type === 'action' ? actionModes : monitorOutputs;
-    const now = new Date().toISOString();
-
-    const botPayload = {
-      name: name.trim(),
-      display_name: name.trim(),
-      type,
-      status: existingBot?.status || 'draft',
-      purpose: purpose.trim(),
-      domains_allowed: domains,
-      regions_allowed: regions,
-      roles_allowed: roles,
-      provider_id: providerId,
-      model,
-      rate_limit: rateLimit,
-      cost_cap: costCap,
-      timeout_sec: timeoutSec,
-      updated_at: now,
-    };
-
-    const versionPayload = {
-      system_instruction: baseSystemInstruction,
-      custom_instruction: customInstruction,
-      safety_rules: safetyRules,
-      temperature,
-      max_tokens: maxTokens,
-      allowed_actions: currentActions,
-      provider_id: providerId,
-      model,
-      connector_snapshot: Object.fromEntries(Object.entries(connectorState)),
-      permission_snapshot: { domainsAllowed: domains, regionsAllowed: regions, rolesAllowed: roles },
-      knowledge_base_ids: selectedKB,
-      change_note: changeNote || 'Initial version',
-      chain_config: chainNextBotId && chainNextBotId !== 'none' ? {
-        next_bot_id: chainNextBotId,
-        prompt_user: chainPromptUser,
-        chain_label: chainLabel || 'Auto-draft all blocks',
-      } : {},
-      created_at: now,
-      created_by: 'admin',
-    };
-
-    try {
-      if (existingBot) {
-        // Update existing bot in Supabase
-        const { error: botErr } = await supabase.from('ai_bots').update(botPayload).eq('id', existingBot.id);
-        if (botErr) throw botErr;
-
-        // Create new version — MUST check for errors
-        const nextVersion = (versionHistory[0]?.version || 0) + 1;
-        const { error: verErr } = await supabase.from('ai_bot_versions').insert({ ...versionPayload, bot_id: existingBot.id, version: nextVersion });
-        if (verErr) throw new Error(`Bot saved but version insert FAILED: ${verErr.message}`);
-
-        toast.success(`Bot "${name}" updated (version ${nextVersion})`);
-      } else {
-        // Insert new bot to Supabase
-        const { data: newBot, error: botErr } = await supabase.from('ai_bots').insert({ ...botPayload, created_at: now, created_by: 'admin' }).select().single();
-        if (botErr) throw botErr;
-
-        const botId = newBot.id;
-        // Insert first version — MUST check for errors
-        const { data: newVer, error: verErr } = await supabase.from('ai_bot_versions').insert({ ...versionPayload, bot_id: botId, version: 1 }).select().single();
-        if (verErr) throw new Error(`Bot created but version insert FAILED: ${verErr.message}. Bot ID: ${botId}`);
-
-        // Update current_version_id
-        if (newVer?.id) {
-          await supabase.from('ai_bots').update({ current_version_id: newVer.id }).eq('id', botId);
-        }
-
-        toast.success(`Bot "${name}" created with version 1`);
-      }
-    } catch (err: any) {
-      console.error('[BotBuilder] Supabase save FAILED:', err.message, err.code, err);
-      toast.error(`SAVE FAILED: ${err.message || 'Unknown database error'}. The bot was NOT saved. Check RLS policies on ai_bots / ai_bot_versions.`);
-      return; // Stay on page — do NOT navigate away
-    }
-
-    navigate(cleanHref('/system/bots'));
+    // SC-01 Wave 02 boundary correction (SX-011): bot record creation and
+    // mutation are current-wave excluded write paths. Bot configuration is
+    // displayed read-only; no ai_bots / ai_bot_versions write occurs here.
+    toast.error("Bot creation and editing are not available in this build (deferred to Sprint X - SX-011).");
   };
 
   return (

@@ -29,7 +29,6 @@ import { useCurrentUser } from "@/hooks/useSupabase";
 import { api } from "@/lib/api-client";
 import {
   fetchPolicyGates,
-  updatePolicyGateConfig,
   fetchGovernanceAuditLog,
   type SupabasePolicyGate,
   type SupabaseGovernanceAuditEntry,
@@ -73,27 +72,6 @@ function PolicyGatesPanel() {
 
   useEffect(() => { loadGates(); }, []);
 
-  const handleModeChange = async (gate: SupabasePolicyGate, newMode: GateMode) => {
-    const result = await updatePolicyGateConfig(gate.id, { mode: newMode }, `Mode changed to ${newMode} via Admin Console`);
-    if (result.success) {
-      toast.success(`Gate "${gate.gate_name}" mode changed to ${newMode.toUpperCase()}. Persisted to Supabase.`);
-      loadGates();
-    } else {
-      toast.warning(`Gate mode change failed — UI not blocked.`, { description: result.error });
-    }
-  };
-
-  const handleOverridableToggle = async (gate: SupabasePolicyGate) => {
-    const newVal = !gate.overridable;
-    const result = await updatePolicyGateConfig(gate.id, { overridable: newVal }, `Override ${newVal ? "enabled" : "disabled"} via Admin Console`);
-    if (result.success) {
-      toast.success(`Gate "${gate.gate_name}" override ${newVal ? "enabled" : "disabled"}. Persisted.`);
-      loadGates();
-    } else {
-      toast.warning(`Toggle failed — UI not blocked.`, { description: result.error });
-    }
-  };
-
   if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading policy gates from Supabase…</p>;
 
   return (
@@ -113,7 +91,7 @@ function PolicyGatesPanel() {
 
       <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/50 flex items-center gap-2">
         <Shield className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-        <p className="text-xs text-blue-800">Advisory mode: gate changes persist to Supabase but do not enforce production rules until explicit approval and testing are complete.</p>
+        <p className="text-xs text-blue-800">Advisory display only: recorded gate configuration is shown read-only. Configuration changes are not available in this build (deferred to Sprint X) and nothing here enforces or restricts any workflow.</p>
       </div>
 
       <div className="space-y-2">
@@ -134,19 +112,13 @@ function PolicyGatesPanel() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3" onClick={e => e.stopPropagation()}>
-                    <Select value={gate.mode} onValueChange={(v: string) => handleModeChange(gate, v as GateMode)}>
-                      <SelectTrigger className={`w-24 h-7 text-[10px] font-medium ${gate.mode === "enforce" ? "border-red-300 text-red-700" : gate.mode === "warn" ? "border-amber-300 text-amber-700" : "border-gray-300 text-gray-500"}`}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="enforce">Enforce</SelectItem>
-                        <SelectItem value="warn">Warn</SelectItem>
-                        <SelectItem value="off">Off</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    {/* SC-01 Wave 02 boundary correction (SX-011): gate configuration
+                        cannot be changed in this build - recorded value shown
+                        read-only, no control, no persistence claim. */}
+                    <Badge variant="outline" className={`text-[10px] font-medium ${gate.mode === "enforce" ? "border-red-300 text-red-700" : gate.mode === "warn" ? "border-amber-300 text-amber-700" : "border-gray-300 text-gray-500"}`}>{gate.mode}</Badge>
                     <div className="flex items-center gap-1.5">
                       <span className="text-[10px] text-muted-foreground">Override</span>
-                      <Switch checked={gate.overridable} onCheckedChange={() => handleOverridableToggle(gate)} className="scale-75" />
+                      <span className="text-[10px] text-muted-foreground">{gate.overridable ? "Yes" : "No"} (read-only)</span>
                     </div>
                   </div>
                 </div>

@@ -23,11 +23,12 @@ import {
   Filter, ToggleLeft, ToggleRight, Radio, Wifi, WifiOff, Shield,
   Copy, Archive, Upload, ChevronRight, AlertOctagon, Bot as BotIcon
 } from 'lucide-react';
-// SC-01 Wave 02 closure (SX-001/SX-004/SX-011): bot-governance (mock) and
-// ai-client are excluded from this build. This page shows REAL ai_bots /
-// ai_providers records or honest empty states; bot record management writes
-// go directly to Supabase; AI-infrastructure controls (kill switch, provider/
-// connector toggles, cloning) refuse honestly. No old-server calls.
+// SC-01 Wave 02 boundary correction (SX-001/SX-004/SX-011): bot-governance
+// (mock) and ai-client are excluded from this build. Bot and AI records are
+// displayed as REAL READ-ONLY records (ai_bots / ai_providers) or honest
+// empty states. Bot activation, status mutation, archive, delete, cloning
+// and infrastructure-control writes are current-wave excluded write paths -
+// no such write exists in this page. No old-server calls.
 type BotStatus = 'draft' | 'active' | 'disabled' | 'archived';
 interface BotType {
   id: string; name: string; type: string; status: BotStatus; purpose: string;
@@ -143,37 +144,7 @@ export default function BotRegistry() {
     return () => { mounted = false; };
   }, []);
 
-  const handleKillSwitch = async (active: boolean) => {
-    void active;
-    toast.error(AI_CONTROL_UNAVAILABLE);
-  };
-
-  const handleBotToggle = async (botId: string, currentStatus: BotStatus) => {
-    const newStatus: BotStatus = currentStatus === 'active' ? 'disabled' : 'active';
-    setBots(prev => prev.map(b => b.id === botId ? { ...b, status: newStatus, updatedAt: new Date().toISOString() } : b));
-    try {
-      // Write directly to Supabase (same as Bot Builder) — no dependency on Express API server
-      const { error } = await supabase.from('ai_bots').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', botId);
-      if (error) throw error;
-      toast.success(`Bot ${newStatus === 'active' ? 'enabled' : 'disabled'}`);
-    } catch (err: any) {
-      console.error('[BotRegistry] toggle failed:', err.message || err);
-      // Rollback optimistic update
-      setBots(prev => prev.map(b => b.id === botId ? { ...b, status: currentStatus } : b));
-      toast.error(`Failed to ${newStatus === 'active' ? 'enable' : 'disable'} bot — reverted`);
-    }
-  };
-
-  const handleProviderToggle = async (providerId: string, enabled: boolean) => {
-    void providerId; void enabled;
-    toast.error(AI_CONTROL_UNAVAILABLE);
-  };
-
-  const handleConnectorToggle = async (connectorId: string, enabled: boolean) => {
-    void connectorId; void enabled;
-    toast.error(AI_CONTROL_UNAVAILABLE);
-  };
-
+  
   const filteredBots = bots.filter(b => {
     if (searchQuery && !b.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
     if (typeFilter !== 'all' && b.type !== typeFilter) return false;
@@ -236,7 +207,8 @@ export default function BotRegistry() {
               </span>
               <Switch
                 checked={killSwitch}
-                onCheckedChange={handleKillSwitch}
+                disabled
+                aria-readonly="true"
                 className="data-[state=checked]:bg-red-500"
               />
             </div>
@@ -367,38 +339,14 @@ export default function BotRegistry() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Switch
-                          checked={bot.status === 'active'}
-                          onCheckedChange={() => handleBotToggle(bot.id, bot.status)}
-                          disabled={killSwitch || bot.status === 'archived'}
-                        />
+                        {/* SC-01 Wave 02 boundary correction (SX-011): bot records are
+                            read-only in this build. Activation, status
+                            mutation, archive, delete and cloning are
+                            current-wave excluded write paths. */}
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground">Read-only in this build</Badge>
                         <Button variant="outline" size="sm" onClick={() => navigate(cleanHref(`/system/bot-builder?id=${bot.id}`))}>
-                          <Pencil className="w-3 h-3 mr-1" /> Edit
+                          <Eye className="w-3 h-3 mr-1" /> View
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => {
-                          toast.error("Bot cloning is not available in this build (deferred to Sprint X - SX-011).");
-                        }}>
-                          <Copy className="w-3 h-3" />
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={async () => {
-                          const { error } = await supabase.from('ai_bots').update({ status: 'archived', updated_at: new Date().toISOString() }).eq('id', bot.id);
-                          if (error) { toast.error(`Archive failed: ${error.message}`); return; }
-                          setBots(prev => prev.map(b => b.id === bot.id ? { ...b, status: 'archived' as const } : b));
-                          toast.success(`Bot "${bot.name}" archived`);
-                        }} disabled={bot.status === 'archived'}>
-                          <Archive className="w-3 h-3" />
-                        </Button>
-                        {(bot.status === 'draft' || bot.status === 'disabled') && (
-                          <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700" onClick={async () => {
-                            if (!confirm(`Delete bot "${bot.name}"? This cannot be undone.`)) return;
-                            const { error } = await supabase.from('ai_bots').delete().eq('id', bot.id);
-                            if (error) { toast.error(`Delete failed: ${error.message}`); return; }
-                            setBots(prev => prev.filter(b => b.id !== bot.id));
-                            toast.success(`Bot "${bot.name}" deleted`);
-                          }}>
-                            <XCircle className="w-3 h-3" />
-                          </Button>
-                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -416,10 +364,7 @@ export default function BotRegistry() {
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-base">{provider.name}</CardTitle>
-                    <Switch
-                      checked={provider.enabled}
-                      onCheckedChange={(v) => handleProviderToggle(provider.id, v)}
-                    />
+                    <Switch checked={provider.enabled} disabled aria-readonly="true" />
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -476,7 +421,7 @@ export default function BotRegistry() {
                   <div className="mt-3">
                     <Switch
                       checked={connector.enabled}
-                      onCheckedChange={(v) => handleConnectorToggle(connector.id, v)}
+                      disabled aria-readonly="true"
                     />
                   </div>
                 </CardContent>
