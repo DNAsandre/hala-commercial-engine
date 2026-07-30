@@ -500,13 +500,24 @@ export default function ProposalArchitectureTOCTab({ ws, reload, onOpenDocuments
     const abortController = new AbortController();
     chainAbortRef.current = abortController;
 
-    const result = await generateAllBlocksSequentially(
-      chainConfig.next_bot_id!,
-      newBlocks,
-      tenderContext,
-      (progress) => setChainProgress(progress),
-      abortController.signal,
-    );
+    let result;
+    try {
+      result = await generateAllBlocksSequentially(
+        chainConfig.next_bot_id!,
+        newBlocks,
+        tenderContext,
+        (progress) => setChainProgress(progress),
+        abortController.signal,
+      );
+    } catch (err: any) {
+      // Honest refusal surfacing (SX-011): show the unavailable error and
+      // reset the chain UI instead of leaving it stuck mid-progress.
+      chainAbortRef.current = null;
+      setChainProgress(null);
+      setIsChaining(false);
+      toast.error(err?.message || "Auto-draft is not available.");
+      return;
+    }
 
     chainAbortRef.current = null;
 

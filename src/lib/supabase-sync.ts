@@ -303,12 +303,11 @@ export async function syncHandoverTaskUpdate(taskId: string, updates: Record<str
 // ============================================================
 
 export async function syncPolicyGateUpdate(gateId: string, updates: Record<string, any>): Promise<void> {
-  const row: Record<string, any> = {};
-  if (updates.mode !== undefined) row.mode = updates.mode;
-  if (updates.overridable !== undefined) row.overridable = updates.overridable;
-  if (updates.name !== undefined) row.name = updates.name;
-  if (updates.description !== undefined) row.description = updates.description;
-  await optimisticSyncUpdate("policy_gates", gateId, row, 'syncPolicyGateUpdate');
+  // SC-01 Wave 02 boundary (SX-011): policy-gate writes are excluded from this
+  // build. Zero callers exist; neutralized defensively so no future caller can
+  // write gate configuration through this path.
+  void gateId; void updates;
+  throw new Error("Policy-gate updates are not available in this build (deferred to Sprint X - SX-011).");
 }
 
 // ============================================================
