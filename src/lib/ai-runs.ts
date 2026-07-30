@@ -8,28 +8,37 @@
  *
  * GOVERNANCE RULE: No hardcoded bots. No in-memory fallback arrays.
  * If a bot is not in Supabase, it does not exist. Period.
- *   AI execution  → Already wired to real providers via ai-client.ts
- *   AI runs       → Already persisted to Supabase `ai_runs` table
  *
- * DO NOT add more hardcoded bots. Add to Supabase `editor_bots` table.
- *
- * Tracks every AI generation action with full audit trail:
- *   - Which bot, which doc, which block(s)
- *   - Input prompt, transcript reference, output text
- *   - Status lifecycle: draft → applied | discarded
- *   - Timestamps for creation and application
+ * SC-01 CLEAN BUILD: AI execution and AI-run recording are EXCLUDED
+ * (SX-001/SX-011). This module provides bot-metadata reads and historical
+ * run display only; generation and run mutations refuse with explicit errors.
  */
 
-import { syncAuditEntry } from "@/lib/supabase-sync";
-import { getCurrentUser } from "@/lib/auth-state";
-import { generateAI, fetchAIProviders, type AIProviderName } from "@/lib/ai-client";
 import { supabase } from "@/lib/supabase";
-import {
-  retrieveContext,
-  formatRetrievedContext,
-  createBotRun,
-  type RetrievedChunk,
-} from "@/lib/knowledgebase";
+import { type RetrievedChunk } from "@/lib/knowledgebase";
+
+// SC-01 WAVE 02 BOUNDARY (SX-001 / SX-011): AI execution and AI-run recording
+// are excluded from this build. This module keeps bot METADATA reads (display
+// of governed bot records) and refuses generation and run-lifecycle mutation
+// with explicit errors. No ai-client import, no local run mirror, no audit
+// entries claiming actions that did not happen.
+
+const AI_UNAVAILABLE =
+  "AI generation is not available in this build (deferred to Sprint X — SX-001/SX-011).";
+const AI_RUN_UNAVAILABLE =
+  "AI-run recording is not available in this build (deferred to Sprint X — SX-011).";
+
+/** Display-only lookup: provider_id → provider name from the established ai_providers table. */
+async function resolveProviderName(providerId: string | null | undefined): Promise<"openai" | "google"> {
+  if (!providerId) return "openai";
+  try {
+    const { data } = await supabase.from("ai_providers").select("id,name").eq("id", providerId).limit(1);
+    const name = data?.[0]?.name;
+    return name === "google" ? "google" : "openai";
+  } catch {
+    return "openai";
+  }
+}
 
 // ============================================================
 // TYPES
@@ -101,18 +110,12 @@ export interface BlockGenerateResult {
 // GOVERNANCE: No hardcoded bots. No in-memory bot arrays.
 // ============================================================
 
-import {
-  fetchEditorBots, insertAIRun as dbInsertAIRun,
-  updateAIRunStatus as dbUpdateAIRunStatus, fetchAIRuns as dbFetchAIRuns,
-} from "./supabase-data";
+import { fetchEditorBots, fetchAIRuns as dbFetchAIRuns } from "./supabase-data";
 
 // Local cache for bots (refreshed on first access)
 let _botCache: EditorBot[] | null = null;
 let _botCacheTime = 0;
 const BOT_CACHE_TTL = 30_000; // 30 seconds
-
-// In-memory fallback for AI runs (used if DB insert fails)
-let aiRunsFallback: AIRun[] = [];
 
 async function loadBots(): Promise<EditorBot[]> {
   if (_botCache !== null && Date.now() - _botCacheTime < BOT_CACHE_TTL) return _botCache;
@@ -140,121 +143,35 @@ export function invalidateBotCache(): void {
 // ============================================================
 
 export function createAIRun(params: Omit<AIRun, "id" | "created_at" | "applied_at" | "status">): AIRun {
-  const run: AIRun = {
-    ...params,
-    id: `airun-${crypto.randomUUID()}`,
-    status: "draft",
-    created_at: new Date().toISOString(),
-    applied_at: null,
-  };
-
-  // Always keep a local copy (survives even if DB insert fails)
-  aiRunsFallback.push(run);
-
-  // Persist to Supabase in parallel — warn on failure, don't swallow
-  dbInsertAIRun(run).catch((err) => {
-    console.warn("[ai-runs] DB insert failed, run preserved in local memory:", err);
-  });
-
-  // Audit log
-  const user = getCurrentUser();
-  void syncAuditEntry({
-    id: crypto.randomUUID(),
-    timestamp: run.created_at,
-    userId: user?.id || "system",
-    userName: user?.name || "System",
-    action: "ai_draft_created",
-    entityType: "ai_run",
-    entityId: run.id,
-    details: `AI draft created by ${run.bot_name} (${run.bot_type}) for ${run.target_scope === "block" ? `block ${run.target_block_ids[0]}` : `document ${run.doc_instance_id}`}`,
-    metadata: {
-      bot_id: run.bot_id,
-      bot_name: run.bot_name,
-      provider: run.provider,
-      model: run.model,
-      doc_instance_id: run.doc_instance_id,
-      target_scope: run.target_scope,
-      target_block_ids: run.target_block_ids,
-      run_mode: run.run_mode,
-    },
-  }).catch((err) => { console.warn('[ai-runs] createAIRun audit fallback:', err); });
-
-  return run;
+  // SX-011: no run construction, no local mirror, no audit entry, no write.
+  void params;
+  throw new Error(AI_RUN_UNAVAILABLE);
 }
 
 export function applyAIRun(runId: string): void {
-  const appliedAt = new Date().toISOString();
-
-  // Update local mirror immediately (always available)
-  const local = aiRunsFallback.find(r => r.id === runId);
-  if (local) { local.status = "applied"; local.applied_at = appliedAt; }
-
-  // Persist to Supabase
-  dbUpdateAIRunStatus(runId, "applied", appliedAt).catch((err) => {
-    console.warn("[ai-runs] DB status update failed for apply:", err);
-  });
-
-  // Audit log
-  const user = getCurrentUser();
-  void syncAuditEntry({
-    id: crypto.randomUUID(),
-    timestamp: appliedAt,
-    userId: user?.id || "system",
-    userName: user?.name || "System",
-    action: "ai_draft_applied",
-    entityType: "ai_run",
-    entityId: runId,
-    details: `AI draft applied: run ${runId} committed`,
-    metadata: { run_id: runId },
-  }).catch((err) => { console.warn('[ai-runs] applyAIRun audit fallback:', err); });
+  // SX-011: no local status change, no write, no audit entry.
+  void runId;
+  throw new Error(AI_RUN_UNAVAILABLE);
 }
 
 export function discardAIRun(runId: string): void {
-  // Update local mirror immediately
-  const local = aiRunsFallback.find(r => r.id === runId);
-  if (local) local.status = "discarded";
-
-  // Persist to Supabase
-  dbUpdateAIRunStatus(runId, "discarded").catch((err) => {
-    console.warn("[ai-runs] DB status update failed for discard:", err);
-  });
-
-  // Audit log
-  const user = getCurrentUser();
-  void syncAuditEntry({
-    id: crypto.randomUUID(),
-    timestamp: new Date().toISOString(),
-    userId: user?.id || "system",
-    userName: user?.name || "System",
-    action: "ai_draft_discarded",
-    entityType: "ai_run",
-    entityId: runId,
-    details: `AI draft discarded: run ${runId} rejected`,
-    metadata: { run_id: runId },
-  }).catch((err) => { console.warn('[ai-runs] discardAIRun audit fallback:', err); });
+  // SX-011: no local status change, no write, no audit entry.
+  void runId;
+  throw new Error(AI_RUN_UNAVAILABLE);
 }
 
 export async function getAIRunsForDocument(docInstanceId: string): Promise<AIRun[]> {
-  try {
-    const dbRuns = await dbFetchAIRuns(docInstanceId);
-    // Merge: DB runs + any local-only runs not yet persisted
-    const dbIds = new Set(dbRuns.map(r => r.id));
-    const localOnly = aiRunsFallback.filter(r => r.doc_instance_id === docInstanceId && !dbIds.has(r.id));
-    const merged = [...dbRuns, ...localOnly].sort((a, b) =>
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
-    return merged;
-  } catch (err) {
-    console.warn('[ai-runs] getAIRunsForDocument Supabase fallback:', err);
-    // DB unavailable — return local-only
-    return aiRunsFallback.filter(r => r.doc_instance_id === docInstanceId).sort((a, b) =>
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
-  }
+  // Read-only display of historical run records; errors surface to the caller.
+  const dbRuns = await dbFetchAIRuns(docInstanceId);
+  return [...dbRuns].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
 }
 
 export function getAIRunById(runId: string): AIRun | null {
-  return aiRunsFallback.find(r => r.id === runId) || null;
+  // No local run store exists in this build (SX-011); nothing to resolve.
+  void runId;
+  return null;
 }
 
 // ============================================================
@@ -331,11 +248,7 @@ export async function loadGovernedBotByName(
 
     // Resolve provider
     let providerName: "openai" | "google" = "openai";
-    try {
-      const providers = await fetchAIProviders();
-      const matched = providers.find(p => p.id === (latestVersion?.provider_id || bot.provider_id));
-      if (matched?.name) providerName = matched.name as "openai" | "google";
-    } catch { /* keep default */ }
+    providerName = await resolveProviderName(latestVersion?.provider_id || bot.provider_id);
 
     // Build system prompt from version
     const systemParts = [
@@ -394,11 +307,7 @@ async function loadGovernedBot(domain: string): Promise<EditorBot | null> {
 
     // Resolve provider name from provider_id
     let providerName: "openai" | "google" = "openai";
-    try {
-      const providers = await fetchAIProviders();
-      const matched = providers.find(p => p.id === (latestVersion?.provider_id || bot.provider_id));
-      if (matched?.name) providerName = matched.name as "openai" | "google";
-    } catch { /* keep default */ }
+    providerName = await resolveProviderName(latestVersion?.provider_id || bot.provider_id);
 
     // Build system prompt: system_instruction + custom_instruction from the version
     const systemParts = [
@@ -480,11 +389,7 @@ export async function getEditorBotById(botId: string): Promise<EditorBot | null>
         : [];
       const v = versions[0] as any;
       let providerName: "openai" | "google" = "openai";
-      try {
-        const providers = await fetchAIProviders();
-        const matched = providers.find(p => p.id === (v?.provider_id || bot.provider_id));
-        if (matched?.name) providerName = matched.name as "openai" | "google";
-      } catch { /* keep default */ }
+      providerName = await resolveProviderName(v?.provider_id || bot.provider_id);
       return {
         id: bot.id,
         name: (bot as any).display_name || bot.name,
@@ -527,116 +432,9 @@ export async function generateBlockContent(
   docInstanceId?: string,
   workspaceId?: string,
 ): Promise<BlockGenerateResult> {
-  const bot = await getEditorBotById(botId);
-
-  if (!bot) {
-    throw new Error(`AI bot "${botId}" not found — check bot configuration`);
-  }
-
-  // 1. Retrieve KB context
-  let retrievedChunks: RetrievedChunk[] = [];
-  let kbContext = "";
-  try {
-    retrievedChunks = await retrieveContext(botId, prompt + " " + blockContent.replace(/<[^>]*>/g, "").substring(0, 200), 5);
-    if (retrievedChunks.length > 0) {
-      kbContext = formatRetrievedContext(retrievedChunks);
-    }
-  } catch (err) {
-    console.warn("[ai-runs] KB retrieval failed:", (err as Error).message);
-  }
-
-  // 2. Build system prompt with mandatory HTML output directive
-  const htmlDirective = `
-
-OUTPUT FORMAT — MANDATORY:
-You MUST output valid HTML only. Do NOT use markdown syntax.
-- Use <h2> and <h3> for headings (never # or ##)
-- Use <strong> for bold (never **)
-- Use <em> for italics (never *)
-- Use <ul><li> for bullet lists (never - or *)
-- Use <ol><li> for numbered lists (never 1. 2. 3.)
-- Use <table><thead><tbody><tr><th><td> for tables
-- Use <p> for paragraphs
-- Use <blockquote> for quotes
-- Structure with clear section headings using <h2> and <h3>
-- Number your sections in headings, e.g. <h2>1. Executive Summary</h2>
-- Do NOT wrap output in \`\`\`html code fences
-- Output raw HTML directly, starting with the first HTML tag`;
-
-  const fullSystemPrompt = bot.system_prompt + htmlDirective;
-
-  // 3. Call real AI via Edge Functions — throws on failure, no silent fallback
-  const userPrompt = [
-    prompt,
-    blockContent ? `\n\nExisting block content:\n${blockContent.replace(/<[^>]*>/g, "")}` : "",
-    transcript ? `\n\nTranscript reference:\n${transcript.substring(0, 3000)}` : "",
-    kbContext ? `\n\nKnowledgebase context:\n${kbContext}` : "",
-    retrievedChunks.length > 0 ? `\n\nIMPORTANT: Cite sources using [Source: DocumentTitle #ChunkIndex] format when using KB context.` : "",
-  ].join("");
-
-  const result = await generateAI({
-    provider: bot.provider as AIProviderName,
-    model: bot.model,
-    systemPrompt: fullSystemPrompt,
-    userPrompt,
-    temperature: 0.7,
-    action: "block_generate",
-    botId: bot.id,
-    botName: bot.name,
-  });
-
-  // Post-process: strip markdown code fences and convert stray markdown → HTML
-  let cleanContent = result.content;
-  // Strip ```html ... ``` wrappers
-  cleanContent = cleanContent.replace(/^```html\s*/i, "").replace(/\s*```$/i, "");
-  // Convert stray markdown headings → HTML (in case model ignores directive)
-  cleanContent = cleanContent.replace(/^### (.+)$/gm, "<h3>$1</h3>");
-  cleanContent = cleanContent.replace(/^## (.+)$/gm, "<h2>$1</h2>");
-  cleanContent = cleanContent.replace(/^# (.+)$/gm, "<h1>$1</h1>");
-  // Convert stray **bold** → <strong>
-  cleanContent = cleanContent.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  // Convert stray *italic* → <em>
-  cleanContent = cleanContent.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
-  // Convert stray markdown bullets → list items (group consecutive lines)
-  cleanContent = cleanContent.replace(/(?:^|\n)(?:- (.+)\n?)+/g, (match) => {
-    const items = match.trim().split("\n").map(line => `<li>${line.replace(/^- /, "")}</li>`).join("");
-    return `<ul>${items}</ul>`;
-  });
-
-  // 4. Create bot_run trace
-  createBotRun({
-    bot_id: botId,
-    bot_name: bot.name,
-    doc_instance_id: docInstanceId || null,
-    workspace_id: workspaceId || null,
-    scope: "block",
-    target_block_ids: null,
-    prompt,
-    provider: bot.provider,
-    model: bot.model,
-    kb_collections: Array.from(new Set(retrievedChunks.map(c => c.collection_name))),
-    retrieved_chunks: retrievedChunks,
-    output: { text: cleanContent },
-    status: "draft",
-  });
-
-  const citations = extractCitationsFromChunks(retrievedChunks);
-
-  return {
-    content: cleanContent,
-    tokens_input: result.tokensInput,
-    tokens_output: result.tokensOutput,
-    retrieved_chunks: retrievedChunks,
-    citations,
-  };
-}
-
-function extractCitationsFromChunks(chunks: RetrievedChunk[]): { source: string; chunkIndex: number; snippet: string }[] {
-  return chunks.slice(0, 5).map(c => ({
-    source: c.document_title,
-    chunkIndex: c.chunk_index,
-    snippet: c.content.substring(0, 120),
-  }));
+  // SX-001/SX-011: AI generation excluded from this build.
+  void botId; void blockFamily; void prompt; void blockContent; void transcript; void docInstanceId; void workspaceId;
+  throw new Error(AI_UNAVAILABLE);
 }
 
 export async function generateDocumentContent(
@@ -646,59 +444,9 @@ export async function generateDocumentContent(
   transcript: string | null,
   runMode: DocumentRunMode,
 ): Promise<{ suggestions: DocumentBlockSuggestion[]; tokens_input: number; tokens_output: number }> {
-  // Call real AI via Edge Functions — throws on failure, no silent fallback
-  const bot = await getEditorBotById(botId);
-  if (!bot) {
-    throw new Error(`AI bot "${botId}" not found — check bot configuration`);
-  }
-  const blockSummary = blocks.map(b => `[${b.key}] ${b.name}: ${b.content.replace(/<[^>]*>/g, "").substring(0, 200)}`).join("\n");
-  const userPrompt = [
-    `Run mode: ${runMode}`,
-    prompt ? `\nUser instructions: ${prompt}` : "",
-    `\n\nDocument blocks:\n${blockSummary}`,
-    transcript ? `\n\nTranscript:\n${transcript.substring(0, 5000)}` : "",
-    `\n\nReturn a JSON array of objects: [{"block_id": "...", "block_key": "...", "block_name": "...", "suggested_text": "<html content>"}]`,
-  ].join("");
-
-  const result = await generateAI({
-    provider: bot.provider as AIProviderName,
-    model: bot.model,
-    systemPrompt: bot.system_prompt,
-    userPrompt,
-    temperature: 0.5,
-    action: `document_${runMode}`,
-    botId: bot.id,
-    botName: bot.name,
-  });
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(result.content);
-  } catch {
-    throw new Error("AI returned a response that could not be parsed — check provider output format");
-  }
-
-  if (!Array.isArray(parsed)) {
-    throw new Error("AI response was not a JSON array — check provider output format");
-  }
-
-  const suggestions: DocumentBlockSuggestion[] = (parsed as any[]).map((s) => {
-    const matchBlock = blocks.find(b => b.id === s.block_id || b.key === s.block_key);
-    return {
-      block_id: s.block_id || matchBlock?.id || "",
-      block_key: s.block_key || matchBlock?.key || "",
-      block_name: s.block_name || matchBlock?.name || "",
-      original_text: matchBlock?.content || "",
-      suggested_text: s.suggested_text || "",
-      selected: true,
-    };
-  }).filter((s: DocumentBlockSuggestion) => s.block_id && s.suggested_text);
-
-  return {
-    suggestions,
-    tokens_input: result.tokensInput,
-    tokens_output: result.tokensOutput,
-  };
+  // SX-001/SX-011: AI generation excluded from this build.
+  void botId; void blocks; void prompt; void transcript; void runMode;
+  throw new Error(AI_UNAVAILABLE);
 }
 
 // ============================================================
@@ -781,66 +529,8 @@ export async function generateAllBlocksSequentially(
   onProgress: (progress: BlockChainProgress) => void,
   abortSignal?: AbortSignal,
 ): Promise<BlockChainResult> {
-  const results: Record<string, string> = {};
-  let completed = 0;
-  let failed = 0;
-
-  for (let i = 0; i < blocks.length; i++) {
-    // Check abort
-    if (abortSignal?.aborted) {
-      return { completed, failed, cancelled: true, results };
-    }
-
-    const block = blocks[i];
-    onProgress({
-      current: i + 1,
-      total: blocks.length,
-      blockTitle: block.title || block.block_key,
-      status: "generating",
-    });
-
-    try {
-      const prompt = [
-        `## Block Metadata`,
-        `Title: ${block.title || "Untitled"}`,
-        `Volume: ${block.volume || "Not specified"}`,
-        `Section: ${block.section_name || "Not specified"}`,
-        `Source Stages: ${block.source_stages || "Not specified"}`,
-        `Required Source Data: ${block.required_source_data || "Not specified"}`,
-        `Required Evidence: ${block.required_evidence || "Not specified"}`,
-        ``,
-        tenderContext,
-      ].join("\n");
-
-      const existingContent = block.editor_content || block.draft_content || "";
-
-      const result = await generateBlockContent(
-        botId,
-        "commercial",
-        prompt,
-        existingContent,
-        null, // no transcript
-      );
-
-      results[block.id] = result.content;
-      completed++;
-      onProgress({
-        current: i + 1,
-        total: blocks.length,
-        blockTitle: block.title || block.block_key,
-        status: "completed",
-      });
-    } catch (err: any) {
-      console.error(`[ai-runs] Chain: block "${block.title}" failed:`, err.message);
-      failed++;
-      onProgress({
-        current: i + 1,
-        total: blocks.length,
-        blockTitle: block.title || block.block_key,
-        status: "failed",
-      });
-    }
-  }
-
-  return { completed, failed, cancelled: false, results };
+  // SX-001/SX-011: AI generation excluded from this build. Refuse before any
+  // per-block progress is reported — no partial "attempted generation" theater.
+  void botId; void blocks; void tenderContext; void onProgress; void abortSignal;
+  throw new Error(AI_UNAVAILABLE);
 }
