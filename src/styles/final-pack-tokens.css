@@ -1,0 +1,274 @@
+/**
+ * final-pack-tokens.css
+ * ─────────────────────
+ * Design tokens and utility classes for Final Pack Studio.
+ * Extends Hala's existing design system — does NOT replace it.
+ *
+ * Uses Hala's oklch color tokens from index.css:
+ * - --primary (deep navy)
+ * - --background, --foreground, --card, --border, etc.
+ * - --color-hala-navy, --color-hala-navy-light
+ *
+ * FPS-specific tokens are namespaced with --fps- to avoid collision.
+ *
+ * FPS-010 — Wave 1
+ */
+
+/* ── FPS-specific CSS custom properties ─────────────────── */
+:root {
+  /* A4 Preview dimensions (scaled for screen) */
+  --fps-a4-width: 595px;
+  --fps-a4-height: 842px;
+  --fps-preview-scale: 0.75;
+
+  /* Block canvas */
+  --fps-canvas-gap: 8px;
+  --fps-block-radius: 6px;
+  --fps-block-border: var(--border);
+  --fps-block-bg: var(--card);
+  --fps-block-hover: var(--accent);
+
+  /* Source-copy label */
+  --fps-source-label-bg: oklch(0.95 0.02 75);
+  --fps-source-label-text: oklch(0.45 0.08 75);
+  --fps-source-label-border: oklch(0.88 0.04 75);
+
+  /* Warning banner (non-blocking, informational) */
+  --fps-warning-bg: oklch(0.96 0.03 75);
+  --fps-warning-text: oklch(0.40 0.10 75);
+  --fps-warning-border: oklch(0.88 0.06 75);
+
+  /* Drift banner */
+  --fps-drift-bg: oklch(0.94 0.04 250);
+  --fps-drift-text: oklch(0.35 0.08 250);
+  --fps-drift-border: oklch(0.82 0.06 250);
+
+  /* Drag handle */
+  --fps-drag-handle: oklch(0.70 0.01 250);
+  --fps-drag-active: oklch(0.50 0.12 250);
+}
+
+/* ── Block Canvas layout ────────────────────────────────── */
+.fps-canvas {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fps-canvas-gap);
+  padding: 1rem;
+}
+
+/* ── Block Card ─────────────────────────────────────────── */
+.fps-block-card {
+  background: var(--fps-block-bg);
+  border: 1px solid var(--fps-block-border);
+  border-radius: var(--fps-block-radius);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.fps-block-card:hover {
+  border-color: var(--fps-block-hover);
+}
+
+.fps-block-card[data-dragging="true"] {
+  opacity: 0.5;
+  border-color: var(--fps-drag-active);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.fps-block-card[data-hidden="true"] {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
+/* ── Drag handle ────────────────────────────────────────── */
+.fps-drag-handle {
+  cursor: grab;
+  color: var(--fps-drag-handle);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.fps-drag-handle:active {
+  cursor: grabbing;
+  color: var(--fps-drag-active);
+}
+
+/* ── Source-copy label (permanent, non-dismissible) ─────── */
+.fps-source-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  background: var(--fps-source-label-bg);
+  color: var(--fps-source-label-text);
+  border: 1px solid var(--fps-source-label-border);
+}
+
+/* ── Warning banner (informational, never blocks) ──────── */
+.fps-warning-banner {
+  display: flex;
+  flex-direction: column;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  background: var(--fps-warning-bg);
+  color: var(--fps-warning-text);
+  border: 1px solid var(--fps-warning-border);
+}
+
+/* ── Source drift banner ────────────────────────────────── */
+.fps-drift-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  background: var(--fps-drift-bg);
+  color: var(--fps-drift-text);
+  border: 1px solid var(--fps-drift-border);
+}
+
+/* ── A4 Preview pane ────────────────────────────────────── */
+.fps-preview-pane {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: oklch(0.96 0.003 80);
+  /* FPS-010 Ticket 1 — width is driven by the resizable divider (CSS var set
+     on .fps-composer). Falls back to 45% when the user hasn't resized. JS
+     clamps the dragged value, so max-width is unset here. */
+  width: var(--fps-preview-width, 45%);
+  min-width: 320px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.fps-preview-pane.fps-preview-expanded {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 55%;
+  max-width: none;
+  z-index: 50;
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.12);
+}
+
+.fps-preview-container {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  padding: 1rem;
+  background: oklch(0.96 0.003 80);
+}
+
+.fps-preview-iframe {
+  width: var(--fps-a4-width);
+  min-height: var(--fps-a4-height);
+  background: white;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  border-radius: 2px;
+  border: none;
+  transform: scale(var(--fps-preview-scale));
+  transform-origin: top center;
+}
+
+.fps-preview-page {
+  width: var(--fps-a4-width);
+  min-height: var(--fps-a4-height);
+  background: white;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  border-radius: 2px;
+  transform: scale(var(--fps-preview-scale));
+  transform-origin: top center;
+}
+
+/* ── Two-panel composer layout ──────────────────────────── */
+.fps-composer {
+  display: flex;
+  flex: 1;
+  /* min-height:0 lets the inner panels own the scroll when the page height is
+     bounded (compose mode uses h-screen), so the top/bottom bars stay pinned. */
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fps-composer-left {
+  flex: 1 1 0;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+/* ── Resizable divider (FPS-010 Ticket 1) ───────────────── */
+.fps-resizer {
+  flex: 0 0 auto;
+  width: 8px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+.fps-resizer::before {
+  content: "";
+  width: 2px;
+  height: 100%;
+  background: var(--border);
+  transition: background 0.15s ease, width 0.15s ease;
+}
+.fps-resizer:hover::before,
+.fps-resizer[data-active="true"]::before {
+  background: var(--fps-drag-active);
+  width: 3px;
+}
+/* While dragging, keep the whole window in resize cursor + suppress selection. */
+body.fps-resizing { cursor: col-resize; user-select: none; }
+body.fps-resizing iframe { pointer-events: none; }
+
+/* ── Export toolbar ──────────────────────────────────────── */
+.fps-export-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--card);
+  flex-wrap: wrap;
+}
+
+/* Sticky top export bar (FPS-010 Ticket 2) — reuses ExportToolbar but pins it
+   to the top of the workspace and flips the divider to a bottom border. */
+.fps-top-export {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  flex: 0 0 auto;
+}
+.fps-top-export .fps-export-toolbar {
+  border-top: none;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Watermark overlays (preview only) ──────────────────── */
+.fps-watermark {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-45deg);
+  font-size: 6rem;
+  font-weight: 700;
+  opacity: 0.06;
+  pointer-events: none;
+  user-select: none;
+  color: oklch(0.30 0.06 250);
+  letter-spacing: 0.1em;
+  z-index: 1000;
+}
+
