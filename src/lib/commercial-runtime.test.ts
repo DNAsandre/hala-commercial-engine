@@ -34,22 +34,71 @@ function nextResult(): MockResult {
 /** Payloads actually handed to .insert() / .update(), in call order. */
 const writtenRows: Array<{ op: "insert" | "update"; row: Record<string, any> }> = [];
 
+/** Every projection string passed to .select(), in call order. */
+const selectProjections: string[] = [];
+
+/**
+ * The mock HONOURS THE PROJECTION, exactly as PostgREST does: a column the code
+ * does not ask for is not returned.
+ *
+ * This is the whole reason the missing gp_percent/gp_amount projection survived
+ * review — the previous mock ignored its argument and handed back the full
+ * fixture, so the suite asserted a margin that production could never produce.
+ * With this in place, dropping a column from QUOTE_COLUMNS fails the suite.
+ */
+function applyProjection(projection: string | null, data: unknown): unknown {
+  if (!projection || projection === "*" || !Array.isArray(data)) return data;
+  const wanted = projection.split(",").map((c) => c.trim()).filter(Boolean);
+  return data.map((row) => {
+    if (row === null || typeof row !== "object") return row;
+    const picked: Record<string, any> = {};
+    for (const column of wanted) {
+      if (column in (row as Record<string, any>)) {
+        picked[column] = (row as Record<string, any>)[column];
+      }
+    }
+    return picked;
+  });
+}
+
 function makeBuilder(): any {
   const builder: any = {};
-  for (const method of ["select", "delete", "eq", "neq", "order", "limit", "in"]) {
+  let projection: string | null = null;
+
+  for (const method of ["delete", "eq", "neq", "order", "limit", "in"]) {
     builder[method] = vi.fn(() => builder);
   }
+  builder.select = vi.fn((cols?: string) => {
+    if (typeof cols === "string") {
+      selectProjections.push(cols);
+      projection = cols;
+    }
+    return builder;
+  });
   for (const op of ["insert", "update"] as const) {
     builder[op] = vi.fn((row: Record<string, any>) => {
       writtenRows.push({ op, row });
       return builder;
     });
   }
-  builder.single = vi.fn(() => Promise.resolve(nextResult()));
-  builder.maybeSingle = vi.fn(() => Promise.resolve(nextResult()));
+
+  const resolve = () => {
+    const result = nextResult();
+    return { ...result, data: applyProjection(projection, result.data) };
+  };
+
+  builder.single = vi.fn(() => Promise.resolve(resolve()));
+  builder.maybeSingle = vi.fn(() => Promise.resolve(resolve()));
   builder.then = (onFulfilled: any, onRejected: any) =>
-    Promise.resolve(nextResult()).then(onFulfilled, onRejected);
+    Promise.resolve(resolve()).then(onFulfilled, onRejected);
   return builder;
+}
+
+/** The projection string of the most recent .select("...") call. */
+function lastProjection(): string[] {
+  const last = selectProjections[selectProjections.length - 1];
+  if (!last) throw new Error("no projected select was issued");
+  return last.split(",").map((c) => c.trim());
 }
 
 /** The single row sent to the last insert/update of the given kind. */
@@ -163,6 +212,7 @@ const WIZARD_PAYLOAD = {
 beforeEach(() => {
   resultQueue.length = 0;
   writtenRows.length = 0;
+  selectProjections.length = 0;
   fromSpy.mockClear();
   fetchOperationalTicketsByType.mockReset();
   changeStage.mockReset();
@@ -191,7 +241,55 @@ describe("listQuotesByWorkspace", () => {
     expect(quote.validity_days).toBe(45);
     expect(quote.assumptions).toBe("5-day working week");
     expect(quote.discount_percent).toBe(5);
+    // margin must survive the round trip, not be coerced to 0
+    expect(quote.gp_percent).toBe(25);
+    expect(quote.gp_amount).toBe(3000);
     expect(fromSpy).toHaveBeenCalledWith("quotes");
+  });
+
+  it("requests every column the record exposes — a dropped projection is a defect", () => {
+    // Regression guard for the missing gp_percent/gp_amount projection. Listed
+    // explicitly rather than derived, so silently narrowing QUOTE_COLUMNS can
+    // never silently narrow the assertion with it.
+    const required = [
+      "id", "workspace_id", "customer_id", "quote_number",
+      "version", "version_number", "state", "status",
+      "service_type", "currency", "volume_unit", "monthly_volume",
+      "storage_rate", "inbound_rate", "outbound_rate", "pallet_volume",
+      "monthly_revenue", "annual_revenue", "total_cost", "estimated_cost",
+      "discount_percent", "validity_days", "valid_until",
+      "assumptions", "exclusions", "notes",
+      "change_reason", "supersedes_quote_id", "created_by", "created_at",
+      "gp_percent", "gp_amount",
+    ];
+
+    queue({ data: [QUOTE_ROW], error: null });
+    return listQuotesByWorkspace("ws1").then(() => {
+      expect(lastProjection().sort()).toEqual([...required].sort());
+    });
+  });
+
+  it("carries a NULL margin through as null, never as a zero margin", async () => {
+    queue({ data: [{ ...QUOTE_ROW, gp_percent: null, gp_amount: null }], error: null });
+
+    const res = await listQuotesByWorkspace("ws1");
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // 0 would be a real commercial claim; "not captured" is the truth here.
+    expect(res.data[0].gp_percent).toBeNull();
+    expect(res.data[0].gp_amount).toBeNull();
+  });
+
+  it("keeps a genuine zero distinguishable from a missing value", async () => {
+    queue({ data: [{ ...QUOTE_ROW, gp_percent: 0, gp_amount: 0 }], error: null });
+
+    const res = await listQuotesByWorkspace("ws1");
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data[0].gp_percent).toBe(0);
+    expect(res.data[0].gp_amount).toBe(0);
   });
 
   it("falls back to the mirror column when the Sprint-3 side is empty", async () => {
@@ -336,7 +434,9 @@ describe("createQuote", () => {
     // derived columns
     expect(row.quote_number).toBe("Q-WS1-V3");
     expect(row.valid_until).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    // insert path does not stamp updated_*; creation is recorded by created_*
+    // Fable probed both columns live (2026-08-05): they EXIST. The insert path
+    // still does not stamp them - creation is recorded by created_at/created_by;
+    // the update paths do stamp them (asserted separately).
     expect(row).not.toHaveProperty("updated_at");
     expect(row).not.toHaveProperty("updated_by");
 
@@ -385,6 +485,31 @@ describe("createQuote", () => {
 });
 
 describe("updateQuote", () => {
+  it("stamps updated_at / updated_by on an edit", async () => {
+    // Both columns were confirmed to exist on the live table by direct
+    // PostgREST probe (Fable, 2026-08-05), so an edit records who changed it
+    // and when - matching what the replaced route did.
+    queue({ data: [QUOTE_ROW], error: null });
+
+    await updateQuote("q1", WIZARD_PAYLOAD);
+
+    const row = lastWrite("update");
+    expect(typeof row.updated_at).toBe("string");
+    expect(row.updated_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(row).toHaveProperty("updated_by");
+  });
+
+  it("nulls the expiry when the validity period is cleared", async () => {
+    queue({ data: [QUOTE_ROW], error: null });
+
+    await updateQuote("q1", { validity_days: 0 });
+
+    const row = lastWrite("update");
+    expect(row.validity_days).toBe(0);
+    // a stale expiry from the previous validity would outlive its own basis
+    expect(row.valid_until).toBeNull();
+  });
+
   it("sends the full widened column set on an edit", async () => {
     queue({ data: [QUOTE_ROW], error: null });
 
@@ -495,9 +620,51 @@ describe("createQuoteVersion", () => {
     expect(inserted.validity_days).toBe(45);
     expect(inserted.status).toBe("draft");
     expect(inserted.state).toBe("draft");
+    // the stored margin must travel with the copy — nothing recomputes it
+    expect(inserted.gp_amount).toBe(3000);
+    expect(inserted.gp_percent).toBe(25);
+    // and the rest of the commercial figures
+    expect(inserted.monthly_revenue).toBe(1000);
+    expect(inserted.annual_revenue).toBe(12000);
+    expect(inserted.total_cost).toBe(9000);
+    expect(inserted.estimated_cost).toBe(9000);
+    expect(inserted.discount_percent).toBe(5);
+    // expiry is re-derived from the copied validity period
+    expect(inserted.valid_until).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     // the source row is marked superseded on both mirror columns
     expect(lastWrite("update")).toMatchObject({ state: "superseded", status: "superseded" });
     expect(res.data.unstoredFields).toEqual([]);
+  });
+
+  it("copies a NULL margin as null rather than inventing a zero", async () => {
+    queue(
+      { data: [{ ...QUOTE_ROW, gp_amount: null, gp_percent: null }], error: null },
+      { data: [{ version_number: 2 }], error: null },
+      { data: [{ ...QUOTE_ROW, id: "q9" }], error: null },
+      { data: [QUOTE_ROW], error: null },
+    );
+
+    await createQuoteVersion("q1", "Client renegotiated rates");
+
+    const inserted = writtenRows.find((w) => w.op === "insert")!.row;
+    expect(inserted.gp_amount).toBeNull();
+    expect(inserted.gp_percent).toBeNull();
+  });
+
+  it("writes no expiry when the source carries no validity period", async () => {
+    queue(
+      { data: [{ ...QUOTE_ROW, validity_days: null, valid_until: null }], error: null },
+      { data: [{ version_number: 2 }], error: null },
+      { data: [{ ...QUOTE_ROW, id: "q9" }], error: null },
+      { data: [QUOTE_ROW], error: null },
+    );
+
+    await createQuoteVersion("q1", "Client renegotiated rates");
+
+    const inserted = writtenRows.find((w) => w.op === "insert")!.row;
+    // an expiry derived from an invented 30 days would be a stored falsehood
+    expect(inserted.validity_days).toBeNull();
+    expect(inserted.valid_until).toBeNull();
   });
 
   it("keeps the created version but warns when the supersede did not take", async () => {
@@ -545,6 +712,22 @@ describe("listProposalsByWorkspace", () => {
     expect(res.data[0].title).toBe("Sadara warehousing proposal");
     expect(res.data[0].version_number).toBe(2);
     expect(res.data[0].internal_stage).toBe("proposal_drafting");
+  });
+
+  it("reports the version as absent when the ticket carries none", async () => {
+    // No established path writes type_details.proposal_version, so this is the
+    // real-world case: defaulting it to 1 asserted a version nothing holds.
+    fetchOperationalTicketsByType.mockResolvedValue({
+      data: [{ ...TICKET, type_details: {} }],
+      error: null,
+    });
+
+    const res = await listProposalsByWorkspace("ws1");
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data[0].version).toBeNull();
+    expect(res.data[0].version_number).toBeNull();
   });
 
   it("treats a workspace with no proposal ticket as an honest empty list", async () => {

@@ -103,6 +103,12 @@ const QUOTE_COLUMNS = [
   "supersedes_quote_id",
   "created_by",
   "created_at",
+  // Margin columns. These MUST stay in the projection: they are written by
+  // createQuote/updateQuote, read by supabase-data.ts mapQuote, and drive every
+  // RAG light in the UI. Omitting them made mapQuoteRow coerce `undefined` to 0
+  // and render a fabricated "GP 0%" on every quote in the list.
+  "gp_percent",
+  "gp_amount",
 ] as const;
 
 /**
@@ -135,9 +141,9 @@ export type QuoteState =
 
 /**
  * A quote as the Quote panels consume it — every field is a real column on the
- * live `quotes` table. Nullable fields stay nullable: a column the database
- * genuinely does not hold a value for renders as unknown, never as a default we
- * made up.
+ * live `quotes` table. EVERY field is nullable, including the numerics: a column
+ * the database genuinely holds no value for reads as `null` and renders as
+ * unknown, never as `0` and never as a default we made up. See `numOrNull`.
  */
 export interface QuoteRecord {
   id: string;
@@ -151,16 +157,16 @@ export interface QuoteRecord {
   service_type: string | null;
   currency: string | null;
   volume_unit: string | null;
-  monthly_volume: number;
-  storage_rate: number;
-  inbound_rate: number;
-  outbound_rate: number;
-  pallet_volume: number;
-  monthly_revenue: number;
-  annual_revenue: number;
-  total_cost: number;
-  estimated_cost: number;
-  discount_percent: number;
+  monthly_volume: number | null;
+  storage_rate: number | null;
+  inbound_rate: number | null;
+  outbound_rate: number | null;
+  pallet_volume: number | null;
+  monthly_revenue: number | null;
+  annual_revenue: number | null;
+  total_cost: number | null;
+  estimated_cost: number | null;
+  discount_percent: number | null;
   validity_days: number | null;
   valid_until: string | null;
   assumptions: string | null;
@@ -170,8 +176,8 @@ export interface QuoteRecord {
   supersedes_quote_id: string | null;
   created_by: string | null;
   created_at: string | null;
-  gp_percent: number;
-  gp_amount: number;
+  gp_percent: number | null;
+  gp_amount: number | null;
 }
 
 function num(value: unknown): number {
@@ -181,6 +187,28 @@ function num(value: unknown): number {
 
 function text(value: unknown): string | null {
   return value === undefined || value === null || value === "" ? null : String(value);
+}
+
+/**
+ * NULL POLICY for numeric quote columns.
+ *
+ * `0` is a real commercial value — a quote genuinely priced at 0% margin is not
+ * the same fact as a quote whose margin was never captured. Coercing NULL to 0
+ * (what `num()` does) is what made every listed quote render "GP 0%" behind a
+ * red light. So every nullable numeric column is mapped through this helper and
+ * NULL is carried all the way to the UI, which renders it as "Not captured".
+ *
+ * This is the doctrine the codebase already states for commercial data:
+ * unified-ticket-types.ts:8-9 — "null = unknown / not captured yet, 0 =
+ * explicitly confirmed zero".
+ *
+ * `num()` is still used for values WE compute or copy, where a number is always
+ * present by construction.
+ */
+function numOrNull(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function mapQuoteRow(row: Record<string, any>): QuoteRecord {
@@ -201,17 +229,17 @@ function mapQuoteRow(row: Record<string, any>): QuoteRecord {
     service_type: text(row.service_type),
     currency: text(row.currency),
     volume_unit: text(row.volume_unit),
-    monthly_volume: num(row.monthly_volume),
-    storage_rate: num(row.storage_rate),
-    inbound_rate: num(row.inbound_rate),
-    outbound_rate: num(row.outbound_rate),
-    pallet_volume: num(row.pallet_volume),
-    monthly_revenue: num(row.monthly_revenue),
-    annual_revenue: num(row.annual_revenue),
-    total_cost: num(row.total_cost),
-    estimated_cost: num(estimatedCost),
-    discount_percent: num(row.discount_percent),
-    validity_days: row.validity_days == null ? null : Number(row.validity_days),
+    monthly_volume: numOrNull(row.monthly_volume),
+    storage_rate: numOrNull(row.storage_rate),
+    inbound_rate: numOrNull(row.inbound_rate),
+    outbound_rate: numOrNull(row.outbound_rate),
+    pallet_volume: numOrNull(row.pallet_volume),
+    monthly_revenue: numOrNull(row.monthly_revenue),
+    annual_revenue: numOrNull(row.annual_revenue),
+    total_cost: numOrNull(row.total_cost),
+    estimated_cost: numOrNull(estimatedCost),
+    discount_percent: numOrNull(row.discount_percent),
+    validity_days: numOrNull(row.validity_days),
     valid_until: text(row.valid_until),
     assumptions: text(row.assumptions),
     exclusions: text(row.exclusions),
@@ -220,8 +248,8 @@ function mapQuoteRow(row: Record<string, any>): QuoteRecord {
     supersedes_quote_id: text(row.supersedes_quote_id),
     created_by: text(row.created_by),
     created_at: text(row.created_at),
-    gp_percent: num(row.gp_percent),
-    gp_amount: num(row.gp_amount),
+    gp_percent: numOrNull(row.gp_percent),
+    gp_amount: numOrNull(row.gp_amount),
   };
 }
 
@@ -319,11 +347,13 @@ function quoteRowFromInput(input: QuoteWriteInput): Record<string, any> {
     row.total_cost = num(input.estimated_cost);
   }
 
-  // validity_days drives valid_until, exactly as the old server did.
+  // validity_days drives valid_until, exactly as the old server did. The two
+  // always move together: if the validity is cleared or non-positive the expiry
+  // is nulled rather than left behind as a stale date.
   if (input.validity_days !== undefined) {
-    const days = num(input.validity_days);
+    const days = numOrNull(input.validity_days);
     row.validity_days = days;
-    if (days > 0) row.valid_until = calculateValidUntil(days);
+    row.valid_until = days != null && days > 0 ? calculateValidUntil(days) : null;
   }
 
   return row;
@@ -561,7 +591,13 @@ export async function createQuoteVersion(
   if ("error" in next) return fail(next.error);
 
   const source = mapQuoteRow(sourceRow);
-  const validityDays = source.validity_days ?? 30;
+  // Defect 3: only derive an expiry when the source genuinely carries a validity
+  // period. Deriving it from an invented 30 days would store a false date in a
+  // real column while `validity_days` itself stayed null.
+  const validUntil =
+    source.validity_days != null && source.validity_days > 0
+      ? calculateValidUntil(source.validity_days)
+      : null;
   const insertRow = {
     workspace_id: workspaceId,
     customer_id: source.customer_id,
@@ -584,10 +620,15 @@ export async function createQuoteVersion(
     estimated_cost: source.estimated_cost,
     discount_percent: source.discount_percent,
     validity_days: source.validity_days,
-    valid_until: calculateValidUntil(validityDays),
+    valid_until: validUntil,
     assumptions: source.assumptions,
     exclusions: source.exclusions,
     notes: source.notes,
+    // Defect 2: the stored margin must travel with the copy. The old route
+    // copied both (routes/quotes.ts:441-442) and nothing recomputes them here,
+    // so omitting them silently zeroed the new version's margin.
+    gp_amount: source.gp_amount,
+    gp_percent: source.gp_percent,
     supersedes_quote_id: quoteId,
     change_reason: trimmed,
     created_by: getCurrentUser().id,
@@ -664,9 +705,15 @@ export interface ProposalRecord {
   /** derived from internal_stage — there is no separate status column */
   status: ProposalState;
   internal_stage: string | null;
-  version: number;
+  /**
+   * `type_details.proposal_version` if the ticket happens to carry it, else
+   * null. No established path ever WRITES that key (see
+   * PROPOSAL_VERSION_UNAVAILABLE), so in practice this is null and the UI must
+   * render the version as absent rather than asserting "V1".
+   */
+  version: number | null;
   /** alias of `version` */
-  version_number: number;
+  version_number: number | null;
   customer_name: string | null;
   notes: string | null;
   created_at: string | null;
@@ -688,7 +735,9 @@ function ticketWorkspaceId(row: CommercialTicket): string {
 
 function mapTicketToProposal(row: CommercialTicket): ProposalRecord {
   const details = ticketDetails(row);
-  const version = Number(details.proposal_version ?? 1) || 1;
+  // Defect 4: no `?? 1`. Nothing writes proposal_version, so defaulting to 1
+  // asserted a version number the database does not hold.
+  const version = numOrNull(details.proposal_version);
   return {
     id: row.id,
     workspace_id: ticketWorkspaceId(row),

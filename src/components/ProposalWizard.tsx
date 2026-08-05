@@ -20,8 +20,27 @@ import {
 } from "@/lib/commercial-runtime";
 
 const STEPS = ["Select Quote", "Basics", "Scope", "Pricing Snapshot", "Assumptions", "Negotiation", "Review & Save"];
-const ragDot: Record<string, string> = { green: "bg-emerald-500", amber: "bg-amber-500", red: "bg-red-500" };
-function getRAG(gp: number) { return gp >= 25 ? "green" : gp >= 15 ? "amber" : "red"; }
+const ragDot: Record<string, string> = {
+  green: "bg-emerald-500",
+  amber: "bg-amber-500",
+  red: "bg-red-500",
+  // No captured margin gets a neutral light, not a red one.
+  unknown: "bg-muted-foreground/30",
+};
+function getRAG(gp: number | null) {
+  if (gp == null) return "unknown";
+  return gp >= 25 ? "green" : gp >= 15 ? "amber" : "red";
+}
+
+/** null = the column holds no value. 0 = a real, stored zero. */
+function money(currency: string | null, value: number | null) {
+  if (value == null) return "Not captured";
+  return `${currency || "—"} ${value.toLocaleString()}`;
+}
+
+function percent(value: number | null) {
+  return value == null ? "Not captured" : `${value}%`;
+}
 
 interface Props {
   workspaceId: string;
@@ -141,7 +160,7 @@ export default function ProposalWizard({ workspaceId, customerId, customerName, 
               <p className="text-xs text-amber-700 mt-0.5">Create a quote before creating a proposal.</p></div>
             </div>
           ) : quotes.map(q => {
-            const rag = getRAG(q.gp_percent || 0);
+            const rag = getRAG(q.gp_percent);
             return (
               <button key={q.id} onClick={() => { setSelectedQuoteId(q.id); if (!form.assumptions && q.assumptions) set("assumptions", q.assumptions); if (!form.exclusions && q.exclusions) set("exclusions", q.exclusions); }}
                 className={`w-full text-left p-3 rounded-lg border-2 transition-all ${selectedQuoteId === q.id ? "border-[var(--color-hala-navy)] bg-[var(--color-hala-navy)]/5" : "border-border hover:border-muted-foreground/30"}`}>
@@ -149,10 +168,10 @@ export default function ProposalWizard({ workspaceId, customerId, customerName, 
                   <span className={`w-2 h-2 rounded-full ${ragDot[rag]}`} />
                   <span className="text-sm font-medium">{q.quote_number || `V${q.version_number ?? "?"}`}</span>
                   <Badge variant="outline" className="text-[10px]">{q.status ?? "not captured"}</Badge>
-                  <span className="text-xs text-muted-foreground ml-auto">GP: {q.gp_percent}%</span>
+                  <span className="text-xs text-muted-foreground ml-auto">GP: {percent(q.gp_percent)}</span>
                 </div>
                 <div className="flex gap-4 text-xs text-muted-foreground">
-                  <span>Revenue: {q.currency || "—"} {q.annual_revenue.toLocaleString()}/yr</span>
+                  <span>Revenue: {money(q.currency, q.annual_revenue)}{q.annual_revenue != null ? "/yr" : ""}</span>
                   <span>Service: {q.service_type || "Not captured"}</span>
                 </div>
               </button>
@@ -189,10 +208,10 @@ export default function ProposalWizard({ workspaceId, customerId, customerName, 
                 <span>Linked to <span className="font-semibold">{pricingSnapshot.quote_number || `V${pricingSnapshot.quote_version ?? "?"}`}</span> ({pricingSnapshot.quote_status ?? "not captured"})</span>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <Stat label="Annual Revenue" value={`${pricingSnapshot.currency || "—"} ${pricingSnapshot.annual_revenue.toLocaleString()}`} />
-                <Stat label="Monthly Revenue" value={`${pricingSnapshot.currency || "—"} ${pricingSnapshot.monthly_revenue.toLocaleString()}`} />
-                <Stat label="Estimated Cost" value={`${pricingSnapshot.currency || "—"} ${pricingSnapshot.estimated_cost.toLocaleString()}`} />
-                <Stat label="Gross Profit" value={`${pricingSnapshot.gp_percent}% (${pricingSnapshot.currency || "—"} ${pricingSnapshot.gp_amount.toLocaleString()})`} rag={getRAG(pricingSnapshot.gp_percent)} />
+                <Stat label="Annual Revenue" value={money(pricingSnapshot.currency, pricingSnapshot.annual_revenue)} />
+                <Stat label="Monthly Revenue" value={money(pricingSnapshot.currency, pricingSnapshot.monthly_revenue)} />
+                <Stat label="Estimated Cost" value={money(pricingSnapshot.currency, pricingSnapshot.estimated_cost)} />
+                <Stat label="Gross Profit" value={`${percent(pricingSnapshot.gp_percent)} (${money(pricingSnapshot.currency, pricingSnapshot.gp_amount)})`} rag={getRAG(pricingSnapshot.gp_percent)} />
               </div>
               <p className="text-[10px] text-muted-foreground flex items-center gap-1"><Info className="w-3 h-3" /> Read directly from the selected quote record. This link is shown for review only — it is not stored on the proposal.</p>
             </>
@@ -228,14 +247,14 @@ export default function ProposalWizard({ workspaceId, customerId, customerName, 
           {pricingSnapshot && (
             <div className="rounded-lg border border-blue-100 bg-blue-50/30 p-2 flex items-center gap-2 text-xs">
               <Link2 className="w-3.5 h-3.5 text-blue-500" />
-              Linked to <span className="font-semibold">{pricingSnapshot.quote_number || `V${pricingSnapshot.quote_version ?? "?"}`}</span> — GP: {pricingSnapshot.gp_percent}%
+              Linked to <span className="font-semibold">{pricingSnapshot.quote_number || `V${pricingSnapshot.quote_version ?? "?"}`}</span> — GP: {percent(pricingSnapshot.gp_percent)}
             </div>
           )}
           <div className="grid grid-cols-2 gap-2 text-xs">
             <ReviewRow label="Title" value={form.title || "(untitled)"} />
             <ReviewRow label="Service" value={pricingSnapshot?.service_type || "—"} />
-            <ReviewRow label="Annual Value" value={pricingSnapshot ? `${pricingSnapshot.currency || "—"} ${pricingSnapshot.annual_revenue.toLocaleString()}` : "—"} />
-            <ReviewRow label="GP%" value={pricingSnapshot ? `${pricingSnapshot.gp_percent}%` : "—"} />
+            <ReviewRow label="Annual Value" value={pricingSnapshot ? money(pricingSnapshot.currency, pricingSnapshot.annual_revenue) : "—"} />
+            <ReviewRow label="GP%" value={pricingSnapshot ? percent(pricingSnapshot.gp_percent) : "—"} />
           </div>
           {form.executive_summary && <div className="text-xs"><span className="font-medium">Summary:</span> <span className="text-muted-foreground">{form.executive_summary.substring(0, 200)}</span></div>}
           {form.negotiation_notes && <div className="text-xs"><span className="font-medium">Negotiation:</span> <span className="text-muted-foreground">{form.negotiation_notes.substring(0, 200)}</span></div>}
