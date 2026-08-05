@@ -58,7 +58,25 @@ import { isAllowedTenderTicket } from './process-isolation';
 
 // ─── Bundle type ────────────────────────────────────────────
 
+/**
+ * W04-T08-A: an honest, four-way load outcome.
+ *
+ * Before this existed, every non-success path collapsed into `tender: null`,
+ * which the workspace rendered as "No Supabase data found for tender ID: …".
+ * A PostgREST/RLS failure, a record excluded by process isolation, and a
+ * genuinely absent row are three different facts and must look different.
+ */
+export type TenderBundleLoadState =
+  | { kind: 'loaded' }
+  | { kind: 'not_found'; message: string }
+  | { kind: 'isolated'; message: string }
+  | { kind: 'error'; message: string };
+
 export interface TenderWorkspaceBundle {
+  /** The tender id this bundle was requested for. Identity anchor for the caller. */
+  requestedTenderId: string;
+  /** Why this bundle looks the way it does. Never infer emptiness from `tender === null`. */
+  loadState: TenderBundleLoadState;
   tender: Tender | null;
   packs: TenderPack[];
   placeholders: TenderPlaceholder[];
@@ -76,10 +94,21 @@ export interface TenderWorkspaceBundle {
   riskLevel: 'green' | 'amber' | 'red';
   crmSyncStatus: 'not_synced' | 'synced' | 'sync_failed' | 'conflict' | 'simulated';
   submissionModel: 'single_pack' | 'multi_pack';
+  /**
+   * The raw `commercial_tickets.crm_pipeline_stage` value, verbatim.
+   * `normalizeCrmStage` coerces null/unknown to 'prospecting' so the strip has a
+   * value to highlight; that coercion must never be presented as stored truth.
+   */
+  crmPipelineStageRaw: string | null;
 }
 
-function emptyTenderWorkspaceBundle(): TenderWorkspaceBundle {
+function emptyTenderWorkspaceBundle(
+  requestedTenderId: string,
+  loadState: TenderBundleLoadState,
+): TenderWorkspaceBundle {
   return {
+    requestedTenderId,
+    loadState,
     tender: null,
     packs: [],
     placeholders: [],
@@ -96,6 +125,7 @@ function emptyTenderWorkspaceBundle(): TenderWorkspaceBundle {
     riskLevel: 'green',
     crmSyncStatus: 'not_synced',
     submissionModel: 'single_pack',
+    crmPipelineStageRaw: null,
   };
 }
 
@@ -370,6 +400,23 @@ function normalizeCrmStage(value: string | null | undefined): Tender['crmPipelin
   return CRM_STAGE_MAP[value.toLowerCase().trim()] ?? 'prospecting';
 }
 
+/**
+ * W04-T08-A: the CRM stage keys this read layer can restore from
+ * `commercial_tickets.crm_pipeline_stage`.
+ *
+ * `normalizeCrmStage` silently coerces anything else to 'prospecting'. A writer
+ * that persists an unrestorable key produces a successful write whose value the
+ * workspace then displays as a *different* stage. Callers must check this
+ * before writing rather than report a persistence that cannot be read back.
+ */
+export const RESTORABLE_CRM_PIPELINE_STAGES: readonly string[] = Array.from(
+  new Set(Object.values(CRM_STAGE_MAP)),
+);
+
+export function isRestorableCrmPipelineStage(value: string | null | undefined): boolean {
+  return typeof value === 'string' && RESTORABLE_CRM_PIPELINE_STAGES.includes(value);
+}
+
 function normalizeInternalTenderStage(value: string | null | undefined): Tender['status'] {
   // Tender.status is TenderMilestone — same union as crmPipelineStage.
   // commercial_tickets.internal_stage may carry values like "identified",
@@ -570,7 +617,18 @@ function mapCommercialTicketToTender(row: any): Tender {
 
 // ─── Fetch functions ─────────────────────────────────────────
 
-async function fetchTenderHeader(tenderId: string): Promise<Tender | null> {
+type TenderHeaderRead =
+  | { outcome: 'loaded'; row: any; tender: Tender }
+  | { outcome: 'not_found' }
+  | { outcome: 'error'; message: string };
+
+/**
+ * W04-T08-A: the header read now reports failure instead of swallowing it.
+ * Previously a PostgREST/RLS error was console-warned and returned as `null`,
+ * which the workspace rendered as "no data found" — a read failure disguised as
+ * an honest empty. It also asserts the returned row IS the requested identity.
+ */
+async function fetchTenderHeader(tenderId: string): Promise<TenderHeaderRead> {
   const intake = await supabase
     .from('commercial_tickets')
     .select('*')
@@ -581,32 +639,32 @@ async function fetchTenderHeader(tenderId: string): Promise<Tender | null> {
 
   if (intake.error) {
     console.warn('[SUPA-006] fetchTenderHeader commercial_tickets error:', intake.error.message);
+    return { outcome: 'error', message: intake.error.message };
   }
 
-  if (intake.data) {
-    return mapCommercialTicketToTender(intake.data);
+  if (!intake.data) return { outcome: 'not_found' };
+
+  if (intake.data.id !== tenderId) {
+    return {
+      outcome: 'error',
+      message: `Tender identity mismatch: requested ${tenderId} but commercial_tickets returned ${String(intake.data.id)}.`,
+    };
   }
 
-  return null;
+  return { outcome: 'loaded', row: intake.data, tender: mapCommercialTicketToTender(intake.data) };
 }
 
-async function fetchTenderDocuments(tenderId: string): Promise<TenderDocument[]> {
-  const ticket = await supabase
-    .from('commercial_tickets')
-    .select('type_details')
-    .eq('id', tenderId)
-    .eq('ticket_type', 'tender')
-    .eq('active', true)
-    .maybeSingle();
-
-  if (ticket.error) console.warn('[SUPA-006] fetchTenderDocuments commercial_tickets error:', ticket.error.message);
-
-  const details = ticket.data?.type_details && typeof ticket.data.type_details === 'object' ? ticket.data.type_details as any : {};
-  const storedDocs = Array.isArray(details.documents)
+/**
+ * Documents live in `type_details.documents` on the very row the header read
+ * already returned. Reading them from that row (instead of a second query that
+ * could fail independently and silently return `[]`) keeps the document context
+ * bound to the same tender identity the rest of the workspace renders.
+ */
+function documentsFromTenderRow(row: any, tenderId: string): TenderDocument[] {
+  const details = row?.type_details && typeof row.type_details === 'object' ? row.type_details as any : {};
+  return Array.isArray(details.documents)
     ? details.documents.map((doc: any) => normalizeTenderDocument(doc, tenderId)).filter(Boolean) as TenderDocument[]
     : [];
-
-  return storedDocs;
 }
 
 async function fetchTenderPacks(tenderId: string): Promise<{ packs: TenderPack[]; sections: TenderPackSection[] }> {
@@ -693,22 +751,39 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
   console.log(`[SUPA-006] Loading tender workspace bundle for: ${tenderId}`);
 
   if (!isAllowedTenderTicket({ id: tenderId, ticket_type: 'tender' })) {
-    return emptyTenderWorkspaceBundle();
+    // NOT an empty result: no query was issued at all. Saying "no data found"
+    // here would assert something about the database that was never checked.
+    return emptyTenderWorkspaceBundle(tenderId, {
+      kind: 'isolated',
+      message:
+        'No read was attempted for this tender: the id is outside the clean-process allowlist in src/lib/process-isolation.ts (ALLOWED_TENDER_IDS). This is not evidence that the record is absent from commercial_tickets.',
+    });
   }
 
-  const [tender, { packs, sections: _sections }, activityEvents, auditEntries] = await Promise.all([
+  const [header, { packs, sections: _sections }, activityEvents, auditEntries] = await Promise.all([
     fetchTenderHeader(tenderId),
     fetchTenderPacks(tenderId),
     fetchTenderActivityEvents(tenderId),
     fetchTenderAuditEntries(tenderId),
   ]);
 
-  const packIds = packs.map(p => p.id);
+  if (header.outcome === 'error') {
+    return emptyTenderWorkspaceBundle(tenderId, { kind: 'error', message: header.message });
+  }
+  if (header.outcome === 'not_found') {
+    return emptyTenderWorkspaceBundle(tenderId, {
+      kind: 'not_found',
+      message: `No active tender row is visible for id ${tenderId} in commercial_tickets. Rows hidden by row-level security are indistinguishable from absent rows on this read.`,
+    });
+  }
 
-  const [placeholders, requiredDocuments, documents, complianceItems, splitChecks, packOutputs, submissionEmails] = await Promise.all([
+  const tender = header.tender;
+  const packIds = packs.map(p => p.id);
+  const documents = documentsFromTenderRow(header.row, tenderId);
+
+  const [placeholders, requiredDocuments, complianceItems, splitChecks, packOutputs, submissionEmails] = await Promise.all([
     fetchTenderPlaceholders(tenderId, packIds),
     fetchTenderRequiredDocuments(packIds),
-    fetchTenderDocuments(tenderId),
     fetchTenderComplianceItems(packIds),
     fetchTenderSplitChecks(tenderId),
     fetchTenderPackOutputs(tenderId),
@@ -734,6 +809,8 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
     : 'green';
 
   return {
+    requestedTenderId: tenderId,
+    loadState: { kind: 'loaded' },
     tender,
     packs,
     placeholders,
@@ -750,6 +827,9 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
     riskLevel,
     crmSyncStatus: 'not_synced',
     submissionModel: packs.length > 1 ? 'multi_pack' : 'single_pack',
+    crmPipelineStageRaw: typeof header.row.crm_pipeline_stage === 'string' && header.row.crm_pipeline_stage.trim()
+      ? header.row.crm_pipeline_stage
+      : null,
   };
 }
 
@@ -764,6 +844,7 @@ export function bundleToTenderWorkspace(bundle: TenderWorkspaceBundle): TenderWo
     riskLevel: bundle.riskLevel,
     crmSyncStatus: bundle.crmSyncStatus,
     submissionModel: bundle.submissionModel,
+    crmPipelineStageRaw: bundle.crmPipelineStageRaw,
     packs: bundle.packs,
     placeholders: bundle.placeholders,
     requiredDocuments: bundle.requiredDocuments,

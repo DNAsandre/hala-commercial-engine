@@ -10,12 +10,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { formatSAR } from "@/lib/store";
-import { getTenderStatusDisplayName, getTenderStatusColor, type TenderMilestone } from "@/lib/tender-engine";
+import { getTenderStatusColor, type TenderMilestone } from "@/lib/tender-engine";
 import { getPackStatusLabel, getPackTypeLabel, getSectionStatusLabel, getSectionStatusColor, getSectionApprovalLabel, stageLabelFromInternalStage, type TenderStageRelevance, type TenderWorkspace, type TenderPack } from "@/lib/tender-workspace-data";
 import { useTenderWorkspaceData } from "@/hooks/useTenderWorkspaceData";
 import { toast } from "sonner";
 import { updateTenderPhase, updateTenderCrmStage } from "@/lib/supabase-tender-actions";
-import { mapDbStageToInternalCognitionStage } from "@/lib/supabase-tender-data";
+import { mapDbStageToInternalCognitionStage, isRestorableCrmPipelineStage } from "@/lib/supabase-tender-data";
 import {
   TENDER_INTERNAL_STAGES,
   normalizeTenderInternalStage,
@@ -1565,8 +1565,15 @@ export default function TenderWorkspaceDetail() {
 
   if (status === 'error') return (
     <div className="p-6 space-y-3">
-      <h1 className="text-xl font-serif text-red-700">Failed to load tender workspace</h1>
-      <p className="text-sm text-muted-foreground">{errorMessage}</p>
+      <div className="flex items-center gap-2">
+        <AlertTriangle className="w-5 h-5 text-red-600" />
+        <h1 className="text-xl font-serif text-red-700">Could not read this tender</h1>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        The read failed. This is a failure, not an empty tender — nothing can be concluded about the record itself.
+      </p>
+      <p className="text-xs font-mono text-red-700 bg-red-50 border border-red-200 rounded-md p-2">{errorMessage}</p>
+      <p className="text-[11px] text-muted-foreground">Tender ID: {id}</p>
       <div className="flex gap-2">
         <Button variant="outline" size="sm" onClick={reload}>Retry</Button>
           <Link href={cleanHref("/tenders")}><Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4 mr-1.5" />Back</Button></Link>
@@ -1574,11 +1581,33 @@ export default function TenderWorkspaceDetail() {
     </div>
   );
 
+  // W04-T08-A: process isolation skipped the read entirely. Reporting this as
+  // "not found" would assert a database fact that was never checked.
+  if (status === 'isolated') return (
+    <div className="p-6 space-y-3">
+      <div className="flex items-center gap-2">
+        <ZapOff className="w-5 h-5 text-amber-600" />
+        <h1 className="text-xl font-serif text-amber-800">This tender workspace is not connected</h1>
+      </div>
+      <p className="text-sm text-muted-foreground max-w-2xl">{errorMessage}</p>
+      <p className="text-[11px] text-muted-foreground">Tender ID: {id}</p>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={reload}>Retry</Button>
+        <Link href={cleanHref("/tenders")}><Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4 mr-1.5" />Back to Tenders</Button></Link>
+      </div>
+    </div>
+  );
+
   if (status === 'empty' || !ws) return (
-    <div className="p-6">
+    <div className="p-6 space-y-3">
       <h1 className="text-xl font-serif">Tender workspace not found</h1>
-      <p className="text-xs text-muted-foreground mt-1">No Supabase data found for tender ID: {id}</p>
-      <Link href={cleanHref("/tenders")}><Button variant="outline" className="mt-4"><ArrowLeft className="w-4 h-4 mr-1.5" />Back to Tenders</Button></Link>
+      <p className="text-sm text-muted-foreground max-w-2xl">
+        {errorMessage || `No active tender row is visible for id ${id} in commercial_tickets.`}
+      </p>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={reload}>Retry</Button>
+        <Link href={cleanHref("/tenders")}><Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4 mr-1.5" />Back to Tenders</Button></Link>
+      </div>
     </div>
   );
 
@@ -1606,7 +1635,16 @@ export default function TenderWorkspaceDetail() {
             <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${ws.riskLevel === "red" ? "bg-red-500" : ws.riskLevel === "amber" ? "bg-amber-500" : "bg-emerald-500"}`} />
             <h1 className="text-xl font-serif font-bold">{t.title}</h1>
             <Badge variant="outline" className="text-[10px] border-[#244f96] text-[#075eea] bg-[#075eea]/10">{ws.tenderType}</Badge>
-            <Badge variant="outline" className={`text-[10px] ${getTenderStatusColor(t.status)}`}>{getTenderStatusDisplayName(t.status)}</Badge>
+            {/* W04-T08-A: this badge used to render `t.status`, which is
+                internal_stage squeezed through the CRM TenderMilestone union —
+                so a tender saved at "clarification" displayed "Prospecting".
+                It now renders the internal stage in its own vocabulary. */}
+            <Badge variant="outline" className="text-[10px] border-[#244f96]/40 text-[#075eea] bg-[#075eea]/10">
+              Internal: {TENDER_INTERNAL_STAGES.find(s => s.value === persistedInternalStage)?.label ?? persistedInternalStage}
+            </Badge>
+            <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700 bg-emerald-50">
+              Saved CRM stage: {ws.crmPipelineStageRaw ?? 'Not set'}
+            </Badge>
             {riskBadge(ws.riskLevel)}
             <Badge variant="outline" className="text-[10px] border-gray-300 text-gray-600">CRM: {getCleanCrmSyncStatusLabel(ws.crmSyncStatus)}</Badge>
             <Badge variant="outline" className="text-[10px] border-emerald-400 text-emerald-700 bg-emerald-50 flex items-center gap-1"><Database className="w-2.5 h-2.5" />Supabase-Backed</Badge>
@@ -1642,10 +1680,23 @@ export default function TenderWorkspaceDetail() {
           </Card>
         )}
 
+        {/* W04-T08-A: the strip is fed the PERSISTED stage only. It used to
+            prefer `crmCognitionStage`, a pending dialog selection, which would
+            have shown an unsaved stage as if it were the saved one. */}
         <CrmPipelineStrip
-          activeCrmStage={(crmCognitionStage?.value ?? t.crmPipelineStage ?? 'prospecting') as any}
+          activeCrmStage={t.crmPipelineStage as any}
           onCrmStageChange={async (stage) => {
-            const prev = t.crmPipelineStage ?? 'prospecting';
+            // The read layer coerces any stage key it does not know back to
+            // 'prospecting'. Writing such a key would produce a "persisted"
+            // toast followed by a reload showing a different stage. Refuse and
+            // say so rather than report a persistence that cannot be read back.
+            if (!isRestorableCrmPipelineStage(stage)) {
+              toast.warning('CRM stage not moved', {
+                description: `"${stage}" is not a CRM stage this workspace can store and read back, so nothing was written. The saved stage is unchanged.`,
+              });
+              return;
+            }
+            const prev = ws.crmPipelineStageRaw ?? '(not set)';
             const result = await updateTenderCrmStage(id!, prev, stage, 'Manual CRM stage move');
             if (result.success) { toast.success(`CRM Pipeline moved to ${stage}`, { description: 'Persisted to Supabase.' }); reload(); }
             else toast.warning('CRM stage update failed', { description: result.error });
@@ -2198,7 +2249,14 @@ export default function TenderWorkspaceDetail() {
               <div className="space-y-1">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Move to this stage?</p>
                 <Button className="w-full text-sm" onClick={async () => {
-                  const prev = t.crmPipelineStage ?? 'prospecting';
+                  const prev = ws.crmPipelineStageRaw ?? '(not set)';
+                  if (!isRestorableCrmPipelineStage(crmCognitionStage.value)) {
+                    toast.warning('CRM stage not moved', {
+                      description: `"${crmCognitionStage.value}" is not a CRM stage this workspace can store and read back, so nothing was written.`,
+                    });
+                    setCrmCognitionStage(null);
+                    return;
+                  }
                   const result = await updateTenderCrmStage(id!, prev, crmCognitionStage.value, 'Manual CRM stage move');
                   if (result.success) { toast.success(`CRM Pipeline moved to ${crmCognitionStage.label}`, { description: 'Persisted to Supabase.' }); reload(); }
                   else toast.warning('CRM stage update failed', { description: result.error });

@@ -628,6 +628,13 @@ export interface TenderWorkspace {
   riskLevel: "green" | "amber" | "red";
   crmSyncStatus: "not_synced" | "synced" | "sync_failed" | "conflict" | "simulated";
   submissionModel: "single_pack" | "multi_pack";
+  /**
+   * W04-T08-A: raw `commercial_tickets.crm_pipeline_stage`, verbatim (null when
+   * the column is unset). `tender.crmPipelineStage` is a normalized display
+   * value that falls back to "prospecting"; that fallback must never be shown
+   * as the saved stage.
+   */
+  crmPipelineStageRaw: string | null;
   packs: TenderPack[];
   placeholders: TenderPlaceholder[];
   requiredDocuments: TenderRequiredDocument[];
