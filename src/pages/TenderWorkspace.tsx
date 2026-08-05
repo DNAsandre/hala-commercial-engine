@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { formatSAR } from "@/lib/store";
 import { getTenderStatusColor, type TenderMilestone } from "@/lib/tender-engine";
-import { getPackStatusLabel, getPackTypeLabel, getSectionStatusLabel, getSectionStatusColor, getSectionApprovalLabel, stageLabelFromInternalStage, type TenderStageRelevance, type TenderWorkspace, type TenderPack } from "@/lib/tender-workspace-data";
+import { getPackStatusLabel, getPackTypeLabel, getSectionStatusLabel, getSectionStatusColor, getSectionApprovalLabel, stageLabelFromInternalStage, buildRequiredDocumentsProgress, type TenderStageRelevance, type TenderWorkspace, type TenderPack } from "@/lib/tender-workspace-data";
 import { useTenderWorkspaceData } from "@/hooks/useTenderWorkspaceData";
 import { toast } from "sonner";
 import { updateTenderPhase, updateTenderCrmStage } from "@/lib/supabase-tender-actions";
@@ -94,7 +94,31 @@ type StageTaskProgressSegment = {
   key: string;
   label: string;
   percent: number | null;
+  /**
+   * W04-C4: an explicit explanation shown in place of a percentage. Used where
+   * the honest answer is "this was never recorded" rather than a number.
+   */
+  note?: string;
 };
+
+/**
+ * W04-C4: the Required Documents segment of the Submitted → Submission
+ * Checklist tab. Derived from the recorded requirement set only; see
+ * `buildRequiredDocumentsProgress`.
+ */
+function buildRequiredDocumentsSegment(ws: TenderWorkspace): StageTaskProgressSegment {
+  const progress = buildRequiredDocumentsProgress({
+    requiredDocuments: ws.requiredDocuments ?? [],
+    requiredDocumentsAssessed: ws.requiredDocumentsAssessed,
+    uploadedDocumentNames: (ws.documents ?? []).map(d => d.document_name),
+  });
+  return {
+    key: "required_docs",
+    label: "Required Documents",
+    percent: progress.percent,
+    note: progress.note,
+  };
+}
 
 function hasValue(value: unknown): boolean {
   if (value === null || value === undefined) return false;
@@ -1298,16 +1322,13 @@ function buildFinalApprovedTaskProgress(tabId: string, ws: TenderWorkspace): Sta
   }
 
   if (tabId === "submission_checklist") {
-    const uploadedNames = ws.documents.map(d => d.document_name.toLowerCase());
-    const uploaded = [
-      "Final Tender Pack PDF", "OBK Native Excel", "OBK Signed/Stamped PDF", "Bid Statement Signed/Stamped PDF",
-      "Transition Plan", "Continuous Improvement Proposal Form", "Compliance Pack", "Commercial Registration",
-      "VAT Certificate", "ISO Certificates", "Insurance Certificates", "ADR Class 2 Certifications",
-      "Reference Credentials", "Performance Guarantee Confirmation",
-    ].filter(doc => uploadedNames.some(n => n.includes(doc.toLowerCase().split(" ")[0]))).length;
-    return [
-      { key: "required_docs", label: "Required Documents", percent: Math.round((uploaded / 14) * 100) },
-    ];
+    // W04-C4: this used to fuzzy-match uploaded filenames against a hardcoded
+    // 14-item document list and divide by a literal 14. That denominator was
+    // not this tender's requirement set — no such set is stored — so the bar
+    // presented a fabricated completion percentage as progress. It now derives
+    // from the recorded required-document set, and where none is recorded it
+    // states that instead of showing a number.
+    return [buildRequiredDocumentsSegment(ws)];
   }
 
   if (tabId === "approval_record") {
@@ -1387,7 +1408,7 @@ function StageTaskProgressMeter({ segments }: { segments: StageTaskProgressSegme
         <span
           key={segment.key}
           className={`${stageTaskProgressColor(segment.percent)} min-w-0 rounded-sm shadow-[inset_0_0_0_1px_rgba(15,23,42,.12)] first:rounded-l-full last:rounded-r-full`}
-          title={`${segment.label}: ${segment.percent === null ? "Informational" : `${segment.percent}% complete`}`}
+          title={`${segment.label}: ${segment.percent === null ? (segment.note ?? "Informational") : `${segment.percent}% complete`}`}
         />
       ))}
     </div>
@@ -1412,10 +1433,26 @@ function toCleanTabId(name: string): string {
 }
 
 
+/**
+ * W04-C4: this used to fall through to a green "On Track" badge for ANY value
+ * it did not recognise — including the case where the compliance / required-
+ * document collections behind the verdict were never read. A risk verdict is
+ * now only rendered when its inputs were actually loaded; otherwise the badge
+ * says so, in the same spirit as the readiness header ("not measured").
+ */
 function riskBadge(level: string) {
   if (level === "red") return <Badge variant="outline" className="text-[10px] border-red-300 text-red-700 bg-red-50">High Risk</Badge>;
   if (level === "amber") return <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700 bg-amber-50">Amber</Badge>;
-  return <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700 bg-emerald-50">On Track</Badge>;
+  if (level === "green") return <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700 bg-emerald-50">On Track</Badge>;
+  return (
+    <Badge
+      variant="outline"
+      className="text-[10px] border-slate-300 text-slate-600 bg-slate-50"
+      title="Risk is derived from the compliance matrix and the required-document set. Neither is read for this tender in the clean app, so no verdict can be stated."
+    >
+      Risk not assessed
+    </Badge>
+  );
 }
 function PackCard({ pack }: { pack: TenderPack }) {
   return (
@@ -1632,7 +1669,9 @@ export default function TenderWorkspaceDetail() {
         {/* Header */}
         <div className="mb-4">
           <div className="flex items-center gap-3 flex-wrap">
-            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${ws.riskLevel === "red" ? "bg-red-500" : ws.riskLevel === "amber" ? "bg-amber-500" : "bg-emerald-500"}`} />
+            {/* W04-C4: the dot is the same verdict as the badge — a grey dot
+                when risk was never assessed, not a reassuring green one. */}
+            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${ws.riskLevel === "red" ? "bg-red-500" : ws.riskLevel === "amber" ? "bg-amber-500" : ws.riskLevel === "green" ? "bg-emerald-500" : "bg-slate-300"}`} />
             <h1 className="text-xl font-serif font-bold">{t.title}</h1>
             <Badge variant="outline" className="text-[10px] border-[#244f96] text-[#075eea] bg-[#075eea]/10">{ws.tenderType}</Badge>
             {/* W04-T08-A: this badge used to render `t.status`, which is

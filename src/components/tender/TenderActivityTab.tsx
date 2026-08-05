@@ -140,12 +140,17 @@ export default function TenderActivityTab({ ws, tenderId, reload }: { ws: Tender
               setNoteSubmitting(true);
               const result = await createActivityNote(tenderId, noteTitle.trim(), noteDesc.trim());
               if (result.success) {
-                toast.success("Activity note added.", { description: "Persisted to Supabase." });
+                // W04-C4: createActivityNote now confirms the stored row before
+                // returning success, so this claim is backed by the database.
+                toast.success("Activity note added.", {
+                  description: "Confirmed stored in commercial_ticket_audit.",
+                });
                 setNoteTitle("");
                 setNoteDesc("");
                 reload();
               } else {
-                toast.warning("Note failed to save.", { description: result.error });
+                // The note text is deliberately left in the inputs so it is not lost.
+                toast.error("Note was NOT saved.", { description: result.error, duration: 10000 });
               }
               setNoteSubmitting(false);
             }}
