@@ -11,7 +11,12 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChevronLeft, ChevronRight, Save, Send, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/lib/api-client";
+import {
+  createQuote,
+  updateQuote,
+  submitQuote,
+  type QuoteRecord,
+} from "@/lib/commercial-runtime";
 
 // ── Constants ────────────────────────────────────────────
 const GP_GREEN = 25, GP_AMBER = 15;
@@ -64,8 +69,8 @@ interface Props {
   workspaceId: string;
   customerId?: string;
   customerName?: string;
-  existingQuote?: any;
-  onSaved: (quote: any) => void;
+  existingQuote?: QuoteRecord | null;
+  onSaved: (quote: QuoteRecord) => void;
   onCancel: () => void;
 }
 
@@ -74,6 +79,10 @@ export default function QuoteWizard({ workspaceId, customerId, customerName, exi
   const [saving, setSaving] = useState(false);
   const isEdit = !!existingQuote;
 
+  // Every field below round-trips to a real `quotes` column, so an edit
+  // re-hydrates all of them from the stored quote. Where a saved quote holds
+  // nothing, the wizard's own starting value is used — that is an input default
+  // offered to the human, not a claim about what is stored.
   const [form, setForm] = useState<QuoteFormData>(() => ({
     service_type: existingQuote?.service_type || "warehousing",
     volume_unit: existingQuote?.volume_unit || "pallets",
@@ -82,7 +91,7 @@ export default function QuoteWizard({ workspaceId, customerId, customerName, exi
     storage_rate: existingQuote?.storage_rate || 0,
     inbound_rate: existingQuote?.inbound_rate || 0,
     outbound_rate: existingQuote?.outbound_rate || 0,
-    estimated_cost: existingQuote?.estimated_cost || existingQuote?.total_cost || 0,
+    estimated_cost: existingQuote?.estimated_cost || 0,
     discount_percent: existingQuote?.discount_percent || 0,
     validity_days: existingQuote?.validity_days || 30,
     assumptions: existingQuote?.assumptions || "",
@@ -124,26 +133,37 @@ export default function QuoteWizard({ workspaceId, customerId, customerName, exi
         customer_id: customerId,
       };
 
-      let quote: any;
-      if (isEdit) {
-        const res = await api.quotes.update(existingQuote.id, payload);
-        quote = res.data;
-      } else {
-        const res = await api.quotes.create(workspaceId, payload);
-        quote = res.data;
+      const saved = isEdit && existingQuote
+        ? await updateQuote(existingQuote.id, payload)
+        : await createQuote(workspaceId, payload);
+
+      if (!saved.ok) { toast.error(saved.error); return; }
+
+      let quote = saved.data.quote;
+      const notes: string[] = [...saved.data.warnings];
+      if (saved.data.unstoredFields.length > 0) {
+        notes.push(`Not stored (no column in the quotes table): ${saved.data.unstoredFields.join(", ")}.`);
       }
 
-      if (andSubmit && quote) {
-        const res = await api.quotes.submit(quote.id);
-        quote = res.data;
-        toast.success("Quote submitted for approval");
+      if (andSubmit) {
+        const submitted = await submitQuote(quote.id);
+        if (!submitted.ok) {
+          toast.error(submitted.error, {
+            description: `The quote itself WAS saved as V${quote.version_number ?? "?"}. ${notes.join(" ")}`.trim(),
+          });
+          onSaved(quote);
+          return;
+        }
+        quote = submitted.data;
+        toast.success("Quote submitted for approval", notes.length > 0 ? { description: notes.join(" ") } : undefined);
       } else {
-        toast.success(isEdit ? "Quote updated" : "Quote saved as draft");
+        toast.success(
+          isEdit ? "Quote updated" : "Quote saved as draft",
+          notes.length > 0 ? { description: notes.join(" ") } : undefined,
+        );
       }
 
       onSaved(quote);
-    } catch (err: any) {
-      toast.error(err.message || "Failed to save quote");
     } finally {
       setSaving(false);
     }
