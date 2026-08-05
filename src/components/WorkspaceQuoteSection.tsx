@@ -12,7 +12,16 @@ import {
   ChevronDown, ChevronRight, FileText, Info,
 } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/lib/api-client";
+import {
+  listQuotesByWorkspace,
+  submitQuote,
+  approveQuote,
+  rejectQuote,
+  createQuoteVersion,
+  type QuoteRecord,
+  type QuoteMutationOutcome,
+  type RuntimeResult,
+} from "@/lib/commercial-runtime";
 import QuoteWizard from "./QuoteWizard";
 
 const statusConfig: Record<string, { color: string; label: string; icon: any }> = {
@@ -39,10 +48,11 @@ interface Props {
 }
 
 export default function WorkspaceQuoteSection({ workspaceId, customerId, customerName }: Props) {
-  const [quotes, setQuotes] = useState<any[]>([]);
+  const [quotes, setQuotes] = useState<QuoteRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [editQuote, setEditQuote] = useState<any>(null);
+  const [editQuote, setEditQuote] = useState<QuoteRecord | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [rejectId, setRejectId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -50,40 +60,64 @@ export default function WorkspaceQuoteSection({ workspaceId, customerId, custome
   const [versionReason, setVersionReason] = useState("");
 
   const fetchQuotes = useCallback(async () => {
-    try {
-      const res = await api.quotes.listByWorkspace(workspaceId);
-      setQuotes(res.data || []);
-    } catch (err: any) {
-      console.warn("[QuoteSection] fetch error:", err.message);
-    } finally {
-      setLoading(false);
+    const res = await listQuotesByWorkspace(workspaceId);
+    if (!res.ok) {
+      // A failed query is NOT an empty list — surface it.
+      setLoadError(res.error);
+      setQuotes([]);
+    } else {
+      setLoadError(null);
+      setQuotes(res.data);
     }
+    setLoading(false);
   }, [workspaceId]);
 
   useEffect(() => { fetchQuotes(); }, [fetchQuotes]);
 
   const handleWizardSaved = () => { setWizardOpen(false); setEditQuote(null); fetchQuotes(); };
 
+  /** Report only what actually happened — never a success we did not confirm. */
+  const report = (
+    res: RuntimeResult<QuoteMutationOutcome>,
+    successMessage: string,
+  ) => {
+    if (!res.ok) { toast.error(res.error); return false; }
+    const notes: string[] = [...res.data.warnings];
+    if (res.data.unstoredFields.length > 0) {
+      notes.push(`Not stored (no column in the quotes table): ${res.data.unstoredFields.join(", ")}.`);
+    }
+    toast.success(successMessage, notes.length > 0 ? { description: notes.join(" ") } : undefined);
+    return true;
+  };
+
   const handleSubmit = async (id: string) => {
-    try { await api.quotes.submit(id); toast.success("Quote submitted"); fetchQuotes(); }
-    catch (e: any) { toast.error(e.message); }
+    const res = await submitQuote(id);
+    if (!res.ok) { toast.error(res.error); return; }
+    toast.success("Quote submitted");
+    fetchQuotes();
   };
 
   const handleApprove = async (id: string) => {
-    try { await api.quotes.approve(id); toast.success("Quote approved"); fetchQuotes(); }
-    catch (e: any) { toast.error(e.message); }
+    const res = await approveQuote(id);
+    if (!res.ok) { toast.error(res.error); return; }
+    toast.success("Quote approved");
+    fetchQuotes();
   };
 
   const handleReject = async () => {
     if (!rejectId || !rejectReason.trim()) { toast.error("Reason required"); return; }
-    try { await api.quotes.reject(rejectId, rejectReason); toast.success("Quote rejected"); setRejectId(null); setRejectReason(""); fetchQuotes(); }
-    catch (e: any) { toast.error(e.message); }
+    const res = await rejectQuote(rejectId, rejectReason);
+    if (!report(res, "Quote rejected")) return;
+    setRejectId(null); setRejectReason("");
+    fetchQuotes();
   };
 
   const handleCreateVersion = async () => {
     if (!versionId || !versionReason.trim()) { toast.error("Change reason required"); return; }
-    try { await api.quotes.createVersion(versionId, versionReason); toast.success("New version created"); setVersionId(null); setVersionReason(""); fetchQuotes(); }
-    catch (e: any) { toast.error(e.message); }
+    const res = await createQuoteVersion(versionId, versionReason);
+    if (!report(res, "New version created")) return;
+    setVersionId(null); setVersionReason("");
+    fetchQuotes();
   };
 
   // Show wizard
@@ -119,6 +153,15 @@ export default function WorkspaceQuoteSection({ workspaceId, customerId, custome
       <CardContent className="pt-4">
         {loading ? (
           <p className="text-xs text-muted-foreground py-8 text-center">Loading quotes...</p>
+        ) : loadError ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-semibold text-red-800">Quotes could not be loaded</p>
+              <p className="text-[11px] text-red-700 mt-0.5">{loadError}</p>
+              <p className="text-[10px] text-red-700/80 mt-1">This is a read failure, not an empty list. Nothing below is being hidden.</p>
+            </div>
+          </div>
         ) : quotes.length === 0 ? (
           <div className="text-center py-8">
             <FileText className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
@@ -178,10 +221,10 @@ export default function WorkspaceQuoteSection({ workspaceId, customerId, custome
 }
 
 function QuoteCard({ q, isLatest, onEdit, onSubmit, onApprove, onReject, onNewVersion }: {
-  q: any; isLatest: boolean;
+  q: QuoteRecord; isLatest: boolean;
   onEdit?: () => void; onSubmit?: () => void; onApprove?: () => void; onReject?: () => void; onNewVersion?: () => void;
 }) {
-  const cfg = statusConfig[q.status] || statusConfig.draft;
+  const cfg = statusConfig[q.status ?? "draft"] || statusConfig.draft;
   const Icon = cfg.icon;
   const rag = getRAG(q.gp_percent || 0);
 
@@ -189,18 +232,16 @@ function QuoteCard({ q, isLatest, onEdit, onSubmit, onApprove, onReject, onNewVe
     <div className={`rounded-lg border p-3 ${isLatest ? "border-border" : "border-muted bg-muted/10"}`}>
       <div className="flex items-center gap-2 mb-2">
         <span className={`w-2.5 h-2.5 rounded-full ${ragDot[rag]}`} />
-        <span className="text-sm font-semibold">{q.quote_number || `V${q.version_number || q.version}`}</span>
+        <span className="text-sm font-semibold">V{q.version_number ?? "?"}</span>
         <Badge variant="outline" className={`text-[10px] ${cfg.color}`}><Icon className="w-3 h-3 mr-0.5" />{cfg.label}</Badge>
-        {q.supersedes_quote_id && <Badge variant="outline" className="text-[10px] border-amber-300 bg-amber-50">Supersedes previous</Badge>}
         {isLatest && <Badge variant="outline" className="text-[10px] border-blue-300 bg-blue-50">Latest</Badge>}
       </div>
       <div className="grid grid-cols-4 gap-3 text-xs mb-2">
-        <div><span className="text-muted-foreground">Annual Revenue</span><p className="font-medium">{q.currency || "SAR"} {(q.annual_revenue || 0).toLocaleString()}</p></div>
-        <div><span className="text-muted-foreground">Cost</span><p className="font-medium">{q.currency || "SAR"} {(q.estimated_cost || q.total_cost || 0).toLocaleString()}</p></div>
-        <div><span className="text-muted-foreground">GP%</span><p className="font-medium">{q.gp_percent || 0}%</p></div>
-        <div><span className="text-muted-foreground">Validity</span><p className="font-medium">{q.validity_days || 30} days</p></div>
+        <div><span className="text-muted-foreground">Annual Revenue</span><p className="font-medium">SAR {q.annual_revenue.toLocaleString()}</p></div>
+        <div><span className="text-muted-foreground">Cost</span><p className="font-medium">SAR {q.estimated_cost.toLocaleString()}</p></div>
+        <div><span className="text-muted-foreground">GP%</span><p className="font-medium">{q.gp_percent}%</p></div>
+        <div><span className="text-muted-foreground">GP Amount</span><p className="font-medium">SAR {q.gp_amount.toLocaleString()}</p></div>
       </div>
-      {q.change_reason && <p className="text-[10px] text-muted-foreground mb-2"><span className="font-medium">Change reason:</span> {q.change_reason}</p>}
 
       {isLatest && (
         <div className="flex gap-1.5 mt-2 pt-2 border-t border-dashed">
