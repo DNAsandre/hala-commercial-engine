@@ -6,6 +6,27 @@ export const ALLOWED_TENDER_IDS = [
   "7483c493-0098-40a9-9e5f-76007bc62cd1",
 ] as const;
 
+/**
+ * SC-01 Wave 05 — ARCHITECT RULING, PROCESS-ISOLATION OPTION B.
+ *
+ * A tender created by the clean application must be immediately visible,
+ * openable and editable, surviving reload and direct navigation. The
+ * clean-origin marker is `commercial_tickets.created_from_intake`, which
+ * `intake-save.createTicket` writes as `true` on every clean create — an
+ * established column, probed live on 2026-08-05, not an invented one.
+ *
+ * Legacy seed records remain excluded, but ONLY by their exact captured ids
+ * (the standing delete-by-exact-id doctrine applied to filtering): the three
+ * `[HALA-UAT-ARV2]` seed tenders below also carry `created_from_intake=true`,
+ * so the marker alone cannot distinguish them. No fuzzy, prefix, title or
+ * date matching is used — an unlisted record is never treated as a seed.
+ */
+export const LEGACY_SEED_TENDER_IDS = [
+  "a1100000-0000-4000-8000-000000000030", // [HALA-UAT-ARV2] National Distribution Tender
+  "a1200000-0000-4000-8000-000000000001", // [HALA-UAT-ARV2][W2-S001] Tender Aggregate Test
+  "a1200000-0000-4000-8000-000000000002", // [HALA-UAT-ARV2][W2-S002] Fifteen Stage Tender Test
+] as const;
+
 export const LEGACY_TENDER_IDS_FOR_AUDIT = [
   "tn-linde-001",
 ] as const;
@@ -107,6 +128,7 @@ export const ALLOWED_TENDER_LOCAL_INTELLIGENCE_SOURCES = [
 type TicketLike = {
   id?: unknown;
   ticket_type?: unknown;
+  created_from_intake?: unknown;
   ticket_title?: unknown;
   customer_name?: unknown;
   company?: unknown;
@@ -156,10 +178,6 @@ function normalizeText(value: unknown): string {
 
 function hasId(id: unknown, allowedIds: readonly string[]): boolean {
   return typeof id === "string" && allowedIds.includes(id);
-}
-
-function hasNonCanonicalId(id: unknown, allowedIds: readonly string[]): boolean {
-  return typeof id === "string" && !allowedIds.includes(id);
 }
 
 function aliasesMatch(values: unknown[], aliases: readonly string[]): boolean {
@@ -227,13 +245,40 @@ function isAllowedProposalCreatorSourceType(sourceType: unknown): boolean {
   return PROPOSAL_CREATOR_SOURCE_TYPES.some(allowed => source === normalizeText(allowed));
 }
 
+/**
+ * Option B admission (architect ruling, 2026-08-05). In order:
+ *  1. exact legacy-seed ids are excluded;
+ *  2. the ratified explicit allowlist (Linde) is admitted;
+ *  3. any tender whose ROW carries `created_from_intake === true` is admitted —
+ *     this is what makes a human-created tender visible immediately;
+ *  4. the historical Linde name-alias fallback is retained last, for callers
+ *     holding partial rows without the marker column.
+ *
+ * The previous `hasNonCanonicalId` early-reject — which refused every canonical
+ * UUID outside the one-entry allowlist before anything else could run — is the
+ * exact behaviour the ruling removes, and it must not return.
+ */
 export function isAllowedTenderTicket(ticket: TicketLike | null | undefined): boolean {
   if (!PROCESS_ISOLATION_ENABLED) return true;
   if (!ticket) return false;
   if (ticket.ticket_type && ticket.ticket_type !== "tender") return false;
+  if (hasId(ticket.id, LEGACY_SEED_TENDER_IDS)) return false;
   if (hasId(ticket.id, ALLOWED_TENDER_IDS)) return true;
-  if (hasNonCanonicalId(ticket.id, ALLOWED_TENDER_IDS)) return false;
+  if (ticket.created_from_intake === true) return true;
   return aliasesMatch(ticketIdentityValues(ticket), ALLOWED_TENDER_NAME_ALIASES);
+}
+
+/**
+ * Pre-fetch check for id-only callers (the tender workspace deep link). Under
+ * Option B a clean-created tender can only be recognised from its ROW (the
+ * marker lives on the row), so an id-only check may reject ONLY the exact
+ * legacy seed ids. Everything else must be fetched and then evaluated with
+ * {@link isAllowedTenderTicket} — "the allowlist may not reject a
+ * clean-created tender before its row is read."
+ */
+export function mayTenderIdBeAllowed(id: unknown): boolean {
+  if (!PROCESS_ISOLATION_ENABLED) return true;
+  return !hasId(id, LEGACY_SEED_TENDER_IDS);
 }
 
 export function isAllowedProposalTicket(ticket: TicketLike | null | undefined): boolean {

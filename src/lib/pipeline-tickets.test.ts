@@ -463,18 +463,25 @@ describe("CRM stage columns — terminal stages are columns, not locks", () => {
 
 // ── Observed behaviour of the tender process-isolation allowlist ────
 
-describe("process-isolation tender allowlist (observed, not owned by this lane)", () => {
-  it("admits only the hardcoded tender id, dropping other real tender rows", () => {
+describe("process-isolation tender filter (observed, not owned by this lane)", () => {
+  // Wave 05, architect's Option B ruling: clean-created tenders (rows carrying
+  // created_from_intake=true) are admitted; the three legacy seed ids stay
+  // excluded by exact id; Linde's ratified admission is unchanged.
+  it("admits Linde and clean-created rows, drops exactly the legacy seed ids", () => {
     const rows = [
       ticket({ id: ALLOWED_TENDER_IDS[0], ticket_type: "tender", ticket_title: "Linde SIGAS Bulk Transportation Tender" }),
-      ticket({ id: "a1200000-0000-4000-8000-000000000002", ticket_type: "tender", ticket_title: "Fifteen Stage Tender Test" }),
-      ticket({ id: "a1200000-0000-4000-8000-000000000001", ticket_type: "tender", ticket_title: "Tender Aggregate Test" }),
-      ticket({ id: "a1100000-0000-4000-8000-000000000030", ticket_type: "tender", ticket_title: "National Distribution Tender" }),
+      ticket({ id: "a1200000-0000-4000-8000-000000000002", ticket_type: "tender", ticket_title: "Fifteen Stage Tender Test", created_from_intake: true }),
+      ticket({ id: "a1200000-0000-4000-8000-000000000001", ticket_type: "tender", ticket_title: "Tender Aggregate Test", created_from_intake: true }),
+      ticket({ id: "a1100000-0000-4000-8000-000000000030", ticket_type: "tender", ticket_title: "National Distribution Tender", created_from_intake: true }),
+      ticket({ id: "b7e2c9d4-1234-4abc-9def-000000000001", ticket_type: "tender", ticket_title: "Human-Created Tender", created_from_intake: true }),
     ];
     const allowed = filterAllowedTenderTickets(rows);
-    expect(allowed.map(r => r.id)).toEqual([ALLOWED_TENDER_IDS[0]]);
-    // 4 tender rows in, 1 out: every tender surface in this lane renders a
-    // strict subset of the tender rows the database returns.
-    expect(rows.length).toBe(4);
+    expect(allowed.map(r => r.id)).toEqual([
+      ALLOWED_TENDER_IDS[0],
+      "b7e2c9d4-1234-4abc-9def-000000000001",
+    ]);
+    // The withheld set is exactly the three captured seed ids — never a
+    // record a human created through the clean application.
+    expect(rows.length - allowed.length).toBe(3);
   });
 });
