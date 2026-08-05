@@ -1667,7 +1667,12 @@ export default function TenderWorkspaceDetail() {
             <span className="flex items-center gap-1"><CalendarDays className="w-3 h-3" />Due: <span className="font-medium text-foreground">{t.submissionDeadline}</span></span>
             <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{formatSAR(t.estimatedValue)}</span>
             <span className="flex items-center gap-1"><Target className="w-3 h-3" />GP: {t.targetGpPercent}%</span>
-            <span>Readiness: <span className="font-medium text-foreground">{ws.readinessScore}%</span></span>
+            {/* W04-T08-A: readinessScore is the mean over ws.packs. With no
+                packs the mean is 0, which read as "0% ready" rather than "not
+                measured". State which of the two it is. */}
+            <span>Readiness: <span className="font-medium text-foreground">
+              {ws.packs.length > 0 ? `${ws.readinessScore}%` : 'not measured (no packs configured)'}
+            </span></span>
           </div>
         </div>
 
