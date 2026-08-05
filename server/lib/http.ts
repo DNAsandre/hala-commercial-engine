@@ -12,7 +12,8 @@ export interface ErrorDetail {
   message: string;
 }
 
-/** Uniform error envelope. Mirrors the shape the clean api-client parses. */
+/** Uniform error envelope: { error, code, details? }. Parsed client-side by
+ * src/lib/document-runtime.ts (the old api-client was deleted in Wave 03). */
 export function sendError(
   res: Response,
   status: number,

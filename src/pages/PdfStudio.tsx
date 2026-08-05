@@ -432,8 +432,9 @@ export default function FinalPackStudio() {
       {/* ── Top Bar ── */}
       <header className="flex items-center gap-3 px-6 py-3 border-b border-border bg-card">
         {/* CLEAN APP: the "Back to Tender" control below was a raw <a> (full page
-            reload). Raw anchors bypass wouter's <Router base="/clean">, so it
-            escaped to the legacy /tenders/:id route. Converted to <Link>. */}
+            reload) that bypassed wouter client-side routing. Converted to <Link>.
+            The app is root-mounted (SC-01.6) — cleanHref normalizes any historical
+            /clean-prefixed href to the root-based /tenders/:id route. */}
         {mode === "select" ? (
           tenderId ? (
             <Link

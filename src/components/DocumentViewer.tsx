@@ -23,7 +23,6 @@ import {
   getCategoryIcon,
   getSignedDownloadUrl,
   resolveVersionFilePath,
-  hasRealFile,
   downloadDocument,
   initializeDocumentVault,
   softDeleteDocument,
