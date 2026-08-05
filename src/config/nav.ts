@@ -5,10 +5,11 @@
  * Claude Clean App Migration Brief (2026-07-28) sections 2 and 4.
  *
  * ROUTING NOTE
- * The clean app is mounted inside wouter's <Router base="/clean">. Every path
- * below is therefore BASE-RELATIVE: "/dashboard" renders at "/clean/dashboard".
- * This is deliberate — it means reused components that emit <Link href="/tenders">
- * resolve to "/clean/tenders" automatically and cannot escape the clean surface.
+ * Superseded by SC-01.6: the standalone application operates from its OWN root.
+ * There is no "/clean" prefix and no wouter base (see src/CleanApp.tsx). Every
+ * path below is a real top-level route: "/dashboard" renders at "/dashboard".
+ * `cleanHref` in src/lib/clean-routing.ts normalizes any surviving prototype
+ * form ("~/clean/x", "/clean/x") back to the root-based path.
  *
  * DOCTRINE
  *  - ONLY approved surfaces appear here. No legacy composer / PDF Studio /

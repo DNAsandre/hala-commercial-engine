@@ -285,7 +285,16 @@ export async function updateTicket(
   return { data: row as CommercialTicket, error: null };
 }
 
-/** Change pipeline/internal stage with audit */
+/**
+ * Change pipeline/internal stage with audit.
+ *
+ * SC-01 Wave 04: the update is read back with `.select()` and the stored value
+ * is compared to what was requested BEFORE any audit row is written. Without
+ * that, an update matching zero rows (RLS, deleted ticket, wrong id) returns no
+ * error, and the caller reported success — and wrote a `stage_changed` audit
+ * entry — for a change the database never stored. A resolved request is not
+ * proof of persistence.
+ */
 export async function changeStage(
   ticketId: string,
   field: "crm_pipeline_stage" | "internal_stage",
@@ -293,12 +302,29 @@ export async function changeStage(
   newValue: string,
   userName: string
 ): Promise<{ error: string | null }> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("commercial_tickets")
     .update({ [field]: newValue })
-    .eq("id", ticketId);
+    .eq("id", ticketId)
+    .select("id, crm_pipeline_stage, internal_stage");
 
   if (error) return { error: error.message };
+
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  if (rows.length === 0) {
+    return {
+      error:
+        "The stage change was not stored: no matching record was updated. " +
+        "It may have been removed, or this account may not be permitted to change it.",
+    };
+  }
+  if (rows[0]?.[field] !== newValue) {
+    return {
+      error: `The stage change was not stored: the record still reads "${String(
+        rows[0]?.[field] ?? ""
+      )}".`,
+    };
+  }
 
   await writeAudit({
     ticket_id: ticketId,
