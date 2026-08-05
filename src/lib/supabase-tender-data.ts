@@ -413,10 +413,18 @@ function normalizeCrmStage(value: string | null | undefined): Tender['crmPipelin
  */
 export const RESTORABLE_CRM_PIPELINE_STAGES: readonly string[] = Array.from(
   new Set(Object.values(CRM_STAGE_MAP)),
-);
+).filter((v) => normalizeCrmStage(v) === v);
 
+/**
+ * SC-01 Wave 04 (Fable, integration): defined as an actual round trip rather
+ * than membership of the map's *value* set. Those are not the same test — the
+ * map can hold a spaced spelling ("actual go live") whose value is a valid
+ * milestone while the underscored key the application actually writes is
+ * absent. Membership would pass; the round trip would still break, and the
+ * workspace would display a different stage than the one stored.
+ */
 export function isRestorableCrmPipelineStage(value: string | null | undefined): boolean {
-  return typeof value === 'string' && RESTORABLE_CRM_PIPELINE_STAGES.includes(value);
+  return typeof value === 'string' && value !== '' && normalizeCrmStage(value) === value;
 }
 
 function normalizeInternalTenderStage(value: string | null | undefined): Tender['status'] {
