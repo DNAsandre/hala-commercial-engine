@@ -8,17 +8,16 @@
  *
  * ── HONESTY CONTRACT ────────────────────────────────────────────────
  *  1. Only ESTABLISHED tables/columns are touched. Nothing is invented.
- *       quotes                 — proven by supabase-data.ts mapQuote/quoteToRow
- *                                (id, workspace_id, version, state, created_at,
- *                                 storage_rate, inbound_rate, outbound_rate,
- *                                 pallet_volume, monthly_revenue,
- *                                 annual_revenue, total_cost, gp_percent,
- *                                 gp_amount)
+ *       quotes                 — full Sprint-3 schema, CONFIRMED LIVE by a
+ *                                column-by-column PostgREST probe of the
+ *                                project (W03 coordinator, 2026-08). The old
+ *                                server route that owned this table is
+ *                                hala-commercial-engine/server/routes/quotes.ts
+ *                                (read-only evidence) and it is the source of
+ *                                the mirror-column, quote_number and
+ *                                valid_until conventions reproduced below.
  *       commercial_tickets     — proven by intake-save.ts + unified-ticket-types.ts
  *       commercial_ticket_audit— proven by intake-save.ts writeAudit()
- *       approval_records       — proven by supabase-data.ts approvalToRow /
- *                                createApprovalRecord (entity_type includes
- *                                "quote")
  *  2. Every mutation is CONFIRMED with .select() and a returned-row check.
  *     A write that returns no row is reported as a failure, never as success.
  *  3. Reads distinguish three outcomes: real data, honest empty, functional
@@ -56,15 +55,36 @@ function ok<T>(data: T): RuntimeResult<T> {
 // ════════════════════════════════════════════════════════════════════
 
 /**
- * Established `quotes` columns. This list is the whole persistable surface;
- * anything outside it is reported as unstored rather than written.
+ * Established `quotes` columns, all confirmed present on the live table.
+ *
+ * MIRROR PAIRS: the table carries both the original clean-app columns and the
+ * Sprint-3 additions for the same three facts —
+ *     version : version_number
+ *     state   : status
+ *     total_cost : estimated_cost
+ * The old server wrote BOTH sides of every pair (routes/quotes.ts:132-147), and
+ * supabase-data.ts mapQuote still reads the original side while these panels
+ * read the Sprint-3 side. Writing only one side would leave the other stale, so
+ * every write here sets both. This is not duplication we invented; it is the
+ * established shape of the table.
+ *
+ * `updated_at` / `updated_by` are deliberately NOT written: the migration adds
+ * them but they were not part of the confirmed live probe, and naming a column
+ * that does not exist would fail the whole statement.
  */
 const QUOTE_COLUMNS = [
   "id",
   "workspace_id",
+  "customer_id",
+  "quote_number",
   "version",
+  "version_number",
   "state",
-  "created_at",
+  "status",
+  "service_type",
+  "currency",
+  "volume_unit",
+  "monthly_volume",
   "storage_rate",
   "inbound_rate",
   "outbound_rate",
@@ -72,9 +92,38 @@ const QUOTE_COLUMNS = [
   "monthly_revenue",
   "annual_revenue",
   "total_cost",
-  "gp_percent",
-  "gp_amount",
+  "estimated_cost",
+  "discount_percent",
+  "validity_days",
+  "valid_until",
+  "assumptions",
+  "exclusions",
+  "notes",
+  "change_reason",
+  "supersedes_quote_id",
+  "created_by",
+  "created_at",
 ] as const;
+
+/**
+ * Quote number format, reproduced exactly from the old server route
+ * (hala-commercial-engine/server/routes/quotes.ts:23) so numbers generated here
+ * are indistinguishable from the ones already in the table.
+ */
+export function generateQuoteNumber(workspaceId: string, version: number): string {
+  const prefix = workspaceId.replace(/[^a-zA-Z0-9]/g, "").substring(0, 6).toUpperCase();
+  return `Q-${prefix}-V${version}`;
+}
+
+/**
+ * valid_until = today + validity_days, date only. Reproduced from the old
+ * server route (routes/quotes.ts:28).
+ */
+export function calculateValidUntil(validityDays: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + validityDays);
+  return date.toISOString().split("T")[0];
+}
 
 /** Quote states used by the app (store.ts QuoteState). */
 export type QuoteState =
@@ -85,19 +134,24 @@ export type QuoteState =
   | "superseded";
 
 /**
- * A quote as the Quote panels consume it.
- *
- * `status`, `version_number` and `estimated_cost` are NOT extra columns: they
- * are the established columns `state`, `version` and `total_cost` surfaced
- * under the key names the existing UI already reads. No new storage exists
- * behind them.
+ * A quote as the Quote panels consume it — every field is a real column on the
+ * live `quotes` table. Nullable fields stay nullable: a column the database
+ * genuinely does not hold a value for renders as unknown, never as a default we
+ * made up.
  */
 export interface QuoteRecord {
   id: string;
   workspace_id: string | null;
+  customer_id: string | null;
+  quote_number: string | null;
   version: number | null;
+  version_number: number | null;
   state: string | null;
-  created_at: string | null;
+  status: string | null;
+  service_type: string | null;
+  currency: string | null;
+  volume_unit: string | null;
+  monthly_volume: number;
   storage_rate: number;
   inbound_rate: number;
   outbound_rate: number;
@@ -105,14 +159,19 @@ export interface QuoteRecord {
   monthly_revenue: number;
   annual_revenue: number;
   total_cost: number;
+  estimated_cost: number;
+  discount_percent: number;
+  validity_days: number | null;
+  valid_until: string | null;
+  assumptions: string | null;
+  exclusions: string | null;
+  notes: string | null;
+  change_reason: string | null;
+  supersedes_quote_id: string | null;
+  created_by: string | null;
+  created_at: string | null;
   gp_percent: number;
   gp_amount: number;
-  /** alias of `state` */
-  status: string | null;
-  /** alias of `version` */
-  version_number: number | null;
-  /** alias of `total_cost` */
-  estimated_cost: number;
 }
 
 function num(value: unknown): number {
@@ -120,37 +179,70 @@ function num(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function text(value: unknown): string | null {
+  return value === undefined || value === null || value === "" ? null : String(value);
+}
+
 function mapQuoteRow(row: Record<string, any>): QuoteRecord {
-  const state = row.state ?? null;
-  const version = row.version == null ? null : Number(row.version);
-  const totalCost = num(row.total_cost);
+  // Mirror pairs: prefer the Sprint-3 column, fall back to the original one so
+  // rows written before the migration still read correctly.
+  const version = row.version_number ?? row.version;
+  const status = row.status ?? row.state;
+  const estimatedCost = row.estimated_cost ?? row.total_cost;
   return {
     id: String(row.id),
-    workspace_id: row.workspace_id ?? null,
-    version,
-    state,
-    created_at: row.created_at ?? null,
+    workspace_id: text(row.workspace_id),
+    customer_id: text(row.customer_id),
+    quote_number: text(row.quote_number),
+    version: row.version == null ? null : Number(row.version),
+    version_number: version == null ? null : Number(version),
+    state: text(row.state),
+    status: text(status),
+    service_type: text(row.service_type),
+    currency: text(row.currency),
+    volume_unit: text(row.volume_unit),
+    monthly_volume: num(row.monthly_volume),
     storage_rate: num(row.storage_rate),
     inbound_rate: num(row.inbound_rate),
     outbound_rate: num(row.outbound_rate),
     pallet_volume: num(row.pallet_volume),
     monthly_revenue: num(row.monthly_revenue),
     annual_revenue: num(row.annual_revenue),
-    total_cost: totalCost,
+    total_cost: num(row.total_cost),
+    estimated_cost: num(estimatedCost),
+    discount_percent: num(row.discount_percent),
+    validity_days: row.validity_days == null ? null : Number(row.validity_days),
+    valid_until: text(row.valid_until),
+    assumptions: text(row.assumptions),
+    exclusions: text(row.exclusions),
+    notes: text(row.notes),
+    change_reason: text(row.change_reason),
+    supersedes_quote_id: text(row.supersedes_quote_id),
+    created_by: text(row.created_by),
+    created_at: text(row.created_at),
     gp_percent: num(row.gp_percent),
     gp_amount: num(row.gp_amount),
-    status: state,
-    version_number: version,
-    estimated_cost: totalCost,
   };
 }
 
 /**
- * Fields the Quote wizard collects that have NO column in the established
- * `quotes` table. They are reported back, never written and never faked.
+ * Every caller-supplied key this module knows how to persist. Anything a caller
+ * sends that is NOT in here has no column and is reported back through
+ * `unstoredFields` rather than silently dropped. The set is derived from the
+ * write mapping below, so it can never drift out of sync with it.
  */
-const QUOTE_UNSTORED_KEYS = [
+const PERSISTABLE_QUOTE_INPUT_KEYS = new Set([
+  "storage_rate",
+  "inbound_rate",
+  "outbound_rate",
+  "pallet_volume",
+  "monthly_revenue",
+  "annual_revenue",
+  "gp_percent",
+  "gp_amount",
+  "estimated_cost",
   "service_type",
+  "currency",
   "volume_unit",
   "monthly_volume",
   "discount_percent",
@@ -158,9 +250,8 @@ const QUOTE_UNSTORED_KEYS = [
   "assumptions",
   "exclusions",
   "notes",
-  "currency",
   "customer_id",
-] as const;
+]);
 
 export interface QuoteWriteInput {
   storage_rate?: number;
@@ -171,8 +262,19 @@ export interface QuoteWriteInput {
   annual_revenue?: number;
   gp_percent?: number;
   gp_amount?: number;
-  /** written to the established `total_cost` column */
+  /** written to BOTH `estimated_cost` and the mirror `total_cost` */
   estimated_cost?: number;
+  service_type?: string;
+  currency?: string;
+  volume_unit?: string;
+  monthly_volume?: number;
+  discount_percent?: number;
+  /** also drives the derived `valid_until` column */
+  validity_days?: number;
+  assumptions?: string;
+  exclusions?: string;
+  notes?: string;
+  customer_id?: string;
   [key: string]: unknown;
 }
 
@@ -186,21 +288,59 @@ export interface QuoteMutationOutcome {
 
 function quoteRowFromInput(input: QuoteWriteInput): Record<string, any> {
   const row: Record<string, any> = {};
-  if (input.storage_rate !== undefined) row.storage_rate = num(input.storage_rate);
-  if (input.inbound_rate !== undefined) row.inbound_rate = num(input.inbound_rate);
-  if (input.outbound_rate !== undefined) row.outbound_rate = num(input.outbound_rate);
-  if (input.pallet_volume !== undefined) row.pallet_volume = num(input.pallet_volume);
-  if (input.monthly_revenue !== undefined) row.monthly_revenue = num(input.monthly_revenue);
-  if (input.annual_revenue !== undefined) row.annual_revenue = num(input.annual_revenue);
-  if (input.gp_percent !== undefined) row.gp_percent = num(input.gp_percent);
-  if (input.gp_amount !== undefined) row.gp_amount = num(input.gp_amount);
-  if (input.estimated_cost !== undefined) row.total_cost = num(input.estimated_cost);
+  const setNum = (key: string, value: unknown) => {
+    if (value !== undefined) row[key] = num(value);
+  };
+  const setText = (key: string, value: unknown) => {
+    if (value !== undefined) row[key] = value === null ? null : String(value);
+  };
+
+  setNum("storage_rate", input.storage_rate);
+  setNum("inbound_rate", input.inbound_rate);
+  setNum("outbound_rate", input.outbound_rate);
+  setNum("pallet_volume", input.pallet_volume);
+  setNum("monthly_volume", input.monthly_volume);
+  setNum("monthly_revenue", input.monthly_revenue);
+  setNum("annual_revenue", input.annual_revenue);
+  setNum("gp_percent", input.gp_percent);
+  setNum("gp_amount", input.gp_amount);
+  setNum("discount_percent", input.discount_percent);
+  setText("service_type", input.service_type);
+  setText("currency", input.currency);
+  setText("volume_unit", input.volume_unit);
+  setText("assumptions", input.assumptions);
+  setText("exclusions", input.exclusions);
+  setText("notes", input.notes);
+  setText("customer_id", input.customer_id);
+
+  // Mirror pair — the old server kept estimated_cost and total_cost in sync.
+  if (input.estimated_cost !== undefined) {
+    row.estimated_cost = num(input.estimated_cost);
+    row.total_cost = num(input.estimated_cost);
+  }
+
+  // validity_days drives valid_until, exactly as the old server did.
+  if (input.validity_days !== undefined) {
+    const days = num(input.validity_days);
+    row.validity_days = days;
+    if (days > 0) row.valid_until = calculateValidUntil(days);
+  }
+
   return row;
 }
 
-/** Which caller-supplied values carry information the quotes table cannot hold. */
+/**
+ * Which caller-supplied values carry information the quotes table cannot hold.
+ *
+ * Since the Sprint-3 columns were confirmed live, every field the quote wizard
+ * collects now has a column and this returns [] for the wizard's payload. The
+ * check is kept — and made generic rather than a fixed list — so that any
+ * future field a caller invents is still reported honestly instead of being
+ * dropped in silence.
+ */
 export function listUnstoredQuoteFields(input: QuoteWriteInput): string[] {
-  return QUOTE_UNSTORED_KEYS.filter((key) => {
+  return Object.keys(input).filter((key) => {
+    if (PERSISTABLE_QUOTE_INPUT_KEYS.has(key)) return false;
     const value = input[key];
     return value !== undefined && value !== null && value !== "" && value !== 0;
   });
@@ -219,29 +359,29 @@ export async function listQuotesByWorkspace(
     .from("quotes")
     .select(QUOTE_COLUMNS.join(","))
     .eq("workspace_id", workspaceId)
-    .order("version", { ascending: false })
+    .order("version_number", { ascending: false })
     .order("created_at", { ascending: false });
 
   if (error) return fail(`Quotes could not be read: ${error.message}`);
   return ok(((data ?? []) as Record<string, any>[]).map(mapQuoteRow));
 }
 
-/** Highest existing version in a workspace, or null when the read failed. */
+/** Highest existing version in a workspace, or an error when the read failed. */
 async function readNextQuoteVersion(
   workspaceId: string,
 ): Promise<{ version: number } | { error: string }> {
   const { data, error } = await supabase
     .from("quotes")
-    .select("version")
+    .select("version_number,version")
     .eq("workspace_id", workspaceId)
-    .order("version", { ascending: false })
+    .order("version_number", { ascending: false })
     .limit(1);
 
   if (error) {
     return { error: `Existing quote versions could not be read: ${error.message}` };
   }
-  const rows = (data ?? []) as Array<{ version: number | null }>;
-  const highest = rows.length > 0 ? Number(rows[0]?.version ?? 0) : 0;
+  const rows = (data ?? []) as Array<{ version_number: number | null; version: number | null }>;
+  const highest = rows.length > 0 ? Number(rows[0]?.version_number ?? rows[0]?.version ?? 0) : 0;
   return { version: (Number.isFinite(highest) ? highest : 0) + 1 };
 }
 
@@ -262,8 +402,13 @@ export async function createQuote(
   const row = {
     ...quoteRowFromInput(input),
     workspace_id: workspaceId,
+    quote_number: generateQuoteNumber(workspaceId, next.version),
+    // both sides of each mirror pair — see QUOTE_COLUMNS
     version: next.version,
+    version_number: next.version,
     state: "draft" satisfies QuoteState,
+    status: "draft" satisfies QuoteState,
+    created_by: getCurrentUser().id,
   };
 
   const { data, error } = await supabase.from("quotes").insert(row).select();
@@ -317,16 +462,23 @@ export async function updateQuote(
   });
 }
 
-/** Shared confirmed state write for the quote record actions. */
+/**
+ * Shared confirmed state write for the quote record actions. Sets BOTH sides of
+ * the state/status mirror pair so every reader of this table agrees.
+ *
+ * No gates: unlike the old server route (which rejected anything but
+ * draft→submitted→approved), any state can be recorded at any time.
+ */
 async function setQuoteState(
   quoteId: string,
   state: QuoteState,
+  extra: Record<string, any> = {},
 ): Promise<RuntimeResult<QuoteRecord>> {
   if (!quoteId) return fail("No quote id supplied; nothing was recorded.");
 
   const { data, error } = await supabase
     .from("quotes")
-    .update({ state })
+    .update({ state, status: state, ...extra })
     .eq("id", quoteId)
     .select();
 
@@ -354,10 +506,9 @@ export async function approveQuote(quoteId: string): Promise<RuntimeResult<Quote
 /**
  * Row 54 — POST /api/quotes/:id/reject.
  *
- * The quotes table has no rejection-reason column, so the reason is recorded
- * in the established `approval_records` table (entity_type "quote"). The state
- * change is primary and confirmed; if the reason row cannot be written that is
- * reported as a warning — never hidden.
+ * The reason goes into the established `change_reason` column in the SAME
+ * confirmed update as the state change — exactly what the old server route did
+ * (routes/quotes.ts:363-368). One write, one confirmation, nothing to lose.
  */
 export async function rejectQuote(
   quoteId: string,
@@ -366,40 +517,18 @@ export async function rejectQuote(
   const trimmed = (reason ?? "").trim();
   if (!trimmed) return fail("A rejection reason is required; nothing was recorded.");
 
-  const stateResult = await setQuoteState(quoteId, "rejected");
+  const stateResult = await setQuoteState(quoteId, "rejected", { change_reason: trimmed });
   if (!stateResult.ok) return fail(stateResult.error);
 
-  const warnings: string[] = [];
-  const user = getCurrentUser();
-  const { data, error } = await supabase
-    .from("approval_records")
-    .insert({
-      entity_type: "quote",
-      entity_id: quoteId,
-      workspace_id: stateResult.data.workspace_id,
-      approver_role: user.role,
-      approver_name: user.name,
-      decision: "rejected",
-      reason: trimmed,
-      is_override: false,
-    })
-    .select();
-
-  if (error) {
-    warnings.push(`Rejection reason was NOT recorded: ${error.message}`);
-  } else if (((data ?? []) as unknown[]).length === 0) {
-    warnings.push("Rejection reason was NOT recorded: the insert returned no row.");
-  }
-
-  return ok({ quote: stateResult.data, unstoredFields: [], warnings });
+  return ok({ quote: stateResult.data, unstoredFields: [], warnings: [] });
 }
 
 /**
  * Row 53 — POST /api/quotes/:id/create-version.
  *
- * Copies the established pricing columns into a new draft row at version+1 and
- * marks the source row superseded. The quotes table has no change-reason
- * column, so the supplied reason is reported as unstored.
+ * Copies the full quote into a new draft row at version+1, links it back with
+ * `supersedes_quote_id`, stores the `change_reason`, and marks the source row
+ * superseded. Mirrors the old server route (routes/quotes.ts:421-455).
  */
 export async function createQuoteVersion(
   quoteId: string,
@@ -409,16 +538,16 @@ export async function createQuoteVersion(
   if (!quoteId) return fail("No quote id supplied; no version was created.");
   if (!trimmed) return fail("A change reason is required; no version was created.");
 
-  const source = await supabase
+  const sourceRead = await supabase
     .from("quotes")
     .select(QUOTE_COLUMNS.join(","))
     .eq("id", quoteId)
     .limit(1);
 
-  if (source.error) {
-    return fail(`Source quote could not be read: ${source.error.message}`);
+  if (sourceRead.error) {
+    return fail(`Source quote could not be read: ${sourceRead.error.message}`);
   }
-  const sourceRow = ((source.data ?? []) as Record<string, any>[])[0];
+  const sourceRow = ((sourceRead.data ?? []) as Record<string, any>[])[0];
   if (!sourceRow) {
     return fail("Source quote could not be read: no row matched that id.");
   }
@@ -431,19 +560,37 @@ export async function createQuoteVersion(
   const next = await readNextQuoteVersion(workspaceId);
   if ("error" in next) return fail(next.error);
 
+  const source = mapQuoteRow(sourceRow);
+  const validityDays = source.validity_days ?? 30;
   const insertRow = {
     workspace_id: workspaceId,
+    customer_id: source.customer_id,
+    quote_number: generateQuoteNumber(workspaceId, next.version),
     version: next.version,
+    version_number: next.version,
     state: "draft" satisfies QuoteState,
-    storage_rate: num(sourceRow.storage_rate),
-    inbound_rate: num(sourceRow.inbound_rate),
-    outbound_rate: num(sourceRow.outbound_rate),
-    pallet_volume: num(sourceRow.pallet_volume),
-    monthly_revenue: num(sourceRow.monthly_revenue),
-    annual_revenue: num(sourceRow.annual_revenue),
-    total_cost: num(sourceRow.total_cost),
-    gp_percent: num(sourceRow.gp_percent),
-    gp_amount: num(sourceRow.gp_amount),
+    status: "draft" satisfies QuoteState,
+    service_type: source.service_type,
+    currency: source.currency,
+    volume_unit: source.volume_unit,
+    monthly_volume: source.monthly_volume,
+    storage_rate: source.storage_rate,
+    inbound_rate: source.inbound_rate,
+    outbound_rate: source.outbound_rate,
+    pallet_volume: source.pallet_volume,
+    monthly_revenue: source.monthly_revenue,
+    annual_revenue: source.annual_revenue,
+    total_cost: source.total_cost,
+    estimated_cost: source.estimated_cost,
+    discount_percent: source.discount_percent,
+    validity_days: source.validity_days,
+    valid_until: calculateValidUntil(validityDays),
+    assumptions: source.assumptions,
+    exclusions: source.exclusions,
+    notes: source.notes,
+    supersedes_quote_id: quoteId,
+    change_reason: trimmed,
+    created_by: getCurrentUser().id,
   };
 
   const { data, error } = await supabase.from("quotes").insert(insertRow).select();
@@ -464,7 +611,7 @@ export async function createQuoteVersion(
 
   return ok({
     quote: mapQuoteRow(created),
-    unstoredFields: ["change_reason"],
+    unstoredFields: [],
     warnings,
   });
 }

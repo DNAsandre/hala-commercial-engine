@@ -232,16 +232,22 @@ function QuoteCard({ q, isLatest, onEdit, onSubmit, onApprove, onReject, onNewVe
     <div className={`rounded-lg border p-3 ${isLatest ? "border-border" : "border-muted bg-muted/10"}`}>
       <div className="flex items-center gap-2 mb-2">
         <span className={`w-2.5 h-2.5 rounded-full ${ragDot[rag]}`} />
-        <span className="text-sm font-semibold">V{q.version_number ?? "?"}</span>
+        {/* quote_number is a real stored column; fall back to the stored
+            version rather than inventing an identifier. */}
+        <span className="text-sm font-semibold">{q.quote_number || `V${q.version_number ?? "?"}`}</span>
         <Badge variant="outline" className={`text-[10px] ${cfg.color}`}><Icon className="w-3 h-3 mr-0.5" />{cfg.label}</Badge>
+        {q.supersedes_quote_id && <Badge variant="outline" className="text-[10px] border-amber-300 bg-amber-50">Supersedes previous</Badge>}
         {isLatest && <Badge variant="outline" className="text-[10px] border-blue-300 bg-blue-50">Latest</Badge>}
       </div>
       <div className="grid grid-cols-4 gap-3 text-xs mb-2">
-        <div><span className="text-muted-foreground">Annual Revenue</span><p className="font-medium">SAR {q.annual_revenue.toLocaleString()}</p></div>
-        <div><span className="text-muted-foreground">Cost</span><p className="font-medium">SAR {q.estimated_cost.toLocaleString()}</p></div>
+        {/* Currency and validity are stored columns. When the row genuinely
+            holds no value they render as unknown, never as an assumed default. */}
+        <div><span className="text-muted-foreground">Annual Revenue</span><p className="font-medium">{q.currency || "—"} {q.annual_revenue.toLocaleString()}</p></div>
+        <div><span className="text-muted-foreground">Cost</span><p className="font-medium">{q.currency || "—"} {q.estimated_cost.toLocaleString()}</p></div>
         <div><span className="text-muted-foreground">GP%</span><p className="font-medium">{q.gp_percent}%</p></div>
-        <div><span className="text-muted-foreground">GP Amount</span><p className="font-medium">SAR {q.gp_amount.toLocaleString()}</p></div>
+        <div><span className="text-muted-foreground">Validity</span><p className="font-medium">{q.validity_days != null ? `${q.validity_days} days` : "Not captured"}</p></div>
       </div>
+      {q.change_reason && <p className="text-[10px] text-muted-foreground mb-2"><span className="font-medium">Change reason:</span> {q.change_reason}</p>}
 
       {isLatest && (
         <div className="flex gap-1.5 mt-2 pt-2 border-t border-dashed">

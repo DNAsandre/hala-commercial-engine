@@ -31,16 +31,32 @@ function nextResult(): MockResult {
   );
 }
 
+/** Payloads actually handed to .insert() / .update(), in call order. */
+const writtenRows: Array<{ op: "insert" | "update"; row: Record<string, any> }> = [];
+
 function makeBuilder(): any {
   const builder: any = {};
-  for (const method of ["select", "insert", "update", "delete", "eq", "neq", "order", "limit", "in"]) {
+  for (const method of ["select", "delete", "eq", "neq", "order", "limit", "in"]) {
     builder[method] = vi.fn(() => builder);
+  }
+  for (const op of ["insert", "update"] as const) {
+    builder[op] = vi.fn((row: Record<string, any>) => {
+      writtenRows.push({ op, row });
+      return builder;
+    });
   }
   builder.single = vi.fn(() => Promise.resolve(nextResult()));
   builder.maybeSingle = vi.fn(() => Promise.resolve(nextResult()));
   builder.then = (onFulfilled: any, onRejected: any) =>
     Promise.resolve(nextResult()).then(onFulfilled, onRejected);
   return builder;
+}
+
+/** The single row sent to the last insert/update of the given kind. */
+function lastWrite(op: "insert" | "update"): Record<string, any> {
+  const match = [...writtenRows].reverse().find((w) => w.op === op);
+  if (!match) throw new Error(`no ${op} was issued`);
+  return match.row;
 }
 
 const fromSpy = vi.fn(() => makeBuilder());
@@ -77,17 +93,28 @@ import {
   submitQuote,
   approveQuote,
   rejectQuote,
+  createQuoteVersion,
   listProposalsByWorkspace,
   markProposalSent,
   listUnstoredQuoteFields,
   mapInternalStageToProposalState,
+  generateQuoteNumber,
+  calculateValidUntil,
 } from "./commercial-runtime";
 
 const QUOTE_ROW = {
   id: "q1",
   workspace_id: "ws1",
+  customer_id: "cust-1",
+  quote_number: "Q-WS1-V2",
   version: 2,
+  version_number: 2,
   state: "submitted",
+  status: "submitted",
+  service_type: "warehousing",
+  currency: "SAR",
+  volume_unit: "pallets",
+  monthly_volume: 500,
   created_at: "2026-01-01T00:00:00Z",
   storage_rate: "12.5",
   inbound_rate: 3,
@@ -96,12 +123,46 @@ const QUOTE_ROW = {
   monthly_revenue: 1000,
   annual_revenue: 12000,
   total_cost: 9000,
+  estimated_cost: 9000,
+  discount_percent: 5,
+  validity_days: 45,
+  valid_until: "2026-02-15",
+  assumptions: "5-day working week",
+  exclusions: "Hazmat",
+  notes: "check rates",
+  change_reason: null,
+  supersedes_quote_id: null,
+  created_by: "u1",
   gp_percent: 25,
   gp_amount: 3000,
 };
 
+/** The wizard's real save payload shape. */
+const WIZARD_PAYLOAD = {
+  service_type: "transport",
+  volume_unit: "trips",
+  pallet_volume: 100,
+  monthly_volume: 500,
+  storage_rate: 12.5,
+  inbound_rate: 3,
+  outbound_rate: 4,
+  estimated_cost: 9000,
+  discount_percent: 5,
+  validity_days: 45,
+  assumptions: "5-day working week",
+  exclusions: "Hazmat handling",
+  notes: "check rates",
+  currency: "SAR",
+  monthly_revenue: 1000,
+  annual_revenue: 12000,
+  gp_amount: 3000,
+  gp_percent: 25,
+  customer_id: "cust-1",
+};
+
 beforeEach(() => {
   resultQueue.length = 0;
+  writtenRows.length = 0;
   fromSpy.mockClear();
   fetchOperationalTicketsByType.mockReset();
   changeStage.mockReset();
@@ -123,11 +184,44 @@ describe("listQuotesByWorkspace", () => {
     const quote = res.data[0];
     expect(quote.id).toBe("q1");
     expect(quote.storage_rate).toBe(12.5);
-    // aliases are the established columns, not extra storage
-    expect(quote.status).toBe(quote.state);
-    expect(quote.version_number).toBe(quote.version);
-    expect(quote.estimated_cost).toBe(quote.total_cost);
+    // the widened Sprint-3 columns round-trip
+    expect(quote.quote_number).toBe("Q-WS1-V2");
+    expect(quote.service_type).toBe("warehousing");
+    expect(quote.currency).toBe("SAR");
+    expect(quote.validity_days).toBe(45);
+    expect(quote.assumptions).toBe("5-day working week");
+    expect(quote.discount_percent).toBe(5);
     expect(fromSpy).toHaveBeenCalledWith("quotes");
+  });
+
+  it("falls back to the mirror column when the Sprint-3 side is empty", async () => {
+    queue({
+      data: [{ ...QUOTE_ROW, status: null, version_number: null, estimated_cost: null }],
+      error: null,
+    });
+
+    const res = await listQuotesByWorkspace("ws1");
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data[0].status).toBe("submitted"); // from `state`
+    expect(res.data[0].version_number).toBe(2); // from `version`
+    expect(res.data[0].estimated_cost).toBe(9000); // from `total_cost`
+  });
+
+  it("reports a genuinely empty column as unknown rather than a default", async () => {
+    queue({
+      data: [{ ...QUOTE_ROW, currency: null, validity_days: null, quote_number: null }],
+      error: null,
+    });
+
+    const res = await listQuotesByWorkspace("ws1");
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data[0].currency).toBeNull();
+    expect(res.data[0].validity_days).toBeNull();
+    expect(res.data[0].quote_number).toBeNull();
   });
 
   it("treats no rows as an honest empty list, not an error", async () => {
@@ -208,28 +302,62 @@ describe("approveQuote", () => {
 // ════════════════════════════════════════════════════════════════════
 
 describe("createQuote", () => {
-  it("inserts at the next version and reports the values it could not store", async () => {
+  it("sends the full widened column set, including both sides of every mirror pair", async () => {
     queue(
-      { data: [{ version: 2 }], error: null }, // highest existing version
-      { data: [{ ...QUOTE_ROW, id: "q2", version: 3, state: "draft" }], error: null },
+      { data: [{ version_number: 2 }], error: null }, // highest existing version
+      { data: [{ ...QUOTE_ROW, id: "q2", version: 3, version_number: 3, state: "draft", status: "draft" }], error: null },
+    );
+
+    const res = await createQuote("ws1", WIZARD_PAYLOAD);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    const row = lastWrite("insert");
+    // every wizard field is actually persisted — nothing is dropped
+    expect(row.service_type).toBe("transport");
+    expect(row.volume_unit).toBe("trips");
+    expect(row.monthly_volume).toBe(500);
+    expect(row.discount_percent).toBe(5);
+    expect(row.validity_days).toBe(45);
+    expect(row.assumptions).toBe("5-day working week");
+    expect(row.exclusions).toBe("Hazmat handling");
+    expect(row.notes).toBe("check rates");
+    expect(row.currency).toBe("SAR");
+    expect(row.customer_id).toBe("cust-1");
+    expect(row.storage_rate).toBe(12.5);
+    // mirror pairs — both sides written so every reader of the table agrees
+    expect(row.version).toBe(3);
+    expect(row.version_number).toBe(3);
+    expect(row.state).toBe("draft");
+    expect(row.status).toBe("draft");
+    expect(row.estimated_cost).toBe(9000);
+    expect(row.total_cost).toBe(9000);
+    // derived columns
+    expect(row.quote_number).toBe("Q-WS1-V3");
+    expect(row.valid_until).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // columns not confirmed present on the live table are never named
+    expect(row).not.toHaveProperty("updated_at");
+    expect(row).not.toHaveProperty("updated_by");
+
+    expect(res.data.unstoredFields).toEqual([]);
+  });
+
+  it("still reports a field that genuinely has no column", async () => {
+    queue(
+      { data: [{ version_number: 0 }], error: null },
+      { data: [{ ...QUOTE_ROW, id: "q2" }], error: null },
     );
 
     const res = await createQuote("ws1", {
-      storage_rate: 12.5,
-      estimated_cost: 9000,
-      assumptions: "5-day working week",
-      currency: "SAR",
-      discount_percent: 0,
+      ...WIZARD_PAYLOAD,
+      sla_penalty_clause: "2% per late delivery",
     });
 
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.data.quote.version).toBe(3);
-    expect(res.data.quote.state).toBe("draft");
-    expect(res.data.unstoredFields).toContain("assumptions");
-    expect(res.data.unstoredFields).toContain("currency");
-    // a zero discount lost no information, so it is not reported
-    expect(res.data.unstoredFields).not.toContain("discount_percent");
+    expect(res.data.unstoredFields).toEqual(["sla_penalty_clause"]);
+    expect(lastWrite("insert")).not.toHaveProperty("sla_penalty_clause");
   });
 
   it("does NOT report success when the insert returned no row", async () => {
@@ -257,8 +385,44 @@ describe("createQuote", () => {
 });
 
 describe("updateQuote", () => {
+  it("sends the full widened column set on an edit", async () => {
+    queue({ data: [QUOTE_ROW], error: null });
+
+    const res = await updateQuote("q1", WIZARD_PAYLOAD);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    const row = lastWrite("update");
+    expect(row.service_type).toBe("transport");
+    expect(row.volume_unit).toBe("trips");
+    expect(row.monthly_volume).toBe(500);
+    expect(row.discount_percent).toBe(5);
+    expect(row.validity_days).toBe(45);
+    expect(row.valid_until).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(row.assumptions).toBe("5-day working week");
+    expect(row.exclusions).toBe("Hazmat handling");
+    expect(row.notes).toBe("check rates");
+    expect(row.currency).toBe("SAR");
+    // estimated_cost mirrors into total_cost
+    expect(row.estimated_cost).toBe(9000);
+    expect(row.total_cost).toBe(9000);
+    expect(res.data.unstoredFields).toEqual([]);
+  });
+
+  it("still reports a field that genuinely has no column", async () => {
+    queue({ data: [QUOTE_ROW], error: null });
+
+    const res = await updateQuote("q1", { storage_rate: 5, payment_terms_days: 60 });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.unstoredFields).toEqual(["payment_terms_days"]);
+    expect(lastWrite("update")).not.toHaveProperty("payment_terms_days");
+  });
+
   it("refuses when nothing supplied maps to an established column", async () => {
-    const res = await updateQuote("q1", { assumptions: "only unstored data" });
+    const res = await updateQuote("q1", { payment_terms_days: 60 });
 
     expect(res.ok).toBe(false);
     if (res.ok) return;
@@ -278,24 +442,77 @@ describe("updateQuote", () => {
 });
 
 describe("rejectQuote", () => {
-  it("keeps the confirmed state change but warns when the reason could not be recorded", async () => {
-    queue(
-      { data: [{ ...QUOTE_ROW, state: "rejected" }], error: null }, // state update
-      { data: null, error: { message: "relation approval_records does not exist" } },
-    );
+  it("stores the reason in change_reason in the same confirmed write", async () => {
+    queue({ data: [{ ...QUOTE_ROW, state: "rejected", status: "rejected", change_reason: "Margin too thin" }], error: null });
 
     const res = await rejectQuote("q1", "Margin too thin");
 
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.data.quote.state).toBe("rejected");
-    expect(res.data.warnings.join(" ")).toContain("NOT recorded");
+    const row = lastWrite("update");
+    expect(row.state).toBe("rejected");
+    expect(row.status).toBe("rejected");
+    expect(row.change_reason).toBe("Margin too thin");
+    expect(res.data.quote.change_reason).toBe("Margin too thin");
+    expect(res.data.warnings).toEqual([]);
+  });
+
+  it("does NOT report success when the reject write matched no row", async () => {
+    queue({ data: [], error: null });
+
+    const res = await rejectQuote("q1", "Margin too thin");
+
+    expect(res.ok).toBe(false);
   });
 
   it("requires a reason and writes nothing without one", async () => {
     const res = await rejectQuote("q1", "   ");
     expect(res.ok).toBe(false);
     expect(fromSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("createQuoteVersion", () => {
+  it("copies the whole quote, links it back and stores the change reason", async () => {
+    queue(
+      { data: [QUOTE_ROW], error: null }, // source read
+      { data: [{ version_number: 2 }], error: null }, // highest version
+      { data: [{ ...QUOTE_ROW, id: "q9", version: 3, version_number: 3, state: "draft", status: "draft" }], error: null }, // insert
+      { data: [{ ...QUOTE_ROW, state: "superseded", status: "superseded" }], error: null }, // supersede
+    );
+
+    const res = await createQuoteVersion("q1", "Client renegotiated rates");
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    const inserted = writtenRows.find((w) => w.op === "insert")!.row;
+    expect(inserted.supersedes_quote_id).toBe("q1");
+    expect(inserted.change_reason).toBe("Client renegotiated rates");
+    expect(inserted.quote_number).toBe("Q-WS1-V3");
+    expect(inserted.service_type).toBe("warehousing");
+    expect(inserted.assumptions).toBe("5-day working week");
+    expect(inserted.validity_days).toBe(45);
+    expect(inserted.status).toBe("draft");
+    expect(inserted.state).toBe("draft");
+    // the source row is marked superseded on both mirror columns
+    expect(lastWrite("update")).toMatchObject({ state: "superseded", status: "superseded" });
+    expect(res.data.unstoredFields).toEqual([]);
+  });
+
+  it("keeps the created version but warns when the supersede did not take", async () => {
+    queue(
+      { data: [QUOTE_ROW], error: null },
+      { data: [{ version_number: 2 }], error: null },
+      { data: [{ ...QUOTE_ROW, id: "q9", version_number: 3 }], error: null },
+      { data: [], error: null }, // supersede matched no row
+    );
+
+    const res = await createQuoteVersion("q1", "Client renegotiated rates");
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.warnings.join(" ")).toContain("NOT marked superseded");
   });
 });
 
@@ -406,10 +623,26 @@ describe("helpers", () => {
     expect(mapInternalStageToProposalState(null)).toBe("ready_for_crm");
   });
 
-  it("listUnstoredQuoteFields only reports values that actually carry information", () => {
+  it("listUnstoredQuoteFields reports nothing for the wizard payload now the columns exist", () => {
     expect(listUnstoredQuoteFields({})).toEqual([]);
-    expect(listUnstoredQuoteFields({ notes: "", validity_days: 0 })).toEqual([]);
-    expect(listUnstoredQuoteFields({ notes: "check rates", service_type: "transport" }))
-      .toEqual(["service_type", "notes"]);
+    expect(listUnstoredQuoteFields(WIZARD_PAYLOAD)).toEqual([]);
+  });
+
+  it("listUnstoredQuoteFields still catches a key with no column", () => {
+    expect(listUnstoredQuoteFields({ notes: "check rates", rebate_tier: "gold" }))
+      .toEqual(["rebate_tier"]);
+    // an empty/zero unknown value lost no information, so it is not reported
+    expect(listUnstoredQuoteFields({ rebate_tier: "" })).toEqual([]);
+  });
+
+  it("generateQuoteNumber matches the format already in the table", () => {
+    expect(generateQuoteNumber("ws1", 3)).toBe("Q-WS1-V3");
+    expect(generateQuoteNumber("a1b2-c3d4-e5f6", 12)).toBe("Q-A1B2C3-V12");
+  });
+
+  it("calculateValidUntil returns a date-only string in the future", () => {
+    const result = calculateValidUntil(30);
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(new Date(result).getTime()).toBeGreaterThan(Date.now());
   });
 });

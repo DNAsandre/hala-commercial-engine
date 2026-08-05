@@ -71,6 +71,7 @@ export default function ProposalWizard({ workspaceId, customerId, customerName, 
   const selectedQuote = quotes.find(q => q.id === selectedQuoteId);
   const pricingSnapshot = selectedQuote ? {
     quote_id: selectedQuote.id,
+    quote_number: selectedQuote.quote_number,
     quote_version: selectedQuote.version_number,
     quote_status: selectedQuote.status,
     storage_rate: selectedQuote.storage_rate, inbound_rate: selectedQuote.inbound_rate,
@@ -78,6 +79,7 @@ export default function ProposalWizard({ workspaceId, customerId, customerName, 
     monthly_revenue: selectedQuote.monthly_revenue, annual_revenue: selectedQuote.annual_revenue,
     estimated_cost: selectedQuote.estimated_cost,
     gp_amount: selectedQuote.gp_amount, gp_percent: selectedQuote.gp_percent,
+    currency: selectedQuote.currency, service_type: selectedQuote.service_type,
   } : null;
 
   const handleSave = async (andSubmit = false) => {
@@ -141,17 +143,17 @@ export default function ProposalWizard({ workspaceId, customerId, customerName, 
           ) : quotes.map(q => {
             const rag = getRAG(q.gp_percent || 0);
             return (
-              <button key={q.id} onClick={() => setSelectedQuoteId(q.id)}
+              <button key={q.id} onClick={() => { setSelectedQuoteId(q.id); if (!form.assumptions && q.assumptions) set("assumptions", q.assumptions); if (!form.exclusions && q.exclusions) set("exclusions", q.exclusions); }}
                 className={`w-full text-left p-3 rounded-lg border-2 transition-all ${selectedQuoteId === q.id ? "border-[var(--color-hala-navy)] bg-[var(--color-hala-navy)]/5" : "border-border hover:border-muted-foreground/30"}`}>
                 <div className="flex items-center gap-2 mb-1">
                   <span className={`w-2 h-2 rounded-full ${ragDot[rag]}`} />
-                  <span className="text-sm font-medium">V{q.version_number ?? "?"}</span>
+                  <span className="text-sm font-medium">{q.quote_number || `V${q.version_number ?? "?"}`}</span>
                   <Badge variant="outline" className="text-[10px]">{q.status ?? "not captured"}</Badge>
                   <span className="text-xs text-muted-foreground ml-auto">GP: {q.gp_percent}%</span>
                 </div>
                 <div className="flex gap-4 text-xs text-muted-foreground">
-                  <span>Revenue: SAR {q.annual_revenue.toLocaleString()}/yr</span>
-                  <span>Cost: SAR {q.estimated_cost.toLocaleString()}</span>
+                  <span>Revenue: {q.currency || "—"} {q.annual_revenue.toLocaleString()}/yr</span>
+                  <span>Service: {q.service_type || "Not captured"}</span>
                 </div>
               </button>
             );
@@ -184,13 +186,13 @@ export default function ProposalWizard({ workspaceId, customerId, customerName, 
             <>
               <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3 flex items-center gap-2 text-xs">
                 <Link2 className="w-3.5 h-3.5 text-blue-600" />
-                <span>Linked to <span className="font-semibold">V{pricingSnapshot.quote_version ?? "?"}</span> ({pricingSnapshot.quote_status ?? "not captured"})</span>
+                <span>Linked to <span className="font-semibold">{pricingSnapshot.quote_number || `V${pricingSnapshot.quote_version ?? "?"}`}</span> ({pricingSnapshot.quote_status ?? "not captured"})</span>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <Stat label="Annual Revenue" value={`SAR ${pricingSnapshot.annual_revenue.toLocaleString()}`} />
-                <Stat label="Monthly Revenue" value={`SAR ${pricingSnapshot.monthly_revenue.toLocaleString()}`} />
-                <Stat label="Estimated Cost" value={`SAR ${pricingSnapshot.estimated_cost.toLocaleString()}`} />
-                <Stat label="Gross Profit" value={`${pricingSnapshot.gp_percent}% (SAR ${pricingSnapshot.gp_amount.toLocaleString()})`} rag={getRAG(pricingSnapshot.gp_percent)} />
+                <Stat label="Annual Revenue" value={`${pricingSnapshot.currency || "—"} ${pricingSnapshot.annual_revenue.toLocaleString()}`} />
+                <Stat label="Monthly Revenue" value={`${pricingSnapshot.currency || "—"} ${pricingSnapshot.monthly_revenue.toLocaleString()}`} />
+                <Stat label="Estimated Cost" value={`${pricingSnapshot.currency || "—"} ${pricingSnapshot.estimated_cost.toLocaleString()}`} />
+                <Stat label="Gross Profit" value={`${pricingSnapshot.gp_percent}% (${pricingSnapshot.currency || "—"} ${pricingSnapshot.gp_amount.toLocaleString()})`} rag={getRAG(pricingSnapshot.gp_percent)} />
               </div>
               <p className="text-[10px] text-muted-foreground flex items-center gap-1"><Info className="w-3 h-3" /> Read directly from the selected quote record. This link is shown for review only — it is not stored on the proposal.</p>
             </>
@@ -201,8 +203,10 @@ export default function ProposalWizard({ workspaceId, customerId, customerName, 
       case 4: return (
         <div className="space-y-4">
           <h3 className="text-sm font-semibold">Assumptions & Exclusions</h3>
+          {selectedQuote?.assumptions && <div className="rounded-md border border-muted bg-muted/20 p-2 text-xs"><span className="font-medium">Inherited from quote:</span> <span className="text-muted-foreground">{selectedQuote.assumptions}</span></div>}
           <div><label className="text-xs text-muted-foreground mb-1 block">Assumptions</label>
           <textarea value={form.assumptions} onChange={e => set("assumptions", e.target.value)} placeholder="Proposal-specific assumptions..." className="w-full h-20 rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring" /></div>
+          {selectedQuote?.exclusions && <div className="rounded-md border border-muted bg-muted/20 p-2 text-xs"><span className="font-medium">Inherited from quote:</span> <span className="text-muted-foreground">{selectedQuote.exclusions}</span></div>}
           <div><label className="text-xs text-muted-foreground mb-1 block">Exclusions</label>
           <textarea value={form.exclusions} onChange={e => set("exclusions", e.target.value)} placeholder="Proposal-specific exclusions..." className="w-full h-20 rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring" /></div>
         </div>
@@ -224,12 +228,13 @@ export default function ProposalWizard({ workspaceId, customerId, customerName, 
           {pricingSnapshot && (
             <div className="rounded-lg border border-blue-100 bg-blue-50/30 p-2 flex items-center gap-2 text-xs">
               <Link2 className="w-3.5 h-3.5 text-blue-500" />
-              Linked to <span className="font-semibold">V{pricingSnapshot.quote_version ?? "?"}</span> — GP: {pricingSnapshot.gp_percent}%
+              Linked to <span className="font-semibold">{pricingSnapshot.quote_number || `V${pricingSnapshot.quote_version ?? "?"}`}</span> — GP: {pricingSnapshot.gp_percent}%
             </div>
           )}
           <div className="grid grid-cols-2 gap-2 text-xs">
             <ReviewRow label="Title" value={form.title || "(untitled)"} />
-            <ReviewRow label="Annual Value" value={pricingSnapshot ? `SAR ${pricingSnapshot.annual_revenue.toLocaleString()}` : "—"} />
+            <ReviewRow label="Service" value={pricingSnapshot?.service_type || "—"} />
+            <ReviewRow label="Annual Value" value={pricingSnapshot ? `${pricingSnapshot.currency || "—"} ${pricingSnapshot.annual_revenue.toLocaleString()}` : "—"} />
             <ReviewRow label="GP%" value={pricingSnapshot ? `${pricingSnapshot.gp_percent}%` : "—"} />
           </div>
           {form.executive_summary && <div className="text-xs"><span className="font-medium">Summary:</span> <span className="text-muted-foreground">{form.executive_summary.substring(0, 200)}</span></div>}

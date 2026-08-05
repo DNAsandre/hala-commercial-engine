@@ -79,25 +79,25 @@ export default function QuoteWizard({ workspaceId, customerId, customerName, exi
   const [saving, setSaving] = useState(false);
   const isEdit = !!existingQuote;
 
-  // Only the fields with an established `quotes` column are re-hydrated from a
-  // saved quote. The rest have no storage (see commercial-runtime.ts
-  // QUOTE_UNSTORED_KEYS) and therefore start blank rather than pretending to
-  // show what was previously entered.
+  // Every field below round-trips to a real `quotes` column, so an edit
+  // re-hydrates all of them from the stored quote. Where a saved quote holds
+  // nothing, the wizard's own starting value is used — that is an input default
+  // offered to the human, not a claim about what is stored.
   const [form, setForm] = useState<QuoteFormData>(() => ({
-    service_type: "warehousing",
-    volume_unit: "pallets",
+    service_type: existingQuote?.service_type || "warehousing",
+    volume_unit: existingQuote?.volume_unit || "pallets",
     pallet_volume: existingQuote?.pallet_volume || 0,
-    monthly_volume: 0,
+    monthly_volume: existingQuote?.monthly_volume || 0,
     storage_rate: existingQuote?.storage_rate || 0,
     inbound_rate: existingQuote?.inbound_rate || 0,
     outbound_rate: existingQuote?.outbound_rate || 0,
     estimated_cost: existingQuote?.estimated_cost || 0,
-    discount_percent: 0,
-    validity_days: 30,
-    assumptions: "",
-    exclusions: "",
-    notes: "",
-    currency: "SAR",
+    discount_percent: existingQuote?.discount_percent || 0,
+    validity_days: existingQuote?.validity_days || 30,
+    assumptions: existingQuote?.assumptions || "",
+    exclusions: existingQuote?.exclusions || "",
+    notes: existingQuote?.notes || "",
+    currency: existingQuote?.currency || "SAR",
   }));
 
   const set = (key: keyof QuoteFormData, val: any) => setForm(f => ({ ...f, [key]: val }));
@@ -321,15 +321,6 @@ export default function QuoteWizard({ workspaceId, customerId, customerName, exi
           </div>
           {form.assumptions && <div className="text-xs"><span className="font-medium">Assumptions:</span> <span className="text-muted-foreground">{form.assumptions}</span></div>}
           {form.exclusions && <div className="text-xs"><span className="font-medium">Exclusions:</span> <span className="text-muted-foreground">{form.exclusions}</span></div>}
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-2 flex items-start gap-2">
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-            <p className="text-[10px] text-amber-800">
-              Saved to the quote record: rates, storage volume, revenue, cost and gross profit.
-              Service type, volume unit, monthly handling volume, discount, validity, assumptions,
-              exclusions, notes and currency have no column in the quotes table and are NOT stored —
-              the confirmation after saving lists exactly what was left out.
-            </p>
-          </div>
         </div>
       );
 
