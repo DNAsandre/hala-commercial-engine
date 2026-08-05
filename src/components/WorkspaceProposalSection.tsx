@@ -12,55 +12,82 @@ import {
   FileCheck, Link2, Eye, ArrowRight, AlertTriangle, Info,
 } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/lib/api-client";
+import {
+  listProposalsByWorkspace,
+  markProposalSent,
+  markProposalNegotiation,
+  approveProposal,
+  recordProposalSubmittedForReview,
+  recordProposalReadyForCrm,
+  recordProposalRejected,
+  PROPOSAL_VERSION_UNAVAILABLE,
+  type ProposalRecord,
+  type ProposalMutationOutcome,
+  type RuntimeResult,
+} from "@/lib/commercial-runtime";
 import ProposalWizard from "./ProposalWizard";
 
+/**
+ * Status vocabulary = the states the established internal_stage → proposal
+ * state mapping can actually produce. Nothing else is displayable, so nothing
+ * else is listed.
+ */
 const statusCfg: Record<string, { color: string; label: string }> = {
   draft: { color: "bg-gray-100 text-gray-700", label: "Draft" },
-  ready_for_review: { color: "bg-blue-100 text-blue-700", label: "Ready for Review" },
   ready_for_crm: { color: "bg-[#075eea]/15 text-[#075eea]", label: "Ready for CRM" },
   sent: { color: "bg-[#075eea]/15 text-[#075eea]", label: "Sent" },
   negotiation_active: { color: "bg-orange-100 text-orange-700", label: "Negotiation" },
-  approved: { color: "bg-emerald-100 text-emerald-700", label: "Approved" },
-  rejected: { color: "bg-red-100 text-red-700", label: "Rejected" },
-  superseded: { color: "bg-amber-100 text-amber-700", label: "Superseded" },
+  commercial_approved: { color: "bg-emerald-100 text-emerald-700", label: "Commercial Approved" },
 };
 
 interface Props { workspaceId: string; customerId?: string; customerName?: string; }
 
 export default function WorkspaceProposalSection({ workspaceId, customerId, customerName }: Props) {
-  const [proposals, setProposals] = useState<any[]>([]);
+  const [proposals, setProposals] = useState<ProposalRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [editProp, setEditProp] = useState<any>(null);
+  const [editProp, setEditProp] = useState<ProposalRecord | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [rejectId, setRejectId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
-  const [versionId, setVersionId] = useState<string | null>(null);
-  const [versionReason, setVersionReason] = useState("");
 
   const fetch_ = useCallback(async () => {
-    try { const r = await api.proposals.listByWorkspace(workspaceId); setProposals(r.data || []); }
-    catch (e: any) { console.warn("[ProposalSection]", e.message); }
-    finally { setLoading(false); }
+    const r = await listProposalsByWorkspace(workspaceId);
+    if (!r.ok) {
+      // A failed query is NOT an empty list — surface it.
+      setLoadError(r.error);
+      setProposals([]);
+    } else {
+      setLoadError(null);
+      setProposals(r.data);
+    }
+    setLoading(false);
   }, [workspaceId]);
 
   useEffect(() => { fetch_(); }, [fetch_]);
 
-  const act = async (fn: () => Promise<any>, msg: string) => {
-    try { await fn(); toast.success(msg); fetch_(); } catch (e: any) { toast.error(e.message); }
+  /** Report only what actually happened — never a success we did not confirm. */
+  const act = async (
+    fn: () => Promise<RuntimeResult<ProposalMutationOutcome>>,
+    msg: string,
+  ) => {
+    const res = await fn();
+    if (!res.ok) { toast.error(res.error); return false; }
+    const notes = [res.data.recorded, ...res.data.warnings];
+    if (res.data.unstoredFields.length > 0) {
+      notes.push(`Not stored (no established column): ${res.data.unstoredFields.join(", ")}.`);
+    }
+    toast.success(msg, { description: notes.join(" ") });
+    fetch_();
+    return true;
   };
 
   const handleReject = async () => {
     if (!rejectId || !rejectReason.trim()) { toast.error("Reason required"); return; }
-    await act(() => api.proposals.reject(rejectId!, rejectReason), "Proposal rejected");
+    const done = await act(() => recordProposalRejected(rejectId, rejectReason), "Rejection recorded");
+    if (!done) return;
     setRejectId(null); setRejectReason("");
-  };
-
-  const handleVersion = async () => {
-    if (!versionId || !versionReason.trim()) { toast.error("Reason required"); return; }
-    await act(() => api.proposals.createVersion(versionId!, versionReason), "New version created");
-    setVersionId(null); setVersionReason("");
   };
 
   if (wizardOpen || editProp) {
@@ -69,8 +96,11 @@ export default function WorkspaceProposalSection({ workspaceId, customerId, cust
       onCancel={() => { setWizardOpen(false); setEditProp(null); }} />;
   }
 
-  const latest = proposals.find(p => p.status !== "superseded") || proposals[0];
-  const older = proposals.filter(p => p !== latest);
+  // The established feed returns the workspace's proposal tickets newest-first;
+  // there is no "superseded" proposal state in commercial_tickets, so the first
+  // row is simply the current one.
+  const latest = proposals[0];
+  const older = proposals.slice(1);
 
   return (
     <Card className="border shadow-sm">
@@ -85,7 +115,16 @@ export default function WorkspaceProposalSection({ workspaceId, customerId, cust
       </CardHeader>
       <CardContent className="pt-4">
         {loading ? <p className="text-xs text-muted-foreground py-8 text-center">Loading...</p>
-        : proposals.length === 0 ? (
+        : loadError ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-semibold text-red-800">Proposals could not be loaded</p>
+              <p className="text-[11px] text-red-700 mt-0.5">{loadError}</p>
+              <p className="text-[10px] text-red-700/80 mt-1">This is a read failure, not an empty list. Nothing below is being hidden.</p>
+            </div>
+          </div>
+        ) : proposals.length === 0 ? (
           <div className="text-center py-8">
             <FileCheck className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
             <p className="text-sm text-muted-foreground">No proposals yet</p>
@@ -94,14 +133,14 @@ export default function WorkspaceProposalSection({ workspaceId, customerId, cust
         ) : (
           <div className="space-y-3">
             {latest && <PropCard p={latest} isLatest
-              onEdit={() => latest.status === "draft" ? setEditProp(latest) : setVersionId(latest.id)}
-              onSubmitReview={() => act(() => api.proposals.submitReview(latest.id), "Submitted for review")}
-              onMarkReadyCRM={() => act(() => api.proposals.markReadyCRM(latest.id), "Marked ready for CRM")}
-              onMarkSent={() => act(() => api.proposals.markSent(latest.id), "Marked as sent")}
-              onMarkNeg={() => act(() => api.proposals.markNegotiation(latest.id), "Negotiation active")}
-              onApprove={() => act(() => api.proposals.approve(latest.id), "Proposal approved")}
+              onEdit={() => setEditProp(latest)}
+              onSubmitReview={() => act(() => recordProposalSubmittedForReview(latest.id), "Submitted for review")}
+              onMarkReadyCRM={() => act(() => recordProposalReadyForCrm(latest.id), "Marked ready for CRM")}
+              onMarkSent={() => act(() => markProposalSent(latest.id), "Marked as sent")}
+              onMarkNeg={() => act(() => markProposalNegotiation(latest.id), "Negotiation active")}
+              onApprove={() => act(() => approveProposal(latest.id), "Proposal approved")}
               onReject={() => setRejectId(latest.id)}
-              onNewVersion={() => setVersionId(latest.id)}
+              onNewVersion={() => toast.error(PROPOSAL_VERSION_UNAVAILABLE)}
             />}
 
             {rejectId && (
@@ -111,17 +150,6 @@ export default function WorkspaceProposalSection({ workspaceId, customerId, cust
                 <div className="flex gap-2 justify-end">
                   <Button variant="ghost" size="sm" onClick={() => { setRejectId(null); setRejectReason(""); }} className="text-xs h-7">Cancel</Button>
                   <Button size="sm" onClick={handleReject} className="text-xs h-7 bg-red-600 hover:bg-red-700">Reject</Button>
-                </div>
-              </div>
-            )}
-
-            {versionId && (
-              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-2">
-                <p className="text-xs font-semibold text-blue-800">New Version — Change Reason</p>
-                <Input value={versionReason} onChange={e => setVersionReason(e.target.value)} placeholder="Why is a new version needed?" className="h-8 text-xs" />
-                <div className="flex gap-2 justify-end">
-                  <Button variant="ghost" size="sm" onClick={() => { setVersionId(null); setVersionReason(""); }} className="text-xs h-7">Cancel</Button>
-                  <Button size="sm" onClick={handleVersion} className="text-xs h-7 bg-blue-600 hover:bg-blue-700">Create Version</Button>
                 </div>
               </div>
             )}
@@ -143,43 +171,40 @@ export default function WorkspaceProposalSection({ workspaceId, customerId, cust
 }
 
 function PropCard({ p, isLatest, onEdit, onSubmitReview, onMarkReadyCRM, onMarkSent, onMarkNeg, onApprove, onReject, onNewVersion }: {
-  p: any; isLatest: boolean; onEdit?: () => void; onSubmitReview?: () => void; onMarkReadyCRM?: () => void;
+  p: ProposalRecord; isLatest: boolean; onEdit?: () => void; onSubmitReview?: () => void; onMarkReadyCRM?: () => void;
   onMarkSent?: () => void; onMarkNeg?: () => void; onApprove?: () => void; onReject?: () => void; onNewVersion?: () => void;
 }) {
   const cfg = statusCfg[p.status] || statusCfg.draft;
-  const snap = p.pricing_snapshot;
 
   return (
     <div className={`rounded-lg border p-3 ${isLatest ? "" : "bg-muted/10 border-muted"}`}>
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-sm font-semibold">{p.proposal_number || `V${p.version_number || p.version}`}</span>
+        {/* Only shown when the ticket actually carries a version. No established
+            path writes type_details.proposal_version, so rendering "V1"
+            unconditionally asserted a number the database does not hold. */}
+        {p.version_number != null && <span className="text-sm font-semibold">V{p.version_number}</span>}
         <Badge variant="outline" className={`text-[10px] ${cfg.color}`}>{cfg.label}</Badge>
-        {p.linked_quote_id && <Badge variant="outline" className="text-[10px] border-blue-300 bg-blue-50 gap-0.5"><Link2 className="w-2.5 h-2.5" />{snap?.quote_number || "Quote"}</Badge>}
         {isLatest && <Badge variant="outline" className="text-[10px] border-blue-300 bg-blue-50">Latest</Badge>}
-        {p.indicative_sla_disclaimer && <Badge variant="outline" className="text-[10px] border-amber-300 bg-amber-50 gap-0.5"><AlertTriangle className="w-2.5 h-2.5" />SLA Advisory</Badge>}
       </div>
       {p.title && <p className="text-xs font-medium mb-1">{p.title}</p>}
-      {snap && (
-        <div className="grid grid-cols-3 gap-3 text-xs mb-2">
-          <div><span className="text-muted-foreground">Annual Value</span><p className="font-medium">{snap.currency || "SAR"} {(snap.annual_revenue || 0).toLocaleString()}</p></div>
-          <div><span className="text-muted-foreground">GP%</span><p className="font-medium">{snap.gp_percent || 0}%</p></div>
-          <div><span className="text-muted-foreground">Service</span><p className="font-medium">{snap.service_type}</p></div>
-        </div>
-      )}
-      {p.change_reason && <p className="text-[10px] text-muted-foreground"><span className="font-medium">Change:</span> {p.change_reason}</p>}
+      <div className="grid grid-cols-2 gap-3 text-xs mb-2">
+        <div><span className="text-muted-foreground">Customer</span><p className="font-medium">{p.customer_name || "Not captured"}</p></div>
+        <div><span className="text-muted-foreground">Internal stage</span><p className="font-medium">{p.internal_stage || "Not captured"}</p></div>
+      </div>
 
       {isLatest && (
+        // No gates: every recorded action stays available to the human at any
+        // stage. Actions marked "record" write an audit entry only — there is
+        // no established internal stage for them, so no stage is invented.
         <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-dashed">
-          {p.status === "draft" && onEdit && <Btn onClick={onEdit} icon={Edit} label="Edit" />}
-          {p.status === "draft" && onSubmitReview && <Btn onClick={onSubmitReview} icon={Send} label="Submit Review" />}
-          {p.status === "ready_for_review" && onMarkReadyCRM && <Btn onClick={onMarkReadyCRM} icon={ArrowRight} label="Ready CRM" />}
-          {p.status === "ready_for_review" && onApprove && <Btn onClick={onApprove} icon={CheckCircle2} label="Approve" color="emerald" />}
-          {p.status === "ready_for_crm" && onMarkSent && <Btn onClick={onMarkSent} icon={Send} label="Mark Sent" />}
-          {p.status === "sent" && onMarkNeg && <Btn onClick={onMarkNeg} icon={ArrowRight} label="Negotiation" />}
-          {p.status === "sent" && onApprove && <Btn onClick={onApprove} icon={CheckCircle2} label="Approve" color="emerald" />}
-          {p.status === "negotiation_active" && onApprove && <Btn onClick={onApprove} icon={CheckCircle2} label="Approve" color="emerald" />}
-          {["ready_for_review", "ready_for_crm", "sent", "negotiation_active"].includes(p.status) && onReject && <Btn onClick={onReject} icon={XCircle} label="Reject" color="red" />}
-          {["approved", "rejected"].includes(p.status) && onNewVersion && <Btn onClick={onNewVersion} icon={Copy} label="New Version" color="blue" />}
+          {onEdit && <Btn onClick={onEdit} icon={Edit} label="Edit" />}
+          {onSubmitReview && <Btn onClick={onSubmitReview} icon={Send} label="Submit Review (record)" />}
+          {onMarkReadyCRM && <Btn onClick={onMarkReadyCRM} icon={ArrowRight} label="Ready CRM (record)" />}
+          {onMarkSent && <Btn onClick={onMarkSent} icon={Send} label="Mark Sent" />}
+          {onMarkNeg && <Btn onClick={onMarkNeg} icon={ArrowRight} label="Negotiation" />}
+          {onApprove && <Btn onClick={onApprove} icon={CheckCircle2} label="Approve" color="emerald" />}
+          {onReject && <Btn onClick={onReject} icon={XCircle} label="Reject (record)" color="red" />}
+          {onNewVersion && <Btn onClick={onNewVersion} icon={Copy} label="New Version" color="blue" />}
         </div>
       )}
     </div>

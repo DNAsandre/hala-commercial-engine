@@ -5,7 +5,6 @@
  * All configuration explicit, versioned, auditable.
  */
 import { useState, useMemo, useEffect } from 'react';
-import { api } from '@/lib/api-client';
 import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';

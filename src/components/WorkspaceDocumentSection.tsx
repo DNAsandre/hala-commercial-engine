@@ -6,9 +6,14 @@ import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { FileText, Download, RefreshCw, Clock, User, FileCheck, Loader2 } from "lucide-react";
+import { FileText, Download, RefreshCw, Clock, User, FileCheck, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/lib/api-client";
+import {
+  downloadDocumentToUser,
+  generateDocumentPdf,
+  listWorkspaceDocuments,
+  type DocumentRecord,
+} from "@/lib/document-runtime";
 
 type GeneratedDocumentType = "quote" | "proposal";
 
@@ -24,36 +29,49 @@ interface Props {
 }
 
 export default function WorkspaceDocumentSection({ workspaceId, quotes = [], proposals = [] }: Props) {
-  const [docs, setDocs] = useState<any[]>([]);
+  const [docs, setDocs] = useState<DocumentRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [generating, setGenerating] = useState<string | null>(null);
 
+  // SC-01 W03-4: the clean server is the only document backend. A failed load
+  // is shown as a failure — it is never presented as "no documents".
   const fetchDocs = useCallback(async () => {
-    try { const r = await api.documents.listByWorkspace(workspaceId); setDocs(r.data || []); }
-    catch (e: any) { console.warn("[DocSection]", e.message); }
-    finally { setLoading(false); }
+    setLoading(true);
+    try {
+      const rows = await listWorkspaceDocuments(workspaceId);
+      setDocs(rows);
+      setLoadError(null);
+    } catch (e: any) {
+      setDocs([]);
+      setLoadError(e?.message || "Documents could not be loaded.");
+    } finally { setLoading(false); }
   }, [workspaceId]);
 
   useEffect(() => { fetchDocs(); }, [fetchDocs]);
 
   const handleGenerate = async (docType: GeneratedDocumentType, sourceId: string, sourceVersion?: number) => {
     const key = `${docType}-${sourceId}`;
+    const label = docType.charAt(0).toUpperCase() + docType.slice(1);
     setGenerating(key);
     try {
-      await api.documents.generatePdf({ workspace_id: workspaceId, document_type: docType, source_id: sourceId, source_version: sourceVersion });
-      toast.success(`${docType.charAt(0).toUpperCase() + docType.slice(1)} PDF generated`);
+      const result = await generateDocumentPdf({ workspace_id: workspaceId, document_type: docType, source_id: sourceId, source_version: sourceVersion });
+      // Success is claimed only for what the server actually confirmed.
+      if (result.fileGenerated) {
+        toast.success(`${label} PDF generated`);
+      } else {
+        toast.warning(result.notice || `${label} document record created — the server did not report a generated PDF file.`);
+      }
       fetchDocs();
-    } catch (e: any) { toast.error(e.message || "Generation failed"); }
+    } catch (e: any) { toast.error(e?.message || "Generation failed"); }
     finally { setGenerating(null); }
   };
 
   const handleDownload = async (docId: string) => {
     try {
-      const res = await api.documents.download(docId);
-      if (res.data?.download_url) {
-        window.open(res.data.download_url, '_blank');
-      } else { toast.error("Download URL not available"); }
-    } catch (e: any) { toast.error(e.message); }
+      // Delivers the real file: the stored bytes, or the server's signed URL.
+      await downloadDocumentToUser(docId);
+    } catch (e: any) { toast.error(e?.message || "Download failed"); }
   };
 
   // Build generation sources
@@ -102,7 +120,15 @@ export default function WorkspaceDocumentSection({ workspaceId, quotes = [], pro
 
         {/* Generated documents list */}
         {loading ? <p className="text-xs text-muted-foreground py-4 text-center">Loading...</p>
-        : latestDocs.length === 0 ? (
+        : loadError ? (
+          <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+            <p className="text-xs font-medium text-destructive flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5" /> Documents could not be loaded
+            </p>
+            <p className="text-[10px] text-destructive/80 mt-1">{loadError}</p>
+            <Button variant="outline" size="sm" onClick={() => fetchDocs()} className="text-xs h-6 mt-2">Retry</Button>
+          </div>
+        ) : latestDocs.length === 0 ? (
           <div className="text-center py-4">
             <p className="text-xs text-muted-foreground">No documents generated yet</p>
           </div>
