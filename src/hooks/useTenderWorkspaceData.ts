@@ -6,6 +6,13 @@
  *
  * Replaces direct calls to getTenderWorkspaceById() from tender-workspace-data.ts.
  * No silent fallback to in-memory mock data.
+ *
+ * W04-T08-A additions:
+ *   - the loaded bundle is stored together with the tender id it belongs to, so
+ *     data from a previously viewed tender can never be handed out under a
+ *     different :id in the URL;
+ *   - the four load outcomes (loaded / not_found / isolated / error) are carried
+ *     through instead of collapsing into "empty".
  */
 
 import { useState, useEffect } from 'react';
@@ -16,7 +23,7 @@ import {
 } from '@/lib/supabase-tender-data';
 import type { TenderWorkspace } from '@/lib/tender-workspace-data';
 
-export type TenderDataStatus = 'loading' | 'loaded' | 'error' | 'empty';
+export type TenderDataStatus = 'loading' | 'loaded' | 'error' | 'empty' | 'isolated';
 
 export interface UseTenderWorkspaceDataResult {
   /** Full workspace assembled from Supabase bundle */
@@ -25,57 +32,104 @@ export interface UseTenderWorkspaceDataResult {
   bundle: TenderWorkspaceBundle | null;
   /** Current loading status */
   status: TenderDataStatus;
-  /** Error message if status === 'error' */
+  /** Human-readable explanation for 'error', 'empty' and 'isolated' */
   errorMessage: string;
   /** Trigger a reload */
   reload: () => void;
 }
 
+/** What the hook has loaded, tagged with the identity it was loaded for. */
+export interface LoadedTenderState {
+  tenderId: string;
+  bundle: TenderWorkspaceBundle;
+  ws: TenderWorkspace | null;
+  status: Exclude<TenderDataStatus, 'loading'>;
+  errorMessage: string;
+}
+
+/**
+ * Identity guard, extracted so it can be tested without a DOM.
+ *
+ * A loaded state is only usable for the tender it was loaded for. Returning
+ * `loaded.ws` for a different `tenderId` would render one tender's customer,
+ * owner, value, tasks and documents under another tender's URL.
+ */
+export function selectTenderWorkspaceView(
+  loaded: LoadedTenderState | null,
+  tenderId: string,
+): { ws: TenderWorkspace | null; bundle: TenderWorkspaceBundle | null; status: TenderDataStatus; errorMessage: string } {
+  if (!loaded || loaded.tenderId !== tenderId) {
+    return { ws: null, bundle: null, status: 'loading', errorMessage: '' };
+  }
+  return { ws: loaded.ws, bundle: loaded.bundle, status: loaded.status, errorMessage: loaded.errorMessage };
+}
+
+/** Translate the bundle's load outcome into the hook's status contract. */
+export function statusFromBundle(bundle: TenderWorkspaceBundle): {
+  status: Exclude<TenderDataStatus, 'loading'>;
+  errorMessage: string;
+} {
+  switch (bundle.loadState.kind) {
+    case 'loaded':
+      return bundle.tender
+        ? { status: 'loaded', errorMessage: '' }
+        : { status: 'error', errorMessage: 'Tender bundle reported success without a tender record.' };
+    case 'isolated':
+      return { status: 'isolated', errorMessage: bundle.loadState.message };
+    case 'error':
+      return { status: 'error', errorMessage: bundle.loadState.message };
+    case 'not_found':
+      return { status: 'empty', errorMessage: bundle.loadState.message };
+  }
+}
+
 export function useTenderWorkspaceData(tenderId: string): UseTenderWorkspaceDataResult {
-  const [bundle, setBundle] = useState<TenderWorkspaceBundle | null>(null);
-  const [ws, setWs] = useState<TenderWorkspace | null>(null);
-  const [status, setStatus] = useState<TenderDataStatus>('loading');
-  const [errorMessage, setErrorMessage] = useState('');
+  const [loaded, setLoaded] = useState<LoadedTenderState | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!tenderId) {
-      setStatus('empty');
+      setLoaded(null);
       return;
     }
 
     let cancelled = false;
-    setStatus('loading');
-    setErrorMessage('');
 
     fetchTenderWorkspaceBundleFromSupabase(tenderId)
       .then(result => {
         if (cancelled) return;
-        if (!result.tender) {
-          setBundle(result);
-          setWs(null);
-          setStatus('empty');
-        } else {
-          setBundle(result);
-          setWs(bundleToTenderWorkspace(result));
-          setStatus('loaded');
-        }
+        const { status, errorMessage } = statusFromBundle(result);
+        setLoaded({
+          tenderId,
+          bundle: result,
+          ws: status === 'loaded' ? bundleToTenderWorkspace(result) : null,
+          status,
+          errorMessage,
+        });
       })
       .catch(err => {
         if (cancelled) return;
         console.error('[SUPA-006] Failed to load tender workspace data:', err);
-        setErrorMessage(err?.message || 'Unknown error');
-        setStatus('error');
+        setLoaded({
+          tenderId,
+          bundle: null as unknown as TenderWorkspaceBundle,
+          ws: null,
+          status: 'error',
+          errorMessage: err?.message || 'Unknown error',
+        });
       });
 
     return () => { cancelled = true; };
   }, [tenderId, reloadKey]);
 
+  const view = selectTenderWorkspaceView(loaded, tenderId);
+
   return {
-    ws,
-    bundle,
-    status,
-    errorMessage,
+    ws: view.ws,
+    bundle: view.bundle,
+    // An empty :id is not "still loading" — nothing was ever requested.
+    status: !tenderId ? 'empty' : view.status,
+    errorMessage: !tenderId ? 'No tender id was supplied in the route.' : view.errorMessage,
     reload: () => setReloadKey(k => k + 1),
   };
 }
