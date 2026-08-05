@@ -44,7 +44,7 @@ import {
   ProcessStageTaskShell,
   type ProcessStageSectionTab,
 } from "@/components/process/ProcessStageTaskShell";
-import { listWorkspaceDocuments } from "@/lib/document-runtime";
+import { listScopeDocumentsFromCleanServer } from "@/lib/document-runtime";
 import type { ActiveProposalIdentity } from "@/lib/proposal-identity";
 import {
   extractDiscoveryStageData,
@@ -1006,7 +1006,7 @@ async function fetchProposalStageDocuments(
     // origin (:5300) and returned the SPA shell instead of documents. It now
     // goes to the clean server, and any failure propagates to the caller's
     // error toast instead of silently producing zero documents.
-    const rows = await listWorkspaceDocuments(scopeId);
+    const rows = await listScopeDocumentsFromCleanServer(scopeId);
     rows.forEach(row => {
       const doc = mapGeneratedDocumentToSupportingDocument(row, activeProposal);
       if (doc) documents.push(doc);

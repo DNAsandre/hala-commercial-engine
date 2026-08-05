@@ -3,23 +3,35 @@
  *
  * The clean application's ONLY client contract for generated documents.
  *
+ * TWO TRANSPORTS, BY ARCHITECT ALLOCATION (not an inconsistency):
+ *  - Row 69 (workspace documents list, WorkspaceDocumentSection) is allocated
+ *    to DIRECT SUPABASE: it reads the `generated_documents` table itself,
+ *    modelled on the established `document-vault.ts` scoping semantics.
+ *  - Rows 26-32 (proposal stage document list, download, generate-pdf) are
+ *    allocated to the CLEAN SERVER, because they need server execution
+ *    (storage signing, PDF production).
+ *
  * INDEPENDENCE
- *  - Every request is an absolute clean-server URL built from
+ *  - Every server request is an absolute clean-server URL built from
  *    `cleanServerUrl()`. There is no relative `/api/...` fetch (which would hit
  *    the frontend origin on :5300 and return the SPA shell), no
  *    localhost:3001, and no proxy.
  *
  * HONESTY
- *  - A request that cannot be made, is refused, or comes back in a shape this
+ *  - A read that cannot be made, is refused, or comes back in a shape this
  *    module does not recognise throws `DocumentRuntimeError`. It is NEVER
  *    converted into an empty list, a fake record or a fake success.
- *  - "Zero rows returned by the server" is the ONLY thing that produces an
- *    empty list.
+ *  - "The source returned zero rows" is the ONLY thing that produces an empty
+ *    list — a Supabase error never renders as "no documents".
  *  - Nothing here invents documents, counts, statuses, file sizes or URLs.
  *    Response shapes are normalised (bare array vs `{ data: [...] }`), never
  *    fabricated.
  */
 import { cleanServerUrl } from "@/lib/runtime-config";
+import { supabase } from "@/lib/supabase";
+
+/** The established document record table (same table document-vault.ts reads). */
+const DOCUMENT_TABLE = "generated_documents";
 
 /**
  * A `generated_documents` row exactly as the clean server returned it. The
@@ -148,7 +160,52 @@ function normalizeDocumentRows(payload: unknown, url: string): DocumentRecord[] 
   return rows as DocumentRecord[];
 }
 
-// ─── list ────────────────────────────────────────────────────────────────────
+// ─── list (row 69 — DIRECT SUPABASE) ─────────────────────────────────────────
+
+/**
+ * Workspace document list, read straight from `generated_documents`.
+ *
+ * Scoping mirrors the established `document-vault.ts` contract
+ * (`getDocumentsByWorkspace`):
+ *  - matched on the `workspace_id` column,
+ *  - rows whose `source_type` is "tender" are NOT workspace documents (the
+ *    vault maps their workspaceId to null),
+ *  - archived rows are excluded,
+ *  - newest first by `generated_at`.
+ *
+ * Rows are returned exactly as stored, so `WorkspaceDocumentSection` renders
+ * the same columns it always did. An empty array means the table genuinely
+ * holds zero matching rows; a query error throws and must be shown.
+ */
+export async function listWorkspaceDocuments(workspaceId: string): Promise<DocumentRecord[]> {
+  const scopeId = text(workspaceId);
+  if (!scopeId) {
+    throw new DocumentRuntimeError("Cannot load documents without a workspace id.");
+  }
+
+  const { data, error } = await supabase
+    .from(DOCUMENT_TABLE)
+    .select("*")
+    .eq("workspace_id", scopeId)
+    .order("generated_at", { ascending: false });
+
+  if (error) {
+    throw new DocumentRuntimeError(
+      error.message || "Documents could not be read from generated_documents.",
+    );
+  }
+  if (!Array.isArray(data)) {
+    // No error AND no result set: ambiguous, so it is reported rather than
+    // silently rendered as "no documents".
+    throw new DocumentRuntimeError("generated_documents returned no result set.");
+  }
+
+  return (data as DocumentRecord[]).filter(
+    row => isRecord(row) && row.source_type !== "tender" && row.status !== "archived",
+  );
+}
+
+// ─── list (row 27 — CLEAN SERVER) ────────────────────────────────────────────
 
 /**
  * GET /api/documents?workspace_id=...
@@ -156,7 +213,9 @@ function normalizeDocumentRows(payload: unknown, url: string): DocumentRecord[] 
  * Returns the rows the clean server holds for the scope. An empty array means
  * the server genuinely returned zero rows; every other outcome throws.
  */
-export async function listWorkspaceDocuments(workspaceId: string): Promise<DocumentRecord[]> {
+export async function listScopeDocumentsFromCleanServer(
+  workspaceId: string,
+): Promise<DocumentRecord[]> {
   const scopeId = text(workspaceId);
   if (!scopeId) {
     throw new DocumentRuntimeError("Cannot load documents without a workspace id.");

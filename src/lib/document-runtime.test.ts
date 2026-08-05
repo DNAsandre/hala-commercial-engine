@@ -1,13 +1,15 @@
 /**
  * document-runtime.test.ts — SC-01 Wave 03 (W03-4)
  *
- * Proves the three document call paths are honest:
- *  - real rows come back as real rows,
- *  - zero rows is an empty list (not an error),
- *  - every failure surfaces as an error (never a silent empty list or a fake
- *    success),
- *  - every request goes to the ABSOLUTE clean-server base, never a relative
- *    /api/... URL against the frontend origin.
+ * Proves the document call paths are honest, across BOTH allocated transports:
+ *  - row 69 (workspace list) reads generated_documents directly via Supabase,
+ *  - rows 26-32 (proposal scope list, download, generate-pdf) use the clean
+ *    server at an ABSOLUTE base — never a relative /api/... URL against the
+ *    frontend origin.
+ *
+ * In both transports: real rows come back as real rows, zero rows is an empty
+ * list (not an error), and every failure surfaces as an error — never a silent
+ * empty list or a fake success.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CLEAN_SERVER_BASE } from "@/lib/runtime-config";
@@ -15,8 +17,37 @@ import {
   DocumentRuntimeError,
   fetchDocumentDownload,
   generateDocumentPdf,
+  listScopeDocumentsFromCleanServer,
   listWorkspaceDocuments,
 } from "@/lib/document-runtime";
+
+// ─── mocked Supabase client (row 69) ─────────────────────────────────────────
+
+const sb = vi.hoisted(() => ({
+  result: { data: null as unknown, error: null as unknown },
+  calls: [] as Array<{ table: string; filters: Array<[string, unknown]>; order: unknown[] }>,
+}));
+
+vi.mock("@/lib/supabase", () => ({
+  supabase: {
+    from(table: string) {
+      const call = { table, filters: [] as Array<[string, unknown]>, order: [] as unknown[] };
+      sb.calls.push(call);
+      const builder: any = {
+        select: () => builder,
+        eq: (column: string, value: unknown) => {
+          call.filters.push([column, value]);
+          return builder;
+        },
+        order: (...args: unknown[]) => {
+          call.order = args;
+          return Promise.resolve(sb.result);
+        },
+      };
+      return builder;
+    },
+  },
+}));
 
 const JSON_HEADERS = { "content-type": "application/json" };
 
@@ -29,6 +60,8 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
+  sb.result = { data: null, error: null };
+  sb.calls.length = 0;
 });
 
 afterEach(() => {
@@ -40,7 +73,78 @@ function requestedUrl(call = 0): string {
   return String(fetchMock.mock.calls[call][0]);
 }
 
-describe("listWorkspaceDocuments", () => {
+describe("listWorkspaceDocuments (row 69 — direct Supabase)", () => {
+  it("returns the generated_documents rows exactly as stored", async () => {
+    const row = {
+      id: "doc-1",
+      workspace_id: "ws-1",
+      file_name: "quote.pdf",
+      document_type: "quote",
+      status: "generated",
+      file_size: 2048,
+      generated_at: "2026-07-29T10:00:00.000Z",
+      source_id: "q-1",
+      source_version: 2,
+    };
+    sb.result = { data: [row], error: null };
+
+    await expect(listWorkspaceDocuments("ws-1")).resolves.toEqual([row]);
+  });
+
+  it("queries generated_documents scoped to the workspace, newest first", async () => {
+    sb.result = { data: [], error: null };
+
+    await listWorkspaceDocuments("ws-1");
+
+    expect(sb.calls).toHaveLength(1);
+    expect(sb.calls[0].table).toBe("generated_documents");
+    expect(sb.calls[0].filters).toEqual([["workspace_id", "ws-1"]]);
+    expect(sb.calls[0].order).toEqual(["generated_at", { ascending: false }]);
+    expect(fetchMock).not.toHaveBeenCalled(); // no server hop on this row
+  });
+
+  it("treats zero rows as a genuinely empty list, not an error", async () => {
+    sb.result = { data: [], error: null };
+
+    await expect(listWorkspaceDocuments("ws-1")).resolves.toEqual([]);
+  });
+
+  it("surfaces a Supabase error instead of rendering 'no documents'", async () => {
+    sb.result = { data: null, error: { message: "permission denied for table generated_documents" } };
+
+    const promise = listWorkspaceDocuments("ws-1");
+    await expect(promise).rejects.toBeInstanceOf(DocumentRuntimeError);
+    await expect(listWorkspaceDocuments("ws-1")).rejects.toThrow(/permission denied/i);
+  });
+
+  it("surfaces a missing result set rather than a silent empty list", async () => {
+    sb.result = { data: null, error: null };
+
+    await expect(listWorkspaceDocuments("ws-1")).rejects.toThrow(/no result set/i);
+  });
+
+  it("applies the document-vault scoping semantics (no tender rows, no archived)", async () => {
+    sb.result = {
+      data: [
+        { id: "keep", source_type: "ticket", status: "generated" },
+        { id: "tender", source_type: "tender", status: "generated" },
+        { id: "archived", source_type: "ticket", status: "archived" },
+      ],
+      error: null,
+    };
+
+    const rows = await listWorkspaceDocuments("ws-1");
+
+    expect(rows.map(r => r.id)).toEqual(["keep"]);
+  });
+
+  it("refuses to query without a workspace id", async () => {
+    await expect(listWorkspaceDocuments("  ")).rejects.toBeInstanceOf(DocumentRuntimeError);
+    expect(sb.calls).toHaveLength(0);
+  });
+});
+
+describe("listScopeDocumentsFromCleanServer (row 27 — clean server)", () => {
   it("returns the server rows when the payload is a bare array", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse([
@@ -48,7 +152,7 @@ describe("listWorkspaceDocuments", () => {
       ]),
     );
 
-    const rows = await listWorkspaceDocuments("ws-1");
+    const rows = await listScopeDocumentsFromCleanServer("ws-1");
 
     expect(rows).toEqual([
       { id: "doc-1", file_name: "quote.pdf", document_type: "quote", status: "generated" },
@@ -58,13 +162,13 @@ describe("listWorkspaceDocuments", () => {
   it("returns the server rows when the payload is wrapped in { data }", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: "doc-2" }], count: 1 }));
 
-    await expect(listWorkspaceDocuments("ws-1")).resolves.toEqual([{ id: "doc-2" }]);
+    await expect(listScopeDocumentsFromCleanServer("ws-1")).resolves.toEqual([{ id: "doc-2" }]);
   });
 
   it("targets the absolute clean-server URL, never a relative /api path", async () => {
     fetchMock.mockResolvedValue(jsonResponse([]));
 
-    await listWorkspaceDocuments("ws 1/2");
+    await listScopeDocumentsFromCleanServer("ws 1/2");
 
     const url = requestedUrl();
     expect(url.startsWith(`${CLEAN_SERVER_BASE}/api/documents?workspace_id=`)).toBe(true);
@@ -74,16 +178,16 @@ describe("listWorkspaceDocuments", () => {
 
   it("treats zero rows as a genuinely empty list, not an error", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ data: [], count: 0 }));
-    await expect(listWorkspaceDocuments("ws-1")).resolves.toEqual([]);
+    await expect(listScopeDocumentsFromCleanServer("ws-1")).resolves.toEqual([]);
 
     fetchMock.mockResolvedValue(jsonResponse([]));
-    await expect(listWorkspaceDocuments("ws-1")).resolves.toEqual([]);
+    await expect(listScopeDocumentsFromCleanServer("ws-1")).resolves.toEqual([]);
   });
 
   it("surfaces a non-OK response as an error instead of an empty list", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ error: "Document scope not found" }, 404));
 
-    await expect(listWorkspaceDocuments("ws-1")).rejects.toMatchObject({
+    await expect(listScopeDocumentsFromCleanServer("ws-1")).rejects.toMatchObject({
       name: "DocumentRuntimeError",
       message: "Document scope not found",
       status: 404,
@@ -93,8 +197,8 @@ describe("listWorkspaceDocuments", () => {
   it("surfaces an unreachable clean server as an error instead of an empty list", async () => {
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
 
-    await expect(listWorkspaceDocuments("ws-1")).rejects.toBeInstanceOf(DocumentRuntimeError);
-    await expect(listWorkspaceDocuments("ws-1")).rejects.toThrow(/not reachable/i);
+    await expect(listScopeDocumentsFromCleanServer("ws-1")).rejects.toBeInstanceOf(DocumentRuntimeError);
+    await expect(listScopeDocumentsFromCleanServer("ws-1")).rejects.toThrow(/not reachable/i);
   });
 
   it("surfaces an HTML/SPA response (the old relative-fetch defect) as an error", async () => {
@@ -105,17 +209,19 @@ describe("listWorkspaceDocuments", () => {
       }),
     );
 
-    await expect(listWorkspaceDocuments("ws-1")).rejects.toThrow(/did not return JSON/i);
+    await expect(listScopeDocumentsFromCleanServer("ws-1")).rejects.toThrow(/did not return JSON/i);
   });
 
   it("surfaces an unrecognised payload shape as an error rather than inventing rows", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ documents: [{ id: "doc-3" }] }));
 
-    await expect(listWorkspaceDocuments("ws-1")).rejects.toThrow(/unrecognised document list shape/i);
+    await expect(listScopeDocumentsFromCleanServer("ws-1")).rejects.toThrow(
+      /unrecognised document list shape/i,
+    );
   });
 
   it("refuses to call the server without a workspace id", async () => {
-    await expect(listWorkspaceDocuments("  ")).rejects.toBeInstanceOf(DocumentRuntimeError);
+    await expect(listScopeDocumentsFromCleanServer("  ")).rejects.toBeInstanceOf(DocumentRuntimeError);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
