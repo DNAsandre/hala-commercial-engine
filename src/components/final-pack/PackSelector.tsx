@@ -408,10 +408,17 @@ function formatPackType(type: string): string {
   return labels[type] || type;
 }
 
-function formatDate(iso: string): string {
+/**
+ * W04-C4: the `catch` here never fired. `toLocaleDateString` on an unparseable
+ * date does not throw — it RETURNS the string "Invalid Date", which rendered
+ * verbatim in the pack list. Guard on the timestamp instead.
+ */
+export function formatDate(iso: string): string {
   if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
   try {
-    return new Date(iso).toLocaleDateString("en-GB", {
+    return d.toLocaleDateString("en-GB", {
       day: "2-digit",
       month: "short",
       year: "numeric",
