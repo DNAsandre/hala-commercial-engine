@@ -10,7 +10,7 @@ import { Link } from "wouter";
 import { cleanHref } from "@clean/lib/clean-routing";
 import {
   Users, Settings, Database, Link2, Bell, Shield, Key, Globe,
-  Plus, Edit3, Trash2, Check, RefreshCw, Server, HardDrive, Warehouse,
+  Edit3, Trash2, Check, RefreshCw, Server, HardDrive, Warehouse,
   Mail, Building2, UserPlus, Search, ChevronRight, X,
   Layers, Wrench, Star, Bot, Radio, Activity, BarChart3,
   FileText, Palette, BookOpen, Blocks, Variable, Eye, EyeOff,
@@ -72,7 +72,20 @@ async function fetchProviderRowsAdmin(): Promise<AIProvider[]> {
   }));
 }
 import { supabase } from "@/lib/supabase";
-import { api } from "@/lib/api-client";
+// SC-01 W03-2: the Admin panel's last four old-server HTTP calls (register rows
+// 42, 61, 62) are replaced by the clean-owned ops runtime. No api-client import
+// remains on this page.
+import {
+  CLEAN_SERVER_PROBE_NAME,
+  SUPABASE_PROBE_NAME,
+  readIntegrationStatus,
+  readSystemHealth,
+  readSystemSettings,
+  saveSystemSettings,
+  type IntegrationReport,
+  type Probe,
+  type SystemHealthReport,
+} from "@/lib/ops-runtime";
 import { fetchEditorBots } from "@/lib/supabase-data";
 import FacilitiesAdmin from "@/pages/FacilitiesAdmin";
 
@@ -352,7 +365,13 @@ function AIProvidersEmbed() {
   );
 }
 
-/* ─── Settings Tab — Fully Persistent ─── */
+/* ─── Settings Tab — persisted in the established `system_settings` table ───
+ * SC-01 W03-2 (register row 62): replaces GET/PUT /api/system-settings on the
+ * old Hala server with a direct, confirmed read/write via ops-runtime. A save
+ * is only reported as saved once the database returns the stored row and that
+ * row matches the submission. Read failures are surfaced, never papered over
+ * with defaults that would let a user overwrite unknown stored state.
+ */
 const SETTINGS_DEFAULTS = {
   org_name: 'Hala Supply Chain Solutions',
   default_currency: 'SAR',
@@ -369,36 +388,61 @@ const SETTINGS_DEFAULTS = {
   feature_dark_mode: false,
 };
 
+type SettingsLoadState =
+  | { kind: "loading" }
+  | { kind: "loaded"; updatedAt: string | null; filledFromDefaults: string[] }
+  | { kind: "empty" }
+  | { kind: "error"; error: string };
+
 function SettingsTabContent() {
   const [s, setS] = useState({ ...SETTINGS_DEFAULTS });
   const [saved, setSaved] = useState({ ...SETTINGS_DEFAULTS });
-  const [loading, setLoading] = useState(true);
+  const [load, setLoad] = useState<SettingsLoadState>({ kind: "loading" });
   const [saving, setSaving] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    api.systemSettings.get().then(res => {
+    setLoad({ kind: "loading" });
+    readSystemSettings().then(result => {
       if (cancelled) return;
-      if (res.data?.settings) {
-        const merged = { ...SETTINGS_DEFAULTS, ...res.data.settings };
-        setS(merged);
-        setSaved(merged);
+      if (result.status === "error") {
+        setLoad({ kind: "error", error: result.error });
+        return;
       }
-      setLoading(false);
-    }).catch(() => setLoading(false));
+      if (result.status === "empty") {
+        const base = { ...SETTINGS_DEFAULTS };
+        setS(base);
+        setSaved(base);
+        setLoad({ kind: "empty" });
+        return;
+      }
+      const stored = result.settings as Partial<typeof SETTINGS_DEFAULTS>;
+      const merged = { ...SETTINGS_DEFAULTS, ...stored };
+      const filledFromDefaults = Object.keys(SETTINGS_DEFAULTS).filter(
+        k => !(k in stored),
+      );
+      setS(merged);
+      setSaved(merged);
+      setLoad({ kind: "loaded", updatedAt: result.updatedAt, filledFromDefaults });
+    });
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
 
   const isDirty = JSON.stringify(s) !== JSON.stringify(saved);
 
   const handleSave = async () => {
     setSaving(true);
-    try {
-      await api.systemSettings.update(s);
-      setSaved({ ...s });
-      toast.success("Settings saved");
-    } catch {
-      toast.error("Failed to save settings");
+    const result = await saveSystemSettings({ ...s });
+    if (result.status === "saved") {
+      const confirmed = { ...SETTINGS_DEFAULTS, ...(result.settings as Partial<typeof SETTINGS_DEFAULTS>) };
+      setS(confirmed);
+      setSaved(confirmed);
+      setLoad({ kind: "loaded", updatedAt: result.updatedAt, filledFromDefaults: [] });
+      toast.success("Settings saved", { description: "Confirmed by the stored row returned from the database." });
+    } else {
+      // Nothing is marked as saved — the previous saved baseline is kept.
+      toast.error("Settings were NOT saved", { description: result.error });
     }
     setSaving(false);
   };
@@ -410,10 +454,51 @@ function SettingsTabContent() {
 
   const upd = (key: string, val: any) => setS(prev => ({ ...prev, [key]: val }));
 
-  if (loading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+  if (load.kind === "loading") return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+
+  if (load.kind === "error") {
+    return (
+      <Card className="border border-red-200 shadow-none">
+        <CardContent className="p-6 space-y-2">
+          <p className="text-sm font-semibold text-red-700">Settings could not be read</p>
+          <p className="text-xs text-muted-foreground">
+            The stored settings row could not be read, so the current saved values are unknown.
+            Editing is disabled to avoid overwriting state that has not been seen.
+          </p>
+          <p className="text-[11px] font-mono text-muted-foreground break-all">{load.error}</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={() => setReloadKey(k => k + 1)}>
+            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <>
+      {load.kind === "empty" ? (
+        <Card className="border border-amber-200 bg-amber-50/50 shadow-none">
+          <CardContent className="p-3">
+            <p className="text-xs text-amber-800">
+              No saved settings row exists yet. The values below are this build's defaults —
+              nothing is stored until you press Save Settings.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="border border-border shadow-none">
+          <CardContent className="p-3">
+            <p className="text-xs text-muted-foreground">
+              Loaded from the stored settings row
+              {load.updatedAt ? ` (last updated ${load.updatedAt})` : " (no update timestamp recorded)"}.
+              {load.filledFromDefaults.length > 0
+                ? ` Not stored, shown from build defaults: ${load.filledFromDefaults.join(", ")}.`
+                : ""}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="border border-border shadow-none">
         <CardHeader className="pb-3"><CardTitle className="text-base font-serif">General Settings</CardTitle></CardHeader>
         <CardContent className="space-y-4">
@@ -579,120 +664,165 @@ function EditorBotsEmbed() {
   );
 }
 
-/* ─── System Module metadata (icons, colors) — static ─── */
-const moduleMetadata: Record<string, { icon: React.ElementType; color: string; hint?: string }> = {
-  "CRM Sync Engine": { icon: RefreshCw, color: "text-emerald-600 bg-emerald-50" },
-  "Document Export Engine": { icon: HardDrive, color: "text-blue-600 bg-blue-50" },
-  "Escalation Engine": { icon: Shield, color: "text-[#075eea] bg-[#075eea]/10" },
-  "Audit Logger": { icon: Database, color: "text-amber-600 bg-amber-50" },
-  "AI Authoring": { icon: Brain, color: "text-pink-600 bg-pink-50" },
-  "Notification Service": { icon: Bell, color: "text-gray-400 bg-gray-50", hint: "Requires SMTP configuration in Integrations" },
+/* ─── System Module metadata (icons only) ─── */
+const moduleMetadata: Record<string, { icon: React.ElementType; color: string }> = {
+  [SUPABASE_PROBE_NAME]: { icon: Database, color: "text-emerald-600 bg-emerald-50" },
+  [CLEAN_SERVER_PROBE_NAME]: { icon: Server, color: "text-blue-600 bg-blue-50" },
+  "CRM Sync Engine": { icon: RefreshCw, color: "text-gray-400 bg-gray-50" },
+  "Document Export Engine": { icon: HardDrive, color: "text-gray-400 bg-gray-50" },
+  "Escalation Engine": { icon: Shield, color: "text-gray-400 bg-gray-50" },
+  "Audit Logger": { icon: Database, color: "text-gray-400 bg-gray-50" },
+  "AI Authoring": { icon: Brain, color: "text-gray-400 bg-gray-50" },
+  "Notification Service": { icon: Bell, color: "text-gray-400 bg-gray-50" },
 };
 
-const defaultModules = [
-  { name: "CRM Sync Engine", status: "active", lastActivity: "Checking..." },
-  { name: "Document Export Engine", status: "active", lastActivity: "Checking..." },
-  { name: "Escalation Engine", status: "active", lastActivity: "Checking..." },
-  { name: "Audit Logger", status: "active", lastActivity: "Checking..." },
-  { name: "AI Authoring", status: "active", lastActivity: "Checking..." },
-  { name: "Notification Service", status: "inactive", lastActivity: "Disabled" },
-];
+function ProbeCard({ probe }: { probe: Probe }) {
+  const meta = moduleMetadata[probe.name] || { icon: Server, color: "text-gray-500 bg-gray-50" };
+  const Icon = meta.icon;
+  const badgeClass =
+    probe.status === "ok" ? "bg-emerald-50 text-emerald-700" :
+    probe.status === "failed" ? "bg-red-50 text-red-700" :
+    "bg-gray-50 text-gray-500";
+  const dotClass =
+    probe.status === "ok" ? "bg-emerald-500" :
+    probe.status === "failed" ? "bg-red-500" :
+    "bg-gray-300";
+  const label =
+    probe.status === "ok" ? "Probe succeeded" :
+    probe.status === "failed" ? "Probe failed" :
+    "Not measured";
 
+  return (
+    <Card className="border border-border shadow-none">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between mb-3">
+          <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${meta.color}`}>
+            <Icon className="w-5 h-5" />
+          </div>
+          <Badge variant="outline" className={`text-[10px] ${badgeClass}`}>
+            {probe.status === "not_measured" ? "not measured" : probe.status}
+          </Badge>
+        </div>
+        <h3 className="text-sm font-semibold mb-0.5">{probe.name}</h3>
+        <p className="text-xs text-muted-foreground break-words">{probe.detail}</p>
+        <div className="flex items-center gap-2 mt-3">
+          <div className={`w-2 h-2 rounded-full ${dotClass}`} />
+          <span className="text-[10px] text-muted-foreground">{label}</span>
+        </div>
+        {probe.measuredAt && (
+          <p className="text-[10px] text-muted-foreground/70 mt-2">
+            Measured {probe.measuredAt}
+            {probe.latencyMs === null ? "" : ` — ${probe.latencyMs}ms`}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* SC-01 W03-2 (register row 61): replaces GET /api/system-health. That endpoint
+ * described the OLD server. This build reports on ITSELF only: two probes that
+ * genuinely run (Supabase query, clean server /healthz). Every other subsystem
+ * the old endpoint listed is shown as explicitly not measured — never assumed
+ * running, never given a fabricated status or uptime. */
 function SystemModulesTab() {
-  const [modules, setModules] = useState(defaultModules);
+  const [report, setReport] = useState<SystemHealthReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    api.systemHealth.get()
-      .then((res: any) => {
-        if (cancelled) return;
-        const mods = res?.modules || res?.data?.modules;
-        if (mods) setModules(mods);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    setLoading(true);
+    readSystemHealth().then(r => {
+      if (cancelled) return;
+      setReport(r);
+      setLoading(false);
+    });
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
+
+  if (loading || !report) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin" /></div>;
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-3">
-        {modules.map(mod => {
-          const meta = moduleMetadata[mod.name] || { icon: Server, color: "text-gray-500 bg-gray-50" };
-          const Icon = meta.icon;
-          const isActive = mod.status === "active";
-          const isDegraded = mod.status === "degraded";
-          return (
-            <Card key={mod.name} className="border border-border shadow-none">
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between mb-3">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${meta.color}`}>
-                    <Icon className="w-5 h-5" />
-                  </div>
-                  <Badge variant="outline" className={`text-[10px] ${
-                    isDegraded ? "bg-amber-50 text-amber-700" :
-                    isActive ? "bg-emerald-50 text-emerald-700" : "bg-gray-50 text-gray-500"
-                  }`}>
-                    {mod.status}
-                  </Badge>
-                </div>
-                <h3 className="text-sm font-semibold mb-0.5">{mod.name}</h3>
-                <p className="text-xs text-muted-foreground">{loading ? "Checking..." : mod.lastActivity}</p>
-                <div className="flex items-center gap-2 mt-3">
-                  <div className={`w-2 h-2 rounded-full ${
-                    isDegraded ? "bg-amber-500" :
-                    isActive ? "bg-emerald-500" : "bg-gray-300"
-                  }`} />
-                  <span className="text-[10px] text-muted-foreground">
-                    {isDegraded ? "Degraded" : isActive ? "Running" : "Offline"}
-                  </span>
-                </div>
-                {meta.hint && mod.status === "inactive" && (
-                  <p className="text-[10px] text-muted-foreground/70 mt-2 italic">{meta.hint}</p>
-                )}
-              </CardContent>
-            </Card>
-          );
-        })}
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">Report generated {report.reportedAt}</p>
+        <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => setReloadKey(k => k + 1)}>
+          <RefreshCw className="w-3.5 h-3.5 mr-1" /> Re-run probes
+        </Button>
       </div>
-      <p className="text-xs text-muted-foreground">System module status is managed at the infrastructure level. Contact your DevOps team to enable or disable modules.</p>
+
+      <div className="grid grid-cols-3 gap-3">
+        {report.probes.map(p => <ProbeCard key={p.name} probe={p} />)}
+      </div>
+
+      <div className="space-y-2">
+        <h4 className="text-xs font-semibold uppercase text-muted-foreground">Not measured by this build</h4>
+        <div className="grid grid-cols-3 gap-3">
+          {report.notMeasured.map(p => <ProbeCard key={p.name} probe={p} />)}
+        </div>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Only the probes above are real measurements of this application. Nothing on this page reports
+        on the previous Hala server, and no status is inferred or assumed.
+      </p>
     </div>
   );
 }
 
-/* ─── Integration metadata (icons only — status comes from API) ─── */
+/* ─── Integration metadata (icons only — status comes from real probes) ─── */
 const integrationIcons: Record<string, React.ElementType> = {
-  "Zoho CRM": Link2,
+  "CRM connections": Link2,
   "Zoho Books": Building2,
   "WMS (Blue Yonder)": Database,
   "Email (SMTP)": Mail,
   "Supabase": Globe,
 };
 
+/* SC-01 W03-2 (register row 42): replaces GET /api/integration-status, which
+ * described the OLD server's integrations. This build reports only what it can
+ * genuinely observe: a live Supabase probe and a real read of the established
+ * crm_connections table (whose stored health values are labelled as recorded,
+ * not live). Integrations that do not exist here are shown as not measured —
+ * never "active", never "demo", never a fabricated connection state. */
 function IntegrationsTab() {
-  const [integrations, setIntegrations] = useState<Array<{ name: string; status: string; description: string; connectionInfo: string }>>([]);
+  const [report, setReport] = useState<IntegrationReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    api.systemHealth.integrations()
-      .then((res: any) => {
-        if (cancelled) return;
-        const ints = res?.integrations || res?.data?.integrations;
-        if (ints) setIntegrations(ints);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    setLoading(true);
+    readIntegrationStatus().then(r => {
+      if (cancelled) return;
+      setReport(r);
+      setLoading(false);
+    });
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
 
-  if (loading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+  if (loading || !report) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin" /></div>;
 
   return (
     <div className="space-y-3">
-      {integrations.map(int => {
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">Report generated {report.reportedAt}</p>
+        <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => setReloadKey(k => k + 1)}>
+          <RefreshCw className="w-3.5 h-3.5 mr-1" /> Re-check
+        </Button>
+      </div>
+
+      {report.integrations.map(int => {
         const Icon = integrationIcons[int.name] || Globe;
+        const badgeClass =
+          int.status === "ok" ? "bg-emerald-50 text-emerald-700" :
+          int.status === "failed" ? "bg-red-50 text-red-700" :
+          "bg-gray-50 text-gray-500";
+        const badgeLabel =
+          int.status === "ok" ? "checked" :
+          int.status === "failed" ? "check failed" :
+          "not measured";
         return (
           <Card key={int.name} className="border border-border shadow-none">
             <CardContent className="p-4">
@@ -703,35 +833,13 @@ function IntegrationsTab() {
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className="text-sm font-semibold">{int.name}</span>
-                    <Badge variant="outline" className={`text-[10px] ${
-                      int.status === "demo" ? "bg-amber-50 text-amber-700" :
-                      int.status === "active" ? "bg-emerald-50 text-emerald-700" :
-                      int.status === "error" ? "bg-red-50 text-red-700" :
-                      "bg-gray-50 text-gray-500"
-                    }`}>
-                      {int.status === "demo" ? "Demo Mode" : int.status}
-                    </Badge>
+                    <Badge variant="outline" className={`text-[10px] ${badgeClass}`}>{badgeLabel}</Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground">{int.description}</p>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <Key className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground font-mono">{int.connectionInfo}</span>
+                  <p className="text-xs text-muted-foreground break-words">{int.detail}</p>
+                  <div className="flex items-start gap-1.5 mt-1">
+                    <Key className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
+                    <span className="text-[10px] text-muted-foreground font-mono break-all">{int.connectionInfo}</span>
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {int.status === "active" ? (
-                    <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700">✓ Connected</Badge>
-                  ) : int.status === "demo" ? (
-                    <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => toast.info(`To activate ${int.name}, provide API credentials in the integration settings.`, { description: 'Contact admin@halascs.com for API keys.' })}>
-                      <Settings className="w-3.5 h-3.5 mr-1" /> Configure
-                    </Button>
-                  ) : int.status === "error" ? (
-                    <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700">✗ Error</Badge>
-                  ) : (
-                    <Button variant="outline" size="sm" className="text-xs h-8" disabled>
-                      <Settings className="w-3.5 h-3.5 mr-1" /> Coming Soon
-                    </Button>
-                  )}
                 </div>
               </div>
             </CardContent>
@@ -739,16 +847,10 @@ function IntegrationsTab() {
         );
       })}
 
-      <Card className="border-2 border-dashed border-border shadow-none">
-        <CardContent className="p-6 text-center">
-          <Plus className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" />
-          <p className="text-sm text-muted-foreground">Add Custom Integration</p>
-          <p className="text-xs text-muted-foreground/60 mt-0.5">Connect any REST API with custom credentials</p>
-          <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => toast("Custom integration setup coming soon")}>
-            Configure
-          </Button>
-        </CardContent>
-      </Card>
+      <p className="text-xs text-muted-foreground">
+        "checked" means a real request succeeded just now. "not measured" means this build performs no
+        check for that integration — it is not a claim that the integration is working or broken.
+      </p>
     </div>
   );
 }
