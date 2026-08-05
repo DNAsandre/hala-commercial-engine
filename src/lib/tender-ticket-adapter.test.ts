@@ -180,11 +180,20 @@ describe("fetchTenderPortfolioRows — what reaches the database", () => {
     await expect(fetchTenderPortfolioRows()).resolves.toEqual([]);
   });
 
-  it("resolves to an empty list when rows came back but none survive process isolation", async () => {
-    // Observed, not owned by this lane: non-allowlisted tender ids are dropped
-    // client-side, so a successful read of real rows can still render nothing.
+  it("resolves to an empty list when the only returned rows are legacy seed ids", async () => {
+    // Wave 05 Option B: only the exact legacy seed ids are dropped client-side.
+    // A clean-created row (created_from_intake=true) always survives.
     queue({ data: [tenderRow({ id: "a1100000-0000-4000-8000-000000000030" })], error: null });
     await expect(fetchTenderPortfolioRows()).resolves.toEqual([]);
+  });
+
+  it("keeps a clean-created tender in the portfolio read", async () => {
+    queue({
+      data: [tenderRow({ id: "b7e2c9d4-1234-4abc-9def-000000000001", created_from_intake: true })],
+      error: null,
+    });
+    const rows = await fetchTenderPortfolioRows();
+    expect(rows.map((r: { id: string }) => r.id)).toEqual(["b7e2c9d4-1234-4abc-9def-000000000001"]);
   });
 
   it("maps a returned row onto the portfolio shape without inventing values", async () => {

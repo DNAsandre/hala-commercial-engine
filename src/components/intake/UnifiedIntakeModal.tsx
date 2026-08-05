@@ -298,8 +298,9 @@ export default function UnifiedIntakeModal({
             </Badge>
           </DialogTitle>
           <DialogDescription>
-            All new tickets enter as <strong>unverified</strong>. Lineage must be confirmed
-            before they appear in operational views.
+            New tickets are saved with lineage status <strong>unverified</strong> and
+            appear in operational views immediately. Lineage can be confirmed later
+            for audit traceability; it does not block any view or workflow.
           </DialogDescription>
         </DialogHeader>
 
@@ -659,8 +660,9 @@ export default function UnifiedIntakeModal({
               <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
               <span>
                 This ticket will be saved with lineage status{" "}
-                <strong className="text-amber-700">UNVERIFIED</strong>. It will not
-                appear in operational views until lineage is confirmed.
+                <strong className="text-amber-700">UNVERIFIED</strong> and will appear
+                in operational views immediately. Lineage confirmation is an audit
+                step, not a gate.
               </span>
             </div>
           </div>

@@ -55,7 +55,7 @@ import {
 import { normalizeTenderPricingData } from './tender-pricing-types';
 import { normalizeTenderTypeDetails } from './tender-type-details';
 import { normalizeTenderInternalStage } from './tender-stage-source-truth';
-import { isAllowedTenderTicket } from './process-isolation';
+import { isAllowedTenderTicket, mayTenderIdBeAllowed } from './process-isolation';
 
 // ─── Bundle type ────────────────────────────────────────────
 
@@ -795,13 +795,16 @@ async function fetchTenderSubmissionEmails(tenderId: string): Promise<TenderSubm
 export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): Promise<TenderWorkspaceBundle> {
   console.log(`[SUPA-006] Loading tender workspace bundle for: ${tenderId}`);
 
-  if (!isAllowedTenderTicket({ id: tenderId, ticket_type: 'tender' })) {
-    // NOT an empty result: no query was issued at all. Saying "no data found"
-    // here would assert something about the database that was never checked.
+  // Option B (architect ruling): an id-only check may reject ONLY the exact
+  // legacy seed ids. Every other id is fetched first — a clean-created tender
+  // can only be recognised from its row's created_from_intake marker, so
+  // rejecting before the read would make a human's own record unreachable.
+  if (!mayTenderIdBeAllowed(tenderId)) {
+    // NOT an empty result: no query was issued at all.
     return emptyTenderWorkspaceBundle(tenderId, {
       kind: 'isolated',
       message:
-        'No read was attempted for this tender: the id is outside the clean-process allowlist in src/lib/process-isolation.ts (ALLOWED_TENDER_IDS). This is not evidence that the record is absent from commercial_tickets.',
+        'No read was attempted for this tender: the id is one of the excluded legacy seed records (src/lib/process-isolation.ts, LEGACY_SEED_TENDER_IDS). This is not evidence that the record is absent from commercial_tickets.',
     });
   }
 
@@ -819,6 +822,18 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
     return emptyTenderWorkspaceBundle(tenderId, {
       kind: 'not_found',
       message: `No active tender row is visible for id ${tenderId} in commercial_tickets. Rows hidden by row-level security are indistinguishable from absent rows on this read.`,
+    });
+  }
+
+  // Post-fetch admission (Option B): the row was read, so it can be evaluated
+  // against the real filter — including the created_from_intake marker. A row
+  // that fails here was genuinely read and deliberately excluded, and the
+  // message says that, rather than pretending the record does not exist.
+  if (!isAllowedTenderTicket(header.row)) {
+    return emptyTenderWorkspaceBundle(tenderId, {
+      kind: 'isolated',
+      message:
+        'This tender row was read from commercial_tickets but is excluded from the clean process surface by process isolation (it is neither clean-created nor on the approved allowlist). The record exists; it is deliberately not shown here.',
     });
   }
 
