@@ -3414,3 +3414,221 @@ export async function saveProposalGoLiveStageData(
   if (!updated) throw new Error("Go-Live stage save did not update an active proposal ticket.");
   return { savedAt };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROPOSAL TRACKER STAGES (SC-01 Wave 04, T08-B)
+//
+// The proposal workspace shows TWO independent trackers backed by TWO
+// established columns on the SAME commercial_tickets row:
+//   - crm_pipeline_stage  — where the opportunity is commercially
+//   - internal_stage      — what internal work stage the proposal is in
+// Neither reads or writes the other.
+//
+// WHY THESE HELPERS EXIST
+// lib/intake-save.ts#changeStage issues .update(...).eq("id", …) with no
+// .select(), so it reports { error: null } even when the statement matched
+// ZERO rows. That is not a theoretical hole: probed live on 2026-08-05 against
+// commercial_tickets, an unauthorised PATCH of an existing, readable row
+// returned HTTP 200 with an empty row set and left the stored value untouched
+// — "no error" while nothing was written. Announcing success (and writing an
+// audit entry) from that outcome would put a fabricated state change in front
+// of the user. Everything below therefore CONFIRMS the stored value from the
+// returned row before anything is reported, and writes the audit entry only
+// after that confirmation.
+//
+// These helpers scope, they do not gate: they never block stage movement,
+// never hide a stage and never require an approval.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type ProposalTrackerStageColumn = "crm_pipeline_stage" | "internal_stage";
+
+export interface ProposalTrackerStages {
+  /** true only when the ticket row itself was read back. */
+  found: boolean;
+  /** Raw stored value — null means the column is genuinely not recorded. */
+  internalStage: string | null;
+  crmPipelineStage: string | null;
+  /** Set only when the READ failed. A failed read is not an empty result. */
+  error: string | null;
+}
+
+/**
+ * Read both tracker columns for one ticket, by exact id.
+ *
+ * The three outcomes stay distinguishable for the caller:
+ *   - read failed               → { found: false, error: "<message>" }
+ *   - ticket not visible/absent → { found: false, error: null }
+ *   - read succeeded            → { found: true, …raw column values }
+ * A null column is reported as null; it is never defaulted to a stage name.
+ */
+export async function readProposalTrackerStages(
+  ticketId: string,
+): Promise<ProposalTrackerStages> {
+  const id = text(ticketId);
+  if (!id) {
+    return { found: false, internalStage: null, crmPipelineStage: null, error: "No commercial ticket id was supplied." };
+  }
+
+  const { data, error } = await supabase
+    .from("commercial_tickets")
+    .select("id,internal_stage,crm_pipeline_stage")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    return { found: false, internalStage: null, crmPipelineStage: null, error: error.message };
+  }
+  if (!data) {
+    return { found: false, internalStage: null, crmPipelineStage: null, error: null };
+  }
+
+  const row = data as Record<string, unknown>;
+  return {
+    found: true,
+    internalStage: text(row.internal_stage) || null,
+    crmPipelineStage: text(row.crm_pipeline_stage) || null,
+    error: null,
+  };
+}
+
+export interface ProposalTrackerStageChangeResult {
+  /** true ONLY when the database returned the new value on the target row. */
+  ok: boolean;
+  /** The value the database actually holds now, as returned by the write. */
+  persistedValue: string | null;
+  /** true when the audit entry was accepted; only ever attempted after ok. */
+  auditWritten: boolean;
+  /** Human-facing explanation. Always populated. */
+  message: string;
+}
+
+/**
+ * Move ONE tracker column on ONE ticket and prove it landed.
+ *
+ * Order of operations is the whole point:
+ *   1. UPDATE … .select("id,<column>").maybeSingle()   ← returns the stored row
+ *   2. no returned row               → NOT saved, report the failure, stop
+ *   3. returned value !== requested  → NOT saved as asked, report it, stop
+ *   4. only now write the audit entry
+ * The caller may move local state, open an Undo window or show success only
+ * when ok is true.
+ */
+export async function changeProposalTrackerStage(input: {
+  ticketId: string;
+  column: ProposalTrackerStageColumn;
+  oldValue: string | null;
+  newValue: string;
+  userName: string;
+}): Promise<ProposalTrackerStageChangeResult> {
+  const ticketId = text(input.ticketId);
+  const newValue = text(input.newValue);
+  if (!ticketId) {
+    return { ok: false, persistedValue: null, auditWritten: false, message: "No commercial ticket is linked to this workspace." };
+  }
+  if (!newValue) {
+    return { ok: false, persistedValue: null, auditWritten: false, message: "No stage was supplied." };
+  }
+
+  const { data: updated, error: writeError } = await supabase
+    .from("commercial_tickets")
+    .update({ [input.column]: newValue })
+    .eq("id", ticketId)
+    .select("id," + input.column)
+    .maybeSingle();
+
+  if (writeError) {
+    return { ok: false, persistedValue: null, auditWritten: false, message: writeError.message };
+  }
+  if (!updated) {
+    return {
+      ok: false,
+      persistedValue: null,
+      auditWritten: false,
+      message: "The database accepted the request but updated no row, so the stage was NOT saved. The displayed stage is unchanged.",
+    };
+  }
+
+  const persistedValue = text((updated as unknown as Record<string, unknown>)[input.column]) || null;
+  if (persistedValue !== newValue) {
+    return {
+      ok: false,
+      persistedValue,
+      auditWritten: false,
+      message: "The stage was not stored as requested — the ticket now holds " + (persistedValue ?? "no value") + ".",
+    };
+  }
+
+  // Confirmed persisted. Only now is there something true to record.
+  const { error: auditError } = await supabase
+    .from("commercial_ticket_audit")
+    .insert({
+      ticket_id: ticketId,
+      action: "stage_changed",
+      field_changed: input.column,
+      old_value: text(input.oldValue) || null,
+      new_value: newValue,
+      user_name: input.userName,
+      notes: null,
+    });
+
+  return {
+    ok: true,
+    persistedValue,
+    auditWritten: !auditError,
+    message: auditError
+      ? "Saved to the commercial ticket, but the audit entry was not recorded (" + auditError.message + ")."
+      : "Saved to the commercial ticket.",
+  };
+}
+
+export type StageAdvanceOutcome =
+  /** The write itself failed or changed nothing. Database truth is untouched. */
+  | { status: "not_persisted"; message: string }
+  /**
+   * The write landed but the workspace could NOT be re-read. The display is
+   * stale, so no success is claimed, no audit is written and the Undo window
+   * stays shut — Undo must never act on a stage it cannot see.
+   */
+  | { status: "persisted_not_refreshed"; message: string }
+  /** Persisted AND rehydrated: safe to report success and open Undo. */
+  | { status: "confirmed"; message: string };
+
+/**
+ * Sequence a workspace stage advance: persist, then rehydrate, then report.
+ *
+ * `persist` must resolve true only on a confirmed write; `refetch` must resolve
+ * true only when the record was actually re-read. `refetch` is never called
+ * when the write did not land.
+ */
+export async function finalizeStageAdvance(deps: {
+  persist: () => Promise<boolean>;
+  refetch: () => Promise<boolean>;
+}): Promise<StageAdvanceOutcome> {
+  let persisted: boolean;
+  try {
+    persisted = await deps.persist();
+  } catch (err: any) {
+    return { status: "not_persisted", message: err?.message || "Database write failed. The workspace stage is unchanged." };
+  }
+  if (!persisted) {
+    return {
+      status: "not_persisted",
+      message: "The database did not confirm the update (possibly a concurrent edit). The workspace stage is unchanged.",
+    };
+  }
+
+  let refreshed: boolean;
+  try {
+    refreshed = await deps.refetch();
+  } catch {
+    refreshed = false;
+  }
+  if (!refreshed) {
+    return {
+      status: "persisted_not_refreshed",
+      message: "The change IS persisted, but the page could not re-read it. Reload to see the current stage. Undo stays unavailable until the display reflects the saved stage.",
+    };
+  }
+
+  return { status: "confirmed", message: "Stage change persisted and re-read." };
+}

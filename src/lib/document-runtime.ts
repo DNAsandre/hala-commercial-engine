@@ -253,14 +253,39 @@ export async function listWorkspaceDocuments(workspaceId: string): Promise<Docum
 // ─── list (row 27 — CLEAN SERVER) ────────────────────────────────────────────
 
 /**
+ * One page of scope documents as the clean server actually answered it.
+ *
+ * SC-01 W04 (Wave 03 observation 9): `GET /api/documents` caps the result set
+ * at `LIST_LIMIT` rows and says so in the envelope (`{ limit, truncated }`).
+ * Returning only `data` threw that disclosure away, so a scope holding more
+ * documents than the cap rendered a PARTIAL list that looked complete. The
+ * flags now travel with the rows so the UI can tell the human the truth.
+ */
+export interface ScopeDocumentPage {
+  rows: DocumentRecord[];
+  /** The server's row cap for this request, when it declared one. */
+  limit: number | null;
+  /** True only when the SERVER said the result set was cut short. */
+  truncated: boolean;
+}
+
+function readNonNegativeInt(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/**
  * GET /api/documents?workspace_id=...
  *
- * Returns the rows the clean server holds for the scope. An empty array means
- * the server genuinely returned zero rows; every other outcome throws.
+ * Returns the rows the clean server holds for the scope, together with the
+ * server's own truncation disclosure. An empty `rows` array means the server
+ * genuinely returned zero rows; every other outcome throws.
+ *
+ * `truncated` is NEVER inferred: it is taken from the server envelope, and is
+ * false when the server did not declare one.
  */
-export async function listScopeDocumentsFromCleanServer(
+export async function listScopeDocumentsPageFromCleanServer(
   workspaceId: string,
-): Promise<DocumentRecord[]> {
+): Promise<ScopeDocumentPage> {
   const scopeId = text(workspaceId);
   if (!scopeId) {
     throw new DocumentRuntimeError("Cannot load documents without a workspace id.");
@@ -287,7 +312,91 @@ export async function listScopeDocumentsFromCleanServer(
     );
   }
 
-  return normalizeDocumentRows(payload, url);
+  const rows = normalizeDocumentRows(payload, url);
+  const envelope = isRecord(payload) ? payload : null;
+  return {
+    rows,
+    limit: readNonNegativeInt(envelope?.limit),
+    truncated: envelope?.truncated === true,
+  };
+}
+
+/**
+ * Rows-only form of {@link listScopeDocumentsPageFromCleanServer}. Callers that
+ * render a list for a human must use the page form instead, so a truncated
+ * result cannot be shown as if it were the whole scope.
+ */
+export async function listScopeDocumentsFromCleanServer(
+  workspaceId: string,
+): Promise<DocumentRecord[]> {
+  const page = await listScopeDocumentsPageFromCleanServer(workspaceId);
+  return page.rows;
+}
+
+// ─── honest presentation helpers ─────────────────────────────────────────────
+
+/**
+ * Render a stored `file_size` for a human.
+ *
+ * SC-01 W04 (Wave 03 observation 13): the workspace document row computed
+ * `(file_size / 1024).toFixed(1) + " KB"` unconditionally, so a row whose
+ * `file_size` is NULL — which `generated_documents` allows, e.g. when a record
+ * was created without stored bytes — printed the literal string "NaN KB". An
+ * unknown size must read as unknown; it must never be rendered as a number.
+ */
+export function formatDocumentFileSize(value: unknown): string {
+  const size = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
+  if (!Number.isFinite(size) || size < 0) return "Size unknown";
+  if (size < 1024) return `${Math.round(size)} B`;
+  return `${(size / 1024).toFixed(1)} KB`;
+}
+
+export type DocumentListLoadState = "idle" | "loading" | "loaded" | "error";
+
+export type DocumentListState =
+  | { kind: "loading" }
+  /** The read FAILED. Distinct from empty, and it must persist on screen. */
+  | { kind: "error"; message: string }
+  /**
+   * The source really returned zero rows for this view. It still carries the
+   * truncation notice: a capped scope can hold zero rows for THIS stage while
+   * hiding rows the human was never shown.
+   */
+  | { kind: "empty"; truncationNotice: string | null }
+  /** Rows to render; `truncationNotice` is set only when the server said so. */
+  | { kind: "list"; count: number; truncationNotice: string | null };
+
+/**
+ * Decide which of the three states a document list is in.
+ *
+ * SC-01 W04 (Wave 03 observation 10): a failed document read was announced
+ * only through a transient toast while the list stayed `[]`, so once the toast
+ * dismissed the panel read as genuinely empty. Loading, real empty and
+ * functional error are three different answers and must look different.
+ */
+export function resolveDocumentListState(input: {
+  loadState: DocumentListLoadState;
+  error?: string | null;
+  count: number;
+  truncated?: boolean;
+  limit?: number | null;
+}): DocumentListState {
+  const message = text(input.error);
+  // A recorded failure outranks everything: never fall through to "empty".
+  if (message) return { kind: "error", message };
+  if (input.loadState === "error") {
+    return { kind: "error", message: "Documents could not be loaded." };
+  }
+  if (input.loadState === "idle" || input.loadState === "loading") return { kind: "loading" };
+
+  const truncationNotice = input.truncated
+    ? `Partial list — the server returned only the first ${
+        input.limit ?? input.count
+      } document records for this scope, so documents beyond that cap are not shown here.`
+    : null;
+
+  if (input.count <= 0) return { kind: "empty", truncationNotice };
+  return { kind: "list", count: input.count, truncationNotice };
 }
 
 // ─── download ────────────────────────────────────────────────────────────────
