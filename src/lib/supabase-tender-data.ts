@@ -390,6 +390,8 @@ const CRM_STAGE_MAP: Record<string, Tender['crmPipelineStage']> = {
   'contract_signed': 'contract_signed',
   'operational handover': 'operational_handover',
   'operational_handover': 'operational_handover',
+  'actual go live': 'actual_go_live',
+  'actual_go_live': 'actual_go_live',
   'closed lost': 'closed_lost',
   'closed_lost': 'closed_lost',
   'discontinued': 'discontinued',

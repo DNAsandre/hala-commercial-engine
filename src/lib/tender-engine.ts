@@ -13,6 +13,14 @@ import type { Region } from "./store";
 
 // ─── CRM PIPELINE MILESTONES ───────────────────────────────
 
+/**
+ * SC-01 Wave 04: `actual_go_live` added so this union matches the CRM stage
+ * vocabulary the human actually clicks. `CRMStage` (src/lib/store.ts) and the
+ * CRM Pipeline strip both offer "Actual Go Live"; this union did not know it,
+ * so selecting that stage stored a value the reader could not map and the row
+ * reloaded as "Prospecting" — after a "Persisted to Supabase" success toast.
+ * `operational_handover` is retained because rows may already hold it.
+ */
 export type TenderMilestone =
   | "prospecting"
   | "qualified"
@@ -22,6 +30,7 @@ export type TenderMilestone =
   | "closed_won"
   | "contract_signed"
   | "operational_handover"
+  | "actual_go_live"
   | "closed_lost"
   | "discontinued";
 
@@ -35,6 +44,7 @@ export function getTenderStatusDisplayName(status: TenderMilestone): string {
     closed_won: "Closed Won",
     contract_signed: "Contract Signed",
     operational_handover: "Operational Handover",
+    actual_go_live: "Actual Go Live",
     closed_lost: "Closed Lost",
     discontinued: "Discontinued",
   };
@@ -51,6 +61,7 @@ export function getTenderStatusColor(status: TenderMilestone): string {
     closed_won: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
     contract_signed: "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300",
     operational_handover: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300",
+    actual_go_live: "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300",
     closed_lost: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
     discontinued: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
   };

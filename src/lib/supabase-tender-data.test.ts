@@ -246,11 +246,15 @@ describe('CRM stage round-trip fidelity', () => {
     expect(mod.RESTORABLE_CRM_PIPELINE_STAGES).toContain('operational_handover');
   });
 
-  it('rejects actual_go_live, which the strip offers but this layer cannot read back', () => {
-    // Guard for a real defect: CrmPipelineStrip offers "actual_go_live", the
-    // read layer's CRM_STAGE_MAP has no such key, so a successful write would
-    // reload as "prospecting" under a "Persisted to Supabase" toast.
-    expect(mod.isRestorableCrmPipelineStage('actual_go_live')).toBe(false);
+  it('restores actual_go_live — every stage the strip offers must survive a round trip', () => {
+    // Regression guard for a real defect (found by W04-T08-A, closed by Fable in
+    // integration): CrmPipelineStrip offers "actual_go_live" but the read layer's
+    // CRM_STAGE_MAP had no such key, so a successful write reloaded as
+    // "prospecting" under a "Persisted to Supabase" toast. Every key the human
+    // can click must be readable back, or the UI reports a stage the row does
+    // not hold.
+    expect(mod.isRestorableCrmPipelineStage('actual_go_live')).toBe(true);
+    expect(mod.RESTORABLE_CRM_PIPELINE_STAGES).toContain('actual_go_live');
   });
 
   it('rejects unknown / empty stage keys', () => {
