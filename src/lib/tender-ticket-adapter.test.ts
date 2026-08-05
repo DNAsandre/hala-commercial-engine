@@ -89,7 +89,11 @@ vi.mock("./supabase", () => ({
   supabase: { from: (...args: unknown[]) => (fromSpy as any)(...args) },
 }));
 
-import { fetchTenderPortfolioRows, mapCommercialTicketToTenderPortfolioRow } from "./tender-ticket-adapter";
+import {
+  fetchTenderPortfolioRead,
+  fetchTenderPortfolioRows,
+  mapCommercialTicketToTenderPortfolioRow,
+} from "./tender-ticket-adapter";
 import { ALLOWED_TENDER_IDS } from "./process-isolation";
 import type { CommercialTicket } from "./unified-ticket-types";
 
@@ -191,6 +195,55 @@ describe("fetchTenderPortfolioRows — what reaches the database", () => {
     expect(row.estimated_value).toBe(4200000);
     // type_details.submission_deadline wins over target_date when present.
     expect(row.submission_deadline).toBe("2026-09-15");
+  });
+});
+
+// ── W04-C1 defect E: the tender pages must be able to tell the truth ──
+
+describe("fetchTenderPortfolioRead — pre-filter and post-filter counts", () => {
+  it("reports how many rows the database returned and how many this client dropped", async () => {
+    // The live shape: 4 tender rows readable, the allowlist admits exactly one.
+    queue({
+      data: [
+        tenderRow(),
+        tenderRow({ id: "a1200000-0000-4000-8000-000000000002", ticket_title: "Fifteen Stage Tender Test", customer_name: "UAT" }),
+        tenderRow({ id: "a1200000-0000-4000-8000-000000000001", ticket_title: "Tender Aggregate Test", customer_name: "UAT" }),
+        tenderRow({ id: "a1100000-0000-4000-8000-000000000030", ticket_title: "National Distribution Tender", customer_name: "UAT" }),
+      ],
+      error: null,
+    });
+
+    const read = await fetchTenderPortfolioRead();
+    expect(read.fetched).toBe(4);
+    expect(read.rows.map(r => r.id)).toEqual([LINDE_ID]);
+    expect(read.withheld).toBe(3);
+  });
+
+  it("reports fetched 0 / withheld 0 when the database genuinely returned nothing", async () => {
+    queue({ data: [], error: null });
+    await expect(fetchTenderPortfolioRead()).resolves.toEqual({ rows: [], fetched: 0, withheld: 0 });
+  });
+
+  it("reports every returned row as withheld when none survive isolation", async () => {
+    queue({ data: [tenderRow({ id: "a1100000-0000-4000-8000-000000000030", customer_name: "UAT", ticket_title: "National Distribution Tender" })], error: null });
+    const read = await fetchTenderPortfolioRead();
+    // A page seeing rows: [] here must NOT say "the read returned no rows".
+    expect(read.rows).toEqual([]);
+    expect(read.fetched).toBe(1);
+    expect(read.withheld).toBe(1);
+  });
+
+  it("REJECTS on a read error rather than reporting fetched 0", async () => {
+    queue({ data: null, error: { message: "permission denied for table commercial_tickets" } });
+    await expect(fetchTenderPortfolioRead()).rejects.toMatchObject({
+      message: "permission denied for table commercial_tickets",
+    });
+  });
+
+  it("issues exactly one read — fetchTenderPortfolioRows delegates to it", async () => {
+    queue({ data: [tenderRow()], error: null });
+    await fetchTenderPortfolioRows();
+    expect(fromSpy).toHaveBeenCalledTimes(1);
   });
 });
 

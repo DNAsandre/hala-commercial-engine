@@ -17,12 +17,15 @@ import {
 import { toast } from "sonner";
 import {
   deriveCommercialTicketPipelineTickets,
-  CRM_PIPELINE_COLUMNS, CRM_TERMINAL,
+  CRM_PIPELINE_COLUMNS,
   STAGE_COLORS, resolveReadState, describeRenderedCount,
+  describeEmptyReadCause, describeIsolationWithholding,
+  readOperationalTicketsWithIsolation,
+  sumCaptured, averageCaptured,
   type CrmStageLabel, type PipelineTicket,
 } from "@/lib/pipeline-tickets";
 import { PipelineTicketCard } from "@/components/crm/PipelineCard";
-import { changeStage, fetchOperationalTickets } from "@/lib/intake-save";
+import { changeStage } from "@/lib/intake-save";
 
 function formatSar(n: number): string {
   if (n >= 1_000_000) return `SAR ${(n / 1_000_000).toFixed(1)}M`;
@@ -47,6 +50,8 @@ export default function CrmPipeline() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  /** Rows the database returned before client-side process isolation ran. */
+  const [fetchedRowCount, setFetchedRowCount] = useState(0);
 
   // Filters
   const [ownerFilter, setOwnerFilter] = useState("all");
@@ -69,24 +74,29 @@ export default function CrmPipeline() {
     setLoading(true);
     setLoadError(null);
 
-    fetchOperationalTickets()
-      .then(intakeRes => {
+    readOperationalTicketsWithIsolation()
+      .then(read => {
         if (cancelled) return;
         // A failed read is not an empty board. Surface it instead of painting
         // eight empty columns that read as "there is no pipeline".
-        if (intakeRes.error) {
-          console.error("[CRM Pipeline] Intake ticket fetch error:", intakeRes.error);
-          setLoadError(intakeRes.error);
+        if (read.error) {
+          console.error("[CRM Pipeline] Intake ticket fetch error:", read.error);
+          setLoadError(read.error);
           setTickets([]);
+          setFetchedRowCount(0);
           return;
         }
-        setTickets(deriveCommercialTicketPipelineTickets((intakeRes.data ?? []) as any));
+        // Keep the pre-isolation count so the empty state can say how many rows
+        // the database actually returned, and how many this client withheld.
+        setFetchedRowCount(read.fetched);
+        setTickets(deriveCommercialTicketPipelineTickets(read.rows));
       })
       .catch(err => {
         if (cancelled) return;
         console.error("Pipeline load error:", err);
         setLoadError(err instanceof Error ? err.message : "Pipeline load failed for an unknown reason");
         setTickets([]);
+        setFetchedRowCount(0);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -129,8 +139,9 @@ export default function CrmPipeline() {
           return bt - at;
         }
         if (sortMode === "revenue") {
-          const av = a.sarValue > 0 ? a.sarValue : -1;
-          const bv = b.sarValue > 0 ? b.sarValue : -1;
+          // A never-captured value sorts last; it is not treated as zero.
+          const av = a.sarValue ?? -1;
+          const bv = b.sarValue ?? -1;
           return bv - av;
         }
         // alphabetical
@@ -145,11 +156,22 @@ export default function CrmPipeline() {
 
   // Header metrics describe the cards actually on the board (`filtered`), not
   // the unfiltered fetch — a headline count must equal what a human can see.
+  // Never-captured figures are excluded from totals and averages rather than
+  // counted as zero, and the headline says how many contributed.
   const metrics = useMemo(() => {
-    const totalValue = filtered.reduce((s, t) => s + t.sarValue, 0);
-    const avgGp = filtered.length > 0 ? filtered.reduce((s, t) => s + t.gpPct, 0) / filtered.length : 0;
-    return { rendered: filtered.length, loaded: tickets.length, totalValue, avgGp };
+    const totalValue = sumCaptured(filtered.map(t => t.sarValue));
+    const avgGp = averageCaptured(filtered.map(t => t.gpPct));
+    return {
+      rendered: filtered.length,
+      loaded: tickets.length,
+      totalValue,
+      valueCaptured: filtered.filter(t => t.sarValue != null).length,
+      avgGp,
+      gpCaptured: filtered.filter(t => t.gpPct != null).length,
+    };
   }, [filtered, tickets]);
+
+  const withheldNotice = describeIsolationWithholding(fetchedRowCount, tickets.length);
 
   const readState = resolveReadState({ loading, error: loadError, count: tickets.length });
 
@@ -226,8 +248,12 @@ export default function CrmPipeline() {
                 ? "Pipeline counts unavailable — the read failed"
                 : <>
                     {describeRenderedCount(metrics.rendered, metrics.loaded, "ticket")} &nbsp;·&nbsp;
-                    {formatSar(metrics.totalValue)} pipeline value &nbsp;·&nbsp;
-                    Avg GP: {metrics.avgGp.toFixed(1)}%
+                    {metrics.valueCaptured === 0
+                      ? "No pipeline value captured"
+                      : `${formatSar(metrics.totalValue)} pipeline value (${metrics.valueCaptured} of ${metrics.rendered} captured)`} &nbsp;·&nbsp;
+                    {metrics.avgGp == null
+                      ? "Avg GP: not captured"
+                      : `Avg GP: ${metrics.avgGp.toFixed(1)}% (${metrics.gpCaptured} of ${metrics.rendered} captured)`}
                   </>}
           </p>
         </div>
@@ -292,6 +318,13 @@ export default function CrmPipeline() {
         </div>
       </div>
 
+      {/* Rows the database returned that this client removed — disclosed, not hidden */}
+      {readState === "ready" && withheldNotice && (
+        <div className="mx-6 mt-3 shrink-0 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5">
+          <p className="text-xs font-medium text-amber-900">{withheldNotice}</p>
+        </div>
+      )}
+
       {/* Loading */}
       {readState === "loading" && (
         <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">Loading pipeline data...</div>
@@ -320,10 +353,17 @@ export default function CrmPipeline() {
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="max-w-md rounded-lg border border-dashed border-border p-5 text-center">
             <Kanban className="mx-auto mb-2 h-6 w-6 text-muted-foreground/40" />
-            <p className="text-sm font-medium text-muted-foreground">No pipeline tickets are visible to this account.</p>
+            <p className="text-sm font-medium text-muted-foreground">No pipeline tickets are shown.</p>
+            {/*
+              W04-C1 defect E: this used to say "the read succeeded and returned
+              no rows" even when rows WERE returned and then removed client-side
+              by the process-isolation allowlist. It now states which happened.
+            */}
             <p className="mt-1 text-xs text-muted-foreground/70">
-              The read succeeded and returned no rows. Add a ticket, or check that your account can
-              see the records you expect.
+              {describeEmptyReadCause(fetchedRowCount, tickets.length)}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground/70">
+              Add a ticket, or check that your account can see the records you expect.
             </p>
             <Button size="sm" className="mt-3 gap-1 bg-[#1B2A4A] hover:bg-[#1B2A4A]/90" onClick={() => setIntakeOpen(true)}>
               <Plus className="h-3 w-3" /> Add Ticket
@@ -339,8 +379,16 @@ export default function CrmPipeline() {
             {CRM_PIPELINE_COLUMNS.map(stage => {
               const cards = columns.get(stage) ?? [];
               const isDropping = dropTarget === stage && dragFromStage !== stage;
-              const canDrop = dragTicketId ? dragFromStage !== stage && !CRM_TERMINAL.includes(dragFromStage!) : false;
-              const colValue = cards.reduce((s, t) => s + t.sarValue, 0);
+              /*
+               * W04-C1 defect F: manual stage movement is free. A drop used to
+               * be refused whenever the SOURCE stage was in CRM_TERMINAL, which
+               * includes "Closed Won" and "Actual Go Live" — both rendered as
+               * columns — so a card could never be moved back out. The only
+               * remaining condition is that a card is being dragged and the
+               * target is not the column it already sits in.
+               */
+              const canDrop = dragTicketId ? dragFromStage !== stage : false;
+              const colValue = sumCaptured(cards.map(t => t.sarValue));
               const colors = STAGE_COLORS[stage];
 
               return (

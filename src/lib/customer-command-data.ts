@@ -10,6 +10,7 @@
  *   - Health score combines real DSO, payment risk, GP, activity, and risks.
  */
 import type { PipelineTicket } from "./pipeline-tickets";
+import { sumCaptured, averageCaptured } from "./pipeline-tickets";
 import type { Customer } from "./store";
 
 export interface CustomerCommandRow {
@@ -25,17 +26,22 @@ export interface CustomerCommandRow {
   proposalTickets: number;
   tenderTickets: number;
   wonRevenue: number;
-  avgGpPct: number;
+  /** null = no ticket in this group captured a GP%. Never 0-as-unknown. */
+  avgGpPct: number | null;
   /** "unknown" = no customer master record / no captured payment status. Never guessed. */
   paymentRisk: "low" | "medium" | "high" | "unknown";
-  dso: number;
+  /** null = no customer master record was read, so DSO is unknown. */
+  dso: number | null;
   contractStatus: string;
   contractExpiry: string;
   goLiveCount: number;
   openRisks: number;
   lastActivity: string;
   nextRenewal: string;
-  healthScore: number;
+  /** null = the score CANNOT be computed because its inputs were not read. */
+  healthScore: number | null;
+  /** Why the score is null, for display. Empty when a score was computed. */
+  healthScoreUnavailableReason: string;
   tickets: PipelineTicket[];
   /** true if matched to a real record in the customers table */
   hasCustomerRecord: boolean;
@@ -44,16 +50,51 @@ export interface CustomerCommandRow {
 const CLOSED_STAGES = ["closed won", "closed lost", "discontinued"];
 const WON_STAGES = ["closed won", "contract signed", "go live", "actual go live"];
 
+/**
+ * HEALTH SCORE — W04-C1 defect B.
+ *
+ * The score is a weighted index over FIVE inputs: average captured GP%, open
+ * risk flags, active ticket count, payment status and DSO. The last two come
+ * only from the `customers` master table, and GP% comes only from the tickets.
+ *
+ * It used to start from a hardcoded 50 and run regardless: with `customers`
+ * returning no rows and GP% never captured, every customer received the same
+ * invented number and it was rendered as a coloured bar and "{score}/100" —
+ * a measurement of nothing.
+ *
+ * A score is now produced ONLY when the inputs it is derived from were actually
+ * read. When they were not, the caller gets null plus the reason, and the grid
+ * says the score cannot be computed. 50 is the mid-point of the index, not a
+ * neutral default for absent data — nothing is ever scored on absent inputs.
+ */
+export const HEALTH_SCORE_INPUTS =
+  "average captured GP%, open risks, active tickets, payment status and DSO";
+
+function healthScoreUnavailableReason(row: {
+  avgGpPct: number | null;
+  hasCustomerRecord: boolean;
+}): string {
+  const missing: string[] = [];
+  if (!row.hasCustomerRecord) missing.push("no customers master record was read (payment status, DSO)");
+  if (row.avgGpPct == null) missing.push("no ticket captured a GP%");
+  if (missing.length === 0) return "";
+  return `Cannot be computed: ${missing.join("; ")}.`;
+}
+
 function computeHealthScore(row: {
-  avgGpPct: number;
+  avgGpPct: number | null;
   openRisks: number;
   activeTickets: number;
   paymentRisk: string;
-  dso: number;
-}): number {
+  dso: number | null;
+  hasCustomerRecord: boolean;
+}): number | null {
+  // Refuse to score on inputs that were never read.
+  if (!row.hasCustomerRecord || row.avgGpPct == null) return null;
+
   let score = 50;
 
-  // GP contribution (0-25)
+  // GP contribution (0-25) — a real, captured figure by the guard above.
   if (row.avgGpPct >= 22) score += 25;
   else if (row.avgGpPct >= 10) score += 12;
   else score -= 10;
@@ -62,13 +103,13 @@ function computeHealthScore(row: {
   score -= Math.min(20, row.openRisks * 5);
 
   // Payment risk (real data only — "unknown" carries no penalty, because an
-  // absent customer record is not evidence of medium risk)
+  // absent payment status is not evidence of medium risk)
   if (row.paymentRisk === "high") score -= 15;
   else if (row.paymentRisk === "medium") score -= 5;
 
-  // DSO penalty (real data)
-  if (row.dso > 90) score -= 10;
-  else if (row.dso > 60) score -= 5;
+  // DSO penalty (real data only)
+  if (row.dso != null && row.dso > 90) score -= 10;
+  else if (row.dso != null && row.dso > 60) score -= 5;
 
   // Activity bonus
   if (row.activeTickets > 0) score += 5;
@@ -133,10 +174,10 @@ export function deriveCustomerRowsFromTickets(
     const stageLower = (s: string) => s.toLowerCase().replace(/[_-]/g, " ").trim();
     const activeTickets = custTickets.filter(t => !CLOSED_STAGES.includes(stageLower(t.crmStage)));
     const wonTickets = custTickets.filter(t => WON_STAGES.includes(stageLower(t.crmStage)));
-    const totalValue = custTickets.reduce((s, t) => s + t.sarValue, 0);
-    const wonRevenue = wonTickets.reduce((s, t) => s + t.sarValue, 0);
-    const gpValues = custTickets.map(t => t.gpPct).filter(v => v > 0);
-    const avgGp = gpValues.length > 0 ? gpValues.reduce((s, v) => s + v, 0) / gpValues.length : 0;
+    // Never-captured figures contribute nothing; they are not counted as zero.
+    const totalValue = sumCaptured(custTickets.map(t => t.sarValue));
+    const wonRevenue = sumCaptured(wonTickets.map(t => t.sarValue));
+    const avgGp = averageCaptured(custTickets.map(t => t.gpPct));
     const proposalTickets = custTickets.filter(t => t.ticketType === "proposal").length;
     const tenderTickets = custTickets.filter(t => t.ticketType === "tender").length;
     const workspaceType: CustomerCommandRow["workspaceType"] =
@@ -153,7 +194,8 @@ export function deriveCustomerRowsFromTickets(
     const goLiveCount = custTickets.filter(t => stageLower(t.crmStage) === "go live" || stageLower(t.crmStage) === "actual go live").length;
 
     const paymentRisk = cust ? mapPaymentRisk(cust.paymentStatus) : "unknown" as const;
-    const dso = cust ? cust.dso : 0;
+    // No master record means DSO was never read — not that it is zero days.
+    const dso = cust ? cust.dso : null;
     const contractExpiry = cust?.contractExpiry || "";
     const contractStatus = cust ? deriveContractStatus(cust.contractExpiry) : "Unknown";
     const nextRenewal = cust?.contractExpiry || "—";
@@ -173,7 +215,7 @@ export function deriveCustomerRowsFromTickets(
       proposalTickets,
       tenderTickets,
       wonRevenue,
-      avgGpPct: Math.round(avgGp * 10) / 10,
+      avgGpPct: avgGp == null ? null : Math.round(avgGp * 10) / 10,
       paymentRisk,
       dso,
       contractStatus,
@@ -189,6 +231,7 @@ export function deriveCustomerRowsFromTickets(
     rows.push({
       ...partial,
       healthScore: computeHealthScore(partial),
+      healthScoreUnavailableReason: healthScoreUnavailableReason(partial),
     });
   }
 

@@ -73,18 +73,23 @@ describe("deriveCustomerRowsFromTickets — payment risk is never guessed", () =
     expect(row.paymentRisk).toBe("unknown");
     expect(row.contractStatus).toBe("Unknown");
     expect(row.industry).toBe("—");
-    expect(row.dso).toBe(0);
+    // W04-C1 defect B: an unread DSO is null, not 0 days.
+    expect(row.dso).toBeNull();
   });
 
-  it("does not dock the health score for an unknown payment risk", () => {
-    const unmatched = deriveCustomerRowsFromTickets([pipelineTicket()], [])[0];
+  it("does not dock a computed health score for an unknown payment risk", () => {
+    const matchedUnknownPayment = deriveCustomerRowsFromTickets(
+      [pipelineTicket()],
+      [customer({ paymentStatus: undefined, dso: 10 })]
+    )[0];
     const matchedGood = deriveCustomerRowsFromTickets(
       [pipelineTicket()],
       [customer({ paymentStatus: "Good", dso: 10 })]
     )[0];
-    // Same tickets, same GP, no risk flags: an absent master record must not
+    // Same tickets, same GP, no risk flags: a blank payment status must not
     // make the customer look worse than one confirmed to pay on time.
-    expect(unmatched.healthScore).toBe(matchedGood.healthScore);
+    expect(matchedUnknownPayment.paymentRisk).toBe("unknown");
+    expect(matchedUnknownPayment.healthScore).toBe(matchedGood.healthScore);
   });
 
   it("still reports a real 'medium' when the master record says Acceptable", () => {
@@ -112,6 +117,82 @@ describe("deriveCustomerRowsFromTickets — payment risk is never guessed", () =
     expect(row.dso).toBe(97);
     expect(row.contractExpiry).toBe("2027-06-30");
     expect(row.contractStatus).toBe("Active");
+  });
+});
+
+// ── W04-C1 defect B: no score without its inputs ────────────────────
+
+describe("deriveCustomerRowsFromTickets — the health score is never invented", () => {
+  it("cannot be computed when no customers master record was read", () => {
+    // This is the live condition: `customers` returns no rows, so payment
+    // status and DSO were never read. The score used to start from a hardcoded
+    // 50 and render as a coloured bar and "{score}/100" regardless.
+    const [row] = deriveCustomerRowsFromTickets([pipelineTicket()], []);
+    expect(row.healthScore).toBeNull();
+    expect(row.healthScoreUnavailableReason).toContain("no customers master record was read");
+  });
+
+  it("cannot be computed when no ticket captured a GP%", () => {
+    const [row] = deriveCustomerRowsFromTickets(
+      [pipelineTicket({ gpPct: null })],
+      [customer()]
+    );
+    expect(row.avgGpPct).toBeNull();
+    expect(row.healthScore).toBeNull();
+    expect(row.healthScoreUnavailableReason).toContain("no ticket captured a GP%");
+  });
+
+  it("is computed, with a reason of empty string, once every input was read", () => {
+    const [row] = deriveCustomerRowsFromTickets(
+      [pipelineTicket({ gpPct: 24 })],
+      [customer({ paymentStatus: "Good", dso: 30 })]
+    );
+    expect(typeof row.healthScore).toBe("number");
+    expect(row.healthScore).toBeGreaterThan(0);
+    expect(row.healthScoreUnavailableReason).toBe("");
+  });
+
+  it("a null score never becomes a 50 through any code path", () => {
+    const rows = deriveCustomerRowsFromTickets(
+      [
+        pipelineTicket({ id: "a", customerName: "A", gpPct: null }),
+        pipelineTicket({ id: "b", customerName: "B", gpPct: 30 }),
+      ],
+      []
+    );
+    expect(rows.map(r => r.healthScore)).toEqual([null, null]);
+  });
+});
+
+// ── W04-C1 defect C: nulls are not measured zeros ───────────────────
+
+describe("deriveCustomerRowsFromTickets — never-captured numbers are not zeros", () => {
+  it("excludes an uncaptured value from the pipeline total instead of adding 0", () => {
+    const [row] = deriveCustomerRowsFromTickets(
+      [
+        pipelineTicket({ id: "a", sarValue: 400 }),
+        pipelineTicket({ id: "b", sarValue: null }),
+      ],
+      []
+    );
+    expect(row.totalPipelineValue).toBe(400);
+  });
+
+  it("excludes an uncaptured GP% from the average instead of averaging in 0", () => {
+    const [row] = deriveCustomerRowsFromTickets(
+      [
+        pipelineTicket({ id: "a", gpPct: 20 }),
+        pipelineTicket({ id: "b", gpPct: null }),
+      ],
+      []
+    );
+    // 20, not 10 — a null must not halve the customer's apparent margin.
+    expect(row.avgGpPct).toBe(20);
+  });
+
+  it("reports a stored zero GP% as a real zero, not as 'not captured'", () => {
+    const [row] = deriveCustomerRowsFromTickets([pipelineTicket({ gpPct: 0 })], []);
+    expect(row.avgGpPct).toBe(0);
   });
 });
 
