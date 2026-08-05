@@ -68,9 +68,9 @@ function ok<T>(data: T): RuntimeResult<T> {
  * every write here sets both. This is not duplication we invented; it is the
  * established shape of the table.
  *
- * `updated_at` / `updated_by` are deliberately NOT written: the migration adds
- * them but they were not part of the confirmed live probe, and naming a column
- * that does not exist would fail the whole statement.
+ * `updated_at` / `updated_by` ARE written on mutations: Fable confirmed both
+ * columns live by direct PostgREST probe (2026-08-05), matching what the old
+ * route did, so the row's change stamp stays truthful.
  */
 const QUOTE_COLUMNS = [
   "id",
@@ -442,7 +442,7 @@ export async function updateQuote(
 
   const { data, error } = await supabase
     .from("quotes")
-    .update(row)
+    .update({ ...row, updated_at: new Date().toISOString(), updated_by: getCurrentUser().id })
     .eq("id", quoteId)
     .select();
 
@@ -478,7 +478,7 @@ async function setQuoteState(
 
   const { data, error } = await supabase
     .from("quotes")
-    .update({ state, status: state, ...extra })
+    .update({ state, status: state, ...extra, updated_at: new Date().toISOString(), updated_by: getCurrentUser().id })
     .eq("id", quoteId)
     .select();
 

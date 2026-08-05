@@ -26,7 +26,6 @@ import { toast } from "sonner";
 // here enforces workflow behavior - governance is advisory before Sprint X.
 import { type GateMode } from "@/lib/store";
 import { useCurrentUser } from "@/hooks/useSupabase";
-import { api } from "@/lib/api-client";
 import {
   fetchPolicyGates,
   fetchGovernanceAuditLog,

@@ -336,7 +336,7 @@ describe("createQuote", () => {
     // derived columns
     expect(row.quote_number).toBe("Q-WS1-V3");
     expect(row.valid_until).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    // columns not confirmed present on the live table are never named
+    // insert path does not stamp updated_*; creation is recorded by created_*
     expect(row).not.toHaveProperty("updated_at");
     expect(row).not.toHaveProperty("updated_by");
 
