@@ -195,8 +195,8 @@ describe("GET /healthz", () => {
     expect(res.body).toEqual({
       ok: true,
       service: "hala-clean-commercial-engine",
-      wave: "SC-01.1",
-      note: "Document/PDF capabilities arrive in SC-01.4.",
+      wave: "SC-01.4",
+      note: "Document list and download are served here. Faithful PDF rendering stays client-side (FinalStudio); server-side generation is not available.",
     });
   });
 });
