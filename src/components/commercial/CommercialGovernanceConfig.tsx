@@ -10,7 +10,11 @@ import { useEffect, useState } from "react";
 import { Shield, Info, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { fetchCommercialGovernanceConfig, type GovernanceConfigEntry } from "@/lib/supabase-governance-data";
+import {
+  fetchCommercialGovernanceConfigResult,
+  type GovernanceConfigEntry,
+  type GovernanceRead,
+} from "@/lib/supabase-governance-data";
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
@@ -23,21 +27,19 @@ function formatValue(value: unknown): string {
 }
 
 export default function CommercialGovernanceConfig() {
-  const [entries, setEntries] = useState<GovernanceConfigEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  /* SC-01 Wave 04: the previous empty state read "No entries exist ... (or the
+   * store could not be read)", which merged a real zero with a failed read into
+   * one sentence a human cannot act on. The read now reports which happened. */
+  const [read, setRead] = useState<GovernanceRead<GovernanceConfigEntry> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      const data = await fetchCommercialGovernanceConfig();
-      if (!cancelled) {
-        setEntries(data);
-        setLoading(false);
-      }
-    })();
+    fetchCommercialGovernanceConfigResult().then(r => { if (!cancelled) setRead(r); });
     return () => { cancelled = true; };
   }, []);
 
+  const loading = read === null;
+  const entries = read?.rows ?? [];
   const categories = Array.from(new Set(entries.map(e => e.category || "Uncategorized")));
 
   return (
@@ -74,18 +76,34 @@ export default function CommercialGovernanceConfig() {
           <Loader2 className="w-5 h-5 animate-spin text-[var(--color-hala-navy)]" />
           <span className="text-sm text-muted-foreground">Loading governance configuration…</span>
         </div>
+      ) : read.status === "error" ? (
+        /* Failed read — visibly different from a real zero. */
+        <Card className="border border-red-200 bg-red-50/40 shadow-none">
+          <CardContent className="p-4">
+            <div className="flex items-start gap-3">
+              <Info className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+              <div>
+                <div className="text-sm font-semibold text-red-700 mb-0.5">Commercial governance configuration could not be read</div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Nothing is listed. The number of recorded configuration entries is unknown — it is not zero.
+                </p>
+                <p className="text-[11px] font-mono text-muted-foreground break-all mt-1">{read.error}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       ) : entries.length === 0 ? (
-        /* Honest empty state — exclusive of any config listing */
+        /* Honest empty state — the read succeeded and returned zero rows. */
         <Card className="border shadow-none bg-muted/20">
           <CardContent className="p-4">
             <div className="flex items-start gap-3">
               <Info className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
               <div>
-                <div className="text-sm font-semibold mb-0.5">No commercial governance configuration recorded</div>
+                <div className="text-sm font-semibold mb-0.5">No commercial governance configuration is visible to this account</div>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  No entries exist in the commercial governance configuration store
-                  (or the store could not be read). Nothing is displayed until real
-                  configuration entries are recorded by a human administrator.
+                  The read of <span className="font-mono">commercial_governance_config</span> succeeded and returned zero
+                  rows. Rows hidden by row-level security would not appear here, so this is not a statement that the
+                  store is empty.
                 </p>
               </div>
             </div>
