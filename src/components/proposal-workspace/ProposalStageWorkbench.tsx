@@ -44,6 +44,7 @@ import {
   ProcessStageTaskShell,
   type ProcessStageSectionTab,
 } from "@/components/process/ProcessStageTaskShell";
+import { listWorkspaceDocuments } from "@/lib/document-runtime";
 import type { ActiveProposalIdentity } from "@/lib/proposal-identity";
 import {
   extractDiscoveryStageData,
@@ -953,14 +954,6 @@ function mergeSupportingDocuments(...sets: SupportingDocument[][]): SupportingDo
   return Array.from(merged.values());
 }
 
-function readDocumentRows(payload: unknown): Record<string, unknown>[] {
-  if (!payload || typeof payload !== "object") return [];
-  const data = (payload as { data?: unknown }).data;
-  return Array.isArray(data)
-    ? data.filter((row): row is Record<string, unknown> => !!row && typeof row === "object" && !Array.isArray(row))
-    : [];
-}
-
 function mapGeneratedDocumentToSupportingDocument(
   row: Record<string, unknown>,
   activeProposal: ActiveProposalIdentity,
@@ -1009,14 +1002,11 @@ async function fetchProposalStageDocuments(
   const documents: SupportingDocument[] = [];
 
   for (const scopeId of scopeIds) {
-    const response = await fetch(`/api/documents?workspace_id=${encodeURIComponent(scopeId)}`);
-    if (!response.ok) {
-      const message = await response.text().catch(() => "");
-      throw new Error(message || `Document load failed for ${scopeId}.`);
-    }
-    const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.toLowerCase().includes("application/json")) continue;
-    const rows = readDocumentRows(await response.json());
+    // SC-01 W03-4: was a relative fetch, which resolved against the frontend
+    // origin (:5300) and returned the SPA shell instead of documents. It now
+    // goes to the clean server, and any failure propagates to the caller's
+    // error toast instead of silently producing zero documents.
+    const rows = await listWorkspaceDocuments(scopeId);
     rows.forEach(row => {
       const doc = mapGeneratedDocumentToSupportingDocument(row, activeProposal);
       if (doc) documents.push(doc);
