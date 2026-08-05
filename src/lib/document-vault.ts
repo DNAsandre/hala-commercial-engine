@@ -316,6 +316,27 @@ export function getFileUrl(docId: string, versionNumber: number): string | null 
   return null;
 }
 
+/**
+ * Which stored object a viewer should sign for a given version.
+ *
+ * SC-01 Wave 04: extracted so the choice is testable. Returns null only when
+ * the record genuinely has no stored bytes — callers must not conflate that
+ * with "the URL could not be signed", which is a transport failure.
+ */
+export function resolveVersionFilePath(
+  doc: Pick<UnifiedDocument, "versions" | "currentVersion" | "filePath">,
+  versionNumber?: number | null,
+): string | null {
+  const versions = doc.versions ?? [];
+  const byNumber = versionNumber
+    ? versions.find(v => v.versionNumber === versionNumber)
+    : undefined;
+  const current = versions.find(v => v.versionNumber === doc.currentVersion);
+  const last = versions.length > 0 ? versions[versions.length - 1] : undefined;
+  const path = byNumber?.filePath ?? current?.filePath ?? last?.filePath ?? doc.filePath ?? null;
+  return path && path !== "" ? path : null;
+}
+
 /** Get a signed download URL for a Supabase Storage document */
 export async function getSignedDownloadUrl(storagePath: string): Promise<string | null> {
   const { data } = await supabase.storage.from(BUCKET).createSignedUrl(storagePath, 3600);

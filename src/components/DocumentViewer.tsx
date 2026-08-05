@@ -21,7 +21,8 @@ import {
   getMimeCategory,
   getFileTypeColor,
   getCategoryIcon,
-  getFileUrl,
+  getSignedDownloadUrl,
+  resolveVersionFilePath,
   hasRealFile,
   downloadDocument,
   initializeDocumentVault,
@@ -75,6 +76,15 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
   const [showVersions, setShowVersions] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
   const [textContent, setTextContent] = useState<string | null>(null);
+  /**
+   * Preview resolution for the active version. The four states are deliberately
+   * distinct: a document with no stored file, a document whose URL could not be
+   * signed, and a document still resolving must not all read as "no file".
+   */
+  const [preview, setPreview] = useState<{
+    state: "idle" | "loading" | "ready" | "no-file" | "error";
+    url: string | null;
+  }>({ state: "idle", url: null });
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showEditMeta, setShowEditMeta] = useState(false);
 
@@ -95,20 +105,51 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
     }
   }, [doc?.id]);
 
-  // Load text content for text-based files
+  // Resolve a preview URL for the active version.
+  //
+  // SC-01 Wave 04: this used to call getFileUrl(), which returns null
+  // unconditionally (the legacy in-memory Blob registry is gone). Every
+  // document therefore rendered "This document does not have a valid file
+  // attached" — a false statement about documents whose bytes are really in
+  // Storage — and the Download button, gated on the same value, never appeared.
+  // Real files are reached with a signed Storage URL.
   useEffect(() => {
-    if (!doc || !activeVersion) return;
-    const mimeCategory = getMimeCategory(doc.mimeType);
-    if (mimeCategory === "text") {
-      const url = getFileUrl(doc.id, activeVersion);
-      if (url) {
-        fetch(url)
-          .then(r => r.text())
-          .then(setTextContent)
-          .catch((err) => { console.warn("[DocumentViewer] text fetch failed:", err); setTextContent("Unable to load file content."); });
-      }
+    let cancelled = false;
+    const storagePath = doc ? resolveVersionFilePath(doc, activeVersion) : null;
+
+    if (!doc || !storagePath) {
+      setPreview({ state: doc ? "no-file" : "idle", url: null });
+      return;
     }
-  }, [doc?.id, activeVersion]);
+
+    setPreview({ state: "loading", url: null });
+    getSignedDownloadUrl(storagePath)
+      .then((url) => {
+        if (cancelled) return;
+        setPreview(url ? { state: "ready", url } : { state: "error", url: null });
+      })
+      .catch(() => { if (!cancelled) setPreview({ state: "error", url: null }); });
+
+    return () => { cancelled = true; };
+  }, [doc?.id, activeVersion, doc?.versions.length]);
+
+  // Load text content for text-based files, from the signed URL above.
+  useEffect(() => {
+    if (!doc || preview.state !== "ready" || !preview.url) return;
+    if (getMimeCategory(doc.mimeType) !== "text") return;
+    let cancelled = false;
+    fetch(preview.url)
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.text();
+      })
+      .then((t) => { if (!cancelled) setTextContent(t); })
+      .catch((err) => {
+        console.warn("[DocumentViewer] text fetch failed:", err);
+        if (!cancelled) setTextContent("Unable to load file content.");
+      });
+    return () => { cancelled = true; };
+  }, [doc?.id, preview.state, preview.url]);
 
   const handleDelete = useCallback(() => {
     if (!doc) return;
@@ -130,8 +171,11 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
   const isArchived = doc.status === "Archived";
   const mimeCategory = getMimeCategory(doc.mimeType);
   const currentVersionData = doc.versions.find(v => v.versionNumber === activeVersion) || doc.versions[doc.versions.length - 1];
-  const fileUrl = activeVersion ? getFileUrl(doc.id, activeVersion) : null;
-  const isViewable = hasRealFile(doc) && fileUrl;
+  const fileUrl = preview.url;
+  const isViewable = preview.state === "ready" && !!fileUrl;
+  // The download path re-signs its own URL, so it is offered whenever the
+  // record actually has stored bytes — it does not depend on the preview.
+  const isDownloadable = resolveVersionFilePath(doc, activeVersion) !== null;
 
   // Get audit entries for this document
   const docAuditEntries = auditLog
@@ -176,7 +220,7 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
                 </div>
               </div>
               <div className="flex items-center gap-1.5 flex-shrink-0">
-                {isViewable && (
+                {isDownloadable && (
                   <Button
                     size="sm"
                     variant="outline"
@@ -237,11 +281,43 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
             <div className="flex-1 overflow-auto bg-muted/30">
               {!isViewable ? (
                 <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center p-8">
-                  <File className="h-16 w-16 text-muted-foreground/40 mb-4" />
-                  <p className="text-lg font-medium text-muted-foreground mb-2">No file available</p>
-                  <p className="text-sm text-muted-foreground/70 max-w-md">
-                    This document does not have a valid file attached. Upload a file to enable viewing.
-                  </p>
+                  {preview.state === "loading" ? (
+                    <>
+                      <File className="h-16 w-16 text-muted-foreground/40 mb-4 animate-pulse" />
+                      <p className="text-lg font-medium text-muted-foreground mb-2">Preparing preview…</p>
+                    </>
+                  ) : preview.state === "error" ? (
+                    <>
+                      <AlertTriangle className="h-16 w-16 text-amber-500 mb-4" />
+                      <p className="text-lg font-medium mb-2">Preview unavailable</p>
+                      <p className="text-sm text-muted-foreground/70 max-w-md mb-4">
+                        This document has a stored file, but a preview link could not be
+                        prepared. This is a problem reaching the file, not a missing file.
+                      </p>
+                      {isDownloadable && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            downloadDocument(doc, activeVersion || undefined);
+                          }}
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          Try download
+                        </Button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <File className="h-16 w-16 text-muted-foreground/40 mb-4" />
+                      <p className="text-lg font-medium text-muted-foreground mb-2">No file available</p>
+                      <p className="text-sm text-muted-foreground/70 max-w-md">
+                        This document record has no stored file. Upload a file to enable viewing.
+                      </p>
+                    </>
+                  )}
                 </div>
               ) : mimeCategory === "pdf" ? (
                 /* Use <object> instead of <iframe> to avoid browser print dialog */
