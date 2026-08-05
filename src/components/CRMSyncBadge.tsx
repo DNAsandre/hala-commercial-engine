@@ -4,9 +4,9 @@
  * Used in workspace cards, workspace detail header, and workspace list.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  CheckCircle2, XCircle, Clock, RefreshCw, Loader2, Unplug, ArrowUpDown,
+  CheckCircle2, XCircle, Clock, RefreshCw, Loader2, Unplug, ArrowUpDown, AlertTriangle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,8 @@ const statusConfig: Record<string, { icon: React.ElementType; color: string; lab
   retrying: { icon: RefreshCw, color: "text-amber-600", label: "Retrying", badgeClass: "border-amber-300 text-amber-700 bg-amber-50" },
   conflict_resolved: { icon: ArrowUpDown, color: "text-blue-600", label: "Resolved", badgeClass: "border-blue-300 text-blue-700 bg-blue-50" },
   not_synced: { icon: Unplug, color: "text-muted-foreground", label: "Not Synced", badgeClass: "border-border text-muted-foreground" },
+  // "We could not look" must not be shown as "we looked and found nothing".
+  read_failed: { icon: AlertTriangle, color: "text-amber-600", label: "Sync Unknown", badgeClass: "border-amber-300 text-amber-700 bg-amber-50" },
 };
 
 function formatTimeAgo(dateStr: string | null): string {
@@ -85,20 +87,36 @@ export default function CRMSyncBadge({ workspaceId, workspaceTitle, variant = "b
   const [latestEvent, setLatestEvent] = useState<HardenedSyncEvent | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [readFailed, setReadFailed] = useState(false);
 
-  // Load on mount
-  useState(() => {
+  // SC-01 W04 (T08-B): this was a `useState(initializer)` mount hack, so the
+  // read ran ONCE for whichever workspace id the component first saw and never
+  // again. Moving between two proposals without unmounting therefore kept
+  // showing the FIRST proposal's sync event. Keyed to `workspaceId`, with the
+  // previous record's state cleared before the new read starts.
+  useEffect(() => {
+    let cancelled = false;
+    setLatestEvent(null);
+    setReadFailed(false);
+    setLoaded(false);
+
     (async () => {
       try {
         const events = await fetchSyncEvents({ limit: 50 });
+        if (cancelled) return;
         const wsEvents = events.filter(e => e.entity_id === workspaceId);
-        if (wsEvents.length > 0) {
-          setLatestEvent(wsEvents[0]);
-        }
-      } catch (err) { console.warn('[CRMSyncBadge] mount load fallback:', err); }
-      setLoaded(true);
+        setLatestEvent(wsEvents.length > 0 ? wsEvents[0] : null);
+      } catch (err) {
+        if (cancelled) return;
+        // A failed read is not "not synced": record it and say so.
+        console.warn('[CRMSyncBadge] sync event read failed:', err);
+        setReadFailed(true);
+      }
+      if (!cancelled) setLoaded(true);
     })();
-  });
+
+    return () => { cancelled = true; };
+  }, [workspaceId]);
 
   const handleSyncNow = async () => {
     setSyncing(true);
@@ -123,7 +141,7 @@ export default function CRMSyncBadge({ workspaceId, workspaceTitle, variant = "b
     }
   };
 
-  const status = latestEvent?.status || "not_synced";
+  const status = readFailed ? "read_failed" : latestEvent?.status || "not_synced";
   const config = statusConfig[status] || statusConfig.not_synced;
   const StatusIcon = config.icon;
   const isAdmin = user?.role === "admin";

@@ -14,13 +14,14 @@
  */
 import { useState } from "react";
 import {
-  Upload, FileText, Plus, ChevronDown, X,
+  Upload, FileText, Plus, ChevronDown, X, AlertTriangle, Loader2, Info,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import { uploadDocument, downloadDocument, type UnifiedDocument, type DocumentCategory } from "@/lib/document-vault";
+import { resolveDocumentListState, type DocumentListLoadState } from "@/lib/document-runtime";
 
 // ── Document categories ──
 export const SUPPORTING_DOC_CATEGORIES = [
@@ -126,6 +127,17 @@ interface SupportingDocumentsPanelProps {
   // For tender workspaces, pass tender context
   tenderId?: string;
   tenderName?: string;
+  /**
+   * How the persisted document read went. Loading, a real empty scope and a
+   * failed read are three different answers and are rendered differently; a
+   * failure persists on screen instead of vanishing with a toast.
+   */
+  loadState?: DocumentListLoadState;
+  loadError?: string | null;
+  onRetryLoad?: () => void;
+  /** Set only when the server declared the result set was cut short. */
+  truncated?: boolean;
+  truncationLimit?: number | null;
 }
 
 export default function SupportingDocumentsPanel({
@@ -141,6 +153,11 @@ export default function SupportingDocumentsPanel({
   tenderName,
   customerId,
   customerName,
+  loadState = "loaded",
+  loadError = null,
+  onRetryLoad,
+  truncated = false,
+  truncationLimit = null,
 }: SupportingDocumentsPanelProps) {
   const [showUpload, setShowUpload] = useState(false);
   const [uploadName, setUploadName] = useState("");
@@ -156,6 +173,18 @@ export default function SupportingDocumentsPanel({
   const stageDocuments = allDocuments.filter(
     d => d.linkedStage === linkedStage || d.linkedStage === "all"
   );
+  // A document uploaded in this session is real regardless of how the read
+  // went, so it is still listed; the read failure is reported alongside it.
+  const listState = resolveDocumentListState({
+    loadState,
+    error: loadError,
+    count: stageDocuments.length,
+    truncated,
+    limit: truncationLimit,
+  });
+  const showFailure = listState.kind === "error";
+  const truncationNotice =
+    listState.kind === "list" || listState.kind === "empty" ? listState.truncationNotice : null;
 
   const handleUpload = async () => {
     if (!selectedFile) {
@@ -416,8 +445,36 @@ export default function SupportingDocumentsPanel({
         </Card>
       )}
 
+      {/* Persistent read failure — NOT an empty list. Consistent with the
+          inline error blocks used by the Quote / Proposal / Document sections. */}
+      {showFailure && (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-destructive">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Supporting documents could not be loaded
+          </p>
+          <p className="mt-1 text-[10px] text-destructive/80">
+            {listState.kind === "error" ? listState.message : ""} This panel is NOT showing an empty document set — the stored documents are unknown.
+          </p>
+          {onRetryLoad && (
+            <Button variant="outline" size="sm" onClick={onRetryLoad} className="mt-2 h-6 text-xs">Retry</Button>
+          )}
+        </div>
+      )}
+
+      {/* Partial result disclosure — the server capped the row set. */}
+      {truncationNotice && (
+        <div className="flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-[10px] text-amber-800">
+          <Info className="w-3 h-3 mt-0.5 shrink-0" />
+          <span>{truncationNotice}</span>
+        </div>
+      )}
+
       {/* Document list */}
-      {stageDocuments.length > 0 ? (
+      {listState.kind === "loading" ? (
+        <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading supporting documents…
+        </div>
+      ) : stageDocuments.length > 0 ? (
         <div className="space-y-2">
           {stageDocuments.map(doc => (
             <div
@@ -440,7 +497,7 @@ export default function SupportingDocumentsPanel({
             </div>
           ))}
         </div>
-      ) : (
+      ) : showFailure ? null : (
         <div className="py-6 text-center rounded-lg border border-dashed border-border bg-muted/10">
           <Upload className="w-5 h-5 mx-auto text-muted-foreground/40 mb-2" />
           <p className="text-xs text-muted-foreground/60">No supporting documents uploaded for this stage.</p>

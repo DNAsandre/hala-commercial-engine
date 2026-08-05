@@ -73,9 +73,17 @@ import ProposalStageWorkbench from "@/components/proposal-workspace/ProposalStag
 import ProposalOverviewPanel from "@/components/proposal-workspace/ProposalOverviewPanel";
 import ProposalSnapshotCard from "@/components/proposal-workspace/ProposalSnapshotCard";
 import CrmPipelineStrip, { getCrmStageLabel } from "@/components/proposal-workspace/CrmPipelineStrip";
-import { getProposalStageLabel } from "@/components/proposal-workspace/proposal-stages";
-import { supabase } from "@/lib/supabase";
-import { changeStage as changeTicketStage } from "@/lib/intake-save";
+import { getProposalStageLabel, PROPOSAL_TRACKER_STAGES } from "@/components/proposal-workspace/proposal-stages";
+// SC-01 W04 (T08-B): tracker persistence now goes through helpers that CONFIRM
+// the stored value from the returned row before anything is reported.
+// `lib/intake-save.ts#changeStage` was previously used here; it updates without
+// a `.select()`, so it returns `{ error: null }` even when zero rows matched
+// (proved live on 2026-08-05: HTTP 200, empty row set, stored value unchanged).
+import {
+  changeProposalTrackerStage,
+  finalizeStageAdvance,
+  readProposalTrackerStages,
+} from "@/lib/proposal-workspace-persistence";
 import { createDefaultWorkspaceData, type ProposalWorkspaceData, logProposalAudit, calcQualificationReadiness, calcDiscoveryCompleteness, calcSolutionReadiness, calcPricingConfidence } from "@/components/proposal-workspace/proposal-workspace-state";
 import {
   isWorkspaceIntegrationEnabled, updateRenewalOwner,
@@ -232,10 +240,23 @@ export default function WorkspaceDetail() {
   const [supportUploadRequired, setSupportUploadRequired] = useState(false);
 
   // ── Internal Proposal Tracker stage (separate from CRM pipeline stage) ──
-  const [proposalStage, setProposalStage] = useState("qualified");
+  const [proposalStage, setProposalStage] = useState(PROPOSAL_TRACKER_STAGES[0].key);
 
   // ── CRM Pipeline Stage (TOP tracker — completely independent from proposalStage) ──
   const [crmPipelineStage, setCrmPipelineStage] = useState<import("@/lib/store").CRMStage>("qualified");
+
+  // Where the displayed internal stage came from. The tracker must never
+  // present a stage as persisted truth when it is a placeholder, a stale value
+  // from a previously opened proposal, or the result of a failed read.
+  const [trackerHydration, setTrackerHydration] = useState<{
+    state: "loading" | "persisted" | "unrecorded" | "missing" | "error";
+    message: string | null;
+  }>({ state: "loading", message: null });
+  const [trackerReloadKey, setTrackerReloadKey] = useState(0);
+  // Whether `crm_pipeline_stage` is actually recorded on the ticket. The
+  // workspace mapper turns a NULL column into "prospecting", which would read
+  // as a real CRM position; this keeps the difference visible.
+  const [crmStageRecorded, setCrmStageRecorded] = useState(true);
 
   // Proposal workbench state is session-only until it is backed by Supabase.
   const [proposalWsData, setProposalWsData] = useState<ProposalWorkspaceData>(() => createDefaultWorkspaceData());
@@ -297,25 +318,56 @@ export default function WorkspaceDetail() {
   // ── Seed BOTH trackers from the recorded commercial_tickets row so the
   //    displayed stages are the persisted stages and survive a page reload.
   //    (crm_pipeline_stage / internal_stage are established columns.) ──
+  //    SC-01 W04 (T08-B): the tracker state is RESET on every ticket change
+  //    before the read starts. Previously `internal_stage` was applied only
+  //    when it was non-null and the read error was swallowed, so opening a
+  //    second proposal could keep showing the FIRST proposal's internal stage.
   useEffect(() => {
-    if (ws?.crmStage && ws.crmStage !== crmPipelineStage) {
-      setCrmPipelineStage(ws.crmStage);
-    }
     const ticketId = ws?.crmDealId;
-    if (!ticketId) return;
+
+    // Identity reset — never carry another record's tracker state forward.
+    setProposalStage(PROPOSAL_TRACKER_STAGES[0].key);
+    setTrackerHydration({ state: "loading", message: null });
+    setCrmStageRecorded(true);
+    if (ws?.crmStage) setCrmPipelineStage(ws.crmStage);
+
+    if (!ticketId) {
+      setTrackerHydration({
+        state: "missing",
+        message: "No commercial ticket is linked to this workspace, so no saved internal stage could be read.",
+      });
+      return;
+    }
+
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase
-        .from("commercial_tickets")
-        .select("internal_stage, crm_pipeline_stage")
-        .eq("id", ticketId)
-        .single();
-      if (cancelled || error || !data) return;
-      if (data.internal_stage) setProposalStage(data.internal_stage);
+      const stages = await readProposalTrackerStages(ticketId);
+      if (cancelled) return;
+      if (stages.error) {
+        setTrackerHydration({ state: "error", message: stages.error });
+        return;
+      }
+      if (!stages.found) {
+        setTrackerHydration({
+          state: "missing",
+          message: "The linked commercial ticket could not be read with the current sign-in, so the saved stage is unknown.",
+        });
+        return;
+      }
+      setCrmStageRecorded(stages.crmPipelineStage !== null);
+      if (stages.internalStage) {
+        setProposalStage(stages.internalStage);
+        setTrackerHydration({ state: "persisted", message: null });
+      } else {
+        setTrackerHydration({
+          state: "unrecorded",
+          message: "No internal stage is recorded on this ticket yet — the strip shows the first stage as a starting point, not a saved position.",
+        });
+      }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ws?.id, ws?.crmDealId]);
+  }, [ws?.id, ws?.crmDealId, trackerReloadKey]);
 
   // CLEAN APP: `diLoading` removed — it came from useDocInstances (doc_instances),
   // which was composer-only and has been severed.
@@ -351,12 +403,21 @@ export default function WorkspaceDetail() {
       toast.error("CRM stage not saved", { description: "No commercial ticket is linked to this workspace." });
       return;
     }
-    const { error } = await changeTicketStage(ticketId, "crm_pipeline_stage", oldStage, newStage, getCurrentUser().name);
-    if (error) {
-      toast.error("CRM stage NOT saved", { description: error + ". The displayed stage is unchanged." });
+    // Confirmed write: the displayed stage, the audit entry and the success
+    // message all wait for the value the database returned.
+    const saved = await changeProposalTrackerStage({
+      ticketId,
+      column: "crm_pipeline_stage",
+      oldValue: oldStage,
+      newValue: newStage,
+      userName: getCurrentUser().name,
+    });
+    if (!saved.ok) {
+      toast.error("CRM stage NOT saved", { description: saved.message });
       return;
     }
     setCrmPipelineStage(newStage);
+    setCrmStageRecorded(true);
     logProposalAudit({
       workspaceId: ws.id,
       action: "crm_stage_change",
@@ -367,7 +428,7 @@ export default function WorkspaceDetail() {
       newValue: newStage,
       details: `CRM Pipeline stage moved: ${getCrmStageLabel(oldStage as any)} → ${getCrmStageLabel(newStage)}`,
     });
-    toast.success(`CRM Pipeline → ${getCrmStageLabel(newStage)}`, { description: "Saved to the commercial ticket." });
+    toast.success(`CRM Pipeline → ${getCrmStageLabel(newStage)}`, { description: saved.message });
   };
 
   // ── Proposal Stage handler (updates internal_stage ONLY, never CRM
@@ -379,12 +440,19 @@ export default function WorkspaceDetail() {
       toast.error("Internal stage not saved", { description: "No commercial ticket is linked to this workspace." });
       return;
     }
-    const { error } = await changeTicketStage(ticketId, "internal_stage", oldStage, newStage, getCurrentUser().name);
-    if (error) {
-      toast.error("Internal stage NOT saved", { description: error + ". The displayed stage is unchanged." });
+    const saved = await changeProposalTrackerStage({
+      ticketId,
+      column: "internal_stage",
+      oldValue: oldStage,
+      newValue: newStage,
+      userName: getCurrentUser().name,
+    });
+    if (!saved.ok) {
+      toast.error("Internal stage NOT saved", { description: saved.message });
       return;
     }
     setProposalStage(newStage);
+    setTrackerHydration({ state: "persisted", message: null });
     logProposalAudit({
       workspaceId: ws.id,
       action: "proposal_stage_change",
@@ -395,7 +463,7 @@ export default function WorkspaceDetail() {
       newValue: newStage,
       details: `Internal Proposal stage moved: ${getProposalStageLabel(oldStage)} → ${getProposalStageLabel(newStage)}`,
     });
-    toast.success(`Internal stage → ${getProposalStageLabel(newStage)}`, { description: "Saved to the commercial ticket." });
+    toast.success(`Internal stage → ${getProposalStageLabel(newStage)}`, { description: saved.message });
   };
   // We'll use a simple customer lookup from the workspace data for now
   // The full customer data is fetched via the CustomerDetail page
@@ -474,27 +542,20 @@ export default function WorkspaceDetail() {
       toast.error("Stage advance not possible", { description: result.message });
       return;
     }
-    try {
-      const persisted = await updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any);
-      if (!persisted) {
-        toast.error("Stage advance NOT saved", {
-          description: "Supabase rejected the update (possibly a concurrent edit). The workspace stage is unchanged.",
-        });
-        return;
-      }
-    } catch (err: any) {
-      toast.error("Stage advance NOT saved", { description: err?.message || "Database write failed. The workspace stage is unchanged." });
+    // Persist, then REHYDRATE from Supabase so the displayed tracker and any
+    // subsequent Undo operate on the persisted stage, not the stale cached
+    // object. Success, audit history and the undo window come last, and only
+    // on `confirmed`. A failed refresh yields no success message and no Undo.
+    const outcome = await finalizeStageAdvance({
+      persist: async () => !!(await updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any)),
+      refetch: refetchWs,
+    });
+    if (outcome.status === "not_persisted") {
+      toast.error("Stage advance NOT saved", { description: outcome.message });
       return;
     }
-    // Confirmed persisted — REHYDRATE the workspace from Supabase so the
-    // displayed tracker and any subsequent Undo operate on the persisted
-    // stage, not the stale cached object. Only then report success, write
-    // audit history and open the undo window.
-    const refreshed = await refetchWs();
-    if (!refreshed) {
-      toast.warning("Stage saved, but the page could not refresh", {
-        description: "The change IS persisted in Supabase. Reload the page to see the current stage. Undo is unavailable until the display reflects the saved stage.",
-      });
+    if (outcome.status === "persisted_not_refreshed") {
+      toast.warning("Stage saved, but the page could not refresh", { description: outcome.message });
       return;
     }
     setTransitionResult(result);
@@ -513,26 +574,19 @@ export default function WorkspaceDetail() {
       toast.error("Undo not possible", { description: result.message });
       return;
     }
-    try {
-      const persisted = await updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any);
-      if (!persisted) {
-        toast.error("Stage revert NOT saved", {
-          description: "Supabase rejected the update. The workspace stage is unchanged.",
-        });
-        return;
-      }
-    } catch (err: any) {
-      toast.error("Stage revert NOT saved", { description: err?.message || "Database write failed. The workspace stage is unchanged." });
+    // Undo acts on `ws.stage`, which is the value rehydrated from Supabase by
+    // the advance that opened this window — never on an optimistic local value.
+    const outcome = await finalizeStageAdvance({
+      persist: async () => !!(await updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any)),
+      refetch: refetchWs,
+    });
+    if (outcome.status === "not_persisted") {
+      toast.error("Stage revert NOT saved", { description: outcome.message });
       return;
     }
-    // Confirmed persisted — rehydrate to the persisted stage before
-    // reporting; then close the undo window.
     lastAdvanceAtRef.current = null;
-    const undoRefreshed = await refetchWs();
-    if (!undoRefreshed) {
-      toast.warning("Stage reverted, but the page could not refresh", {
-        description: "The revert IS persisted in Supabase. Reload the page to see the current stage.",
-      });
+    if (outcome.status === "persisted_not_refreshed") {
+      toast.warning("Stage reverted, but the page could not refresh", { description: outcome.message });
       setShowUndoBanner(false); setTransitionResult(null);
       if (undoTimerRef.current) clearInterval(undoTimerRef.current);
       return;
@@ -593,14 +647,28 @@ export default function WorkspaceDetail() {
                 {getWorkspaceTypeLabel(wsType)}
               </Badge>
               {isCommercial && (
-                <Badge variant="outline" className="text-[10px] border-emerald-200 bg-emerald-50 text-emerald-700">
-                  CRM: {getCrmStageLabel(crmPipelineStage)}
-                </Badge>
+                crmStageRecorded ? (
+                  <Badge variant="outline" className="text-[10px] border-emerald-200 bg-emerald-50 text-emerald-700">
+                    CRM: {getCrmStageLabel(crmPipelineStage)}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] border-amber-300 bg-amber-50 text-amber-700"
+                    title="crm_pipeline_stage is empty on this commercial ticket.">
+                    CRM: not recorded
+                  </Badge>
+                )
               )}
               {isCommercial && (
-                <Badge variant="outline" className="text-[10px] border-[#075eea]/20 bg-[#075eea]/10 text-[#075eea]">
-                  Internal: {getProposalStageLabel(proposalStage)}
-                </Badge>
+                trackerHydration.state === "persisted" ? (
+                  <Badge variant="outline" className="text-[10px] border-[#075eea]/20 bg-[#075eea]/10 text-[#075eea]">
+                    Internal: {getProposalStageLabel(proposalStage)}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] border-amber-300 bg-amber-50 text-amber-700"
+                    title={trackerHydration.message ?? "The saved internal stage has not been read yet."}>
+                    Internal: {trackerHydration.state === "loading" ? "reading…" : "not recorded"}
+                  </Badge>
+                )
               )}
               {!isCommercial && (
                 <Badge variant="outline" className={`text-xs ${getEffectiveStageColor(ws)}`}>{getEffectiveStageLabel(ws)}</Badge>
@@ -788,6 +856,8 @@ export default function WorkspaceDetail() {
           <ProposalTrackerStrip
             activeStage={proposalStage}
             onStageChange={handleProposalStageChange}
+            hydration={trackerHydration}
+            onRetryHydration={() => setTrackerReloadKey(key => key + 1)}
           />
           </>
         ) : (

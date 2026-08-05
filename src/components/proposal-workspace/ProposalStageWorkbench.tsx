@@ -44,7 +44,7 @@ import {
   ProcessStageTaskShell,
   type ProcessStageSectionTab,
 } from "@/components/process/ProcessStageTaskShell";
-import { listScopeDocumentsFromCleanServer } from "@/lib/document-runtime";
+import { listScopeDocumentsPageFromCleanServer } from "@/lib/document-runtime";
 import type { ActiveProposalIdentity } from "@/lib/proposal-identity";
 import {
   extractDiscoveryStageData,
@@ -989,10 +989,18 @@ function mapGeneratedDocumentToSupportingDocument(
   };
 }
 
-async function fetchProposalStageDocuments(
+export interface ProposalStageDocumentsResult {
+  documents: SupportingDocument[];
+  /** True when the SERVER said at least one scope result was cut short. */
+  truncated: boolean;
+  /** The row cap the server declared for a truncated scope, when it gave one. */
+  limit: number | null;
+}
+
+export async function fetchProposalStageDocuments(
   activeProposal: ActiveProposalIdentity,
   workspaceId: string,
-): Promise<SupportingDocument[]> {
+): Promise<ProposalStageDocumentsResult> {
   const scopeIds = uniqueText([
     activeProposal.proposalId,
     activeProposal.workspaceId,
@@ -1000,20 +1008,29 @@ async function fetchProposalStageDocuments(
     workspaceId,
   ]);
   const documents: SupportingDocument[] = [];
+  let truncated = false;
+  let limit: number | null = null;
 
   for (const scopeId of scopeIds) {
     // SC-01 W03-4: was a relative fetch, which resolved against the frontend
     // origin (:5300) and returned the SPA shell instead of documents. It now
     // goes to the clean server, and any failure propagates to the caller's
-    // error toast instead of silently producing zero documents.
-    const rows = await listScopeDocumentsFromCleanServer(scopeId);
-    rows.forEach(row => {
+    // error state instead of silently producing zero documents.
+    // SC-01 W04 (Wave 03 obs 9): the server caps the list and declares it in
+    // `{ limit, truncated }`. That disclosure now travels with the rows so a
+    // partial list is never presented as the whole scope.
+    const page = await listScopeDocumentsPageFromCleanServer(scopeId);
+    if (page.truncated) {
+      truncated = true;
+      if (limit === null) limit = page.limit;
+    }
+    page.rows.forEach(row => {
       const doc = mapGeneratedDocumentToSupportingDocument(row, activeProposal);
       if (doc) documents.push(doc);
     });
   }
 
-  return mergeSupportingDocuments(documents);
+  return { documents: mergeSupportingDocuments(documents), truncated, limit };
 }
 
 export default function ProposalStageWorkbench({
@@ -1033,6 +1050,13 @@ export default function ProposalStageWorkbench({
   const [activeTab, setActiveTab] = useState(() => getDefaultProposalTabKey(activeStage, getDefaultProposalTaskKey(activeStage)));
   const [localDocuments, setLocalDocuments] = useState<SupportingDocument[]>([]);
   const [persistedDocuments, setPersistedDocuments] = useState<SupportingDocument[]>([]);
+  // Document read state. A failure must stay on screen (Wave 03 obs 10) and a
+  // capped result must say so (Wave 03 obs 9).
+  const [documentsLoadState, setDocumentsLoadState] = useState<"idle" | "loading" | "loaded" | "error">("idle");
+  const [documentsError, setDocumentsError] = useState<string | null>(null);
+  const [documentsTruncated, setDocumentsTruncated] = useState(false);
+  const [documentsLimit, setDocumentsLimit] = useState<number | null>(null);
+  const [documentsReloadKey, setDocumentsReloadKey] = useState(0);
   const [qualifiedLoadState, setQualifiedLoadState] = useState<"idle" | "loading" | "loaded" | "error">("idle");
   const [qualifiedSaveState, setQualifiedSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [qualifiedSavedAt, setQualifiedSavedAt] = useState<string | null>(null);
@@ -1196,23 +1220,39 @@ export default function ProposalStageWorkbench({
     let cancelled = false;
     setLocalDocuments([]);
     setPersistedDocuments([]);
+    setDocumentsError(null);
+    setDocumentsTruncated(false);
+    setDocumentsLimit(null);
 
-    if (!activeProposal?.proposalId) return;
+    if (!activeProposal?.proposalId) {
+      setDocumentsLoadState("idle");
+      return;
+    }
 
+    setDocumentsLoadState("loading");
     fetchProposalStageDocuments(activeProposal, workspaceId)
-      .then(docs => {
-        if (!cancelled) setPersistedDocuments(docs);
+      .then(result => {
+        if (cancelled) return;
+        setPersistedDocuments(result.documents);
+        setDocumentsTruncated(result.truncated);
+        setDocumentsLimit(result.limit);
+        setDocumentsLoadState("loaded");
       })
       .catch((err: Error) => {
-        if (!cancelled) {
-          toast.warning(`Proposal documents could not be loaded: ${err.message}`);
-        }
+        if (cancelled) return;
+        // SC-01 W04 (Wave 03 obs 10): this used to be a transient
+        // `toast.warning` over an empty list, so once the toast dismissed the
+        // panel read as genuinely empty. The failure is now held in state and
+        // rendered as a persistent inline error with a retry.
+        setPersistedDocuments([]);
+        setDocumentsError(err.message || "Proposal documents could not be loaded.");
+        setDocumentsLoadState("error");
       });
 
     return () => {
       cancelled = true;
     };
-  }, [activeProposal?.proposalId, activeProposal?.routeId, activeProposal?.workspaceId, workspaceId]);
+  }, [activeProposal?.proposalId, activeProposal?.routeId, activeProposal?.workspaceId, workspaceId, documentsReloadKey]);
 
   useEffect(() => {
     const proposalId = activeProposal?.proposalId;
@@ -1785,6 +1825,11 @@ export default function ProposalStageWorkbench({
       workspaceName={activeProposal?.title}
       customerId={activeProposal?.customerId}
       customerName={activeProposal?.customerName ?? customerName}
+      loadState={documentsLoadState}
+      loadError={documentsError}
+      onRetryLoad={() => setDocumentsReloadKey(key => key + 1)}
+      truncated={documentsTruncated}
+      truncationLimit={documentsLimit}
     />
   );
 

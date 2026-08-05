@@ -10,6 +10,7 @@ import { FileText, Download, RefreshCw, Clock, User, FileCheck, Loader2, AlertTr
 import { toast } from "sonner";
 import {
   downloadDocumentToUser,
+  formatDocumentFileSize,
   generateDocumentPdf,
   listWorkspaceDocuments,
   type DocumentRecord,
@@ -149,7 +150,9 @@ export default function WorkspaceDocumentSection({ workspaceId, quotes = [], pro
                         <Badge variant="outline" className={`text-[9px] ${cfg.color}`}>{cfg.label}</Badge>
                         <span className="flex items-center gap-0.5"><Clock className="w-2.5 h-2.5" />{new Date(d.generated_at).toLocaleDateString()}</span>
                         {(d.generated_by_name || d.generated_by) && <span className="flex items-center gap-0.5"><User className="w-2.5 h-2.5" />{d.generated_by_name || d.generated_by.substring(0, 8)}</span>}
-                        <span>{(d.file_size / 1024).toFixed(1)} KB</span>
+                        {/* SC-01 W04 (Wave 03 obs 13): a NULL file_size used to
+                            render the literal "NaN KB". Unknown reads as unknown. */}
+                        <span>{formatDocumentFileSize(d.file_size)}</span>
                       </div>
                     </div>
                   </div>

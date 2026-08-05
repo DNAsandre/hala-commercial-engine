@@ -5,8 +5,7 @@
  * CRM = where the opportunity is commercially
  * This tracker = what internal work stage the proposal is in
  */
-import { useState } from "react";
-import { ChevronDown, Info } from "lucide-react";
+import { ChevronDown, Info, AlertTriangle, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,18 +14,67 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { PROPOSAL_TRACKER_STAGES, getProposalStageIndex, type ProposalStage } from "./proposal-stages";
 
+/**
+ * Where the displayed stage came from. The strip is the human's statement of
+ * "this proposal is here", so it must not present a placeholder, a value from
+ * a previously opened proposal, or the aftermath of a failed read as if it
+ * were the saved position. This disclosure never disables stage movement.
+ */
+export interface ProposalTrackerHydration {
+  state: "loading" | "persisted" | "unrecorded" | "missing" | "error";
+  message: string | null;
+}
+
 interface ProposalTrackerStripProps {
   activeStage: string;
   onStageChange: (key: string) => void;
+  hydration?: ProposalTrackerHydration;
+  onRetryHydration?: () => void;
 }
 
-export default function ProposalTrackerStrip({ activeStage, onStageChange }: ProposalTrackerStripProps) {
+export default function ProposalTrackerStrip({
+  activeStage,
+  onStageChange,
+  hydration,
+  onRetryHydration,
+}: ProposalTrackerStripProps) {
   const activeIdx = getProposalStageIndex(activeStage);
   const activeInfo = PROPOSAL_TRACKER_STAGES[activeIdx];
+  const hydrationState = hydration?.state ?? "persisted";
 
   return (
     <Card className="border border-[#075eea]/20/60 shadow-none mb-3">
       <CardContent className="pt-4 pb-3 px-6">
+        {/* Persisted-truth disclosure — loading, unread and failed read are
+            three visibly different answers, and none of them reads as saved. */}
+        {hydrationState === "loading" && (
+          <div className="mb-2 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+            <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+            Reading the saved internal stage from the commercial ticket…
+          </div>
+        )}
+        {hydrationState === "error" && (
+          <div className="mb-2 rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-2">
+            <p className="flex items-center gap-1.5 text-[11px] font-medium text-destructive">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Saved internal stage could not be read
+            </p>
+            <p className="mt-0.5 text-[10px] text-destructive/80">
+              {hydration?.message} The stage shown below is a starting point, not the saved position.
+            </p>
+            {onRetryHydration && (
+              <Button variant="outline" size="sm" onClick={onRetryHydration} className="mt-1.5 h-6 text-[10px]">
+                Retry
+              </Button>
+            )}
+          </div>
+        )}
+        {(hydrationState === "unrecorded" || hydrationState === "missing") && (
+          <div className="mb-2 flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-[10px] text-amber-800">
+            <Info className="w-3 h-3 mt-0.5 shrink-0" />
+            <span>{hydration?.message ?? "No internal stage is recorded on this ticket yet."}</span>
+          </div>
+        )}
+
         {/* Header row */}
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
