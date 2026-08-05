@@ -33,9 +33,12 @@ const sb = {
   updateError: null as { message: string } | null,
   /** when true, .update() matches no row (stale revision / RLS block) */
   updateMatchesNothing: false,
+  insertError: null as { message: string } | null,
+  /** when true, .insert() resolves without error but returns no stored row */
+  insertMatchesNothing: false,
   updateCalls: [] as UpdateCall[],
   selectCalls: [] as Array<{ table: string; projection: string | null; filters: Array<[string, unknown]> }>,
-  inserts: [] as Array<{ table: string; row: Record<string, any> }>,
+  inserts: [] as Array<{ table: string; row: Record<string, any>; projection: string | null }>,
 };
 
 function applyProjection(projection: string | null, data: unknown): unknown {
@@ -61,7 +64,9 @@ vi.mock('./supabase', () => ({
 
       const settle = () => {
         if (mode === 'insert') {
-          sb.inserts.push({ table, row: insertRow });
+          sb.inserts.push({ table, row: insertRow, projection });
+          if (sb.insertError) return { data: null, error: sb.insertError };
+          if (sb.insertMatchesNothing) return { data: null, error: null };
           return { data: applyProjection(projection, { id: 'audit-row-1' }), error: null };
         }
         if (mode === 'update') {
@@ -117,6 +122,8 @@ beforeEach(async () => {
   sb.readError = null;
   sb.updateError = null;
   sb.updateMatchesNothing = false;
+  sb.insertError = null;
+  sb.insertMatchesNothing = false;
   sb.updateCalls = [];
   sb.selectCalls = [];
   sb.inserts = [];
@@ -233,6 +240,68 @@ describe('updateTenderCrmStage — CRM pipeline tracker', () => {
 
     expect(result.success).toBe(false);
     expect(sb.row!.crm_pipeline_stage).toBe('qualified');
+  });
+});
+
+/**
+ * W04-C4 — createActivityNote.
+ *
+ * The activity note has no canonical ticket write behind it: the
+ * commercial_ticket_audit row IS the note. The old implementation called a
+ * fire-and-forget insert (never awaited, failures console.warn'd only) and then
+ * returned `{ success: true }` with no condition, while the UI printed
+ * "Persisted to Supabase". That is a success message with zero persistence
+ * evidence.
+ */
+describe('createActivityNote — success means a stored row', () => {
+  it('writes the note to commercial_ticket_audit, scoped to the requested tender', async () => {
+    const result = await actions.createActivityNote(TENDER_ID, 'Site visit', 'Met the buyer on site');
+
+    expect(result).toEqual({ success: true });
+
+    const insert = sb.inserts.find(i => i.table === 'commercial_ticket_audit');
+    expect(insert).toBeDefined();
+    // What actually reached the database:
+    expect(insert!.row.ticket_id).toBe(TENDER_ID);
+    expect(insert!.row.field_changed).toBe('note');
+    expect(insert!.row.notes).toBe('Site visit | Met the buyer on site');
+    expect(insert!.row.user_name).toBe('UAT Operator');
+  });
+
+  it('asks the database for the stored id — a resolved request is not the proof', async () => {
+    await actions.createActivityNote(TENDER_ID, 'Note', '');
+
+    const insert = sb.inserts.find(i => i.table === 'commercial_ticket_audit');
+    // The projection reaching the database. Without it the mock (which honours
+    // projections) would hand back nothing, and the fire-and-forget version of
+    // this function asked for nothing at all.
+    expect(insert!.projection).toBe('id');
+  });
+
+  it('reports FAILURE when the insert errors — no fake success', async () => {
+    sb.insertError = { message: 'new row violates row-level security policy for table commercial_ticket_audit' };
+
+    const result = await actions.createActivityNote(TENDER_ID, 'Blocked note', 'body');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('row-level security');
+    expect(result.error).toContain('Not saved');
+  });
+
+  it('reports FAILURE when the insert resolves but no stored row comes back', async () => {
+    sb.insertMatchesNothing = true;
+
+    const result = await actions.createActivityNote(TENDER_ID, 'Silent note', 'body');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not confirmed saved');
+  });
+
+  it('omits an empty description instead of leaving a trailing separator', async () => {
+    await actions.createActivityNote(TENDER_ID, 'Title only', '');
+
+    const insert = sb.inserts.find(i => i.table === 'commercial_ticket_audit');
+    expect(insert!.row.notes).toBe('Title only');
   });
 });
 

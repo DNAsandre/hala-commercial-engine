@@ -519,6 +519,69 @@ export interface TenderRequiredDocument {
   notes: string;
 }
 
+/**
+ * W04-C4 — required-document completion, derived only from a recorded set.
+ *
+ * The tender workspace previously computed this from a hardcoded 14-item list
+ * of document names, fuzzy-matched on the FIRST WORD of each name, divided by a
+ * literal `14`, and presented the result as progress. None of that denominator
+ * belonged to the tender being viewed. This replaces it:
+ *
+ *   - if no requirement set is recorded, `percent` is null and `note` says so —
+ *     "not recorded" is not "0% complete";
+ *   - otherwise the denominator is the recorded set and the numerator is the
+ *     entries that set itself marks satisfied (or that a named uploaded
+ *     document matches in full, not on a first-word prefix).
+ */
+export interface RequiredDocumentsProgress {
+  /** null ⇒ nothing is recorded to measure against; render no percentage. */
+  percent: number | null;
+  note: string;
+  satisfied: number;
+  total: number;
+}
+
+const SATISFIED_REQUIRED_DOC_STATUSES: ReadonlySet<RequiredDocStatus> = new Set<RequiredDocStatus>([
+  "uploaded", "approved", "signed", "stamped", "ready",
+]);
+
+export function buildRequiredDocumentsProgress(input: {
+  requiredDocuments: TenderRequiredDocument[];
+  /** Whether a required-document set was actually read for this tender. */
+  requiredDocumentsAssessed: boolean;
+  uploadedDocumentNames: string[];
+}): RequiredDocumentsProgress {
+  const required = Array.isArray(input.requiredDocuments) ? input.requiredDocuments : [];
+
+  if (!input.requiredDocumentsAssessed || required.length === 0) {
+    return {
+      percent: null,
+      note: input.requiredDocumentsAssessed
+        ? "No required documents are recorded for this tender, so there is nothing to measure completion against."
+        : "The required-document list is not recorded for this tender, so no completion percentage can be derived.",
+      satisfied: 0,
+      total: 0,
+    };
+  }
+
+  const uploaded = input.uploadedDocumentNames
+    .map(n => (n ?? "").toLowerCase().trim())
+    .filter(Boolean);
+
+  const satisfied = required.filter(doc => {
+    if (SATISFIED_REQUIRED_DOC_STATUSES.has(doc.status)) return true;
+    const name = (doc.documentName ?? "").toLowerCase().trim();
+    return name.length > 0 && uploaded.some(n => n.includes(name));
+  }).length;
+
+  return {
+    percent: Math.max(0, Math.min(100, Math.round((satisfied / required.length) * 100))),
+    note: `${satisfied} of ${required.length} recorded required documents are accounted for.`,
+    satisfied,
+    total: required.length,
+  };
+}
+
 export const REQUIRED_DOC_CATEGORIES: { value: RequiredDocCategory | "all"; label: string }[] = [
   { value: "all", label: "All Categories" },
   { value: "pricing_obk", label: "Pricing / OBK" },
@@ -621,11 +684,23 @@ export function getRiskColor(r: ComplianceRisk): string {
 
 // ─── TENDER WORKSPACE (assembled by the Supabase read layer) ─
 
+/**
+ * W04-C4: a risk verdict is only a verdict when the data it derives from was
+ * actually read. `not_assessed` is the honest fourth value for the case where
+ * the compliance / required-document collections were never loaded — it must
+ * never be collapsed into "green" (which reads to a human as "On Track").
+ */
+export type TenderRiskLevel = "green" | "amber" | "red" | "not_assessed";
+
 export interface TenderWorkspace {
   tender: Tender;
   tenderType: string;
   readinessScore: number;
-  riskLevel: "green" | "amber" | "red";
+  riskLevel: TenderRiskLevel;
+  /** W04-C4: false ⇒ `riskLevel` is `not_assessed`; render no verdict. */
+  riskInputsAssessed: boolean;
+  /** W04-C4: false ⇒ no required-document set is recorded; show no percentage. */
+  requiredDocumentsAssessed: boolean;
   crmSyncStatus: "not_synced" | "synced" | "sync_failed" | "conflict" | "simulated";
   submissionModel: "single_pack" | "multi_pack";
   /**

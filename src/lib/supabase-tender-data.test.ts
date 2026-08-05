@@ -264,6 +264,77 @@ describe('CRM stage round-trip fidelity', () => {
   });
 });
 
+describe('risk verdict — W04-C4', () => {
+  /**
+   * The header rendered a green "On Track" badge derived from complianceItems +
+   * requiredDocuments. Both are hard stubs that no query ever populates, so the
+   * verdict was computed over data nobody read: EVERY tender was low risk,
+   * always. A verdict may only be stated when its inputs were actually loaded.
+   */
+  it('reports risk as not_assessed while its inputs are not read', async () => {
+    sb.results.commercial_tickets = { data: tenderRow(), error: null };
+    sb.results.commercial_ticket_audit = { data: [], error: null };
+
+    const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
+
+    expect(bundle.loadState.kind).toBe('loaded');
+    // The tender itself loaded fine…
+    expect(bundle.tender?.id).toBe(ALLOWED_ID);
+    // …but nothing was read for compliance or required documents.
+    expect(bundle.complianceItems).toEqual([]);
+    expect(bundle.requiredDocuments).toEqual([]);
+    // So no verdict, and specifically NOT the reassuring one.
+    expect(bundle.riskInputsAssessed).toBe(false);
+    expect(bundle.riskLevel).toBe('not_assessed');
+    expect(bundle.riskLevel).not.toBe('green');
+  });
+
+  it('no query is issued for compliance items or required documents at all', async () => {
+    sb.results.commercial_tickets = { data: tenderRow(), error: null };
+    sb.results.commercial_ticket_audit = { data: [], error: null };
+
+    await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
+
+    // Proof the collections are stubs, not empty reads: no table other than
+    // commercial_tickets / commercial_ticket_audit was ever touched.
+    const tables = new Set(sb.calls.map(c => c.table));
+    expect([...tables].sort()).toEqual(['commercial_ticket_audit', 'commercial_tickets']);
+  });
+
+  it('reports the required-document set as not recorded, not as an empty one', async () => {
+    sb.results.commercial_tickets = { data: tenderRow(), error: null };
+    sb.results.commercial_ticket_audit = { data: [], error: null };
+
+    const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
+
+    expect(bundle.requiredDocumentsAssessed).toBe(false);
+  });
+
+  it('a bundle that never loaded carries no verdict either', async () => {
+    sb.results.commercial_tickets = { data: null, error: { message: 'permission denied' } };
+    sb.results.commercial_ticket_audit = { data: [], error: null };
+
+    const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
+
+    expect(bundle.loadState.kind).toBe('error');
+    expect(bundle.riskLevel).toBe('not_assessed');
+    expect(bundle.riskInputsAssessed).toBe(false);
+  });
+
+  it('carries both honesty flags through to the workspace the page renders', async () => {
+    sb.results.commercial_tickets = { data: tenderRow(), error: null };
+    sb.results.commercial_ticket_audit = { data: [], error: null };
+
+    const ws = mod.bundleToTenderWorkspace(
+      await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID),
+    );
+
+    expect(ws?.riskLevel).toBe('not_assessed');
+    expect(ws?.riskInputsAssessed).toBe(false);
+    expect(ws?.requiredDocumentsAssessed).toBe(false);
+  });
+});
+
 describe('bundleToTenderWorkspace', () => {
   it('carries the raw CRM column through to the workspace', async () => {
     sb.results.commercial_tickets = { data: tenderRow({ crm_pipeline_stage: 'proposal_sent' }), error: null };

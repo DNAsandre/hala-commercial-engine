@@ -3,10 +3,24 @@
  * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  * SUPA-008: Tender Workspace Action Write Layer
  *
- * Every write function:
- *   1. Performs the canonical commercial_tickets update
- *   2. Appends a commercial_ticket_audit row
- *   4. Returns { success, error? }
+ * Write functions:
+ *   1. Perform the canonical commercial_tickets update through
+ *      saveTenderSourceRecord — read-back confirmed, guarded by an `updated_at`
+ *      optimistic token — and report success only once a stored row came back.
+ *   2. Attempt a commercial_ticket_audit row.
+ *
+ *      W04-C4 — this used to claim "Every write function … appends a
+ *      commercial_ticket_audit row". It does not. For the stage/field writes the
+ *      append is BEST EFFORT: `runBestEffortAuditWrite` does not await the
+ *      insert and only console.warn's on failure, so a missing audit row is
+ *      invisible to both the caller and the user. It is therefore never part of
+ *      the success claim for those functions — their success means the
+ *      commercial_tickets row moved, nothing more.
+ *
+ *      `createActivityNote` is the exception, because there the audit row IS the
+ *      whole payload: it awaits the insert, selects the stored id back, and
+ *      reports success only if that row exists.
+ *   3. Return { success, error? }.
  *
  * No production enforcement. No real email. No CRM sync.
  * Legacy tender child tables are read-only/disabled to prevent mock data drift.
@@ -75,26 +89,67 @@ function runBestEffortAuditWrite(label: string, write: PromiseLike<{ error: { me
     });
 }
 
-async function writeCanonicalTenderAudit(params: {
+interface CanonicalTenderAuditParams {
   tenderId: string;
   fieldChanged: string;
   oldValue?: string | null;
   newValue?: string | null;
   notes?: string | null;
-}): Promise<void> {
+}
+
+/** The exact row shape both the best-effort and the confirmed path insert. */
+function buildCanonicalTenderAuditRow(params: CanonicalTenderAuditParams): Record<string, any> {
   const { userName } = actor();
+  return {
+    ticket_id: params.tenderId,
+    action: auditActionFor(params.fieldChanged),
+    field_changed: params.fieldChanged,
+    old_value: params.oldValue ?? null,
+    new_value: params.newValue ?? null,
+    user_name: userName,
+    notes: params.notes ?? null,
+  };
+}
+
+/**
+ * Best-effort audit append — NOT awaited, failures only console.warn'd.
+ * Callers must not treat this as evidence that anything was stored.
+ */
+async function writeCanonicalTenderAudit(params: CanonicalTenderAuditParams): Promise<void> {
   runBestEffortAuditWrite(
     `audit:${params.fieldChanged}`,
-    supabase.from('commercial_ticket_audit').insert({
-      ticket_id: params.tenderId,
-      action: auditActionFor(params.fieldChanged),
-      field_changed: params.fieldChanged,
-      old_value: params.oldValue ?? null,
-      new_value: params.newValue ?? null,
-      user_name: userName,
-      notes: params.notes ?? null,
-    }),
+    supabase.from('commercial_ticket_audit').insert(buildCanonicalTenderAuditRow(params)),
   );
+}
+
+/**
+ * W04-C4 — confirmed audit append.
+ *
+ * Used where the audit row is not a side note but the ENTIRE payload of the
+ * user's action (an activity note). The insert is awaited and the stored id is
+ * selected back, so success is a statement about the database rather than about
+ * a request having been issued.
+ */
+async function writeCanonicalTenderAuditConfirmed(
+  params: CanonicalTenderAuditParams,
+): Promise<ActionResult> {
+  const { data, error } = await supabase
+    .from('commercial_ticket_audit')
+    .insert(buildCanonicalTenderAuditRow(params))
+    .select('id')
+    .maybeSingle();
+
+  if (error) {
+    return { success: false, error: `Not saved to commercial_ticket_audit: ${error.message}` };
+  }
+  if (!data || !(data as any).id) {
+    return {
+      success: false,
+      error:
+        'The request completed but commercial_ticket_audit returned no stored row, so the note is not confirmed saved. It may have been blocked by row-level security.',
+    };
+  }
+  return { success: true };
 }
 
 async function updateCanonicalTenderTicket(
@@ -1372,24 +1427,27 @@ export async function logMockBypass(
 }
 
 /**
- * 8. Create activity note (activity-only, no audit)
+ * 8. Create activity note.
+ *
+ * W04-C4: this used to call the fire-and-forget `_insertActivityEvent` and then
+ * return `{ success: true }` unconditionally, while the UI printed "Persisted
+ * to Supabase". The commercial_ticket_audit row IS the note — there is no other
+ * write — so an unconfirmed insert meant the note simply did not exist while the
+ * user was told it did. The insert is now awaited and read back.
  */
 export async function createActivityNote(
   tenderId: string,
   title: string,
   description: string,
 ): Promise<ActionResult> {
-  await _insertActivityEvent({
+  return writeCanonicalTenderAuditConfirmed({
     tenderId,
-    actionType: 'note',
-    actionLabel: title,
-    title,
-    description,
-    category: 'note',
-    severity: 'info',
+    fieldChanged: 'note',
+    oldValue: null,
+    newValue: null,
+    // Same notes shape _insertActivityEvent produced, so stored rows are unchanged.
+    notes: [title, description].filter(Boolean).join(' | '),
   });
-
-  return { success: true };
 }
 
 /**

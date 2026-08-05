@@ -19,13 +19,20 @@ interface VersionHistoryPanelProps {
   onClose: () => void;
 }
 
-function fmt(iso: string): string {
+/**
+ * W04-C4: the `catch` here never fired. `toLocaleString` on an unparseable date
+ * does not throw — it RETURNS the string "Invalid Date", which was rendered on
+ * every version row. Guard on the timestamp instead.
+ */
+export function fmt(iso: string): string {
   if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
   try {
-    return new Date(iso).toLocaleString("en-GB", {
+    return d.toLocaleString("en-GB", {
       day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
     });
-  } catch { return iso; }
+  } catch { return "—"; }
 }
 
 export default function VersionHistoryPanel({ instanceId, onRestore, onClose }: VersionHistoryPanelProps) {

@@ -18,6 +18,7 @@ import { FileDown, Printer, FileText, Loader2, Check, AlertCircle, Layers } from
 import {
   executeExport, exportAllVolumes,
   type ExportMode, type ExportAction, type ExportRequest, type VolumeForExport,
+  type ExportDelivery, type ExportResult,
 } from "@/lib/final-pack-export";
 import type { BrandingProfile } from "@/lib/final-pack-preview";
 import type { OutputBlock } from "@/lib/final-pack-loader";
@@ -55,6 +56,31 @@ interface ActionStatus {
   error?: string;
 }
 
+/**
+ * W04-C4 — say exactly what happened.
+ *
+ * Opening the browser's print dialog is not the same event as a PDF file being
+ * written to disk; the page cannot observe the second one. The toolbar used to
+ * show a green tick for both. It now names the step that actually completed,
+ * and separately reports when the export audit row could not be confirmed.
+ */
+export function describeExportOutcome(result: ExportResult): string {
+  const delivery: Record<ExportDelivery, string> = {
+    file_downloaded: "File handed to the browser for download.",
+    print_dialog_opened:
+      "Print pipeline invoked — choose “Save as PDF” in the print dialog to write the file. This page cannot confirm the file was saved.",
+    server_file_opened: "Server-rendered file opened in a new tab.",
+  };
+  const parts: string[] = [];
+  if (result.delivered) parts.push(delivery[result.delivered]);
+  if (result.auditPersisted === false) {
+    parts.push(
+      `Export audit row was NOT confirmed stored${result.auditError ? ` — ${result.auditError}` : ""}.`,
+    );
+  }
+  return parts.join(" ");
+}
+
 export default function ExportToolbar({
   instanceId,
   templateId,
@@ -78,6 +104,8 @@ export default function ExportToolbar({
   allVolumes,
 }: ExportToolbarProps) {
   const [status, setStatus] = useState<Record<string, ActionStatus>>({});
+  // W04-C4: the precise outcome of the last export, shown in the toolbar.
+  const [outcome, setOutcome] = useState<{ text: string; advisory: boolean } | null>(null);
 
   const handleExport = async (action: ExportAction, mode: ExportMode) => {
     const key = `${action}-${mode}`;
@@ -111,6 +139,7 @@ export default function ExportToolbar({
 
     if (result.success) {
       setStatus((prev) => ({ ...prev, [key]: { state: "success" } }));
+      setOutcome({ text: describeExportOutcome(result), advisory: result.auditPersisted === false });
       // Reset to idle after 3s
       setTimeout(() => {
         setStatus((prev) => ({ ...prev, [key]: { state: "idle" } }));
@@ -120,6 +149,7 @@ export default function ExportToolbar({
         ...prev,
         [key]: { state: "error", error: result.error },
       }));
+      setOutcome({ text: `Export failed — ${result.error ?? "unknown error"}`, advisory: true });
       // Reset to idle after 5s
       setTimeout(() => {
         setStatus((prev) => ({ ...prev, [key]: { state: "idle" } }));
@@ -138,8 +168,23 @@ export default function ExportToolbar({
       sourceMode, sourceKind, creationMethod, templateVersionId, templateClass, instanceLastEditedAt, layout,
     };
     const { results } = await exportAllVolumes(base, allVolumes);
-    const ok = results.every((r) => r.success);
-    setAllStatus({ state: ok ? "success" : "error", error: ok ? undefined : "Some volumes failed" });
+    const failed = results.filter((r) => !r.success);
+    const unaudited = results.filter((r) => r.success && r.auditPersisted === false);
+    const ok = failed.length === 0;
+    setAllStatus({
+      state: ok ? "success" : "error",
+      error: ok ? undefined : `${failed.length} of ${results.length} volumes failed`,
+    });
+    setOutcome({
+      text: [
+        `${results.length - failed.length} of ${results.length} volume files handed to the browser for download.`,
+        failed.length > 0 ? `${failed.length} failed: ${failed.map((f) => f.volume_key).join(", ")}.` : "",
+        unaudited.length > 0
+          ? `${unaudited.length} export audit row(s) were NOT confirmed stored.`
+          : "",
+      ].filter(Boolean).join(" "),
+      advisory: failed.length > 0 || unaudited.length > 0,
+    });
     setTimeout(() => setAllStatus({ state: "idle" }), 4000);
   };
 
@@ -200,6 +245,18 @@ export default function ExportToolbar({
             onClick={handleAllVolumes}
           />
         </>
+      )}
+
+      {/* W04-C4: the precise outcome of the last export — never a bare tick. */}
+      {outcome && (
+        <span
+          role="status"
+          className={`ml-2 basis-full text-[11px] leading-snug ${
+            outcome.advisory ? "text-amber-600" : "text-muted-foreground"
+          }`}
+        >
+          {outcome.text}
+        </span>
       )}
     </div>
   );

@@ -29,6 +29,7 @@ import type {
   TenderPackOutput,
   TenderSubmissionEmail,
   TenderWorkspace,
+  TenderRiskLevel,
   TenderPackStatus,
   TenderPackType,
   PlaceholderStatus,
@@ -91,7 +92,22 @@ export interface TenderWorkspaceBundle {
   /** Derived workspace-level fields from pack row (first pack meta) */
   tenderType: string;
   readinessScore: number;
-  riskLevel: 'green' | 'amber' | 'red';
+  /**
+   * W04-C4: `not_assessed` when the collections a risk verdict derives from
+   * (compliance items, required documents) were not actually read. See
+   * `riskInputsAssessed`.
+   */
+  riskLevel: TenderRiskLevel;
+  /**
+   * W04-C4: true only when BOTH risk inputs were genuinely loaded. False means
+   * `riskLevel` is `not_assessed` and no verdict may be rendered.
+   */
+  riskInputsAssessed: boolean;
+  /**
+   * W04-C4: true only when a required-document set was actually read for this
+   * tender. False means "no requirement list is recorded" — not "0 of N done".
+   */
+  requiredDocumentsAssessed: boolean;
   crmSyncStatus: 'not_synced' | 'synced' | 'sync_failed' | 'conflict' | 'simulated';
   submissionModel: 'single_pack' | 'multi_pack';
   /**
@@ -122,7 +138,11 @@ function emptyTenderWorkspaceBundle(
     submissionEmails: [],
     tenderType: '',
     readinessScore: 0,
-    riskLevel: 'green',
+    // W04-C4: nothing was read, so nothing was assessed. 'green' here rendered
+    // as an "On Track" badge on a bundle that never loaded.
+    riskLevel: 'not_assessed',
+    riskInputsAssessed: false,
+    requiredDocumentsAssessed: false,
     crmSyncStatus: 'not_synced',
     submissionModel: 'single_pack',
     crmPipelineStageRaw: null,
@@ -687,14 +707,29 @@ async function fetchTenderPlaceholders(tenderId: string, packIds: string[]): Pro
   return [];
 }
 
-async function fetchTenderRequiredDocuments(packIds: string[]): Promise<TenderRequiredDocument[]> {
-  void packIds;
-  return [];
+/**
+ * W04-C4 — a stub is not an empty result.
+ *
+ * These two collections have no verified source in the clean app: the legacy
+ * tender child tables are read-disabled and nothing replaced them. Returning a
+ * bare `[]` made "never read" indistinguishable from "read, and genuinely
+ * empty", and a downstream verdict (riskLevel) was computed over the difference.
+ * `loaded: false` carries the distinction to the caller so it can decline to
+ * state a verdict instead of inventing a reassuring one.
+ */
+interface TenderCollectionRead<T> {
+  loaded: boolean;
+  items: T[];
 }
 
-async function fetchTenderComplianceItems(packIds: string[]): Promise<TenderComplianceItem[]> {
+async function fetchTenderRequiredDocuments(packIds: string[]): Promise<TenderCollectionRead<TenderRequiredDocument>> {
   void packIds;
-  return [];
+  return { loaded: false, items: [] };
+}
+
+async function fetchTenderComplianceItems(packIds: string[]): Promise<TenderCollectionRead<TenderComplianceItem>> {
+  void packIds;
+  return { loaded: false, items: [] };
 }
 
 
@@ -791,7 +826,7 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
   const packIds = packs.map(p => p.id);
   const documents = documentsFromTenderRow(header.row, tenderId);
 
-  const [placeholders, requiredDocuments, complianceItems, splitChecks, packOutputs, submissionEmails] = await Promise.all([
+  const [placeholders, requiredDocumentsRead, complianceItemsRead, splitChecks, packOutputs, submissionEmails] = await Promise.all([
     fetchTenderPlaceholders(tenderId, packIds),
     fetchTenderRequiredDocuments(packIds),
     fetchTenderComplianceItems(packIds),
@@ -799,6 +834,8 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
     fetchTenderPackOutputs(tenderId),
     fetchTenderSubmissionEmails(tenderId),
   ]);
+  const requiredDocuments = requiredDocumentsRead.items;
+  const complianceItems = complianceItemsRead.items;
 
   // Derive workspace-level fields from pack metadata (first pack with the fields)
   const anyPack = packs[0] as any;
@@ -806,15 +843,23 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
   const readinessScore = packs.length > 0
     ? Math.round(packs.reduce((s, p) => s + p.readinessScore, 0) / packs.length)
     : 0;
-  // riskLevel derived from real compliance gaps and missing documents — no mock gates
+  // riskLevel derived from real compliance gaps and missing documents — no mock gates.
+  //
+  // W04-C4: both inputs are currently NOT READ (see fetchTenderComplianceItems /
+  // fetchTenderRequiredDocuments). Deriving over two never-loaded collections
+  // produced zero gaps for every tender, which the header rendered as a green
+  // "On Track" badge — a verdict about data nobody looked at. A verdict may only
+  // be stated when the inputs it derives from were actually loaded.
+  const riskInputsAssessed = requiredDocumentsRead.loaded && complianceItemsRead.loaded;
   const complianceGaps = complianceItems.filter(c =>
     c.status === 'non_compliant' || c.status === 'clarification_required'
   ).length;
   const missingDocsCount = requiredDocuments.filter(d =>
     d.status === 'awaiting' || d.nativeStatus === 'missing'
   ).length;
-  const riskLevel: 'green' | 'amber' | 'red' =
-    complianceGaps > 5 || missingDocsCount > 5 ? 'red'
+  const riskLevel: TenderRiskLevel = !riskInputsAssessed
+    ? 'not_assessed'
+    : complianceGaps > 5 || missingDocsCount > 5 ? 'red'
     : complianceGaps > 0 || missingDocsCount > 0 ? 'amber'
     : 'green';
 
@@ -835,6 +880,8 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
     tenderType,
     readinessScore,
     riskLevel,
+    riskInputsAssessed,
+    requiredDocumentsAssessed: requiredDocumentsRead.loaded,
     crmSyncStatus: 'not_synced',
     submissionModel: packs.length > 1 ? 'multi_pack' : 'single_pack',
     crmPipelineStageRaw: typeof header.row.crm_pipeline_stage === 'string' && header.row.crm_pipeline_stage.trim()
@@ -852,6 +899,8 @@ export function bundleToTenderWorkspace(bundle: TenderWorkspaceBundle): TenderWo
     tenderType: bundle.tenderType,
     readinessScore: bundle.readinessScore,
     riskLevel: bundle.riskLevel,
+    riskInputsAssessed: bundle.riskInputsAssessed,
+    requiredDocumentsAssessed: bundle.requiredDocumentsAssessed,
     crmSyncStatus: bundle.crmSyncStatus,
     submissionModel: bundle.submissionModel,
     crmPipelineStageRaw: bundle.crmPipelineStageRaw,
