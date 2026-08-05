@@ -17,6 +17,14 @@
  *    the frontend origin on :5300 and return the SPA shell), no
  *    localhost:3001, and no proxy.
  *
+ * AUTH (clean-server routes only)
+ *  - The clean server's document routes require
+ *    `Authorization: Bearer <supabase access token>` and answer 401
+ *    AUTH_REQUIRED without one. The token is read from the live session before
+ *    each call; with no session the call fails fast instead of producing a
+ *    misleading empty result. Row 69 needs nothing here: the Supabase client
+ *    already carries the session.
+ *
  * HONESTY
  *  - A read that cannot be made, is refused, or comes back in a shape this
  *    module does not recognise throws `DocumentRuntimeError`. It is NEVER
@@ -115,16 +123,53 @@ async function readFailureMessage(response: Response): Promise<string> {
     // Do not echo an HTML error page back at the user as if it were a message.
     if (trimmed && !trimmed.startsWith("<")) return trimmed.slice(0, 300);
   }
+  // A 401 with no readable body still has to say something true and specific.
+  if (response.status === 401) return "Clean server rejected the request as unauthenticated (401).";
   return `Clean server responded ${response.status}${response.statusText ? ` ${response.statusText}` : ""}.`;
 }
 
-/** Issue a clean-server request; network failure and non-2xx both throw. */
+/**
+ * The clean server's document routes require the caller's Supabase access
+ * token: it forwards the token so Postgres RLS decides row visibility, and
+ * refuses (401 AUTH_REQUIRED) when none is present.
+ *
+ * Why this must fail fast rather than "just try": `generated_documents` grants
+ * SELECT only to the `authenticated` role, so an anonymous read comes back as
+ * an EMPTY LIST rather than an error — an "empty but OK" lie. Firing a request
+ * we know cannot succeed would put that lie in front of the user.
+ */
+async function requireAccessToken(): Promise<string> {
+  let token = "";
+  try {
+    const { data } = await supabase.auth.getSession();
+    token = text(data?.session?.access_token);
+  } catch (cause) {
+    const detail = cause instanceof Error && cause.message ? ` (${cause.message})` : "";
+    throw new DocumentRuntimeError(`Could not read the current sign-in session${detail}.`);
+  }
+
+  if (!token) {
+    throw new DocumentRuntimeError(
+      "Not signed in — document records are protected and cannot be loaded.",
+    );
+  }
+  return token;
+}
+
+/**
+ * Issue an authenticated clean-server request. A missing session, a network
+ * failure and any non-2xx (including a genuine 401) all throw.
+ */
 async function requestCleanServer(path: string, init?: RequestInit): Promise<Response> {
   const url = cleanServerUrl(path);
+  const token = await requireAccessToken();
+
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${token}`);
 
   let response: Response;
   try {
-    response = await fetch(url, init);
+    response = await fetch(url, { ...init, headers });
   } catch (cause) {
     const detail = cause instanceof Error && cause.message ? ` (${cause.message})` : "";
     throw new DocumentRuntimeError(`Clean document server not reachable at ${url}${detail}`);

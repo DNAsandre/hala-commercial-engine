@@ -26,10 +26,18 @@ import {
 const sb = vi.hoisted(() => ({
   result: { data: null as unknown, error: null as unknown },
   calls: [] as Array<{ table: string; filters: Array<[string, unknown]>; order: unknown[] }>,
+  session: null as { access_token?: string } | null,
+  sessionThrows: null as Error | null,
 }));
 
 vi.mock("@/lib/supabase", () => ({
   supabase: {
+    auth: {
+      getSession: async () => {
+        if (sb.sessionThrows) throw sb.sessionThrows;
+        return { data: { session: sb.session }, error: null };
+      },
+    },
     from(table: string) {
       const call = { table, filters: [] as Array<[string, unknown]>, order: [] as unknown[] };
       sb.calls.push(call);
@@ -62,6 +70,10 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
   sb.result = { data: null, error: null };
   sb.calls.length = 0;
+  // Clean-server routes are authenticated: default the suite to a signed-in
+  // caller, and opt into the no-session case explicitly.
+  sb.session = { access_token: "test-access-token" };
+  sb.sessionThrows = null;
 });
 
 afterEach(() => {
@@ -71,6 +83,10 @@ afterEach(() => {
 
 function requestedUrl(call = 0): string {
   return String(fetchMock.mock.calls[call][0]);
+}
+
+function requestedAuthHeader(call = 0): string | null {
+  return new Headers(fetchMock.mock.calls[call][1]?.headers).get("Authorization");
 }
 
 describe("listWorkspaceDocuments (row 69 — direct Supabase)", () => {
@@ -331,5 +347,82 @@ describe("generateDocumentPdf", () => {
     fetchMock.mockResolvedValue(jsonResponse({ ok: true }, 201));
 
     await expect(generateDocumentPdf(input)).rejects.toThrow(/did not confirm a persisted document/i);
+  });
+});
+
+// ─── auth contract (clean-server routes: rows 27, 30, 31) ────────────────────
+
+describe("clean-server auth contract", () => {
+  const generateInput = {
+    workspace_id: "ws-1",
+    document_type: "quote" as const,
+    source_id: "q-1",
+  };
+
+  it("attaches the Supabase access token to the scope document list", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([]));
+
+    await listScopeDocumentsFromCleanServer("ws-1");
+
+    expect(requestedAuthHeader()).toBe("Bearer test-access-token");
+  });
+
+  it("attaches the Supabase access token to the download request", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: { id: "doc-1", download_url: "https://s/d.pdf" } }));
+
+    await fetchDocumentDownload("doc-1");
+
+    expect(requestedAuthHeader()).toBe("Bearer test-access-token");
+  });
+
+  it("attaches the token to generate-pdf without dropping the JSON content type", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: { id: "doc-9", storage_path: "x.pdf" } }, 201));
+
+    await generateDocumentPdf(generateInput);
+
+    const headers = new Headers(fetchMock.mock.calls[0][1]?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer test-access-token");
+    expect(headers.get("Content-Type")).toBe("application/json");
+  });
+
+  it("fails fast without a session instead of firing a request that would 401", async () => {
+    sb.session = null;
+
+    await expect(listScopeDocumentsFromCleanServer("ws-1")).rejects.toThrow(/not signed in/i);
+    await expect(fetchDocumentDownload("doc-1")).rejects.toThrow(/not signed in/i);
+    await expect(generateDocumentPdf(generateInput)).rejects.toThrow(/not signed in/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fails fast when the session itself cannot be read", async () => {
+    sb.sessionThrows = new Error("storage unavailable");
+
+    await expect(listScopeDocumentsFromCleanServer("ws-1")).rejects.toThrow(/could not read the current sign-in session/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a genuine 401 from the server as an error, never an empty list", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ error: "Authentication required", code: "AUTH_REQUIRED" }, 401),
+    );
+
+    await expect(listScopeDocumentsFromCleanServer("ws-1")).rejects.toMatchObject({
+      name: "DocumentRuntimeError",
+      message: "Authentication required",
+      status: 401,
+    });
+  });
+
+  it("still says something true when a 401 carries no readable body", async () => {
+    fetchMock.mockResolvedValue(new Response("", { status: 401 }));
+
+    await expect(listScopeDocumentsFromCleanServer("ws-1")).rejects.toThrow(/unauthenticated \(401\)/i);
+  });
+
+  it("leaves row 69 alone: the direct Supabase read needs no bearer token", async () => {
+    sb.session = null;
+    sb.result = { data: [{ id: "doc-1" }], error: null };
+
+    await expect(listWorkspaceDocuments("ws-1")).resolves.toEqual([{ id: "doc-1" }]);
   });
 });
