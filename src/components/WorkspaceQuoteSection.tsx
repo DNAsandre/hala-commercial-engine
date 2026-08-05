@@ -33,12 +33,30 @@ const statusConfig: Record<string, { color: string; label: string; icon: any }> 
   expired: { color: "bg-gray-100 text-gray-500 border-gray-200", label: "Expired", icon: Clock },
 };
 
-const ragDot: Record<string, string> = { green: "bg-emerald-500", amber: "bg-amber-500", red: "bg-red-500" };
+const ragDot: Record<string, string> = {
+  green: "bg-emerald-500",
+  amber: "bg-amber-500",
+  red: "bg-red-500",
+  // A quote with no captured margin gets a neutral light, not a red one:
+  // "unknown" is not the same finding as "dangerously thin".
+  unknown: "bg-muted-foreground/30",
+};
 
-function getRAG(gp: number) {
+function getRAG(gp: number | null) {
+  if (gp == null) return "unknown";
   if (gp >= 25) return "green";
   if (gp >= 15) return "amber";
   return "red";
+}
+
+/** null = the column holds no value. 0 = a real, stored zero. */
+function money(currency: string | null, value: number | null) {
+  if (value == null) return "Not captured";
+  return `${currency || "—"} ${value.toLocaleString()}`;
+}
+
+function percent(value: number | null) {
+  return value == null ? "Not captured" : `${value}%`;
 }
 
 interface Props {
@@ -226,7 +244,7 @@ function QuoteCard({ q, isLatest, onEdit, onSubmit, onApprove, onReject, onNewVe
 }) {
   const cfg = statusConfig[q.status ?? "draft"] || statusConfig.draft;
   const Icon = cfg.icon;
-  const rag = getRAG(q.gp_percent || 0);
+  const rag = getRAG(q.gp_percent);
 
   return (
     <div className={`rounded-lg border p-3 ${isLatest ? "border-border" : "border-muted bg-muted/10"}`}>
@@ -240,11 +258,12 @@ function QuoteCard({ q, isLatest, onEdit, onSubmit, onApprove, onReject, onNewVe
         {isLatest && <Badge variant="outline" className="text-[10px] border-blue-300 bg-blue-50">Latest</Badge>}
       </div>
       <div className="grid grid-cols-4 gap-3 text-xs mb-2">
-        {/* Currency and validity are stored columns. When the row genuinely
-            holds no value they render as unknown, never as an assumed default. */}
-        <div><span className="text-muted-foreground">Annual Revenue</span><p className="font-medium">{q.currency || "—"} {q.annual_revenue.toLocaleString()}</p></div>
-        <div><span className="text-muted-foreground">Cost</span><p className="font-medium">{q.currency || "—"} {q.estimated_cost.toLocaleString()}</p></div>
-        <div><span className="text-muted-foreground">GP%</span><p className="font-medium">{q.gp_percent}%</p></div>
+        {/* Every value here is a stored column. A column the row genuinely holds
+            no value for reads "Not captured" — never 0, never an assumed default.
+            A displayed 0 therefore always means a real, stored zero. */}
+        <div><span className="text-muted-foreground">Annual Revenue</span><p className="font-medium">{money(q.currency, q.annual_revenue)}</p></div>
+        <div><span className="text-muted-foreground">Cost</span><p className="font-medium">{money(q.currency, q.estimated_cost)}</p></div>
+        <div><span className="text-muted-foreground">GP%</span><p className="font-medium">{percent(q.gp_percent)}</p></div>
         <div><span className="text-muted-foreground">Validity</span><p className="font-medium">{q.validity_days != null ? `${q.validity_days} days` : "Not captured"}</p></div>
       </div>
       {q.change_reason && <p className="text-[10px] text-muted-foreground mb-2"><span className="font-medium">Change reason:</span> {q.change_reason}</p>}

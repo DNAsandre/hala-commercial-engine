@@ -179,7 +179,10 @@ function PropCard({ p, isLatest, onEdit, onSubmitReview, onMarkReadyCRM, onMarkS
   return (
     <div className={`rounded-lg border p-3 ${isLatest ? "" : "bg-muted/10 border-muted"}`}>
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-sm font-semibold">V{p.version_number}</span>
+        {/* Only shown when the ticket actually carries a version. No established
+            path writes type_details.proposal_version, so rendering "V1"
+            unconditionally asserted a number the database does not hold. */}
+        {p.version_number != null && <span className="text-sm font-semibold">V{p.version_number}</span>}
         <Badge variant="outline" className={`text-[10px] ${cfg.color}`}>{cfg.label}</Badge>
         {isLatest && <Badge variant="outline" className="text-[10px] border-blue-300 bg-blue-50">Latest</Badge>}
       </div>
