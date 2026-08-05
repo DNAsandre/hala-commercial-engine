@@ -135,7 +135,27 @@ let syncEventsSnapshot: HardenedSyncEvent[] = [];
 // CONNECTION READS
 // ============================================================
 
-export async function fetchConnections(): Promise<CRMConnection[]> {
+/**
+ * Outcome of a connection read. Wave 04 requires a failed read to be visibly
+ * different from real emptiness: `crm_connections` does not exist in the
+ * configured project (PGRST205), so the bare array form below cannot tell a
+ * caller whether zero connections means "none configured" or "could not ask".
+ *
+ * - `ok`          — the read succeeded; `connections` is the real set (possibly empty).
+ * - `unavailable` — the table is not present in this project (PGRST205 / 42P01).
+ * - `error`       — the read failed for any other reason.
+ *
+ * Provisioning `crm_connections` and designing synchronization are out of scope
+ * for this wave; reporting the truth is not.
+ */
+export type CrmConnectionsResult =
+  | { status: "ok"; connections: CRMConnection[] }
+  | { status: "unavailable"; connections: []; message: string }
+  | { status: "error"; connections: []; message: string };
+
+const MISSING_TABLE_CODES = new Set(["PGRST205", "42P01"]);
+
+export async function fetchConnectionsResult(): Promise<CrmConnectionsResult> {
   const { data, error } = await supabase
     .from("crm_connections")
     .select("*")
@@ -143,10 +163,27 @@ export async function fetchConnections(): Promise<CRMConnection[]> {
   if (error) {
     handleSupabaseError("fetchConnections", error, { silent: true });
     setFetchError("fetchConnections", error);
-    return [];
+    const code = (error as { code?: string }).code ?? "";
+    if (MISSING_TABLE_CODES.has(code)) {
+      return {
+        status: "unavailable",
+        connections: [],
+        message: "CRM connection storage is not provisioned in this environment.",
+      };
+    }
+    return { status: "error", connections: [], message: error.message };
   }
   clearFetchError("fetchConnections");
-  return (data ?? []).map(mapConnection);
+  return { status: "ok", connections: (data ?? []).map(mapConnection) };
+}
+
+/**
+ * Bare-array form retained for callers that only render a list. It cannot
+ * distinguish failure from emptiness — anything that shows counts, health, or
+ * "no connections" copy must use {@link fetchConnectionsResult} instead.
+ */
+export async function fetchConnections(): Promise<CRMConnection[]> {
+  return (await fetchConnectionsResult()).connections;
 }
 
 // ============================================================
