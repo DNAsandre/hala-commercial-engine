@@ -43,10 +43,14 @@ import {
 //     values like "prov-openai" while `ai_providers.id` holds
 //     "aip-openai-001", so the previous `provider?.name` printed the literal
 //     string "undefined" for every bot on the page.
+//  4. SC-01 Wave 04 (defect D): a failed `ai_providers` read used to be
+//     indistinguishable from "no provider record has this id", and a failed
+//     `ai_bots` read printed a confident "0" bot records against every
+//     provider. Both now say that the read failed.
 import {
+  describeBotProvider,
   readAiBots,
   readAiProviders,
-  resolveBotProviderLabel,
   type AiBotRecord,
   type AiProviderRecord,
   type RecordRead,
@@ -285,7 +289,7 @@ export default function BotRegistry() {
               </CardContent></Card>
             )}
             {filteredBots.map(bot => {
-              const providerLabel = resolveBotProviderLabel(bot.providerId, providers);
+              const providerLabel = describeBotProvider(bot.providerId, providersRead);
               return (
                 <Card key={bot.id} className="hover:shadow-md transition-shadow">
                   <CardContent className="py-4">
@@ -310,7 +314,7 @@ export default function BotRegistry() {
                               this build never invokes a bot, so no runtime
                               figure is shown. */}
                           <div className="flex items-center gap-4 mt-2 text-xs text-slate-400">
-                            <span className={`flex items-center gap-1 ${providerLabel.matched ? '' : 'text-amber-600'}`}>
+                            <span className={`flex items-center gap-1 ${providerLabel.state === 'matched' ? '' : 'text-amber-600'}`}>
                               <Cpu className="w-3 h-3" />{providerLabel.label}
                             </span>
                             <span className="flex items-center gap-1">Model: {bot.model ?? 'not recorded'}</span>
@@ -368,8 +372,17 @@ export default function BotRegistry() {
                       <p className="text-xs text-slate-400">Models: {provider.models.join(', ')}</p>
                     </div>
                     <div className="pt-1">
+                      {/* A count of zero is only stated when the bot records
+                          were actually read. If that read failed, `bots` is []
+                          and "0" would be an assertion about data nobody
+                          saw. */}
                       <p className="text-xs text-slate-400">
-                        Bot records whose provider_id equals this provider id: {bots.filter(b => b.providerId === provider.id).length}
+                        Bot records whose provider_id equals this provider id:{' '}
+                        {botsLoaded
+                          ? bots.filter(b => b.providerId === provider.id).length
+                          : botsRead === null
+                            ? 'bot records not read yet'
+                            : 'unknown — the bot records could not be read'}
                       </p>
                     </div>
                   </div>

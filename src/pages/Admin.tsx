@@ -101,6 +101,41 @@ function FacilitiesEmbed() {
   return <FacilitiesAdmin />;
 }
 
+/* ─── User field guards ────────────────────────────────────────────────────
+ * SC-01 Wave 04 (defect C). `users.name`, `.email` and `.role` are nullable
+ * columns, and the Users tab called `.toLowerCase()` on all three inside the
+ * search filter and `.split(" ")` on the name to build the avatar initials.
+ * A single null column threw a TypeError during render and took the WHOLE
+ * Users tab down — no list, no error, no recovery. A missing field must
+ * degrade to an honest placeholder instead.
+ */
+export const USER_FIELD_NOT_RECORDED = "not recorded";
+
+export function userField(value: unknown): string {
+  return typeof value === "string" && value.trim() !== "" ? value : USER_FIELD_NOT_RECORDED;
+}
+
+/** Avatar initials. A name that is absent yields "?" rather than a crash. */
+export function userInitials(name: unknown): string {
+  if (typeof name !== "string") return "?";
+  const initials = name
+    .split(" ")
+    .map(part => part.trim()[0])
+    .filter(Boolean)
+    .join("")
+    .slice(0, 2);
+  return initials || "?";
+}
+
+/** Search across the three text columns, skipping any that are not recorded. */
+export function matchesUserSearch(user: { name?: unknown; email?: unknown; role?: unknown }, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (q === "") return true;
+  return [user.name, user.email, user.role].some(
+    value => typeof value === "string" && value.toLowerCase().includes(q),
+  );
+}
+
 /* ─── CRM Sync Embed ───────────────────────────────────────────────────────
  * SC-01 Wave 04, Wave 03 observation 1.
  *
@@ -213,36 +248,79 @@ function CRMSyncEmbed() {
   );
 }
 
+/* ─── Knowledgebase read state ─────────────────────────────────────────────
+ * SC-01 Wave 04 (defect D). `fetchCollections` (src/lib/knowledgebase.ts:92-94)
+ * THROWS on a failed read — it does not return []. The previous comment here
+ * claimed the opposite, and the effect had no `.catch`, so a rejected promise
+ * left `kbLoading` true forever: the Knowledgebase tab spun indefinitely and a
+ * read failure was indistinguishable from loading.
+ *
+ * `lib/knowledgebase.ts` is not on this lane's write allowlist, so the throw is
+ * handled here at the call site and the three outcomes are kept apart.
+ */
+export type KnowledgebaseEmbedRead =
+  | { status: "loaded"; collections: KBCollection[] }
+  | { status: "empty" }
+  | { status: "error"; error: string };
+
+export async function loadKnowledgebaseCollections(): Promise<KnowledgebaseEmbedRead> {
+  try {
+    const collections = await fetchCollections();
+    if (collections.length === 0) return { status: "empty" };
+    return { status: "loaded", collections };
+  } catch (err) {
+    return { status: "error", error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 function KnowledgebaseEmbed() {
-  const [collections, setKBCollections] = useState<KBCollection[]>([]);
-  const [kbLoading, setKBLoading] = useState(true);
+  const [read, setRead] = useState<KnowledgebaseEmbedRead | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    fetchCollections().then((c) => { if (!cancelled) { setKBCollections(c); setKBLoading(false); } });
+    setRead(null);
+    loadKnowledgebaseCollections().then((r) => { if (!cancelled) setRead(r); });
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
 
-  if (kbLoading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+  // 1. LOADING — nothing is known yet.
+  if (read === null) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin" /></div>;
 
-  /* SC-01 Wave 04 (requirement D): `fetchCollections` lives in lib/knowledgebase
-   * (outside this lane's write allowlist) and returns [] for BOTH a failed read
-   * and an empty store, so this panel cannot tell them apart. Rather than
-   * asserting "0 collections" as fact, the zero case says what is actually
-   * known. Reported as an observation for the lane that owns that module. */
-  if (collections.length === 0) {
+  // 2. FAILED READ — no count is shown, because no count is known.
+  if (read.status === "error") {
+    return (
+      <Card className="border border-red-200 bg-red-50/40 shadow-none">
+        <CardContent className="p-6 space-y-2">
+          <p className="text-sm font-semibold text-red-700">Knowledgebase collections could not be read</p>
+          <p className="text-xs text-muted-foreground max-w-2xl">
+            Nothing is listed and no totals are shown. The number of recorded collections is unknown — it is not zero.
+          </p>
+          <p className="text-[11px] font-mono text-muted-foreground break-all">{read.error}</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={() => setReloadKey(k => k + 1)}>
+            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // 3. REAL EMPTY — the read succeeded and returned nothing.
+  if (read.status === "empty") {
     return (
       <Card className="border border-border shadow-none">
         <CardContent className="p-6 text-center space-y-1">
-          <p className="text-sm font-medium">No knowledgebase collections were returned</p>
+          <p className="text-sm font-medium">No knowledgebase collections are visible to this account</p>
           <p className="text-xs text-muted-foreground max-w-xl mx-auto">
-            No collections are visible to this account. This read cannot currently distinguish an empty store from a
-            failed read, so no count is asserted and none is shown.
+            The read of the knowledgebase collections succeeded and returned zero rows. Collections hidden by
+            row-level security would not appear here, so this is not a statement that none exist.
           </p>
         </CardContent>
       </Card>
     );
   }
+
+  const collections = read.collections;
 
   return (
     <div className="space-y-3">
@@ -1272,11 +1350,11 @@ function ResetPasswordModal({ user, onClose }: { user: any; onClose: () => void 
         <CardContent className="space-y-4">
           <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
             <div className="w-8 h-8 rounded-full bg-[var(--color-hala-navy)] text-white flex items-center justify-center text-xs font-bold">
-              {user.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
+              {userInitials(user.name)}
             </div>
             <div>
-              <div className="text-sm font-medium">{user.name}</div>
-              <div className="text-xs text-muted-foreground">{user.email}</div>
+              <div className="text-sm font-medium">{userField(user.name)}</div>
+              <div className="text-xs text-muted-foreground">{userField(user.email)}</div>
             </div>
           </div>
           <div className="space-y-1.5">
@@ -1413,11 +1491,7 @@ export default function AdminPanel() {
    * indistinguishable from an account with no team members. */
   const usersFetchError = usersError ?? getFetchError("fetchUsers")?.error.message ?? null;
 
-  const filteredUsers = users.filter((u: any) =>
-    u.name.toLowerCase().includes(userSearch.toLowerCase()) ||
-    u.email.toLowerCase().includes(userSearch.toLowerCase()) ||
-    u.role.toLowerCase().includes(userSearch.toLowerCase())
-  );
+  const filteredUsers = users.filter((u: any) => matchesUserSearch(u, userSearch));
 
   return (
     <div className="max-w-[1400px] mx-auto">
@@ -1640,17 +1714,17 @@ export default function AdminPanel() {
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
                             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isInactive ? "bg-gray-300 text-gray-600" : "bg-[var(--color-hala-navy)] text-white"}`}>
-                              {user.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
+                              {userInitials(user.name)}
                             </div>
                             <div>
-                              <div className="text-sm font-medium">{user.name}</div>
-                              <div className="text-xs text-muted-foreground">{user.email}</div>
+                              <div className="text-sm font-medium">{userField(user.name)}</div>
+                              <div className="text-xs text-muted-foreground">{userField(user.email)}</div>
                             </div>
                           </div>
                         </td>
                         <td className="px-4 py-3">
                           <Badge variant="outline" className={`text-[10px] ${roleColors[user.role] || ""}`}>
-                            {user.role.replace(/_/g, " ")}
+                            {userField(user.role).replace(/_/g, " ")}
                           </Badge>
                         </td>
                         <td className="px-4 py-3 text-sm text-muted-foreground">{user.department || "—"}</td>

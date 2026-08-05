@@ -539,6 +539,40 @@ export function describeRecordRead(
   }
 }
 
+// ── Recorded timestamps ──────────────────────────────────────
+//
+// SC-01 Wave 04 correction. `new Date(x).toLocaleDateString()` does NOT throw
+// on an unparseable value — it returns the literal string "Invalid Date", so a
+// surrounding try/catch is not a guard and the words "Invalid Date" reach the
+// screen as though they were a recorded value. The only reliable test is
+// `Number.isNaN(d.getTime())`, applied here once so every System surface
+// degrades the same honest way.
+
+/** Shown when the column holds nothing at all. */
+export const TIMESTAMP_NOT_RECORDED = "not recorded";
+/** Shown when the column holds something that is not a readable date. */
+export const TIMESTAMP_UNREADABLE = "unreadable date value";
+
+function formatRecordedInstant(
+  value: string | number | null | undefined,
+  render: (d: Date) => string,
+): string {
+  if (value === null || value === undefined || value === "") return TIMESTAMP_NOT_RECORDED;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return TIMESTAMP_UNREADABLE;
+  return render(d);
+}
+
+/** Date only. Never returns "Invalid Date". */
+export function formatRecordedDate(value: string | number | null | undefined): string {
+  return formatRecordedInstant(value, (d) => d.toLocaleDateString());
+}
+
+/** Date and time. Never returns "Invalid Date". */
+export function formatRecordedDateTime(value: string | number | null | undefined): string {
+  return formatRecordedInstant(value, (d) => d.toLocaleString());
+}
+
 // ── Audit trail (audit_log) ──────────────────────────────────
 
 export const AUDIT_LOG_TABLE = "audit_log";
@@ -704,6 +738,43 @@ export function resolveBotProviderLabel(
   const provider = providers.find((p) => p.id === providerId);
   if (provider) return { matched: true, label: provider.displayName };
   return { matched: false, label: `${providerId} (no matching provider record)` };
+}
+
+/**
+ * How a bot's recorded `provider_id` should be described, given the state of
+ * the provider read itself.
+ *
+ * SC-01 Wave 04 correction. `resolveBotProviderLabel` answers "no matching
+ * provider record has this id" from the rows it was handed — but when the
+ * `ai_providers` read FAILED, the caller hands it `[]` and that sentence
+ * becomes an assertion about records nobody ever looked at. "The provider list
+ * could not be read" and "no provider record has this id" are different facts
+ * and must look different to a human.
+ */
+export type BotProviderState =
+  | "unread"      // the provider read has not resolved yet
+  | "unreadable"  // the provider read failed / the table is absent
+  | "none"        // the bot record stores no provider id
+  | "matched"     // a provider record with that id was read
+  | "unmatched";  // the read succeeded and no provider record has that id
+
+export function describeBotProvider(
+  providerId: string | null,
+  providersRead: RecordRead<AiProviderRecord> | null,
+): { state: BotProviderState; label: string } {
+  if (!providerId) return { state: "none", label: "No provider recorded" };
+  if (providersRead === null) {
+    return { state: "unread", label: `${providerId} (provider records not read yet)` };
+  }
+  if (providersRead.status === "error" || providersRead.status === "unavailable") {
+    return {
+      state: "unreadable",
+      label: `${providerId} (the provider records could not be read, so it is unknown whether one has this id)`,
+    };
+  }
+  const provider = providersRead.rows.find((p) => p.id === providerId);
+  if (provider) return { state: "matched", label: provider.displayName };
+  return { state: "unmatched", label: `${providerId} (no matching provider record)` };
 }
 
 // ── Bot versions (ai_bot_versions) ───────────────────────────
@@ -919,4 +990,81 @@ export async function readFacilities(): Promise<RecordRead<FacilityRecord>> {
     .select(FACILITIES_COLUMNS)
     .order("sort_order", { ascending: true });
   return classifyListRead(FACILITIES_TABLE, data, error, mapFacilityRow);
+}
+
+/**
+ * Update one facility row and CONFIRM the stored result before answering.
+ *
+ * SC-01 Wave 04 correction. The Facilities admin previously issued
+ * `.update(...).eq("id", id)` with no `.select()` and then raised
+ * `toast.success("Updated")`. PostgREST returns no error when an update
+ * matches zero rows (deleted row, wrong id, or a row this account may not
+ * write), so the administrator was told a change had been saved that the
+ * database never stored. A resolved request is not proof of persistence.
+ *
+ * The update is read back and every field that was requested is compared with
+ * the value the database now holds. Only an exact match is reported as stored.
+ * This is the same shape as `intake-save.changeStage`.
+ */
+export interface FacilityUpdateFields {
+  name?: string;
+  code?: string | null;
+  region?: string | null;
+  active?: boolean;
+}
+
+export type FacilityWriteResult =
+  /** The row was read back and holds exactly the requested values. */
+  | { status: "stored"; stored: Record<string, unknown> }
+  /** The request resolved without error but the value is NOT in the database. */
+  | { status: "not_stored"; error: string }
+  /** The request itself failed. */
+  | { status: "error"; error: string };
+
+/** null and undefined are the same absence; everything else compares strictly. */
+function sameStoredValue(stored: unknown, requested: unknown): boolean {
+  return (stored ?? null) === (requested ?? null);
+}
+
+export async function updateFacility(
+  id: string,
+  fields: FacilityUpdateFields,
+): Promise<FacilityWriteResult> {
+  const patch = fields as Record<string, unknown>;
+  const requestedColumns = Object.keys(patch);
+  if (requestedColumns.length === 0) {
+    return { status: "error", error: "No fields were supplied to update." };
+  }
+
+  // Read back exactly the columns this call claims to change, plus the id.
+  const projection = ["id", ...requestedColumns].join(", ");
+
+  const { data, error } = await supabase
+    .from(FACILITIES_TABLE)
+    .update(patch)
+    .eq("id", id)
+    .select(projection);
+
+  if (error) return { status: "error", error: errorText(error) };
+
+  const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+  if (rows.length === 0) {
+    return {
+      status: "not_stored",
+      error:
+        "The change was not stored: no matching facility record was updated. " +
+        "The record may have been removed, or this account may not be permitted to change it.",
+    };
+  }
+
+  const stored = rows[0] ?? {};
+  const mismatched = requestedColumns.filter((column) => !sameStoredValue(stored[column], patch[column]));
+  if (mismatched.length > 0) {
+    const detail = mismatched
+      .map((column) => `${column} still reads "${String(stored[column] ?? "")}"`)
+      .join("; ");
+    return { status: "not_stored", error: `The change was not stored: ${detail}.` };
+  }
+
+  return { status: "stored", stored };
 }

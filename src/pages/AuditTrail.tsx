@@ -25,11 +25,61 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   AUDIT_LOG_TABLE,
+  formatRecordedDateTime,
   readAuditTrail,
   type AuditTrailRecord,
   type RecordRead,
 } from "@/lib/ops-runtime";
 import { Loader2 } from "lucide-react";
+
+/**
+ * SC-01 Wave 04 correction (defect C). A Radix `SelectItem` throws when its
+ * `value` is the empty string, and `audit_log.entity_type` / `.action` are
+ * nullable — `mapAuditRow` maps a null column to "". One such row took down
+ * the whole page. Only values that are actually present become options; the
+ * same guard `BotAudit` already applies to its recorded statuses.
+ */
+export function selectableAuditValues(rows: readonly AuditTrailRecord[]): {
+  types: string[];
+  actions: string[];
+} {
+  return {
+    types: Array.from(new Set(rows.map(e => e.entityType).filter(Boolean))),
+    actions: Array.from(new Set(rows.map(e => e.action).filter(Boolean))),
+  };
+}
+
+/** The list the page renders, after both filters. */
+export function filterAuditEntries(
+  rows: readonly AuditTrailRecord[],
+  typeFilter: string,
+  actionFilter: string,
+): AuditTrailRecord[] {
+  return rows
+    .filter(e => typeFilter === "all" || e.entityType === typeFilter)
+    .filter(e => actionFilter === "all" || e.action === actionFilter);
+}
+
+/**
+ * SC-01 Wave 04 correction (defect G). These counters are computed over the
+ * SAME array the list renders — the filtered set. Previously they were
+ * computed over the unfiltered `auditLog` while a comment claimed otherwise,
+ * so applying a filter left "Total Events 194" sitting above three visible
+ * rows.
+ */
+export function summariseAuditEntries(rows: readonly AuditTrailRecord[]): {
+  total: number;
+  approvals: number;
+  overrides: number;
+  users: number;
+} {
+  return {
+    total: rows.length,
+    approvals: rows.filter(e => e.action === "approve").length,
+    overrides: rows.filter(e => e.action === "override").length,
+    users: new Set(rows.map(e => e.userName).filter(Boolean)).size,
+  };
+}
 
 const actionColors: Record<string, string> = {
   create: "bg-emerald-100 text-emerald-800",
@@ -103,12 +153,11 @@ export default function AuditTrail() {
 
   // ── State 3 of 3: SUCCESSFUL READ (rows, or a visible-zero) ─
   const auditLog = read.rows;
-  const filtered = auditLog
-    .filter(e => typeFilter === "all" || e.entityType === typeFilter)
-    .filter(e => actionFilter === "all" || e.action === actionFilter);
+  const filtered = filterAuditEntries(auditLog, typeFilter, actionFilter);
+  const stats = summariseAuditEntries(filtered);
+  const filtersActive = typeFilter !== "all" || actionFilter !== "all";
 
-  const uniqueTypes = Array.from(new Set(auditLog.map(e => e.entityType)));
-  const uniqueActions = Array.from(new Set(auditLog.map(e => e.action)));
+  const { types: uniqueTypes, actions: uniqueActions } = selectableAuditValues(auditLog);
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
@@ -145,15 +194,17 @@ export default function AuditTrail() {
           exact defect Wave 04 asks us to remove. */}
       {auditLog.length > 0 && (
       <>
-      {/* Summary Stats — each counter is computed over the same `auditLog`
-          array that the list below renders, so a counter can never disagree
-          with the data set it summarises. */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+      {/* Summary Stats — SC-01 Wave 04 (defect G). Each counter is computed
+          over `filtered`, which is exactly the array the list below renders,
+          so a counter can never disagree with the data set it summarises. The
+          labels say "shown" and the line underneath states the read total, so
+          the two numbers are never confused for one another. */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-2">
         {[
-          { label: "Total Events", value: auditLog.length, icon: Activity, color: "bg-blue-100 text-blue-800" },
-          { label: "Approvals", value: auditLog.filter(e => e.action === "approve").length, icon: CheckCircle, color: "bg-emerald-100 text-emerald-800" },
-          { label: "Overrides", value: auditLog.filter(e => e.action === "override").length, icon: AlertTriangle, color: "bg-amber-100 text-amber-800" },
-          { label: "Users Active", value: new Set(auditLog.map(e => e.userName)).size, icon: Users, color: "bg-[#075eea]/15 text-[#064fc4]" },
+          { label: "Events shown", value: stats.total, icon: Activity, color: "bg-blue-100 text-blue-800" },
+          { label: "Approvals shown", value: stats.approvals, icon: CheckCircle, color: "bg-emerald-100 text-emerald-800" },
+          { label: "Overrides shown", value: stats.overrides, icon: AlertTriangle, color: "bg-amber-100 text-amber-800" },
+          { label: "Users in shown events", value: stats.users, icon: Users, color: "bg-[#075eea]/15 text-[#064fc4]" },
         ].map(stat => (
           <Card key={stat.label} className="border border-border shadow-none">
             <CardContent className="p-3 flex items-center gap-3">
@@ -168,6 +219,11 @@ export default function AuditTrail() {
           </Card>
         ))}
       </div>
+      <p className="text-[11px] text-muted-foreground mb-6">
+        {filtersActive
+          ? `Counted over the ${filtered.length} ${filtered.length === 1 ? "entry" : "entries"} listed below, which is the filtered subset of the ${auditLog.length} read from ${AUDIT_LOG_TABLE}.`
+          : `Counted over all ${auditLog.length} ${auditLog.length === 1 ? "entry" : "entries"} read from ${AUDIT_LOG_TABLE}; no filter is applied.`}
+      </p>
 
       {/* Filters */}
       <div className="flex items-center gap-3 mb-4">
@@ -208,8 +264,11 @@ export default function AuditTrail() {
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5">{entry.details}</p>
                   </div>
+                  {/* SC-01 Wave 04 (defect B): toLocaleString() returns the
+                      literal string "Invalid Date" for an unparseable value
+                      and throws nothing, so it was rendered as if recorded. */}
                   <span className="text-[10px] text-muted-foreground font-mono shrink-0 whitespace-nowrap">
-                    {new Date(entry.timestamp).toLocaleString()}
+                    {formatRecordedDateTime(entry.timestamp)}
                   </span>
                 </div>
               );
