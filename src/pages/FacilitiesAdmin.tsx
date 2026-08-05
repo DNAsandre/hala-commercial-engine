@@ -17,20 +17,62 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Plus, Pencil, Warehouse, Save, X, Loader2 } from "lucide-react";
 
-interface Facility {
-  id: string;
-  name: string;
-  code: string | null;
-  region: string | null;
-  active: boolean;
-  sort_order: number;
-  created_at: string;
-  updated_at: string;
+import {
+  readFacilities,
+  updateFacility,
+  type FacilityRecord,
+  type FacilityWriteResult,
+  type RecordRead,
+} from "@/lib/ops-runtime";
+
+/**
+ * SC-01 Wave 04 (requirement: never show success until stored truth is
+ * confirmed). Both edit paths on this page used to run
+ * `.update(...).eq("id", id)` with no read-back and then raise a success
+ * toast. An update that matches zero rows returns no error, so the
+ * administrator was told the change was saved when nothing was stored.
+ *
+ * `updateFacility` reads the row back and compares the stored value with the
+ * requested one. This pure function turns that verdict into exactly what the
+ * user is told, so the rule "success only for `stored`" can be asserted
+ * without a DOM.
+ */
+export type FacilityWriteReport =
+  | { tone: "success"; message: string }
+  | { tone: "error"; message: string; description: string };
+
+export function describeFacilityWrite(
+  result: FacilityWriteResult,
+  subject: string,
+  successMessage: string,
+): FacilityWriteReport {
+  if (result.status === "error") {
+    return { tone: "error", message: `Failed to update ${subject}`, description: result.error };
+  }
+  if (result.status === "not_stored") {
+    return { tone: "error", message: `${subject} was NOT saved`, description: result.error };
+  }
+  return { tone: "success", message: successMessage };
+}
+
+/** Raises the report and answers whether the change is confirmed as stored. */
+function reportFacilityWrite(report: FacilityWriteReport): boolean {
+  if (report.tone === "error") {
+    toast.error(report.message, { description: report.description });
+    return false;
+  }
+  toast.success(report.message);
+  return true;
 }
 
 export default function FacilitiesAdmin() {
-  const [facilities, setFacilities] = useState<Facility[]>([]);
-  const [loading, setLoading] = useState(true);
+  /* SC-01 Wave 04: the previous loader toasted on error and left `facilities`
+   * as [], so a failed read rendered the "No facilities found. Run the
+   * intake002_facilities migration…" empty state — telling an administrator to
+   * run a migration when the table may be fully populated. */
+  const [read, setRead] = useState<RecordRead<FacilityRecord> | null>(null);
+  const facilities = read?.rows ?? [];
+  const loading = read === null;
 
   // New facility form
   const [showAdd, setShowAdd] = useState(false);
@@ -46,17 +88,12 @@ export default function FacilitiesAdmin() {
   const [editRegion, setEditRegion] = useState("");
 
   async function load() {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("facilities")
-      .select("*")
-      .order("sort_order", { ascending: true });
-    if (error) {
-      toast.error("Failed to load facilities", { description: error.message });
-    } else {
-      setFacilities((data ?? []) as Facility[]);
+    setRead(null);
+    const result = await readFacilities();
+    setRead(result);
+    if (result.status === "error" || result.status === "unavailable") {
+      toast.error("Failed to load facilities", { description: result.error });
     }
-    setLoading(false);
   }
 
   useEffect(() => { load(); }, []);
@@ -64,7 +101,7 @@ export default function FacilitiesAdmin() {
   async function handleAdd() {
     if (!newName.trim()) { toast.error("Name is required"); return; }
     setSaving(true);
-    const maxOrder = facilities.reduce((m, f) => Math.max(m, f.sort_order), 0);
+    const maxOrder = facilities.reduce((m, f) => Math.max(m, f.sortOrder), 0);
     const { error } = await supabase.from("facilities").insert({
       name: newName.trim(),
       code: newCode.trim() || null,
@@ -83,28 +120,38 @@ export default function FacilitiesAdmin() {
 
   async function handleSaveEdit(id: string) {
     if (!editName.trim()) { toast.error("Name is required"); return; }
-    const { error } = await supabase.from("facilities").update({
+    // The success message is raised ONLY after the stored row has been read
+    // back and matches what was requested.
+    const result = await updateFacility(id, {
       name: editName.trim(),
       code: editCode.trim() || null,
       region: editRegion || null,
-    }).eq("id", id);
-    if (error) {
-      toast.error("Failed to update", { description: error.message });
-    } else {
-      toast.success("Updated");
-      setEditId(null);
+    });
+    const stored = reportFacilityWrite(
+      describeFacilityWrite(result, "This facility", "Saved — the stored record now holds these values"),
+    );
+    if (!stored) {
+      // The edit row stays open with the entered values so nothing is lost.
       load();
+      return;
     }
+    setEditId(null);
+    load();
   }
 
-  async function toggleActive(f: Facility) {
-    const { error } = await supabase.from("facilities")
-      .update({ active: !f.active }).eq("id", f.id);
-    if (error) {
-      toast.error("Failed to toggle", { description: error.message });
-    } else {
-      load();
-    }
+  async function toggleActive(f: FacilityRecord) {
+    const requested = !f.active;
+    const result = await updateFacility(f.id, { active: requested });
+    // Re-read either way, so the badge shows the value the database actually
+    // holds rather than the one the click implied.
+    reportFacilityWrite(
+      describeFacilityWrite(
+        result,
+        `"${f.name}"`,
+        `Saved — "${f.name}" is stored as ${requested ? "Active" : "Inactive"}`,
+      ),
+    );
+    load();
   }
 
   return (
@@ -114,7 +161,11 @@ export default function FacilitiesAdmin() {
         <div className="flex items-center gap-2">
           <Warehouse className="h-5 w-5 text-[#1B2A4A]" />
           <h1 className="text-xl font-semibold">Facilities & Warehouses</h1>
-          <Badge variant="outline" className="text-xs">{facilities.filter(f => f.active).length} active</Badge>
+          <Badge variant="outline" className="text-xs">
+            {read !== null && (read.status === "loaded" || read.status === "empty")
+              ? `${facilities.filter(f => f.active).length} active of ${facilities.length} read`
+              : read === null ? "reading…" : "count unknown"}
+          </Badge>
         </div>
         <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1 bg-[#1B2A4A] hover:bg-[#1B2A4A]/90">
           <Plus className="h-3 w-3" /> Add Facility
@@ -163,6 +214,16 @@ export default function FacilitiesAdmin() {
       {loading ? (
         <div className="flex items-center justify-center py-12 text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading facilities...
+        </div>
+      ) : read !== null && (read.status === "error" || read.status === "unavailable") ? (
+        <div className="border border-red-200 bg-red-50/40 rounded-lg p-6 space-y-2">
+          <p className="text-sm font-semibold text-red-700">Facility records could not be read</p>
+          <p className="text-xs text-muted-foreground">
+            No facilities are listed. The number of recorded facilities is unknown — it is not zero, and no migration
+            is implied.
+          </p>
+          <p className="text-[11px] font-mono text-muted-foreground break-all">{read.error}</p>
+          <Button size="sm" variant="outline" onClick={() => load()}>Retry</Button>
         </div>
       ) : (
         <div className="border rounded-lg overflow-hidden">
@@ -243,7 +304,8 @@ export default function FacilitiesAdmin() {
               {facilities.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
-                    No facilities found. Run the <code>intake002_facilities</code> migration, then add facilities here.
+                    The read succeeded and no facility records are visible to this account. Records hidden by
+                    row-level security would not appear here. Use "Add Facility" to record one.
                   </td>
                 </tr>
               )}

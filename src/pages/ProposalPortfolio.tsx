@@ -8,7 +8,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import {
-  Search, X, Briefcase, RefreshCw, ExternalLink,
+  Search, X, Briefcase, RefreshCw, ExternalLink, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -16,15 +16,15 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { cleanHref } from "@clean/lib/clean-routing";
 import {
-  deriveCommercialTicketPipelineTickets,
+  deriveCommercialTicketPipelineTickets, resolveReadState, describeRenderedCount,
+  describeEmptyReadCause, describeIsolationWithholding,
+  readOperationalTicketsWithIsolation, sumCaptured,
   type PipelineTicket, type CrmStageLabel,
 } from "@/lib/pipeline-tickets";
 import { PipelineTicketCard } from "@/components/crm/PipelineCard";
-import { fetchOperationalTicketsByType } from "@/lib/intake-save";
 
 // ─── HELPERS ────────────────────────────────────────────────
 
@@ -58,7 +58,10 @@ const TABS: TabDef[] = [
   {
     key: "needs_action",
     label: "Needs Action",
-    filter: (t) => t.daysInStage > 14 || t.riskLevel !== "green" || t.syncStatus === "none",
+    filter: (t) =>
+      (t.daysInStage != null && t.daysInStage > 14) ||
+      t.riskLevel !== "green" ||
+      t.syncStatus === "none",
   },
   {
     key: "ready_to_send",
@@ -105,7 +108,10 @@ export default function Commercial() {
   const [, navigate] = useLocation();
   const [allTickets, setAllTickets] = useState<PipelineTicket[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  /** Rows the database returned before client-side process isolation ran. */
+  const [fetchedRowCount, setFetchedRowCount] = useState(0);
 
   // Filters
   const [search, setSearch] = useState("");
@@ -121,15 +127,21 @@ export default function Commercial() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetchOperationalTicketsByType("proposal")
-      .then((result) => {
+    setLoadError(null);
+    readOperationalTicketsWithIsolation("proposal")
+      .then((read) => {
         if (cancelled) return;
-        if (result.error) throw new Error(result.error);
-        setAllTickets(deriveCommercialTicketPipelineTickets(result.data));
+        if (read.error) throw new Error(read.error);
+        setFetchedRowCount(read.fetched);
+        setAllTickets(deriveCommercialTicketPipelineTickets(read.rows));
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // A failed read is not "no proposal tickets".
         console.error("Portfolio load error:", err);
-        toast.error("Failed to load proposal data");
+        setLoadError(err instanceof Error ? err.message : "Proposal load failed for an unknown reason");
+        setAllTickets([]);
+        setFetchedRowCount(0);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -166,9 +178,11 @@ export default function Commercial() {
     return counts;
   }, [dropdownFiltered]);
 
-  // Summary metrics
-  const totalValue = allTickets.reduce((s, t) => s + t.sarValue, 0);
-  const criticalCount = allTickets.filter((t) => t.riskLevel === "red").length;
+  // Summary metrics — computed over the cards actually rendered (`tabFiltered`),
+  // so the headline can never describe a larger set than the grid below it.
+  // Never-captured values contribute nothing; they are not counted as zero.
+  const totalValue = sumCaptured(tabFiltered.map((t) => t.sarValue));
+  const criticalCount = tabFiltered.filter((t) => t.riskLevel === "red").length;
 
   const hasFilters = search || filterCrmStage !== "all" || filterOwner !== "all" || filterRegion !== "all" || filterRisk !== "all";
 
@@ -182,11 +196,37 @@ export default function Commercial() {
   }
 
   // ─── LOADING / ERROR ────────────────────────────────────
-  if (loading) {
+  const readState = resolveReadState({ loading, error: loadError, count: allTickets.length });
+
+  if (readState === "loading") {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-3">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         <p className="text-xs text-muted-foreground">Loading proposal portfolio…</p>
+      </div>
+    );
+  }
+
+  if (readState === "error") {
+    return (
+      <div className="p-6 max-w-[1400px] mx-auto">
+        <div className="mx-auto max-w-md rounded-xl border border-red-300 bg-red-50 p-6 text-center">
+          <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-red-600" />
+          <p className="text-sm font-semibold text-red-900">Proposal portfolio could not be loaded</p>
+          <p className="mt-1 text-xs text-red-800">
+            The read of <span className="font-mono">commercial_tickets</span> failed. No proposal count
+            or pipeline value can be shown. This is a failed read, not an empty portfolio.
+          </p>
+          <p className="mt-2 break-words font-mono text-[10px] text-red-700">{loadError}</p>
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <Button variant="outline" size="sm" className="text-xs" onClick={() => setRefreshKey((k) => k + 1)}>
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Retry
+            </Button>
+            <Button variant="ghost" size="sm" className="text-xs" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
+              <ExternalLink className="w-3 h-3 mr-1.5" /> Go to CRM Pipeline
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -202,7 +242,7 @@ export default function Commercial() {
             Proposal tickets only · search, filter, compare, and review clean proposal records.
           </p>
           <p className="text-xs text-muted-foreground mt-1">
-            {allTickets.length} proposal{allTickets.length !== 1 ? "s" : ""} · {formatSar(totalValue)} pipeline
+            {describeRenderedCount(tabFiltered.length, allTickets.length, "proposal")} · {formatSar(totalValue)} pipeline
             {criticalCount > 0 && <span className="text-red-600 font-medium"> · {criticalCount} critical</span>}
           </p>
         </div>
@@ -215,6 +255,15 @@ export default function Commercial() {
           <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
         </Button>
       </div>
+
+      {/* Rows the database returned that this client removed — disclosed, not hidden */}
+      {describeIsolationWithholding(fetchedRowCount, allTickets.length) && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5">
+          <p className="text-xs font-medium text-amber-900">
+            {describeIsolationWithholding(fetchedRowCount, allTickets.length)}
+          </p>
+        </div>
+      )}
 
       {/* Search + Filters */}
       <div className="space-y-2 mb-4">
@@ -299,8 +348,10 @@ export default function Commercial() {
           <Briefcase className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
           {allTickets.length === 0 ? (
             <>
-              <p className="text-sm font-medium text-muted-foreground">No proposal tickets found.</p>
-              <p className="text-xs text-muted-foreground/60 mt-1">Create or sync proposal tickets from the CRM Pipeline.</p>
+              <p className="text-sm font-medium text-muted-foreground">No proposal tickets are shown.</p>
+              <p className="text-xs text-muted-foreground/60 mt-1">
+                {describeEmptyReadCause(fetchedRowCount, allTickets.length)} Create or sync proposal tickets from the CRM Pipeline.
+              </p>
               <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
                 <ExternalLink className="w-3 h-3 mr-1.5" /> Go to CRM Pipeline
               </Button>

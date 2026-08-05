@@ -65,6 +65,10 @@ export default function FinalPackStudio() {
   const [mode, setMode] = useState<StudioMode>("select");
   const [activeInstance, setActiveInstance] = useState<FinalPackInstance | null>(null);
   const [saving, setSaving] = useState(false);
+  // W04-C4: an auto-save failure used to be console-only — the spinner simply
+  // disappeared, which is exactly what a completed save looks like. The last
+  // failure is now held in state and shown until a save actually succeeds.
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [branding, setBranding] = useState<BrandingProfile>(DEFAULT_BRANDING);
   const { profiles: brandingProfiles } = useBrandingProfiles();
   // Block being saved to the reusable library (FPS-003); null = dialog closed.
@@ -163,12 +167,25 @@ export default function FinalPackStudio() {
           // since we last saw it. If unknown (first save), skip the guard.
           if (lastUpdatedAtRef.current) q = q.eq("updated_at", lastUpdatedAtRef.current);
           const { data, error } = await q.select("id");
-          if (error) { console.error("[FPS] Auto-save error:", error.message); return; }
+          if (error) {
+            console.error("[FPS] Auto-save error:", error.message);
+            setSaveError(error.message);
+            return;
+          }
           if (lastUpdatedAtRef.current && (!data || data.length === 0)) {
             // Someone else saved first. Preserve local edits; warn (advisory).
             setConflict(true);
             return;
           }
+          if (!data || data.length === 0) {
+            // W04-C4: first save, no concurrency guard, and still no row came
+            // back. The request resolved but nothing is confirmed stored.
+            setSaveError(
+              "The editor's save request completed but no stored row came back, so this edit is not confirmed saved.",
+            );
+            return;
+          }
+          setSaveError(null);
           lastUpdatedAtRef.current = newUpdatedAt;
           // Throttled version snapshot (>= 30s apart; never blocks the save).
           const now = Date.now();
@@ -178,6 +195,7 @@ export default function FinalPackStudio() {
           }
         } catch (err) {
           console.error("[FPS] Auto-save error:", err);
+          setSaveError(err instanceof Error ? err.message : "Unknown auto-save error");
         } finally {
           setSaving(false);
         }
@@ -211,10 +229,12 @@ export default function FinalPackStudio() {
   );
 
   // Source drift detection — READ ONLY check against commercial_tickets
-  const { drifted, checking: driftChecking, recheck: recheckDrift } = useSourceDrift(
-    tenderId,
-    activeInstance?.source_snapshot?._hash || null,
-  );
+  const {
+    drifted,
+    checking: driftChecking,
+    recheck: recheckDrift,
+    error: driftError,
+  } = useSourceDrift(tenderId, activeInstance?.source_snapshot?._hash || null);
 
   // FPS-008: discover Bot Builder microbots for the active document ONCE
   // (filtered per-block client-side). Read-only; never blocks editing/export.
@@ -523,12 +543,21 @@ export default function FinalPackStudio() {
                 </button>
               )}
               <div className="h-5 w-px bg-border" />
-              {saving && (
+              {saving ? (
                 <span className="flex items-center gap-1 text-xs text-muted-foreground">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   Saving…
                 </span>
-              )}
+              ) : saveError ? (
+                /* W04-C4: "not saved" must never look like a finished save. */
+                <span
+                  className="flex items-center gap-1 text-xs font-medium text-destructive"
+                  title={saveError}
+                >
+                  <AlertTriangle className="h-3 w-3" />
+                  Not saved
+                </span>
+              ) : null}
               <span className="text-xs px-2 py-0.5 rounded bg-accent text-accent-foreground">
                 {activeInstance.status}
               </span>
@@ -574,13 +603,37 @@ export default function FinalPackStudio() {
                   <SourceDriftBanner
                     drifted={drifted}
                     checking={driftChecking}
+                    error={driftError}
                     onRefreshFromSource={() => {
                       resetAllFromSource(activeInstance.source_snapshot._original_blocks || []);
                     }}
                     onRecheck={recheckDrift}
                   />
                 )}
-                <WarningBanner blocks={activeInstance.blocks} />
+                {/* W04-C4: an auto-save that did not land is stated plainly,
+                    with an explicit retry — it is never left as silence. */}
+                {saveError && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-destructive/40 bg-destructive/5 text-destructive text-xs">
+                    <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+                    <span className="flex-1">
+                      Your last edit was <strong>not saved</strong> — {saveError} Your edits are still
+                      here in the editor; nothing has been lost from this session.
+                    </span>
+                    <button
+                      onClick={() => saveBlocks(activeInstance.id, activeInstance.blocks)}
+                      className="px-2 py-0.5 rounded border border-border bg-card hover:bg-accent"
+                    >
+                      Retry save
+                    </button>
+                  </div>
+                )}
+                {/* W04-C4: when a volume is selected, these notes describe THAT
+                    volume — they used to count the whole document. */}
+                <WarningBanner
+                  blocks={activeInstance.blocks}
+                  volumeBlockKeys={selectedVolume?.block_keys ?? null}
+                  volumeTitle={selectedVolume?.volume_title ?? null}
+                />
                 <MetadataWarningBanner instance={activeInstance} />
                 {/* Save conflict advisory (FPS-007-08) — never blocks editing/export */}
                 {conflict && (
@@ -702,9 +755,11 @@ function StandaloneEntry({
   const [view, setView] = useState<EntryView>("start");
   const { appUser } = useAuth();
   const authoringUser = appUser?.email || appUser?.id || "User";
-  const { instance, loadInstance, listAllInstances } = useFinalPackInstance();
+  const { instance, loadInstance, listAllInstances, error: instanceError } = useFinalPackInstance();
   const [resumeList, setResumeList] = useState<FinalPackInstance[]>([]);
   const [loadingResume, setLoadingResume] = useState(false);
+  // Failed list read ≠ "no documents yet" (W04-T09).
+  const [resumeError, setResumeError] = useState<string | null>(null);
 
   // When an instance is resumed (loaded), hand off to the composer.
   useEffect(() => {
@@ -719,7 +774,8 @@ function StandaloneEntry({
       setLoadingResume(true);
       const list = await listAllInstances();
       if (!cancelled) {
-        setResumeList(list);
+        setResumeList(list.instances);
+        setResumeError(list.error);
         setLoadingResume(false);
       }
     })();
@@ -775,9 +831,32 @@ function StandaloneEntry({
           </p>
         </div>
 
+        {/* Loading, real-empty and failed-read are three visibly different states. */}
+        {instanceError && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-destructive/30 bg-destructive/5 text-destructive text-sm">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+            <span>{instanceError}</span>
+          </div>
+        )}
         {loadingResume ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : resumeError ? (
+          <div className="text-center space-y-3 py-8">
+            <AlertTriangle className="h-6 w-6 text-amber-500 mx-auto" />
+            <p className="text-sm text-muted-foreground">
+              Your documents could not be listed — {resumeError}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              This is a read failure, not an empty list. Existing documents are not lost.
+            </p>
+            <button
+              onClick={() => setView("start")}
+              className="px-3 py-1.5 rounded-md border border-border text-sm hover:bg-accent"
+            >
+              Back to start
+            </button>
           </div>
         ) : resumeList.length === 0 ? (
           <p className="text-center text-sm text-muted-foreground py-8">
@@ -818,17 +897,27 @@ function TenderPicker({ onBack }: { onBack?: () => void }) {
   const [, navigate] = useLocation();
   const [tenders, setTenders] = useState<Array<{ id: string; title: string; customer: string; stage: string }>>([]);
   const [loading, setLoading] = useState(true);
+  // W04-T09 — the read error was discarded, so a failed read rendered as
+  // "No tenders found in Supabase", which is a claim about the data.
+  const [readError, setReadError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("commercial_tickets")
         .select("id, ticket_title, customer_name, internal_stage")
         .order("updated_at", { ascending: false })
         .limit(20);
 
       if (cancelled) return;
+      if (error) {
+        setTenders([]);
+        setReadError(error.message);
+        setLoading(false);
+        return;
+      }
+      setReadError(null);
       setTenders(
         (data || []).map((t: any) => ({
           id: t.id,
@@ -866,9 +955,19 @@ function TenderPicker({ onBack }: { onBack?: () => void }) {
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
+        ) : readError ? (
+          <div className="text-center space-y-2 py-8">
+            <AlertTriangle className="h-6 w-6 text-amber-500 mx-auto" />
+            <p className="text-sm text-muted-foreground">
+              Tenders could not be loaded — {readError}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              This is a read failure, not an empty list.
+            </p>
+          </div>
         ) : tenders.length === 0 ? (
           <p className="text-center text-sm text-muted-foreground py-8">
-            No tenders found in Supabase.
+            No tenders are visible to your account.
           </p>
         ) : (
           <div className="space-y-2">

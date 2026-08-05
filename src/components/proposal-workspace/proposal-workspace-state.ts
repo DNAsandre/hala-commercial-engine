@@ -1274,3 +1274,120 @@ export function logDataChange(
     }
   }
 }
+// ══════════════════════════════════════════════════════
+// SC-01 W04 (T08-B, correction pass) — HONEST-RENDER DECISIONS
+//
+// Pure decision logic lifted out of pages/ProposalWorkspace.tsx so it can be
+// asserted by test. There is no jsdom in this package, so anything that stays
+// inside JSX is verifiable by inspection only; everything below is not.
+//
+// The single rule these functions encode: the page may not assert a business
+// fact that is not stored. An unread value is `null`, never a neutral-looking
+// default, and no verdict is derived from a value that was never read.
+// ══════════════════════════════════════════════════════
+
+/**
+ * The three outcomes a record route must keep visibly distinct.
+ * A failed read is NOT an empty result: "read_failed" carries the reason and
+ * must never be rendered as "not found".
+ */
+export type WorkspaceReadState =
+  | { kind: "loading" }
+  | { kind: "loaded" }
+  | { kind: "not_found" }
+  | { kind: "read_failed"; reason: string };
+
+/**
+ * Classify the proposal route's read.
+ *
+ * `errors` collects every error channel the page has: the hook errors plus any
+ * error the data layer recorded out-of-band (a fetcher that swallows the
+ * PostgREST error and returns null still reports it through getFetchError).
+ */
+export function resolveWorkspaceReadState(input: {
+  loading: boolean;
+  workspace: unknown;
+  errors: Array<string | null | undefined>;
+}): WorkspaceReadState {
+  if (input.loading) return { kind: "loading" };
+  if (input.workspace) return { kind: "loaded" };
+  const reason = input.errors
+    .map(e => (typeof e === "string" ? e.trim() : ""))
+    .find(e => e.length > 0);
+  if (reason) return { kind: "read_failed", reason };
+  return { kind: "not_found" };
+}
+
+/** A customer master record, as far as it was actually read back. */
+export interface CustomerMasterFacts {
+  dso: number | null;
+  paymentStatus: string | null;
+}
+
+/**
+ * What the workspace may say about a customer's payment behaviour.
+ *
+ * Every field is null when the underlying value was not read. `verdict` is
+ * null unless BOTH a stored payment status and a stored DSO exist — the page
+ * previously derived "Healthy customer profile" from a hardcoded
+ * `paymentStatus: 'Good'` and `dso: 0`, which is the fabrication this removes.
+ */
+export interface CustomerRiskReadout {
+  paymentRisk: "Low" | "Medium" | "High" | null;
+  dsoDays: number | null;
+  dsoBand: "Healthy" | "Acceptable" | "Watch" | "Critical" | null;
+  verdict: string | null;
+  tone: "green" | "amber" | "red" | "neutral";
+}
+
+export function readCustomerRisk(customer: CustomerMasterFacts | null): CustomerRiskReadout {
+  const status = typeof customer?.paymentStatus === "string" ? customer.paymentStatus.trim() : "";
+  const paymentRisk: CustomerRiskReadout["paymentRisk"] =
+    status === "Good" ? "Low" : status === "Acceptable" ? "Medium" : status === "Bad" ? "High" : null;
+
+  const rawDso = customer?.dso;
+  const dsoDays = typeof rawDso === "number" && Number.isFinite(rawDso) ? rawDso : null;
+  const dsoBand: CustomerRiskReadout["dsoBand"] =
+    dsoDays === null ? null
+      : dsoDays <= 30 ? "Healthy"
+      : dsoDays <= 45 ? "Acceptable"
+      : dsoDays <= 60 ? "Watch"
+      : "Critical";
+
+  if (paymentRisk === null || dsoBand === null) {
+    return { paymentRisk, dsoDays, dsoBand, verdict: null, tone: "neutral" };
+  }
+  if (paymentRisk === "High" || dsoBand === "Critical") {
+    return { paymentRisk, dsoDays, dsoBand, verdict: "High risk — recorded payment issues", tone: "red" };
+  }
+  if (paymentRisk === "Medium" || dsoBand === "Watch") {
+    return { paymentRisk, dsoDays, dsoBand, verdict: "Medium risk — monitoring recommended", tone: "amber" };
+  }
+  return { paymentRisk, dsoDays, dsoBand, verdict: "Recorded payment behaviour is healthy", tone: "green" };
+}
+
+/**
+ * The one filter behind the Supporting Documents list. The counter and the
+ * list must both be taken from this result — the page previously counted the
+ * unfiltered set above a filtered list.
+ */
+export function filterSupportingDocs<T extends { category: string }>(
+  docs: readonly T[],
+  category: string,
+): T[] {
+  if (!category || category === "all") return [...docs];
+  return docs.filter(d => d.category === category);
+}
+
+/**
+ * `Date#toLocaleDateString` RETURNS the literal string "Invalid Date" for an
+ * unparseable value rather than throwing, so a try/catch is not a guard.
+ * Returns null when there is no date to show, so the caller renders an honest
+ * "not recorded" instead of the words "Invalid Date".
+ */
+export function formatRecordedDate(value: unknown, style: "date" | "datetime" = "date"): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  const d = value instanceof Date ? value : new Date(value as string | number);
+  if (Number.isNaN(d.getTime())) return null;
+  return style === "datetime" ? d.toLocaleString() : d.toLocaleDateString();
+}

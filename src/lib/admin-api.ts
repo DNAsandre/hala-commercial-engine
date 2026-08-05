@@ -70,10 +70,25 @@ async function callEdgeFunction(
       body: JSON.stringify({ action, ...params }),
     });
 
-    const data = await res.json();
+    const data = await res.json().catch(() => null);
 
     if (!res.ok) {
-      return { success: false, error: data.error || `HTTP ${res.status}` };
+      return { success: false, error: data?.error || `HTTP ${res.status}` };
+    }
+
+    /* SC-01 Wave 04: a submitted request is not proof of persistence. Only an
+     * explicit `success: true` in the response body is treated as success —
+     * a 2xx with a missing, malformed or non-boolean body is reported as an
+     * unconfirmed change, never surfaced to the user as "User updated". */
+    if (!data || typeof data !== 'object') {
+      return { success: false, error: `HTTP ${res.status} but the response body could not be read. The change was not confirmed.` };
+    }
+    if ((data as AdminResult).success !== true) {
+      return {
+        success: false,
+        error: (data as AdminResult).error
+          || `HTTP ${res.status} but the response did not confirm the change. Nothing is reported as saved.`,
+      };
     }
 
     return data as AdminResult;

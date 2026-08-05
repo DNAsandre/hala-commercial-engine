@@ -18,6 +18,7 @@ import {
   User,
   ExternalLink,
   RefreshCw,
+  AlertTriangle,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,15 +31,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { toast } from "sonner";
 import {
   deriveCommercialTicketPipelineTickets,
   CRM_PIPELINE_COLUMNS,
   STAGE_COLORS,
+  resolveReadState,
+  describeRenderedCount,
+  describeEmptyReadCause,
+  describeIsolationWithholding,
+  readOperationalTicketsWithIsolation,
+  sumCaptured,
+  averageCaptured,
   type CrmStageLabel,
   type PipelineTicket,
+  type PipelineRiskLevel,
 } from "@/lib/pipeline-tickets";
-import { fetchOperationalTicketsByType } from "@/lib/intake-save";
 import { CRM_PIPELINE_STAGES } from "@/components/proposal-workspace/CrmPipelineStrip";
 import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -66,34 +73,64 @@ function formatSar(n: number): string {
   return n.toLocaleString();
 }
 
+/** A never-captured value is shown as such — never as "SAR 0" or "0%". */
+function formatSarValue(n: number | null): string {
+  return n == null ? "Not captured" : formatSar(n);
+}
+
+function formatPct(n: number | null): string {
+  return n == null ? "Not captured" : `${n}%`;
+}
+
+function formatDays(n: number | null): string {
+  return n == null ? "Not captured" : `${n}d`;
+}
+
 function initials(name: string): string {
   return name.split(/\s+/).map(w => w[0]?.toUpperCase() ?? "").join("").slice(0, 2) || "??";
 }
 
-function getRiskLevel(gpPct: number): { level: "green" | "amber" | "red"; label: string } {
-  if (gpPct < 10) return { level: "red", label: "Critical" };
-  if (gpPct < 22) return { level: "amber", label: "Tight" };
-  return { level: "green", label: "Healthy" };
-}
+/*
+ * W04-C1 defect C: this file used to derive its own margin verdict from
+ * `gpPct` with a local getRiskLevel(), so a never-captured GP arrived as 0 and
+ * was labelled "Critical" — and the swimlane card (which used the local
+ * verdict) disagreed with the preview popup (which used the ticket's own
+ * riskLevel) about the same record. Both now read the single derived verdict
+ * from pipeline-tickets, so they cannot disagree.
+ */
+const RISK_DOT: Record<PipelineRiskLevel, string> = {
+  green: "bg-emerald-500",
+  amber: "bg-amber-500",
+  red: "bg-red-500",
+  unknown: "bg-muted-foreground/30",
+};
+
+const RISK_TEXT: Record<PipelineRiskLevel, string> = {
+  green: "text-emerald-600",
+  amber: "text-amber-600",
+  red: "text-red-600",
+  unknown: "text-muted-foreground",
+};
 
 // ─── METRICS BAR ──────────────────────────────────────────────
 
 function MetricsBar({ tickets }: { tickets: PipelineTicket[] }) {
-  const totalSar = tickets.reduce((s, t) => s + t.sarValue, 0);
-  const totalActive = tickets.length;
-  const avgGp = tickets.length > 0
-    ? tickets.reduce((s, t) => s + t.gpPct, 0) / tickets.length
-    : 0;
-  const stalledCount = tickets.filter(t => t.daysInStage > 14).length;
+  // W04-C1 defect G: every figure here is computed over `tickets`, which is the
+  // exact set the swimlanes below render. The first tile used to be labelled
+  // "Total Active" while those lanes include Closed Lost and Discontinued; it
+  // now says what it counts.
+  const totalSar = sumCaptured(tickets.map(t => t.sarValue));
+  const avgGp = averageCaptured(tickets.map(t => t.gpPct));
+  const stalledCount = tickets.filter(t => t.daysInStage != null && t.daysInStage > 14).length;
   const closedWonCount = tickets.filter(t => t.crmStage === "Closed Won").length;
   const closedLostCount = tickets.filter(t => t.crmStage === "Closed Lost").length;
   const totalClosed = closedWonCount + closedLostCount;
   const winRate = totalClosed > 0 ? Math.round((closedWonCount / totalClosed) * 100) : 0;
 
   const metrics = [
-    { label: "Total Active", value: totalActive },
+    { label: "Tickets Shown", value: tickets.length },
     { label: "Pipeline SAR", value: formatSar(totalSar) },
-    { label: "Avg GP%", value: `${avgGp.toFixed(1)}%` },
+    { label: "Avg GP%", value: avgGp == null ? "Not captured" : `${avgGp.toFixed(1)}%` },
     { label: "Stalled", value: stalledCount, highlight: stalledCount > 0 },
     { label: "Win Rate", value: totalClosed > 0 ? `${winRate}%` : "—" },
   ];
@@ -112,21 +149,94 @@ function MetricsBar({ tickets }: { tickets: PipelineTicket[] }) {
 
 // ─── GAUGE MINI ────────────────────────────────────────────────
 
-function GaugeMini({ label, value, max = 100 }: { label: string; value: number; max?: number }) {
-  const pct = Math.min(100, (value / max) * 100);
-  const color = pct >= 70 ? "bg-emerald-500" : pct >= 40 ? "bg-amber-500" : "bg-red-400";
-  const textColor = pct >= 70 ? "text-emerald-600" : pct >= 40 ? "text-amber-600" : "text-red-500";
+/**
+ * MEASURE MINI — W04-C1 defect A.
+ *
+ * Replaces a gauge whose value came from a three-way bucket
+ * (`gpPct >= 22 ? 85 : gpPct >= 15 ? 50 : 15`) and was printed as the literal
+ * text "85%". Nothing measured 85. The text shown here is always the real
+ * measured figure; `fill` only scales the bar and is never printed as a number.
+ * A never-captured measure gets a dashed empty bar and no colour verdict.
+ */
+function MeasureMini({
+  label, text, fill, tone, scaleNote,
+}: {
+  label: string;
+  text: string;
+  fill: number | null;
+  tone: "green" | "amber" | "red" | "none";
+  scaleNote?: string;
+}) {
+  const barColor = tone === "green" ? "bg-emerald-500"
+    : tone === "amber" ? "bg-amber-500"
+    : tone === "red" ? "bg-red-400"
+    : "bg-muted-foreground/20";
+  const textColor = tone === "green" ? "text-emerald-600"
+    : tone === "amber" ? "text-amber-600"
+    : tone === "red" ? "text-red-500"
+    : "text-muted-foreground";
   return (
     <div className="rounded-lg border border-border p-3 bg-muted/10">
       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">{label}</p>
       <div className="flex items-center gap-3">
-        <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-          <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
-        </div>
-        <span className={`text-sm font-bold ${textColor}`}>{Math.round(pct)}%</span>
+        {fill == null ? (
+          <div className="flex-1 h-2 rounded-full border border-dashed border-border" />
+        ) : (
+          <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.max(0, Math.min(100, fill))}%` }} />
+          </div>
+        )}
+        <span className={`text-sm font-bold ${textColor}`}>{text}</span>
       </div>
+      {scaleNote && <p className="mt-1 text-[9px] text-muted-foreground/60">{scaleNote}</p>}
     </div>
   );
+}
+
+export interface ProposalMeasure {
+  label: string;
+  /** Exactly what is printed. Always a real figure or "Not captured". */
+  text: string;
+  /** Bar scale only, never printed. null = no bar. */
+  fill: number | null;
+  tone: "green" | "amber" | "red" | "none";
+  scaleNote: string;
+}
+
+/**
+ * The proposal preview strip, as data. Exported so a test can assert that every
+ * printed figure comes from the record and not from a bucket constant.
+ */
+export function proposalMeasures(t: PipelineTicket): ProposalMeasure[] {
+  return [
+    {
+      label: "Margin — Target GP%",
+      text: formatPct(t.gpPct),
+      fill: t.gpPct,
+      tone: t.riskLevel === "unknown" ? "none" : t.riskLevel,
+      scaleNote: "Healthy ≥ 22% · Low GP 10–22% · Critical < 10%",
+    },
+    {
+      label: "Age — Days in Stage",
+      text: formatDays(t.daysInStage),
+      fill: t.daysInStage == null ? null : (t.daysInStage / 30) * 100,
+      tone: t.daysInStage == null ? "none"
+        : t.daysInStage <= 7 ? "green"
+        : t.daysInStage <= 14 ? "amber"
+        : "red",
+      scaleNote: "Bar scaled over 30 days · stalled after 14",
+    },
+    {
+      label: "Win Probability",
+      text: formatPct(t.probabilityPct),
+      fill: t.probabilityPct,
+      tone: t.probabilityPct == null ? "none"
+        : t.probabilityPct >= 70 ? "green"
+        : t.probabilityPct >= 40 ? "amber"
+        : "red",
+      scaleNote: "As captured on the ticket",
+    },
+  ];
 }
 
 // ─── PREVIEW POPUP ─────────────────────────────────────────────
@@ -142,9 +252,6 @@ function TicketPreviewPopup({
 }) {
   const [, navigate] = useLocation();
   if (!ticket) return null;
-
-  const marginHealth = ticket.gpPct >= 22 ? 85 : ticket.gpPct >= 15 ? 50 : 15;
-  const timePressure = ticket.daysInStage <= 7 ? 80 : ticket.daysInStage <= 14 ? 50 : 20;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -171,9 +278,7 @@ function TicketPreviewPopup({
 
         <div className="px-8 py-5 border-b border-border">
           <div className="grid grid-cols-3 gap-4">
-            <GaugeMini label="Margin Health" value={marginHealth} />
-            <GaugeMini label="Time Pressure" value={timePressure} />
-            <GaugeMini label="Win Probability" value={ticket.probabilityPct} />
+            {proposalMeasures(ticket).map(m => <MeasureMini key={m.label} {...m} />)}
           </div>
         </div>
 
@@ -181,14 +286,14 @@ function TicketPreviewPopup({
           <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">Key Facts</p>
           <div className="grid grid-cols-3 gap-x-8 gap-y-3">
             {[
-              { l: "SAR Value", v: `SAR ${ticket.sarValue.toLocaleString()}` },
-              { l: "GP%", v: ticket.gpPct > 0 ? `${ticket.gpPct}%` : "—" },
+              { l: "SAR Value", v: ticket.sarValue == null ? "Not captured" : `SAR ${ticket.sarValue.toLocaleString()}` },
+              { l: "GP%", v: formatPct(ticket.gpPct) },
               { l: "Region", v: ticket.region || "—" },
               { l: "Pallets", v: ticket.volumePallets > 0 ? ticket.volumePallets.toLocaleString() : "—" },
               { l: "Expected Close", v: ticket.goLiveDate || "—" },
               { l: "Owner", v: ticket.owner },
-              { l: "Probability", v: `${ticket.probabilityPct}%` },
-              { l: "Days in Stage", v: `${ticket.daysInStage}d` },
+              { l: "Probability", v: formatPct(ticket.probabilityPct) },
+              { l: "Days in Stage", v: formatDays(ticket.daysInStage) },
             ].map(f => (
               <div key={f.l} className="flex justify-between">
                 <span className="text-xs text-muted-foreground">{f.l}</span>
@@ -201,9 +306,9 @@ function TicketPreviewPopup({
         <div className="px-8 py-5 border-b border-border">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">Risk Status</p>
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${ticket.riskLevel === "green" ? "bg-emerald-500" : ticket.riskLevel === "amber" ? "bg-amber-500" : "bg-red-500"}`} />
-            <span className="text-xs font-medium capitalize">{ticket.riskLabel}</span>
-            {ticket.daysInStage > 14 && (
+            <div className={`w-2 h-2 rounded-full ${RISK_DOT[ticket.riskLevel]}`} />
+            <span className="text-xs font-medium">{ticket.riskLabel}</span>
+            {ticket.daysInStage != null && ticket.daysInStage > 14 && (
               <span className="text-xs text-red-600 ml-2 flex items-center gap-1">
                 <Clock className="w-3 h-3" /> Overdue {ticket.daysInStage}d
               </span>
@@ -212,11 +317,19 @@ function TicketPreviewPopup({
         </div>
 
         <div className="px-8 py-4 flex items-center gap-3">
+          {/* Primary action keeps the proposal's identity: /proposals/:id. */}
           <Button
+            className="gap-2 h-9"
+            onClick={() => { onOpenChange(false); navigate(cleanHref(`/proposals/${ticket.id}`)); }}
+          >
+            <ExternalLink className="w-4 h-4" />
+            Open Proposal Workspace
+          </Button>
+          <Button
+            variant="outline"
             className="gap-2 h-9"
             onClick={() => { onOpenChange(false); navigate(cleanHref("/crm-pipeline")); }}
           >
-            <ExternalLink className="w-4 h-4" />
             View in CRM Pipeline
           </Button>
         </div>
@@ -234,9 +347,10 @@ function SwimLaneCard({
   ticket: PipelineTicket;
   onClick: () => void;
 }) {
-  const risk = getRiskLevel(ticket.gpPct);
-  const isStalled = ticket.daysInStage > 14;
-  const isCriticalMargin = ticket.gpPct < 15;
+  // Single derived verdict — the same one the preview popup shows.
+  const risk = { level: ticket.riskLevel, label: ticket.riskLabel };
+  const isStalled = ticket.daysInStage != null && ticket.daysInStage > 14;
+  const isCriticalMargin = ticket.riskLevel === "red";
 
   return (
     <Card
@@ -260,12 +374,14 @@ function SwimLaneCard({
 
         {/* MIDDLE: SAR Value + GP% + local risk */}
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-mono font-semibold">{formatSar(ticket.sarValue)}</span>
-          <span className={`text-[11px] font-mono font-bold ${ticket.gpPct >= 22 ? "text-emerald-600" : ticket.gpPct >= 15 ? "text-amber-600" : "text-red-600"}`}>
-            {ticket.gpPct > 0 ? `${ticket.gpPct.toFixed(1)}%` : "—"}
+          <span className={`text-[11px] font-mono font-semibold ${ticket.sarValue == null ? "text-muted-foreground" : ""}`}>
+            {formatSarValue(ticket.sarValue)}
+          </span>
+          <span className={`text-[11px] font-mono font-bold ${RISK_TEXT[ticket.riskLevel]}`}>
+            {ticket.gpPct == null ? "Not captured" : `${ticket.gpPct.toFixed(1)}%`}
           </span>
           <div className="flex items-center gap-0.5 ml-auto">
-            <div className={`w-1.5 h-1.5 rounded-full ${risk.level === "green" ? "bg-emerald-500" : risk.level === "amber" ? "bg-amber-500" : "bg-red-400"}`} />
+            <div className={`w-1.5 h-1.5 rounded-full ${RISK_DOT[risk.level]}`} />
             <span className="text-[9px] text-muted-foreground">{risk.label}</span>
           </div>
         </div>
@@ -288,7 +404,11 @@ function SwimLaneCard({
         {/* BOTTOM: Risk Status + Next Action + Owner + Sync */}
         <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/40">
           {risk.level !== "green" && (
-            <span className={`text-[8px] px-1 py-0.5 rounded border ${risk.level === "red" ? "border-red-300 text-red-700 bg-red-50" : "border-amber-300 text-amber-700 bg-amber-50"}`}>
+            <span className={`text-[8px] px-1 py-0.5 rounded border ${
+              risk.level === "red" ? "border-red-300 text-red-700 bg-red-50"
+                : risk.level === "amber" ? "border-amber-300 text-amber-700 bg-amber-50"
+                : "border-dashed border-border text-muted-foreground"
+            }`}>
               {risk.label}
             </span>
           )}
@@ -319,29 +439,40 @@ export default function CommercialOverview() {
   const [, navigate] = useLocation();
   const [tickets, setTickets] = useState<PipelineTicket[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  /** Rows the database returned before client-side process isolation ran. */
+  const [fetchedRowCount, setFetchedRowCount] = useState(0);
 
   // Filters
   const [filterSearch, setFilterSearch] = useState("");
   const [filterRegion, setFilterRegion] = useState("all");
   const [filterOwner, setFilterOwner] = useState("all");
   const [filterCrmStage, setFilterCrmStage] = useState<CrmStageLabel | "all">("all");
-  const [filterRisk, setFilterRisk] = useState<"all" | "green" | "amber" | "red">("all");
+  const [filterRisk, setFilterRisk] = useState<"all" | PipelineRiskLevel>("all");
   const [previewTicket, setPreviewTicket] = useState<PipelineTicket | null>(null);
 
   // ─── LOAD DATA ──────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetchOperationalTicketsByType("proposal")
-      .then(result => {
+    setLoadError(null);
+    readOperationalTicketsWithIsolation("proposal")
+      .then(read => {
         if (cancelled) return;
-        if (result.error) throw new Error(result.error);
-        setTickets(deriveCommercialTicketPipelineTickets(result.data));
+        if (read.error) throw new Error(read.error);
+        // Keep the pre-isolation count so the empty state can say how many rows
+        // the database returned and how many this client withheld.
+        setFetchedRowCount(read.fetched);
+        setTickets(deriveCommercialTicketPipelineTickets(read.rows));
       })
-      .catch(err => {
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // A failed read is not "no tickets match the filters".
         console.error("Proposal Pipeline load error:", err);
-        toast.error("Failed to load CRM data");
+        setLoadError(err instanceof Error ? err.message : "Proposal load failed for an unknown reason");
+        setTickets([]);
+        setFetchedRowCount(0);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -365,8 +496,7 @@ export default function CommercialOverview() {
       if (filterCrmStage !== "all" && t.crmStage !== filterCrmStage) return false;
       if (search && !t.customerName.toLowerCase().includes(search) && !t.opportunityName.toLowerCase().includes(search)) return false;
 
-      const risk = getRiskLevel(t.gpPct);
-      if (filterRisk !== "all" && risk.level !== filterRisk) return false;
+      if (filterRisk !== "all" && t.riskLevel !== filterRisk) return false;
 
       return true;
     });
@@ -385,11 +515,40 @@ export default function CommercialOverview() {
     return map;
   }, [filtered]);
 
-  if (loading) {
+  const readState = resolveReadState({ loading, error: loadError, count: tickets.length });
+  const withheldNotice = readState === "ready"
+    ? describeIsolationWithholding(fetchedRowCount, tickets.length)
+    : null;
+
+  if (readState === "loading") {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-3">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         <p className="text-xs text-muted-foreground">Loading Proposal Pipeline…</p>
+      </div>
+    );
+  }
+
+  if (readState === "error") {
+    return (
+      <div className="p-6 max-w-[1600px] mx-auto">
+        <div className="mx-auto max-w-md rounded-xl border border-red-300 bg-red-50 p-6 text-center">
+          <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-red-600" />
+          <p className="text-sm font-semibold text-red-900">Proposal pipeline could not be loaded</p>
+          <p className="mt-1 text-xs text-red-800">
+            The read of <span className="font-mono">commercial_tickets</span> failed. No stage lanes,
+            counts or pipeline value can be shown. This is a failed read, not an empty pipeline.
+          </p>
+          <p className="mt-2 break-words font-mono text-[10px] text-red-700">{loadError}</p>
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setRefreshKey(k => k + 1)}>
+              <RefreshCw className="w-3 h-3 mr-1.5" /> Retry
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
+              <ExternalLink className="w-3 h-3 mr-1.5" /> Go to CRM Pipeline
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -401,19 +560,26 @@ export default function CommercialOverview() {
         <div>
           <h1 className="text-2xl font-serif font-bold">Proposal Pipeline Overview</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {filtered.length} tickets · {formatSar(filtered.reduce((s, t) => s + t.sarValue, 0))} pipeline value
+            {describeRenderedCount(filtered.length, tickets.length, "ticket")} · {formatSar(sumCaptured(filtered.map(t => t.sarValue)))} pipeline value
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => setRefreshKey(k => k + 1)}>
             <RefreshCw className="w-3 h-3 mr-1.5" /> Refresh
           </Button>
-          <Button variant="outline" onClick={() => navigate(cleanHref("/workspaces/proposals"))}>
+          <Button variant="outline" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
             <Briefcase className="w-4 h-4 mr-1.5" />
             CRM Pipeline
           </Button>
         </div>
       </div>
+
+      {/* Rows the database returned that this client removed — disclosed, not hidden */}
+      {withheldNotice && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5">
+          <p className="text-xs font-medium text-amber-900">{withheldNotice}</p>
+        </div>
+      )}
 
       {/* Metrics Bar */}
       <MetricsBar tickets={filtered} />
@@ -466,15 +632,16 @@ export default function CommercialOverview() {
               {ALL_SWIMLANE_STAGES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Select value={filterRisk} onValueChange={v => setFilterRisk(v as "all" | "green" | "amber" | "red")}>
-            <SelectTrigger className="w-[120px] h-8 text-xs">
+          <Select value={filterRisk} onValueChange={v => setFilterRisk(v as "all" | PipelineRiskLevel)}>
+            <SelectTrigger className="w-[150px] h-8 text-xs">
               <SelectValue placeholder="Risk Level" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Risks</SelectItem>
               <SelectItem value="green">Healthy</SelectItem>
-              <SelectItem value="amber">Tight</SelectItem>
+              <SelectItem value="amber">Low GP</SelectItem>
               <SelectItem value="red">Critical</SelectItem>
+              <SelectItem value="unknown">GP not captured</SelectItem>
             </SelectContent>
           </Select>
           {(filterSearch || filterRegion !== "all" || filterOwner !== "all" || filterCrmStage !== "all" || filterRisk !== "all") && (
@@ -492,9 +659,36 @@ export default function CommercialOverview() {
 
       {/* Swimlane View */}
       {filtered.length === 0 ? (
-        <div className="text-center py-20 text-muted-foreground">
+        <div className="text-center py-20 text-muted-foreground border border-dashed rounded-xl">
           <Briefcase className="w-10 h-10 mx-auto mb-3 opacity-20" />
-          <p className="text-sm">No tickets match the current filters.</p>
+          {tickets.length === 0 ? (
+            <>
+              <p className="text-sm">No proposal tickets are shown.</p>
+              {/*
+                W04-C1 defect E: this claimed the read returned no rows even
+                when rows were returned and then removed client-side by the
+                process-isolation allowlist. It now states which happened.
+              */}
+              <p className="text-xs text-muted-foreground/70 mt-1">
+                {describeEmptyReadCause(fetchedRowCount, tickets.length)}
+              </p>
+              <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
+                <ExternalLink className="w-3 h-3 mr-1.5" /> Go to CRM Pipeline
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm">No tickets match the current filters ({tickets.length} loaded).</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2 text-xs"
+                onClick={() => { setFilterSearch(""); setFilterRegion("all"); setFilterOwner("all"); setFilterCrmStage("all"); setFilterRisk("all"); }}
+              >
+                Clear filters
+              </Button>
+            </>
+          )}
         </div>
       ) : (
         <div className="space-y-0 rounded-xl border border-border overflow-hidden">
@@ -517,7 +711,7 @@ export default function CommercialOverview() {
                     {cards.length} ticket{cards.length !== 1 ? "s" : ""}
                   </span>
                   <span className="text-[10px] text-muted-foreground font-mono">
-                    {formatSar(cards.reduce((s, t) => s + t.sarValue, 0))}
+                    {formatSar(sumCaptured(cards.map(t => t.sarValue)))}
                   </span>
                 </div>
 

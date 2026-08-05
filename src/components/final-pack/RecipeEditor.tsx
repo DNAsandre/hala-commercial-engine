@@ -38,7 +38,11 @@ export default function RecipeEditor({
   onClose,
   onSaved,
 }: RecipeEditorProps) {
-  const { saveRecipeVersion } = useTemplates();
+  const { saveRecipeVersion, error: templatesError } = useTemplates();
+  // W04-C4: a failed version insert used to end the interaction silently — the
+  // spinner stopped, the dialog stayed open, and nothing said the recipe was
+  // not stored.
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [recipe, setRecipe] = useState<RecipeEntry[]>(
     () => (baseVersion?.recipe ?? []).map((r, i) => ({ ...r, order: i + 1 })),
   );
@@ -88,13 +92,20 @@ export default function RecipeEditor({
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     const version = await saveRecipeVersion(templateId, recipe, baseVersion?.layout);
     setSaving(false);
     if (version) {
       setDone(true);
       onSaved?.(version);
       setTimeout(onClose, 900);
+      return;
     }
+    setSaveError(
+      templatesError
+        ? `This recipe version was not stored — ${templatesError}`
+        : "This recipe version was not stored. Nothing was saved; your edits are still in this dialog.",
+    );
   };
 
   const displayName = (key: string) =>
@@ -169,6 +180,13 @@ export default function RecipeEditor({
             </div>
           )}
         </div>
+
+        {/* W04-C4: a failed version write is visible, and does not look like a save. */}
+        {saveError && (
+          <div className="mx-5 mb-2 px-3 py-2 rounded-md border border-destructive/40 bg-destructive/5 text-destructive text-xs">
+            {saveError}
+          </div>
+        )}
 
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border">
           <button onClick={onClose} className="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground">

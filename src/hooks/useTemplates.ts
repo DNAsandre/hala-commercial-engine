@@ -220,8 +220,15 @@ export function useTemplates(): UseTemplatesReturn {
         };
         const { error: vErr } = await supabase.from("doc_template_versions").insert(versionRow);
         if (vErr) {
-          setError(vErr.message);
-          // Template row exists but version failed — surface, don't crash.
+          // W04-C4: the RECIPE lives only in the version row. This used to fall
+          // through and return a summary, so the caller reported "Saved" while
+          // the recipe was gone — a success message with no stored truth behind
+          // it. A failed version insert is now a failed save.
+          setError(
+            `Template "${templateRow.name}" was created, but its v1 recipe was NOT stored: ${vErr.message}. ` +
+              `The block layout has not been saved — nothing can be built from this template until it is saved again.`,
+          );
+          return null;
         }
         const summary = normalizeSummary({ ...templateRow, updated_at: nowIso }, 1);
         setTemplates((prev) => [summary, ...prev]);

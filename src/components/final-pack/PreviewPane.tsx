@@ -11,7 +11,13 @@
 
 import { useState, useEffect, useRef, useMemo } from "react";
 import { Maximize2, Minimize2, Files, ScrollText } from "lucide-react";
-import { buildPreviewHTML, DEFAULT_BRANDING, type BrandingProfile, type PreviewOptions } from "@/lib/final-pack-preview";
+import {
+  buildPreviewHTML,
+  selectRenderedBlocks,
+  DEFAULT_BRANDING,
+  type BrandingProfile,
+  type PreviewOptions,
+} from "@/lib/final-pack-preview";
 import type { OutputBlock } from "@/lib/final-pack-loader";
 
 interface PreviewPaneProps {
@@ -68,8 +74,23 @@ export default function PreviewPane({
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      const html = buildPreviewHTML(options);
-      setPreviewHtml(html);
+      try {
+        setPreviewHtml(buildPreviewHTML(options));
+      } catch (err) {
+        // A render failure must be visible. Previously this threw inside a
+        // timer: the pane silently kept stale HTML (or stayed blank).
+        console.error("[FPS Preview] Failed to render preview:", err);
+        const message = err instanceof Error ? err.message : "Unknown render error";
+        setPreviewHtml(
+          `<!DOCTYPE html><html><body style="font-family:system-ui;padding:32px;color:#92400e">` +
+            `<h2 style="margin:0 0 8px">Preview could not be rendered</h2>` +
+            `<p style="margin:0 0 8px;color:#6b7280">Your document content is unchanged and still saved. ` +
+            `Export may also fail until the offending block is corrected.</p>` +
+            `<pre style="white-space:pre-wrap;font-size:12px;color:#6b7280">${
+              message.replace(/</g, "&lt;")
+            }</pre></body></html>`,
+        );
+      }
     }, 300);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -83,7 +104,9 @@ export default function PreviewPane({
     }
   }, [previewHtml]);
 
-  const visibleCount = blocks.filter((b) => b.visible).length;
+  // The counter must equal what the pane actually renders (volume filter and
+  // the cover_page layout flag included) — same function the renderer uses.
+  const visibleCount = selectRenderedBlocks(blocks, { volumeBlockKeys, layout }).length;
   const totalCount = blocks.length;
 
   return (

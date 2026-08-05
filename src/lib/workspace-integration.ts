@@ -190,12 +190,33 @@ export function getSupportingDocs(workspaceId: string, includeArchived = false):
 }
 
 /**
+ * The outcome of a supporting-document write.
+ *
+ * SC-01 W04 (T08-B correction pass): these writes used to be fire-and-forget
+ * (`void supabase…insert(...).then(...)`), so the caller announced success
+ * while the statement was still in flight and a later failure arrived as a
+ * SECOND toast after the human had already been told it worked. Every write
+ * below is now awaited and CONFIRMED from the row the database returned, and
+ * a failure REPLACES the success message instead of following it.
+ */
+export interface SupportDocWriteResult {
+  /** true only when the stored row was read back and matched. */
+  ok: boolean;
+  doc: SupportingDoc | null;
+  /** Why it failed, or what was confirmed. Always safe to show a human. */
+  message: string;
+}
+
+/**
  * Register a supporting document record. Persists a metadata row to
  * generated_documents (no file content is attached by this entry point, and
- * none is claimed — storage_path stays empty). If the insert fails the
- * session record is removed and the error is surfaced.
+ * none is claimed — storage_path stays empty).
+ *
+ * Resolves only after the insert has been confirmed by reading the stored row
+ * back. If nothing was stored the session record is removed again and `ok` is
+ * false — the caller must not report success.
  */
-export function uploadSupportingDoc(input: {
+export async function uploadSupportingDoc(input: {
   workspaceId: string;
   name: string;
   fileName: string;
@@ -203,7 +224,7 @@ export function uploadSupportingDoc(input: {
   isRequired?: boolean;
   linkedCycleId?: string;
   notes?: string;
-}): SupportingDoc {
+}): Promise<SupportDocWriteResult> {
   const id = crypto.randomUUID();
   const doc: SupportingDoc = {
     id,
@@ -221,7 +242,12 @@ export function uploadSupportingDoc(input: {
   };
   supportingDocs.push(doc);
 
-  void supabase
+  const rollback = () => {
+    const idx = supportingDocs.findIndex(d => d.id === id);
+    if (idx >= 0) supportingDocs.splice(idx, 1);
+  };
+
+  const { data, error } = await supabase
     .from("generated_documents")
     .insert({
       id,
@@ -240,16 +266,25 @@ export function uploadSupportingDoc(input: {
       generated_by: getCurrentUser().id || "system",
       notes: input.notes || "",
     })
-    .then(({ error }) => {
-      if (error) {
-        // Roll the session record back — nothing was persisted.
-        const idx = supportingDocs.findIndex(d => d.id === id);
-        if (idx >= 0) supportingDocs.splice(idx, 1);
-        handleSupabaseError("uploadSupportingDoc", error, { silent: false });
-      }
-    });
+    .select("id,file_name,status")
+    .maybeSingle();
 
-  return doc;
+  if (error) {
+    rollback();
+    handleSupabaseError("uploadSupportingDoc", error, { silent: true });
+    return { ok: false, doc: null, message: error.message };
+  }
+  // A PostgREST insert can return 200 with no row (RLS). "No error" is not
+  // proof of persistence, so an empty row set is a failure here.
+  if (!data || (data as any).id !== id) {
+    rollback();
+    const message =
+      "The upload request returned no stored row, so nothing is confirmed saved.";
+    handleSupabaseError("uploadSupportingDoc", { message }, { silent: true });
+    return { ok: false, doc: null, message };
+  }
+
+  return { ok: true, doc, message: "Stored row confirmed in generated_documents." };
 }
 
 /**
@@ -274,32 +309,63 @@ export function linkDocToCycle(docId: string, cycleId: string): SupportingDoc | 
   throw new Error("Linking documents to renewal cycles is not available in this build: renewal-cycle persistence has no established source.");
 }
 
-function persistSupportDocStatus(docId: string, status: "generated" | "archived"): void {
-  void supabase
+/**
+ * Persist a status change and CONFIRM it from the returned row.
+ *
+ * Previously this was a fire-and-forget update with a silent error handler and
+ * no read-back, so the human saw the badge change whether or not anything was
+ * stored. An update that matches zero rows returns `{ error: null }` with an
+ * empty row set, which is why the row itself is checked.
+ */
+async function persistSupportDocStatus(
+  docId: string,
+  status: "generated" | "archived",
+): Promise<{ ok: boolean; message: string }> {
+  const { data, error } = await supabase
     .from("generated_documents")
     .update({ status })
     .eq("id", docId)
-    .then(({ error }) => {
-      if (error) handleSupabaseError("supportingDocStatusUpdate", error, { silent: true });
-    });
+    .select("id,status")
+    .maybeSingle();
+
+  if (error) {
+    handleSupabaseError("supportingDocStatusUpdate", error, { silent: true });
+    return { ok: false, message: error.message };
+  }
+  if (!data) {
+    return { ok: false, message: "No generated_documents row was updated for this document, so nothing was stored." };
+  }
+  const stored = (data as any).status;
+  if (stored !== status) {
+    return { ok: false, message: `The database stored "${stored}" instead of "${status}".` };
+  }
+  return { ok: true, message: "Stored status confirmed." };
 }
 
-/** Archive a supporting doc (persists archived status). */
-export function archiveSupportingDoc(docId: string): SupportingDoc | null {
+/**
+ * Archive a supporting doc. The local record changes only AFTER the stored
+ * status has been read back and matched.
+ */
+export async function archiveSupportingDoc(docId: string): Promise<SupportDocWriteResult> {
   const doc = supportingDocs.find(d => d.id === docId);
-  if (!doc) return null;
+  if (!doc) return { ok: false, doc: null, message: "That supporting document is not loaded in this session." };
+  const outcome = await persistSupportDocStatus(docId, "archived");
+  if (!outcome.ok) return { ok: false, doc, message: outcome.message };
   doc.status = "archived";
-  persistSupportDocStatus(docId, "archived");
-  return doc;
+  return { ok: true, doc, message: outcome.message };
 }
 
-/** Restore a supporting doc (persists active status). */
-export function restoreSupportingDoc(docId: string): SupportingDoc | null {
+/**
+ * Restore a supporting doc. The local record changes only AFTER the stored
+ * status has been read back and matched.
+ */
+export async function restoreSupportingDoc(docId: string): Promise<SupportDocWriteResult> {
   const doc = supportingDocs.find(d => d.id === docId);
-  if (!doc) return null;
+  if (!doc) return { ok: false, doc: null, message: "That supporting document is not loaded in this session." };
+  const outcome = await persistSupportDocStatus(docId, "generated");
+  if (!outcome.ok) return { ok: false, doc, message: outcome.message };
   doc.status = "active";
-  persistSupportDocStatus(docId, "generated");
-  return doc;
+  return { ok: true, doc, message: outcome.message };
 }
 
 // ─── TEAM MEMBERS (for renewal owner dropdown) ──────────────

@@ -28,7 +28,7 @@ import {
   QUOTE_STATES, PROPOSAL_STATES, SLA_STATES, HANDOVER_STATES,
 } from "@/lib/store";
 import {
-  useWorkspace, useCustomer, useQuotesByWorkspace, useProposalsByWorkspace,
+  useWorkspace, useQuotesByWorkspace, useProposalsByWorkspace,
   useApprovalRecords, useAuditLog as useSupabaseAuditLog,
 } from "@/hooks/useSupabase";
 import { Loader2 } from "lucide-react";
@@ -54,7 +54,8 @@ import { DocumentViewer, UploadDialog } from "@/components/DocumentViewer";
 // UnsavedChangesModal, BotAssistPanel, GlobalCRMSyncIndicator) and its
 // allNavItems array of denylisted routes into the clean bundle.
 const navigationV1 = true;
-import { handleSupabaseError } from "@/lib/supabase-error";
+import { handleSupabaseError, getFetchError } from "@/lib/supabase-error";
+import { readCustomerMasterById, type CustomerMasterRead } from "@/lib/supabase-commercial-data";
 import { isPricingLocked, getPricingLockReason, canOverridePricingLock, logOverrideAudit, canEditCosts, type DeltaReport } from "@/lib/sla-integrity";
 import { SlaVsPnlDeltaBanner } from "@/components/SlaVsPnlDeltaBanner";
 import CRMSyncBadge from "@/components/CRMSyncBadge";
@@ -73,10 +74,26 @@ import ProposalStageWorkbench from "@/components/proposal-workspace/ProposalStag
 import ProposalOverviewPanel from "@/components/proposal-workspace/ProposalOverviewPanel";
 import ProposalSnapshotCard from "@/components/proposal-workspace/ProposalSnapshotCard";
 import CrmPipelineStrip, { getCrmStageLabel } from "@/components/proposal-workspace/CrmPipelineStrip";
-import { getProposalStageLabel } from "@/components/proposal-workspace/proposal-stages";
-import { supabase } from "@/lib/supabase";
-import { changeStage as changeTicketStage } from "@/lib/intake-save";
-import { createDefaultWorkspaceData, type ProposalWorkspaceData, logProposalAudit, calcQualificationReadiness, calcDiscoveryCompleteness, calcSolutionReadiness, calcPricingConfidence } from "@/components/proposal-workspace/proposal-workspace-state";
+import { getProposalStageLabel, PROPOSAL_TRACKER_STAGES } from "@/components/proposal-workspace/proposal-stages";
+// SC-01 W04 (T08-B): tracker persistence goes through helpers that CONFIRM the
+// stored value from the returned row before anything is reported. The hazard
+// is real — proved live on 2026-08-05: an unauthorised PATCH returned HTTP 200
+// with an empty row set and the stored value unchanged, so `{ error: null }`
+// alone is not proof of persistence. `lib/intake-save.ts#changeStage`, used
+// here previously, had that gap; as of commit a53717f it reads the row back
+// and compares the stored value itself, so this note is history, not a defect.
+import {
+  changeProposalTrackerStage,
+  finalizeStageAdvance,
+  readProposalTrackerStages,
+} from "@/lib/proposal-workspace-persistence";
+import {
+  createDefaultWorkspaceData, type ProposalWorkspaceData, logProposalAudit,
+  calcQualificationReadiness, calcDiscoveryCompleteness, calcSolutionReadiness, calcPricingConfidence,
+  // SC-01 W04 (T08-B correction pass): honest-render decisions live in the
+  // state module so they can be asserted by test — there is no jsdom here.
+  resolveWorkspaceReadState, readCustomerRisk, filterSupportingDocs, formatRecordedDate,
+} from "@/components/proposal-workspace/proposal-workspace-state";
 import {
   isWorkspaceIntegrationEnabled, updateRenewalOwner,
   getDaysToExpiry, isInRenewalWindow, getSupportingDocs, uploadSupportingDoc,
@@ -232,10 +249,23 @@ export default function WorkspaceDetail() {
   const [supportUploadRequired, setSupportUploadRequired] = useState(false);
 
   // ── Internal Proposal Tracker stage (separate from CRM pipeline stage) ──
-  const [proposalStage, setProposalStage] = useState("qualified");
+  const [proposalStage, setProposalStage] = useState(PROPOSAL_TRACKER_STAGES[0].key);
 
   // ── CRM Pipeline Stage (TOP tracker — completely independent from proposalStage) ──
   const [crmPipelineStage, setCrmPipelineStage] = useState<import("@/lib/store").CRMStage>("qualified");
+
+  // Where the displayed internal stage came from. The tracker must never
+  // present a stage as persisted truth when it is a placeholder, a stale value
+  // from a previously opened proposal, or the result of a failed read.
+  const [trackerHydration, setTrackerHydration] = useState<{
+    state: "loading" | "persisted" | "unrecorded" | "missing" | "error";
+    message: string | null;
+  }>({ state: "loading", message: null });
+  const [trackerReloadKey, setTrackerReloadKey] = useState(0);
+  // Whether `crm_pipeline_stage` is actually recorded on the ticket. The
+  // workspace mapper turns a NULL column into "prospecting", which would read
+  // as a real CRM position; this keeps the difference visible.
+  const [crmStageRecorded, setCrmStageRecorded] = useState(true);
 
   // Proposal workbench state is session-only until it is backed by Supabase.
   const [proposalWsData, setProposalWsData] = useState<ProposalWorkspaceData>(() => createDefaultWorkspaceData());
@@ -260,12 +290,47 @@ export default function WorkspaceDetail() {
     return requestedTab || 'overview';
   }, []);
 
-  const { data: ws, loading: wsLoading, refetch: refetchWs } = useWorkspace(id!, isProposalRoute ? "proposal" : "workspace");
+  const { data: ws, loading: wsLoading, error: wsError, refetch: refetchWs } = useWorkspace(id!, isProposalRoute ? "proposal" : "workspace");
   const { data: wsQuotes, loading: qLoading } = useQuotesByWorkspace(id!);
   const { data: wsProposals, loading: pLoading } = useProposalsByWorkspace(id!);
   const { data: allApprovals, loading: appLoading } = useApprovalRecords();
   const { data: allAuditLog, loading: auditLoading } = useSupabaseAuditLog();
   const { data: wsPnL, loading: pnlLoading } = usePnLByWorkspace(id!);
+
+  // SC-01 W04 (T08-B correction pass): a failed read must not look like an
+  // absent proposal. The hook surfaces thrown/timed-out reads through `error`,
+  // but the proposal fetcher ALSO swallows PostgREST/RLS failures and returns
+  // null — it records them through setFetchError instead. Both channels are
+  // read here so "Workspace not found" is only ever shown for a read that
+  // actually succeeded and matched nothing.
+  const [readAttempt, setReadAttempt] = useState(0);
+  const workspaceFetchError = !wsLoading && !ws
+    ? getFetchError("fetchProposalWorkspaceById")?.error.message ?? null
+    : null;
+
+  // ── Customer master record (real read; replaces a hardcoded literal) ──
+  // The page used to build `customer` as an object literal carrying
+  // paymentStatus:'Good' and dso:0, then rendered a "Healthy customer profile"
+  // verdict and "0 days" from it. Nothing was ever read. Now: read the row,
+  // and keep found / absent / read-failed distinguishable.
+  const [customerRead, setCustomerRead] = useState<CustomerMasterRead & { loading: boolean }>(
+    { status: "absent", customer: null, message: null, loading: true },
+  );
+  const customerIdForRead = ws?.customerId ?? "";
+  useEffect(() => {
+    let cancelled = false;
+    setCustomerRead({ status: "absent", customer: null, message: null, loading: true });
+    if (!customerIdForRead) {
+      setCustomerRead({ status: "absent", customer: null, message: null, loading: false });
+      return;
+    }
+    (async () => {
+      const result = await readCustomerMasterById(customerIdForRead);
+      if (cancelled) return;
+      setCustomerRead({ ...result, loading: false });
+    })();
+    return () => { cancelled = true; };
+  }, [customerIdForRead, readAttempt]);
 
   // Canonical document lists from doc_instances (Wave 2)
 
@@ -297,34 +362,121 @@ export default function WorkspaceDetail() {
   // ── Seed BOTH trackers from the recorded commercial_tickets row so the
   //    displayed stages are the persisted stages and survive a page reload.
   //    (crm_pipeline_stage / internal_stage are established columns.) ──
+  //    SC-01 W04 (T08-B): the tracker state is RESET on every ticket change
+  //    before the read starts. Previously `internal_stage` was applied only
+  //    when it was non-null and the read error was swallowed, so opening a
+  //    second proposal could keep showing the FIRST proposal's internal stage.
   useEffect(() => {
-    if (ws?.crmStage && ws.crmStage !== crmPipelineStage) {
-      setCrmPipelineStage(ws.crmStage);
-    }
     const ticketId = ws?.crmDealId;
-    if (!ticketId) return;
+
+    // Identity reset — never carry another record's tracker state forward.
+    setProposalStage(PROPOSAL_TRACKER_STAGES[0].key);
+    setTrackerHydration({ state: "loading", message: null });
+    setCrmStageRecorded(true);
+    if (ws?.crmStage) setCrmPipelineStage(ws.crmStage);
+
+    if (!ticketId) {
+      setTrackerHydration({
+        state: "missing",
+        message: "No commercial ticket is linked to this workspace, so no saved internal stage could be read.",
+      });
+      return;
+    }
+
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase
-        .from("commercial_tickets")
-        .select("internal_stage, crm_pipeline_stage")
-        .eq("id", ticketId)
-        .single();
-      if (cancelled || error || !data) return;
-      if (data.internal_stage) setProposalStage(data.internal_stage);
+      const stages = await readProposalTrackerStages(ticketId);
+      if (cancelled) return;
+      if (stages.error) {
+        setTrackerHydration({ state: "error", message: stages.error });
+        return;
+      }
+      if (!stages.found) {
+        setTrackerHydration({
+          state: "missing",
+          message: "The linked commercial ticket could not be read with the current sign-in, so the saved stage is unknown.",
+        });
+        return;
+      }
+      setCrmStageRecorded(stages.crmPipelineStage !== null);
+      if (stages.internalStage) {
+        setProposalStage(stages.internalStage);
+        setTrackerHydration({ state: "persisted", message: null });
+      } else {
+        setTrackerHydration({
+          state: "unrecorded",
+          message: "No internal stage is recorded on this ticket yet — the strip shows the first stage as a starting point, not a saved position.",
+        });
+      }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ws?.id, ws?.crmDealId]);
+  }, [ws?.id, ws?.crmDealId, trackerReloadKey]);
 
   // CLEAN APP: `diLoading` removed — it came from useDocInstances (doc_instances),
   // which was composer-only and has been severed.
   const loading = wsLoading || qLoading || pLoading || appLoading || auditLoading || pnlLoading;
-  if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
-  if (!ws) return (
-    <div className="p-6">
-      <h1 className="text-xl font-serif">Workspace not found</h1>
-      <Link href={cleanHref("/workspaces/proposals")}><Button variant="outline" className="mt-4"><ArrowLeft className="w-4 h-4 mr-1.5" />Back</Button></Link>
+
+  // Three distinct outcomes — loading, genuinely not found, read failed.
+  const readState = resolveWorkspaceReadState({
+    loading,
+    workspace: ws,
+    errors: [wsError, workspaceFetchError],
+  });
+
+  if (readState.kind === "loading") {
+    return (
+      <div className="flex flex-col items-center justify-center h-96 gap-3">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Loading proposal {id}…</p>
+      </div>
+    );
+  }
+
+  if (readState.kind === "read_failed") {
+    return (
+      <div className="p-6 max-w-2xl">
+        <Card className="border border-red-200 bg-red-50/40 shadow-none">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base font-serif flex items-center gap-2 text-red-900">
+              <XCircle className="w-4 h-4 text-red-600" /> This proposal could not be read
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 space-y-3">
+            <p className="text-sm text-red-800/90">
+              The read of proposal <span className="font-mono text-xs">{id}</span> failed, so it is unknown
+              whether this record exists. This is <span className="font-semibold">not</span> a statement that
+              the proposal is missing.
+            </p>
+            <p className="rounded border border-red-200 bg-white/70 px-2 py-1.5 font-mono text-[11px] text-red-800">
+              {readState.reason}
+            </p>
+            <div className="flex items-center gap-2 pt-1">
+              <Button variant="outline" size="sm" onClick={() => { setReadAttempt(n => n + 1); void refetchWs(); }}>
+                <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Retry
+              </Button>
+              <Link href={cleanHref("/workspaces/proposals")}>
+                <Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4 mr-1.5" />Back to proposals</Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (readState.kind === "not_found" || !ws) return (
+    <div className="p-6 max-w-2xl">
+      <h1 className="text-xl font-serif">Proposal not found</h1>
+      <p className="mt-1 text-sm text-muted-foreground">
+        The read succeeded and returned no proposal with id <span className="font-mono text-xs">{id}</span>.
+      </p>
+      <div className="flex items-center gap-2 mt-4">
+        <Link href={cleanHref("/workspaces/proposals")}><Button variant="outline"><ArrowLeft className="w-4 h-4 mr-1.5" />Back</Button></Link>
+        <Button variant="ghost" onClick={() => { setReadAttempt(n => n + 1); void refetchWs(); }}>
+          <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Check again
+        </Button>
+      </div>
     </div>
   );
 
@@ -351,12 +503,21 @@ export default function WorkspaceDetail() {
       toast.error("CRM stage not saved", { description: "No commercial ticket is linked to this workspace." });
       return;
     }
-    const { error } = await changeTicketStage(ticketId, "crm_pipeline_stage", oldStage, newStage, getCurrentUser().name);
-    if (error) {
-      toast.error("CRM stage NOT saved", { description: error + ". The displayed stage is unchanged." });
+    // Confirmed write: the displayed stage, the audit entry and the success
+    // message all wait for the value the database returned.
+    const saved = await changeProposalTrackerStage({
+      ticketId,
+      column: "crm_pipeline_stage",
+      oldValue: oldStage,
+      newValue: newStage,
+      userName: getCurrentUser().name,
+    });
+    if (!saved.ok) {
+      toast.error("CRM stage NOT saved", { description: saved.message });
       return;
     }
     setCrmPipelineStage(newStage);
+    setCrmStageRecorded(true);
     logProposalAudit({
       workspaceId: ws.id,
       action: "crm_stage_change",
@@ -367,7 +528,7 @@ export default function WorkspaceDetail() {
       newValue: newStage,
       details: `CRM Pipeline stage moved: ${getCrmStageLabel(oldStage as any)} → ${getCrmStageLabel(newStage)}`,
     });
-    toast.success(`CRM Pipeline → ${getCrmStageLabel(newStage)}`, { description: "Saved to the commercial ticket." });
+    toast.success(`CRM Pipeline → ${getCrmStageLabel(newStage)}`, { description: saved.message });
   };
 
   // ── Proposal Stage handler (updates internal_stage ONLY, never CRM
@@ -379,12 +540,19 @@ export default function WorkspaceDetail() {
       toast.error("Internal stage not saved", { description: "No commercial ticket is linked to this workspace." });
       return;
     }
-    const { error } = await changeTicketStage(ticketId, "internal_stage", oldStage, newStage, getCurrentUser().name);
-    if (error) {
-      toast.error("Internal stage NOT saved", { description: error + ". The displayed stage is unchanged." });
+    const saved = await changeProposalTrackerStage({
+      ticketId,
+      column: "internal_stage",
+      oldValue: oldStage,
+      newValue: newStage,
+      userName: getCurrentUser().name,
+    });
+    if (!saved.ok) {
+      toast.error("Internal stage NOT saved", { description: saved.message });
       return;
     }
     setProposalStage(newStage);
+    setTrackerHydration({ state: "persisted", message: null });
     logProposalAudit({
       workspaceId: ws.id,
       action: "proposal_stage_change",
@@ -395,11 +563,23 @@ export default function WorkspaceDetail() {
       newValue: newStage,
       details: `Internal Proposal stage moved: ${getProposalStageLabel(oldStage)} → ${getProposalStageLabel(newStage)}`,
     });
-    toast.success(`Internal stage → ${getProposalStageLabel(newStage)}`, { description: "Saved to the commercial ticket." });
+    toast.success(`Internal stage → ${getProposalStageLabel(newStage)}`, { description: saved.message });
   };
-  // We'll use a simple customer lookup from the workspace data for now
-  // The full customer data is fetched via the CustomerDetail page
-  const customer: any = ws.customerId ? { id: ws.customerId, name: ws.customerName, industry: '', grade: 'TBA', dso: 0, paymentStatus: 'Good', contractExpiry: '', contractValue2025: 0, revenue2025: 0, region: ws.region, facility: '', status: 'Active' } : null;
+  // ── Customer master record ──
+  // `customer` is now ONLY the row that was read back from `customers`. It is
+  // null when no row was found and null when the read failed; the two are told
+  // apart by `customerRead.status`, never by this value. Nothing here is
+  // defaulted — an unread field stays null and renders as "not recorded".
+  const customer = customerRead.status === "found" ? customerRead.customer : null;
+  const customerRisk = readCustomerRisk(customer);
+  const customerUnavailableNote =
+    customerRead.loading
+      ? "Reading the customer master record…"
+      : customerRead.status === "error"
+        ? `The customer master record could not be read: ${customerRead.message ?? "reason not reported"}. Whether one exists is unknown.`
+        : ws.customerId
+          ? "No customer master record is linked to this proposal, so customer grade, DSO, payment behaviour and contract values are not recorded."
+          : "This proposal carries no customer id, so no customer master record can be read.";
   const wsApprovals = allApprovals.filter(a => a.workspaceId === ws.id);
   const wsSignals: Array<{ id: string; severity: "red" | "amber" | "green"; type: string; message: string }> = [];
   const wsSLAs = workspaceSLAs.filter(s => s.workspaceId === ws.id);
@@ -430,8 +610,13 @@ export default function WorkspaceDetail() {
   const daysToExpiry = activeCycle ? getDaysToExpiry(activeCycle.endDate) : null;
   const inRenewalWindow = activeCycle ? isInRenewalWindow(activeCycle) : false;
 
-  // Supporting docs
+  // Supporting docs.
+  // ONE derived set behind ONE counter: `visibleSupportDocs` is both what the
+  // badge counts and what the list renders. The page previously showed
+  // `wsSupportDocs.length` (pre-filter) above a category-filtered list, in two
+  // separate Documents tabs with two different counters.
   const wsSupportDocs = integrationEnabled ? getSupportingDocs(ws.id, showDocArchived) : [];
+  const visibleSupportDocs = filterSupportingDocs(wsSupportDocs, supportDocFilter);
 
   // ── Undo countdown timer (local window; starts only after confirmed,
   //     rehydrated stage advance) ──
@@ -474,27 +659,20 @@ export default function WorkspaceDetail() {
       toast.error("Stage advance not possible", { description: result.message });
       return;
     }
-    try {
-      const persisted = await updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any);
-      if (!persisted) {
-        toast.error("Stage advance NOT saved", {
-          description: "Supabase rejected the update (possibly a concurrent edit). The workspace stage is unchanged.",
-        });
-        return;
-      }
-    } catch (err: any) {
-      toast.error("Stage advance NOT saved", { description: err?.message || "Database write failed. The workspace stage is unchanged." });
+    // Persist, then REHYDRATE from Supabase so the displayed tracker and any
+    // subsequent Undo operate on the persisted stage, not the stale cached
+    // object. Success, audit history and the undo window come last, and only
+    // on `confirmed`. A failed refresh yields no success message and no Undo.
+    const outcome = await finalizeStageAdvance({
+      persist: async () => !!(await updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any)),
+      refetch: refetchWs,
+    });
+    if (outcome.status === "not_persisted") {
+      toast.error("Stage advance NOT saved", { description: outcome.message });
       return;
     }
-    // Confirmed persisted — REHYDRATE the workspace from Supabase so the
-    // displayed tracker and any subsequent Undo operate on the persisted
-    // stage, not the stale cached object. Only then report success, write
-    // audit history and open the undo window.
-    const refreshed = await refetchWs();
-    if (!refreshed) {
-      toast.warning("Stage saved, but the page could not refresh", {
-        description: "The change IS persisted in Supabase. Reload the page to see the current stage. Undo is unavailable until the display reflects the saved stage.",
-      });
+    if (outcome.status === "persisted_not_refreshed") {
+      toast.warning("Stage saved, but the page could not refresh", { description: outcome.message });
       return;
     }
     setTransitionResult(result);
@@ -513,26 +691,19 @@ export default function WorkspaceDetail() {
       toast.error("Undo not possible", { description: result.message });
       return;
     }
-    try {
-      const persisted = await updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any);
-      if (!persisted) {
-        toast.error("Stage revert NOT saved", {
-          description: "Supabase rejected the update. The workspace stage is unchanged.",
-        });
-        return;
-      }
-    } catch (err: any) {
-      toast.error("Stage revert NOT saved", { description: err?.message || "Database write failed. The workspace stage is unchanged." });
+    // Undo acts on `ws.stage`, which is the value rehydrated from Supabase by
+    // the advance that opened this window — never on an optimistic local value.
+    const outcome = await finalizeStageAdvance({
+      persist: async () => !!(await updateWorkspaceDB(ws.id, { stage: result.nextStage!, daysInStage: 0 } as any)),
+      refetch: refetchWs,
+    });
+    if (outcome.status === "not_persisted") {
+      toast.error("Stage revert NOT saved", { description: outcome.message });
       return;
     }
-    // Confirmed persisted — rehydrate to the persisted stage before
-    // reporting; then close the undo window.
     lastAdvanceAtRef.current = null;
-    const undoRefreshed = await refetchWs();
-    if (!undoRefreshed) {
-      toast.warning("Stage reverted, but the page could not refresh", {
-        description: "The revert IS persisted in Supabase. Reload the page to see the current stage.",
-      });
+    if (outcome.status === "persisted_not_refreshed") {
+      toast.warning("Stage reverted, but the page could not refresh", { description: outcome.message });
       setShowUndoBanner(false); setTransitionResult(null);
       if (undoTimerRef.current) clearInterval(undoTimerRef.current);
       return;
@@ -556,19 +727,41 @@ export default function WorkspaceDetail() {
 
 
   // ── Handle supporting doc upload ──
-  const handleSupportDocUpload = () => {
-    if (!supportUploadName.trim()) { toast.error("Name is required"); return; }
-    uploadSupportingDoc({
+  // The success message waits for the CONFIRMED stored row. Previously the
+  // insert was fire-and-forget and the toast fired immediately, so a failure
+  // arrived as a second toast after the human had been told it worked.
+  const handleSupportDocUpload = async () => {
+    const name = supportUploadName.trim();
+    if (!name) { toast.error("Name is required"); return; }
+    const result = await uploadSupportingDoc({
       workspaceId: ws.id,
-      name: supportUploadName.trim(),
-      fileName: `${supportUploadName.trim().toLowerCase().replace(/\s+/g, "-")}.pdf`,
+      name,
+      fileName: `${name.toLowerCase().replace(/\s+/g, "-")}.pdf`,
       category: supportUploadCategory,
       isRequired: supportUploadRequired,
     });
-    toast.success(`Supporting doc "${supportUploadName}" uploaded`);
+    forceUpdate(n => n + 1);
+    if (!result.ok) {
+      toast.error(`Supporting doc "${name}" NOT saved`, { description: result.message });
+      return;
+    }
+    toast.success(`Supporting doc "${name}" saved`, { description: result.message });
     setSupportUploadName(""); setSupportUploadCategory("Other"); setSupportUploadRequired(false);
     setShowSupportUpload(false);
+  };
+
+  // Archive / restore also report only what the database confirmed.
+  const handleSupportDocArchive = async (docId: string, docName: string) => {
+    const result = await archiveSupportingDoc(docId);
     forceUpdate(n => n + 1);
+    if (!result.ok) { toast.error(`"${docName}" NOT archived`, { description: result.message }); return; }
+    toast.success(`"${docName}" archived`, { description: result.message });
+  };
+  const handleSupportDocRestore = async (docId: string, docName: string) => {
+    const result = await restoreSupportingDoc(docId);
+    forceUpdate(n => n + 1);
+    if (!result.ok) { toast.error(`"${docName}" NOT restored`, { description: result.message }); return; }
+    toast.success(`"${docName}" restored`, { description: result.message });
   };
 
 
@@ -593,14 +786,28 @@ export default function WorkspaceDetail() {
                 {getWorkspaceTypeLabel(wsType)}
               </Badge>
               {isCommercial && (
-                <Badge variant="outline" className="text-[10px] border-emerald-200 bg-emerald-50 text-emerald-700">
-                  CRM: {getCrmStageLabel(crmPipelineStage)}
-                </Badge>
+                crmStageRecorded ? (
+                  <Badge variant="outline" className="text-[10px] border-emerald-200 bg-emerald-50 text-emerald-700">
+                    CRM: {getCrmStageLabel(crmPipelineStage)}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] border-amber-300 bg-amber-50 text-amber-700"
+                    title="crm_pipeline_stage is empty on this commercial ticket.">
+                    CRM: not recorded
+                  </Badge>
+                )
               )}
               {isCommercial && (
-                <Badge variant="outline" className="text-[10px] border-[#075eea]/20 bg-[#075eea]/10 text-[#075eea]">
-                  Internal: {getProposalStageLabel(proposalStage)}
-                </Badge>
+                trackerHydration.state === "persisted" ? (
+                  <Badge variant="outline" className="text-[10px] border-[#075eea]/20 bg-[#075eea]/10 text-[#075eea]">
+                    Internal: {getProposalStageLabel(proposalStage)}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] border-amber-300 bg-amber-50 text-amber-700"
+                    title={trackerHydration.message ?? "The saved internal stage has not been read yet."}>
+                    Internal: {trackerHydration.state === "loading" ? "reading…" : "not recorded"}
+                  </Badge>
+                )
               )}
               {!isCommercial && (
                 <Badge variant="outline" className={`text-xs ${getEffectiveStageColor(ws)}`}>{getEffectiveStageLabel(ws)}</Badge>
@@ -788,6 +995,8 @@ export default function WorkspaceDetail() {
           <ProposalTrackerStrip
             activeStage={proposalStage}
             onStageChange={handleProposalStageChange}
+            hydration={trackerHydration}
+            onRetryHydration={() => setTrackerReloadKey(key => key + 1)}
           />
           </>
         ) : (
@@ -915,8 +1124,14 @@ export default function WorkspaceDetail() {
         </>}
 
         {/* ═══ TABS (type-aware — commercial uses decision-domain tabs) ═══ */}
+        {/* SC-01 W04 (T08-B correction pass): this list used to carry
+            `className={isCommercial ? "hidden" : ""}`. `isCommercial` is
+            unconditionally true on /proposals/:id — the workspace mapper in
+            lib/supabase-data.ts stamps every proposal ticket `type:"commercial"`
+            — so the nine commercial tabs below were reachable only by typing a
+            `?tab=` deep link. They are clickable again; no tab content changed. */}
         <Tabs defaultValue={initialTab} className="space-y-4">
-          <TabsList className={isCommercial ? "hidden" : ""}>
+          <TabsList className={isCommercial ? "flex flex-wrap h-auto gap-1 justify-start" : ""}>
             <TabsTrigger value="overview" className={isCommercial ? "rounded-full text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm" : ""}>Overview</TabsTrigger>
             {isTender ? (
               /* Tender workspace tabs */
@@ -962,21 +1177,58 @@ export default function WorkspaceDetail() {
             )}
           </TabsList>
 
-          {/* ═══ OVERVIEW TAB (hidden for commercial — content moved to Stage Indicators) ═══ */}
+          {/* ═══ OVERVIEW TAB (commercial) ═══
+              The commercial overview surface is the CRM strip, the internal
+              tracker and the stage workbench rendered ABOVE this tab bar. This
+              panel therefore only restates the ticket's own recorded fields and
+              says where the rest of the work lives — it asserts nothing that is
+              not stored on the commercial_tickets row. */}
+          {isCommercial && (
+            <TabsContent value="overview">
+              <Card className="border border-border shadow-none">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-muted-foreground" /> Recorded On This Proposal
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0 space-y-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div><p className="text-[10px] text-muted-foreground uppercase">Title</p><p className="text-sm font-medium mt-0.5">{ws.title || <span className="text-muted-foreground">Not recorded</span>}</p></div>
+                    <div><p className="text-[10px] text-muted-foreground uppercase">Owner</p><p className="text-sm font-medium mt-0.5">{ws.owner || <span className="text-muted-foreground">Not recorded</span>}</p></div>
+                    <div><p className="text-[10px] text-muted-foreground uppercase">Commercial Ticket</p><p className="text-sm font-medium mt-0.5 font-mono text-xs">{ws.crmDealId || <span className="font-sans text-sm text-muted-foreground">Not linked</span>}</p></div>
+                    <div><p className="text-[10px] text-muted-foreground uppercase">Est. Value</p><p className="text-sm font-medium mt-0.5 data-value">{formatSAR(ws.estimatedValue)}</p></div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    The CRM stage, the internal proposal stage and the stage workbench for this proposal
+                    are shown above the tabs. The tabs cover quotes, proposals, SLA, commercial, delivery,
+                    customer, documents, activity and audit.
+                  </p>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          )}
+
+          {/* ═══ OVERVIEW TAB (tender / renewal) ═══ */}
           {!isCommercial && (
           <TabsContent value="overview">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card className="border border-border shadow-none">
                 <CardHeader className="pb-3"><CardTitle className="text-base font-serif">Customer Info</CardTitle></CardHeader>
                 <CardContent className="pt-0 space-y-2">
-                  {customer && [
+                  {customer ? [
                     { l: "Code", v: customer.code }, { l: "Industry", v: customer.industry },
                     { l: "Grade", v: customer.grade }, { l: "Service Type", v: customer.serviceType },
-                    { l: "Contract Expiry", v: customer.contractExpiry }, { l: "DSO", v: `${customer.dso} days` },
-                    { l: "Payment Status", v: customer.paymentStatus }, { l: "Contact", v: customer.contactName },
+                    { l: "Contract Expiry", v: customer.contractExpiry },
+                    { l: "DSO", v: customerRisk.dsoDays === null ? null : `${customerRisk.dsoDays} days` },
+                    { l: "Payment Status", v: customer.paymentStatus }, { l: "Account Owner", v: customer.accountOwner },
                   ].map(r => (
-                    <div key={r.l} className="flex justify-between text-sm"><span className="text-muted-foreground">{r.l}</span><span className="font-medium data-value">{r.v}</span></div>
-                  ))}
+                    <div key={r.l} className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">{r.l}</span>
+                      {r.v ? <span className="font-medium data-value">{r.v}</span> : <span className="text-muted-foreground/70">Not recorded</span>}
+                    </div>
+                  )) : (
+                    <p className="text-sm text-muted-foreground">{customerUnavailableNote}</p>
+                  )}
                 </CardContent>
               </Card>
               <Card className="border border-border shadow-none">
@@ -1235,90 +1487,170 @@ export default function WorkspaceDetail() {
           {isCommercial && (
             <TabsContent value="customer_tab">
               {(() => {
-                const dso = customer?.dso || 0;
-                const grade = customer?.grade || "TBA";
-                const payStatus = customer?.paymentStatus || "—";
-                const ecrScore = grade === "A" ? 92 : grade === "B" ? 78 : grade === "C" ? 55 : grade === "D" ? 35 : grade === "F" ? 10 : null;
-                const ecrGrade = ecrScore ? (ecrScore >= 90 ? "A" : ecrScore >= 80 ? "B" : ecrScore >= 60 ? "C" : ecrScore >= 40 ? "D" : "F") : null;
-                const payRisk = payStatus === "Good" ? "Low" : payStatus === "Acceptable" ? "Medium" : "High";
-                const dsoRisk = dso <= 30 ? "Healthy" : dso <= 45 ? "Acceptable" : dso <= 60 ? "Watch" : "Critical";
-                const strategicFit = (customer?.contractValue2025 || 0) > 5000000 ? "Strategic" : (customer?.contractValue2025 || 0) > 1000000 ? "Core" : "Standard";
+                // SC-01 W04 (T08-B correction pass). Everything on this tab now
+                // comes from the `customers` row that was actually read back.
+                // What was removed and why:
+                //   · the "Healthy customer profile" verdict — it was derived
+                //     from a hardcoded paymentStatus:'Good'
+                //   · the "0 days" DSO — hardcoded dso:0
+                //   · the ECR score (92/78/55/35/10) — invented from the grade
+                //     letter; no ECR score is stored for a customer here
+                // A missing value renders "Not recorded"; a failed read says so.
+                if (customerRead.loading) {
+                  return (
+                    <Card className="border border-border shadow-none">
+                      <CardContent className="py-10 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Reading the customer master record…
+                      </CardContent>
+                    </Card>
+                  );
+                }
+
+                if (customerRead.status === "error") {
+                  return (
+                    <Card className="border border-red-200 bg-red-50/40 shadow-none">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold flex items-center gap-2 text-red-900">
+                          <XCircle className="w-4 h-4 text-red-600" /> Customer record could not be read
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="pt-0 space-y-3">
+                        <p className="text-sm text-red-800/90">
+                          The read of the <span className="font-mono text-xs">customers</span> row for this
+                          proposal failed. No grade, DSO, payment behaviour or contract value is shown,
+                          because none of it is known — this is not a statement that the customer has none.
+                        </p>
+                        <p className="rounded border border-red-200 bg-white/70 px-2 py-1.5 font-mono text-[11px] text-red-800">
+                          {customerRead.message ?? "reason not reported"}
+                        </p>
+                        <Button variant="outline" size="sm" onClick={() => setReadAttempt(n => n + 1)}>
+                          <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Retry
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  );
+                }
+
+                if (!customer) {
+                  return (
+                    <div className="space-y-4">
+                      <Card className="border border-amber-200 bg-amber-50/40 shadow-none">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-amber-900">
+                            <Info className="w-4 h-4 text-amber-600" /> No customer master record
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="pt-0">
+                          <p className="text-sm text-amber-800/90">{customerUnavailableNote}</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="border border-border shadow-none">
+                        <CardContent className="p-4">
+                          <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Customer name on this proposal</p>
+                          <p className="text-sm font-bold mt-0.5">{ws.customerName}</p>
+                          <p className="text-[10px] text-muted-foreground mt-1">
+                            Recorded on the commercial ticket. It is not backed by a customer master row.
+                          </p>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  );
+                }
+
+                const notRecorded = <span className="text-sm font-normal text-muted-foreground">Not recorded</span>;
+                const revenueTrend =
+                  customer.revenue2025 === null || customer.revenue2024 === null
+                    ? null
+                    : customer.revenue2025 > customer.revenue2024 ? "↑ Growing"
+                    : customer.revenue2025 === customer.revenue2024 ? "→ Flat"
+                    : "↓ Declining";
+
                 return (
                   <div className="space-y-6">
-                    {/* Customer Risk Signal Bar */}
-                    <div className={`p-3 rounded-lg border ${payRisk === "High" || dsoRisk === "Critical" ? "border-red-200 bg-red-50" : payRisk === "Medium" || dsoRisk === "Watch" ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
-                      <div className="flex items-center gap-2">
-                        <AlertTriangle className={`w-4 h-4 ${payRisk === "High" ? "text-red-600" : payRisk === "Medium" ? "text-amber-600" : "text-emerald-600"}`} />
-                        <span className={`text-sm font-semibold ${payRisk === "High" ? "text-red-800" : payRisk === "Medium" ? "text-amber-800" : "text-emerald-800"}`}>
-                          {payRisk === "High" ? "High Risk Customer — payment issues detected" : payRisk === "Medium" ? "Medium Risk — monitoring recommended" : "Healthy customer profile"}
-                        </span>
+                    {/* Recorded risk readout — a verdict ONLY when both the
+                        stored payment status and the stored DSO exist. */}
+                    {customerRisk.verdict ? (
+                      <div className={`p-3 rounded-lg border ${customerRisk.tone === "red" ? "border-red-200 bg-red-50" : customerRisk.tone === "amber" ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className={`w-4 h-4 ${customerRisk.tone === "red" ? "text-red-600" : customerRisk.tone === "amber" ? "text-amber-600" : "text-emerald-600"}`} />
+                          <span className={`text-sm font-semibold ${customerRisk.tone === "red" ? "text-red-800" : customerRisk.tone === "amber" ? "text-amber-800" : "text-emerald-800"}`}>
+                            {customerRisk.verdict}
+                          </span>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="p-3 rounded-lg border border-border bg-muted/20">
+                        <p className="text-sm text-muted-foreground">
+                          No risk verdict is shown: this customer record has
+                          {customerRisk.paymentRisk === null ? " no recorded payment status" : ""}
+                          {customerRisk.paymentRisk === null && customerRisk.dsoDays === null ? " and" : ""}
+                          {customerRisk.dsoDays === null ? " no recorded DSO" : ""}.
+                        </p>
+                      </div>
+                    )}
 
-                    {/* ECR + Identity */}
-                    <div className="grid grid-cols-5 gap-3">
-                      <div className={`rounded-lg border p-3 ${ecrGrade === "A" || ecrGrade === "B" ? "border-emerald-200 bg-emerald-50/60" : ecrGrade === "C" ? "border-amber-200 bg-amber-50/60" : ecrGrade ? "border-red-200 bg-red-50/60" : "border-border bg-muted/20"}`}>
-                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">ECR Score</p>
-                        <p className={`text-lg font-bold mt-0.5 ${ecrGrade === "A" || ecrGrade === "B" ? "text-emerald-700" : ecrGrade === "C" ? "text-amber-700" : ecrGrade ? "text-red-700" : ""}`}>{ecrScore || "—"}</p>
-                        <p className="text-[10px] text-muted-foreground">Grade: {ecrGrade || "Not Scored"}</p>
-                      </div>
+                    {/* Identity — stored fields only */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       <div className="rounded-lg border border-border bg-muted/20 p-3">
                         <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Customer</p>
-                        <p className="text-sm font-bold mt-0.5">{ws.customerName}</p>
-                        <p className="text-[10px] text-muted-foreground">{customer?.code || "—"} · {customer?.industry || "—"}</p>
+                        <p className="text-sm font-bold mt-0.5">{customer.name ?? ws.customerName}</p>
+                        <p className="text-[10px] text-muted-foreground">{customer.code ?? "code not recorded"} · {customer.industry ?? "industry not recorded"}</p>
                       </div>
                       <div className="rounded-lg border border-border bg-muted/20 p-3">
-                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Strategic Fit</p>
-                        <p className="text-sm font-bold mt-0.5">{strategicFit}</p>
-                        <p className="text-[10px] text-muted-foreground">{formatSAR(customer?.contractValue2025 || 0)} contract</p>
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Grade</p>
+                        <p className="text-sm font-bold mt-0.5">{customer.grade ?? notRecorded}</p>
+                        <p className="text-[10px] text-muted-foreground">Stored customer grade</p>
                       </div>
                       <div className="rounded-lg border border-border bg-muted/20 p-3">
-                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Region</p>
-                        <p className="text-sm font-bold mt-0.5">{customer?.region || ws.region}</p>
-                        <p className="text-[10px] text-muted-foreground">{customer?.city || "—"}</p>
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">2025 Contract Value</p>
+                        <p className="text-sm font-bold mt-0.5">{customer.contractValue2025 === null ? notRecorded : formatSAR(customer.contractValue2025)}</p>
                       </div>
                       <div className="rounded-lg border border-border bg-muted/20 p-3">
                         <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Account</p>
-                        <p className="text-sm font-bold mt-0.5">{customer?.accountOwner || ws.owner}</p>
-                        <p className="text-[10px] text-muted-foreground">{customer?.serviceType || "—"}</p>
+                        <p className="text-sm font-bold mt-0.5">{customer.accountOwner ?? notRecorded}</p>
+                        <p className="text-[10px] text-muted-foreground">{customer.serviceType ?? "service type not recorded"} · {customer.region ?? "region not recorded"}</p>
                       </div>
                     </div>
 
-                    {/* Payment Behavior Signals */}
+                    {/* Payment Behaviour — recorded values only */}
                     <Card className="border border-border shadow-none">
-                      <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2"><BarChart3 className="w-4 h-4 text-muted-foreground" /> Payment Behavior</CardTitle></CardHeader>
+                      <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2"><BarChart3 className="w-4 h-4 text-muted-foreground" /> Payment Behaviour</CardTitle></CardHeader>
                       <CardContent className="pt-0">
-                        <div className="grid grid-cols-4 gap-4">
-                          <div className={`rounded-lg border p-3 ${payRisk === "High" ? "border-red-200 bg-red-50/60" : payRisk === "Medium" ? "border-amber-200 bg-amber-50/60" : "border-emerald-200 bg-emerald-50/60"}`}>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <div className={`rounded-lg border p-3 ${customerRisk.paymentRisk === "High" ? "border-red-200 bg-red-50/60" : customerRisk.paymentRisk === "Medium" ? "border-amber-200 bg-amber-50/60" : customerRisk.paymentRisk === "Low" ? "border-emerald-200 bg-emerald-50/60" : "border-border bg-muted/20"}`}>
                             <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Payment Risk</p>
-                            <p className={`text-sm font-bold mt-0.5 ${payRisk === "High" ? "text-red-700" : payRisk === "Medium" ? "text-amber-700" : "text-emerald-700"}`}>{payRisk}</p>
-                            <p className="text-[10px] text-muted-foreground">{payStatus}</p>
+                            <p className={`text-sm font-bold mt-0.5 ${customerRisk.paymentRisk === "High" ? "text-red-700" : customerRisk.paymentRisk === "Medium" ? "text-amber-700" : customerRisk.paymentRisk === "Low" ? "text-emerald-700" : ""}`}>{customerRisk.paymentRisk ?? notRecorded}</p>
+                            <p className="text-[10px] text-muted-foreground">{customer.paymentStatus ?? "no stored payment status"}</p>
                           </div>
-                          <div className={`rounded-lg border p-3 ${dsoRisk === "Critical" ? "border-red-200 bg-red-50/60" : dsoRisk === "Watch" ? "border-amber-200 bg-amber-50/60" : "border-border bg-muted/20"}`}>
+                          <div className={`rounded-lg border p-3 ${customerRisk.dsoBand === "Critical" ? "border-red-200 bg-red-50/60" : customerRisk.dsoBand === "Watch" ? "border-amber-200 bg-amber-50/60" : "border-border bg-muted/20"}`}>
                             <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">DSO</p>
-                            <p className={`text-sm font-bold mt-0.5 ${dsoRisk === "Critical" ? "text-red-700" : dsoRisk === "Watch" ? "text-amber-700" : ""}`}>{dso} days</p>
-                            <p className="text-[10px] text-muted-foreground">{dsoRisk}</p>
+                            <p className={`text-sm font-bold mt-0.5 ${customerRisk.dsoBand === "Critical" ? "text-red-700" : customerRisk.dsoBand === "Watch" ? "text-amber-700" : ""}`}>{customerRisk.dsoDays === null ? notRecorded : `${customerRisk.dsoDays} days`}</p>
+                            <p className="text-[10px] text-muted-foreground">{customerRisk.dsoBand ?? "no stored DSO"}</p>
                           </div>
                           <div className="rounded-lg border border-border bg-muted/20 p-3">
                             <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Contract Expiry</p>
-                            <p className="text-sm font-bold mt-0.5">{customer?.contractExpiry || "—"}</p>
+                            <p className="text-sm font-bold mt-0.5">{formatRecordedDate(customer.contractExpiry) ?? notRecorded}</p>
                           </div>
                           <div className="rounded-lg border border-border bg-muted/20 p-3">
                             <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Revenue Trend</p>
-                            <p className="text-sm font-bold mt-0.5">{(customer?.revenue2025 || 0) > (customer?.revenue2024 || 0) ? "↑ Growing" : (customer?.revenue2025 || 0) === (customer?.revenue2024 || 0) ? "→ Flat" : "↓ Declining"}</p>
-                            <p className="text-[10px] text-muted-foreground">{formatSAR(customer?.revenue2025 || 0)} YTD</p>
+                            <p className="text-sm font-bold mt-0.5">{revenueTrend ?? notRecorded}</p>
+                            <p className="text-[10px] text-muted-foreground">{customer.revenue2025 === null ? "2025 revenue not recorded" : `${formatSAR(customer.revenue2025)} recorded for 2025`}</p>
                           </div>
                         </div>
                       </CardContent>
                     </Card>
 
-                    {ws.customerId && (
-                      <Link href={cleanHref("/customers")}>
+                    {/* Identity-preserving link: the customers.id that was read
+                        back travels with the navigation. It used to point at a
+                        bare /customers, dropping the record the user was on. */}
+                    <div className="flex items-center gap-3">
+                      <Link href={cleanHref(`/customers?customerId=${encodeURIComponent(customer.id)}`)}>
                         <Button variant="outline" size="sm" className="text-xs">
-                          <ExternalLink className="w-3 h-3 mr-1.5" /> Open Full Customer Profile
+                          <ExternalLink className="w-3 h-3 mr-1.5" /> Open in Customer Command Centre
                         </Button>
                       </Link>
-                    )}
+                      <span className="text-[10px] text-muted-foreground font-mono">{customer.id}</span>
+                    </div>
                   </div>
                 );
               })()}
@@ -1329,153 +1661,6 @@ export default function WorkspaceDetail() {
           {isCommercial && (
             <TabsContent value="activity">
               <CommercialActivityTab workspaceId={ws.id} />
-            </TabsContent>
-          )}
-
-          {/* ═══ UNIFIED DOCUMENTS TAB (navigationV1) ═══ */}
-          {navigationV1 && (
-            <TabsContent value="documents">
-              {/* ── Document Type Sections (reads from doc_instances — canonical) ── */}
-              <div className="space-y-8">
-
-                {/* ── Supporting Docs Section ── */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-semibold flex items-center gap-2">
-                      <FolderOpen className="w-4 h-4 text-muted-foreground" /> Supporting Documents
-                      <Badge variant="secondary" className="text-[10px]">{wsSupportDocs.length}</Badge>
-                    </h3>
-                    <div className="flex items-center gap-2">
-                      <Select value={supportDocFilter} onValueChange={setSupportDocFilter}>
-                        <SelectTrigger className="h-7 w-[130px] text-xs"><SelectValue placeholder="All Categories" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Categories</SelectItem>
-                          {SUPPORT_DOC_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setShowSupportUpload(true)}>
-                        <Upload className="w-3 h-3 mr-1" /> Upload
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Upload form */}
-                  {showSupportUpload && (
-                    <Card className="border border-blue-200 bg-blue-50/30 shadow-none mb-3">
-                      <CardContent className="p-4 space-y-3">
-                        <p className="text-xs font-semibold text-blue-800">Upload Supporting Document</p>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-[10px] text-muted-foreground uppercase block mb-1">Document Name</label>
-                            <Input value={supportUploadName} onChange={e => setSupportUploadName(e.target.value)} placeholder="e.g. Trade License 2025" className="h-8 text-xs" />
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-muted-foreground uppercase block mb-1">Category</label>
-                            <Select value={supportUploadCategory} onValueChange={v => setSupportUploadCategory(v as SupportDocCategory)}>
-                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                {SUPPORT_DOC_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Button size="sm" className="text-xs h-7 bg-[#1B2A4A] hover:bg-[#2A3F6A]" onClick={handleSupportDocUpload}>
-                            <FileUp className="w-3 h-3 mr-1" /> Upload
-                          </Button>
-                          <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setShowSupportUpload(false)}>Cancel</Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {(() => {
-                    const filtered = supportDocFilter === "all" ? wsSupportDocs : wsSupportDocs.filter(d => d.category === supportDocFilter);
-                    return filtered.length > 0 ? (
-                      <div className="space-y-2">
-                        {filtered.map(doc => (
-                          <div key={doc.id} className={`flex items-center gap-3 p-3 rounded-lg border border-border transition-colors hover:bg-muted/30 ${doc.status === "archived" ? "opacity-60" : ""}`}>
-                            <Badge variant="outline" className="text-[9px] shrink-0">{doc.category}</Badge>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium truncate flex items-center gap-1.5">
-                                {doc.name}
-                                {doc.isRequiredForContractReady && <Badge variant="outline" className="text-[9px] border-emerald-300 bg-emerald-50 text-emerald-700">Required</Badge>}
-                              </p>
-                              <p className="text-xs text-muted-foreground truncate">{doc.fileName} · v{doc.version} · {doc.uploadedBy}</p>
-                            </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => { toggleRequiredForContract(doc.id); forceUpdate(n => n + 1); }}>
-                                {doc.isRequiredForContractReady ? <ToggleRight className="w-3.5 h-3.5 text-emerald-600" /> : <ToggleLeft className="w-3.5 h-3.5 text-muted-foreground" />}
-                              </Button>
-                              {doc.status === "active" ? (
-                                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => { archiveSupportingDoc(doc.id); forceUpdate(n => n + 1); toast.success(`"${doc.name}" archived`); }}>
-                                  <Archive className="w-3.5 h-3.5 text-muted-foreground" />
-                                </Button>
-                              ) : (
-                                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => { restoreSupportingDoc(doc.id); forceUpdate(n => n + 1); toast.success(`"${doc.name}" restored`); }}>
-                                  <RotateCcw className="w-3.5 h-3.5 text-muted-foreground" />
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : <p className="text-xs text-muted-foreground">No supporting documents yet. <Button variant="link" className="text-xs p-0" onClick={() => setShowSupportUpload(true)}>Upload one</Button></p>;
-                  })()}
-                </div>
-
-                <hr className="border-border" />
-
-                {/* ── P&L Summary (read-only snapshot) ── */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-semibold flex items-center gap-2">
-                      <DollarSign className="w-4 h-4 text-muted-foreground" /> P&L Summary
-                      <Badge variant="secondary" className="text-[10px]">Snapshot</Badge>
-                    </h3>
-                    <Button size="sm" variant="outline" className="text-xs h-7" disabled>
-                      <ExternalLink className="w-3 h-3 mr-1" /> Open P&L Calculator
-                    </Button>
-                  </div>
-                  <Card className="border border-border shadow-none">
-                    <CardContent className="p-4">
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                        <div><p className="text-[10px] text-muted-foreground uppercase">Est. Revenue</p><p className="text-sm font-medium mt-0.5 data-value">{formatSAR(ws.estimatedValue)}</p></div>
-                        <div><p className="text-[10px] text-muted-foreground uppercase">GP%</p><p className={`text-sm font-medium mt-0.5 data-value ${ws.gpPercent >= 22 ? "text-emerald-600" : ws.gpPercent >= 15 ? "text-amber-600" : "text-red-600"}`}>{formatPercent(ws.gpPercent)}</p></div>
-                        <div><p className="text-[10px] text-muted-foreground uppercase">Pallet Volume</p><p className="text-sm font-medium mt-0.5 data-value">{ws.palletVolume.toLocaleString()}</p></div>
-                        <div><p className="text-[10px] text-muted-foreground uppercase">Service Type</p><p className="text-sm font-medium mt-0.5">{customer?.serviceType || "N/A"}</p></div>
-                      </div>
-                      <p className="text-[10px] text-muted-foreground mt-3">Read-only snapshot. Open P&L Calculator for full analysis.</p>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                <hr className="border-border" />
-
-                {/* ── ECR Snapshot (read-only) ── */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-semibold flex items-center gap-2">
-                      <BarChart3 className="w-4 h-4 text-muted-foreground" /> ECR Snapshot
-                      <Badge variant="secondary" className="text-[10px]">Read-only</Badge>
-                    </h3>
-                    <Button size="sm" variant="outline" className="text-xs h-7" disabled>
-                      <ExternalLink className="w-3 h-3 mr-1" /> Open ECR View
-                    </Button>
-                  </div>
-                  <Card className="border border-border shadow-none">
-                    <CardContent className="p-4">
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                        <div><p className="text-[10px] text-muted-foreground uppercase">Customer Grade</p><p className="text-sm font-medium mt-0.5">{customer?.grade || "N/A"}</p></div>
-                        <div><p className="text-[10px] text-muted-foreground uppercase">Payment Status</p><p className="text-sm font-medium mt-0.5">{customer?.paymentStatus || "N/A"}</p></div>
-                        <div><p className="text-[10px] text-muted-foreground uppercase">DSO</p><p className="text-sm font-medium mt-0.5 data-value">{customer?.dso ?? "N/A"} days</p></div>
-                        <div><p className="text-[10px] text-muted-foreground uppercase">Industry</p><p className="text-sm font-medium mt-0.5">{customer?.industry || "N/A"}</p></div>
-                      </div>
-                      <p className="text-[10px] text-muted-foreground mt-3">Read-only snapshot. Open ECR View for full scoring and metrics.</p>
-                    </CardContent>
-                  </Card>
-                </div>
-              </div>
             </TabsContent>
           )}
 
@@ -1531,9 +1716,9 @@ export default function WorkspaceDetail() {
                           <h3 className="text-sm font-semibold">ECR — Customer Rating</h3>
                           <p className="text-xs text-muted-foreground mt-0.5">Enterprise customer rating and risk scoring for {ws.customerName}.</p>
                           <div className="flex items-center gap-4 mt-2">
-                            <span className="text-xs"><span className="text-muted-foreground">Grade:</span> <span className="font-medium">{customer?.grade || "N/A"}</span></span>
-                            <span className="text-xs"><span className="text-muted-foreground">DSO:</span> <span className="font-medium data-value">{customer?.dso ?? "N/A"} days</span></span>
-                            <span className="text-xs"><span className="text-muted-foreground">Payment:</span> <span className="font-medium">{customer?.paymentStatus || "N/A"}</span></span>
+                            <span className="text-xs"><span className="text-muted-foreground">Grade:</span> <span className="font-medium">{customer?.grade ?? "Not recorded"}</span></span>
+                            <span className="text-xs"><span className="text-muted-foreground">DSO:</span> <span className="font-medium data-value">{customerRisk.dsoDays === null ? "Not recorded" : `${customerRisk.dsoDays} days`}</span></span>
+                            <span className="text-xs"><span className="text-muted-foreground">Payment:</span> <span className="font-medium">{customer?.paymentStatus ?? "Not recorded"}</span></span>
                           </div>
                         </div>
                       </div>
@@ -1772,7 +1957,7 @@ export default function WorkspaceDetail() {
                 </div>
                 <div className="text-right">
                   <Badge variant={a.decision === "approved" ? "default" : a.decision === "rejected" ? "destructive" : "secondary"} className="text-[10px]">{a.decision}</Badge>
-                  <p className="text-[10px] text-muted-foreground mt-1">{new Date(a.timestamp).toLocaleDateString()}</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">{formatRecordedDate(a.timestamp) ?? "date not recorded"}</p>
                 </div>
               </div>
             ))}</div> : <Card className="border border-border shadow-none"><CardContent className="py-12 text-center text-sm text-muted-foreground">No approval records yet</CardContent></Card>}
@@ -1807,20 +1992,29 @@ export default function WorkspaceDetail() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <p className="text-xs text-muted-foreground">Post-signature handover process for {ws.customerName}. Each step must be completed before go-live.</p>
+                    {/* SC-01 W04 (T08-B correction pass): these six steps used to
+                        carry Complete / Pending badges. Three were flipped to
+                        "Complete" purely because ws.stage === "go_live", and the
+                        other three were hardcoded "Pending". No handover task is
+                        read for this proposal, so no step status is asserted. */}
+                    <p className="text-xs text-muted-foreground">
+                      Post-signature handover steps for {ws.customerName}. <span className="font-medium">No handover
+                      progress is recorded in this build</span> — no per-step status is read, so none is shown. The list
+                      below is the step sequence, not a status report.
+                    </p>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       {[
-                        { step: "Legal Complete", icon: Landmark, status: ws.stage === "go_live" ? "done" : "pending" },
-                        { step: "Finance Setup", icon: DollarSign, status: ws.stage === "go_live" ? "done" : "pending" },
-                        { step: "Ops Briefed", icon: ClipboardList, status: ws.stage === "go_live" ? "done" : "pending" },
-                        { step: "Client Portal", icon: ExternalLink, status: "pending" },
-                        { step: "Training", icon: PackageCheck, status: "pending" },
-                        { step: "Go-Live Scheduled", icon: Clock, status: "pending" },
+                        { step: "Legal Complete", icon: Landmark },
+                        { step: "Finance Setup", icon: DollarSign },
+                        { step: "Ops Briefed", icon: ClipboardList },
+                        { step: "Client Portal", icon: ExternalLink },
+                        { step: "Training", icon: PackageCheck },
+                        { step: "Go-Live Scheduled", icon: Clock },
                       ].map(s => (
-                        <div key={s.step} className={`p-3 rounded-lg border text-center ${s.status === "done" ? "border-emerald-200 bg-emerald-50" : "border-border"}`}>
-                          <s.icon className={`w-5 h-5 mx-auto mb-1.5 ${s.status === "done" ? "text-emerald-600" : "text-muted-foreground"}`} />
+                        <div key={s.step} className="p-3 rounded-lg border border-dashed border-border text-center">
+                          <s.icon className="w-5 h-5 mx-auto mb-1.5 text-muted-foreground" />
                           <p className="text-xs font-medium">{s.step}</p>
-                          <Badge variant={s.status === "done" ? "default" : "secondary"} className="text-[9px] mt-1">{s.status === "done" ? "Complete" : "Pending"}</Badge>
+                          <Badge variant="outline" className="text-[9px] mt-1 text-muted-foreground">Not recorded</Badge>
                         </div>
                       ))}
                     </div>
@@ -1850,14 +2044,25 @@ export default function WorkspaceDetail() {
             </TabsContent>
           )}
 
-          {/* ═══ SUPPORTING DOCS / DOCUMENTS TAB ═══ */}
+          {/* ═══ SUPPORTING DOCS / DOCUMENTS TAB ═══
+              SC-01 W04 (T08-B correction pass): this is now the ONLY
+              `documents` tab. A second one (a navigationV1 block above) used to
+              render the same supporting-document list with its own, differently
+              computed counter; both were mounted at the same time. The P&L and
+              ECR snapshots that only existed there have moved to the bottom of
+              this tab, so no content was lost.
+              The counter below is `visibleSupportDocs`, i.e. exactly the set
+              the list renders — filter and archived toggle included. */}
           <TabsContent value="documents">
             {integrationEnabled ? (
               <>
                 {/* Supporting Docs (v1 integration) */}
                 <div className="flex items-center justify-between mb-4">
                   <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    <FolderOpen className="w-3.5 h-3.5" /> Supporting Documents ({wsSupportDocs.length})
+                    <FolderOpen className="w-3.5 h-3.5" /> Supporting Documents ({visibleSupportDocs.length}
+                    {supportDocFilter !== "all" && wsSupportDocs.length !== visibleSupportDocs.length
+                      ? ` of ${wsSupportDocs.length} loaded`
+                      : ""})
                   </h4>
                   <div className="flex items-center gap-2">
                     <Select value={supportDocFilter} onValueChange={setSupportDocFilter}>
@@ -1906,7 +2111,7 @@ export default function WorkspaceDetail() {
                         </label>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Button size="sm" className="text-xs h-7 bg-[#1B2A4A] hover:bg-[#2A3F6A]" onClick={handleSupportDocUpload}>
+                        <Button size="sm" className="text-xs h-7 bg-[#1B2A4A] hover:bg-[#2A3F6A]" onClick={() => { void handleSupportDocUpload(); }}>
                           <FileUp className="w-3 h-3 mr-1" /> Upload
                         </Button>
                         <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setShowSupportUpload(false)}>Cancel</Button>
@@ -1915,9 +2120,9 @@ export default function WorkspaceDetail() {
                   </Card>
                 )}
 
-                {/* Supporting docs list */}
+                {/* Supporting docs list — the SAME set the counter above counts */}
                 {(() => {
-                  const filtered = supportDocFilter === "all" ? wsSupportDocs : wsSupportDocs.filter(d => d.category === supportDocFilter);
+                  const filtered = visibleSupportDocs;
                   return filtered.length > 0 ? (
                     <div className="space-y-2">
                       {filtered.map(doc => (
@@ -1931,7 +2136,11 @@ export default function WorkspaceDetail() {
                               )}
                               {doc.status === "archived" && <Badge variant="secondary" className="text-[9px]">Archived</Badge>}
                             </p>
-                            <p className="text-xs text-muted-foreground truncate">{doc.fileName} · v{doc.version} · {doc.uploadedBy} · {new Date(doc.uploadedAt).toLocaleDateString()}</p>
+                            {/* `toLocaleDateString` RETURNS the string "Invalid Date"
+                                for an unparseable value instead of throwing, so a
+                                try/catch is no guard. formatRecordedDate returns
+                                null and we say the date is not recorded. */}
+                            <p className="text-xs text-muted-foreground truncate">{doc.fileName} · v{doc.version} · {doc.uploadedBy} · {formatRecordedDate(doc.uploadedAt) ?? "upload date not recorded"}</p>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             <Tooltip>
@@ -1961,19 +2170,13 @@ export default function WorkspaceDetail() {
                               </Tooltip>
                             )}
                             {doc.status === "active" ? (
-                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => {
-                                archiveSupportingDoc(doc.id);
-                                forceUpdate(n => n + 1);
-                                toast.success(`"${doc.name}" archived`);
-                              }}>
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0"
+                                onClick={() => { void handleSupportDocArchive(doc.id, doc.name); }}>
                                 <Archive className="w-3.5 h-3.5 text-muted-foreground" />
                               </Button>
                             ) : (
-                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => {
-                                restoreSupportingDoc(doc.id);
-                                forceUpdate(n => n + 1);
-                                toast.success(`"${doc.name}" restored`);
-                              }}>
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0"
+                                onClick={() => { void handleSupportDocRestore(doc.id, doc.name); }}>
                                 <RotateCcw className="w-3.5 h-3.5 text-muted-foreground" />
                               </Button>
                             )}
@@ -1985,7 +2188,9 @@ export default function WorkspaceDetail() {
                     <Card className="border border-border shadow-none">
                       <CardContent className="py-12 text-center text-sm text-muted-foreground">
                         <FolderOpen className="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />
-                        No supporting documents yet
+                        {wsSupportDocs.length > 0
+                          ? `No supporting document matches the "${supportDocFilter}" category (${wsSupportDocs.length} loaded).`
+                          : "No supporting documents are loaded for this proposal."}
                         <div className="mt-3">
                           <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowSupportUpload(true)}>
                             <Upload className="w-3 h-3" /> Upload First Document
@@ -2026,6 +2231,48 @@ export default function WorkspaceDetail() {
                   );
                 })()}
                 <DocumentViewer document={viewerDoc} open={!!viewerDoc} onClose={() => setViewerDoc(null)} onDocumentChanged={() => forceUpdate(n => n + 1)} />
+
+                {/* ── P&L Summary (moved here from the duplicate documents tab) ── */}
+                <hr className="border-border my-6" />
+                <div>
+                  <h3 className="text-sm font-semibold flex items-center gap-2 mb-3">
+                    <DollarSign className="w-4 h-4 text-muted-foreground" /> P&amp;L Summary
+                    <Badge variant="secondary" className="text-[10px]">Snapshot</Badge>
+                  </h3>
+                  <Card className="border border-border shadow-none">
+                    <CardContent className="p-4">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Est. Revenue</p><p className="text-sm font-medium mt-0.5 data-value">{formatSAR(ws.estimatedValue)}</p></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">GP%</p><p className={`text-sm font-medium mt-0.5 data-value ${ws.gpPercent >= 22 ? "text-emerald-600" : ws.gpPercent >= 15 ? "text-amber-600" : "text-red-600"}`}>{formatPercent(ws.gpPercent)}</p></div>
+                        <div><p className="text-[10px] text-muted-foreground uppercase">Service Type</p><p className="text-sm font-medium mt-0.5">{customer?.serviceType ?? <span className="text-muted-foreground">Not recorded</span>}</p></div>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mt-3">Read from the commercial ticket. The P&amp;L calculator is not available in this build.</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* ── Customer snapshot (moved here from the duplicate documents tab) ── */}
+                <hr className="border-border my-6" />
+                <div>
+                  <h3 className="text-sm font-semibold flex items-center gap-2 mb-3">
+                    <BarChart3 className="w-4 h-4 text-muted-foreground" /> Customer Snapshot
+                    <Badge variant="secondary" className="text-[10px]">Read-only</Badge>
+                  </h3>
+                  <Card className="border border-border shadow-none">
+                    <CardContent className="p-4">
+                      {customer ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                          <div><p className="text-[10px] text-muted-foreground uppercase">Customer Grade</p><p className="text-sm font-medium mt-0.5">{customer.grade ?? <span className="text-muted-foreground">Not recorded</span>}</p></div>
+                          <div><p className="text-[10px] text-muted-foreground uppercase">Payment Status</p><p className="text-sm font-medium mt-0.5">{customer.paymentStatus ?? <span className="text-muted-foreground">Not recorded</span>}</p></div>
+                          <div><p className="text-[10px] text-muted-foreground uppercase">DSO</p><p className="text-sm font-medium mt-0.5 data-value">{customerRisk.dsoDays === null ? <span className="font-sans text-muted-foreground">Not recorded</span> : `${customerRisk.dsoDays} days`}</p></div>
+                          <div><p className="text-[10px] text-muted-foreground uppercase">Industry</p><p className="text-sm font-medium mt-0.5">{customer.industry ?? <span className="text-muted-foreground">Not recorded</span>}</p></div>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">{customerUnavailableNote}</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
               </>
             ) : (
               /* Legacy documents tab (feature flag OFF) */
@@ -2078,9 +2325,9 @@ export default function WorkspaceDetail() {
                       )}
                       <DocumentViewer document={viewerDoc} open={!!viewerDoc} onClose={() => setViewerDoc(null)} onDocumentChanged={() => forceUpdate(n => n + 1)} />
                       <UploadDialog open={showDocUpload} onClose={() => setShowDocUpload(false)} defaultCategory="Supporting"
-                        suggestedName={`${customer?.name ?? ""} — ${ws.title}`}
+                        suggestedName={`${customer?.name ?? ws.customerName} — ${ws.title}`}
                         onUpload={async ({ name, category, file, notes, tags }) => {
-                          await uploadDocument({ name, category: category as DocumentCategory, customerId: ws.customerId, customerName: customer?.name ?? "Unknown", workspaceId: ws.id, workspaceName: ws.title, file, notes, tags });
+                          await uploadDocument({ name, category: category as DocumentCategory, customerId: ws.customerId, customerName: customer?.name ?? ws.customerName, workspaceId: ws.id, workspaceName: ws.title, file, notes, tags });
                           toast.success(`Document "${name}" uploaded.`);
                           forceUpdate(n => n + 1);
                         }} />
@@ -2126,7 +2373,7 @@ export default function WorkspaceDetail() {
                             {getStageDisplayName(ov.fromStage)} → {getStageDisplayName(ov.toStage)}
                           </Badge>
                           <span className="text-xs text-muted-foreground">{ov.userName}</span>
-                          <span className="text-[10px] text-muted-foreground data-value ml-auto">{new Date(ov.timestamp).toLocaleString()}</span>
+                          <span className="text-[10px] text-muted-foreground data-value ml-auto">{formatRecordedDate(ov.timestamp, "datetime") ?? "date not recorded"}</span>
                         </div>
                         <p className="text-xs text-amber-800 mb-1"><span className="font-medium">Reason:</span> {ov.overrideReason}</p>
                         <div className="flex flex-wrap gap-1">
@@ -2175,7 +2422,7 @@ export default function WorkspaceDetail() {
                           )}
                         </div>
                         <span className="text-xs text-muted-foreground shrink-0">{entry.userName}</span>
-                        <span className="text-[10px] text-muted-foreground data-value shrink-0">{new Date(entry.timestamp).toLocaleString()}</span>
+                        <span className="text-[10px] text-muted-foreground data-value shrink-0">{formatRecordedDate(entry.timestamp, "datetime") ?? "date not recorded"}</span>
                       </div>
                     ))}
                   </div>
@@ -2207,7 +2454,7 @@ export default function WorkspaceDetail() {
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">{entry.details}</p>
                     </div>
-                    <span className="text-[10px] text-muted-foreground data-value shrink-0">{new Date(entry.timestamp).toLocaleString()}</span>
+                    <span className="text-[10px] text-muted-foreground data-value shrink-0">{formatRecordedDate(entry.timestamp, "datetime") ?? "date not recorded"}</span>
                   </div>
                 ))}
                 {wsAudit.length === 0 && <div className="py-12 text-center text-sm text-muted-foreground">No audit entries</div>}
@@ -2228,25 +2475,30 @@ export default function WorkspaceDetail() {
                   </div>
                 </CardHeader>
                 <CardContent className="pt-0">
+                  {/* SC-01 W04 (T08-B correction pass): this list used to contain
+                      two invented people — "Hano" (Commercial Analyst, active) and
+                      "Nasser" (Technical Reviewer, pending). Neither was read from
+                      anywhere. There is no team-membership source in this build, so
+                      the only person shown is the owner actually recorded on the
+                      ticket, and no membership status is claimed for anyone. */}
                   <div className="space-y-3">
-                    {[
-                      { name: ws.owner, role: "Tender Lead", status: "active" },
-                      { name: "Hano", role: "Commercial Analyst", status: "active" },
-                      { name: "Nasser", role: "Technical Reviewer", status: "pending" },
-                    ].map((member, i) => (
-                      <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-border">
+                    {ws.owner ? (
+                      <div className="flex items-center gap-3 p-3 rounded-lg border border-border">
                         <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
                           <User className="w-4 h-4 text-muted-foreground" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium">{member.name}</p>
-                          <p className="text-xs text-muted-foreground">{member.role}</p>
+                          <p className="text-sm font-medium">{ws.owner}</p>
+                          <p className="text-xs text-muted-foreground">Recorded owner on this ticket</p>
                         </div>
-                        <Badge variant="outline" className={`text-[10px] ${member.status === "active" ? "border-emerald-300 text-emerald-700" : "border-amber-300 text-amber-700"}`}>
-                          {member.status}
-                        </Badge>
                       </div>
-                    ))}
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No owner is recorded on this ticket.</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      No team-membership records are stored for tenders in this build, so no other members,
+                      roles or statuses are shown. This is an absence of data, not an empty team.
+                    </p>
                   </div>
                   {/* Convert to Commercial CTA */}
                   {ws.tenderStage === "won" && (

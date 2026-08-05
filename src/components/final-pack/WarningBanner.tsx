@@ -20,6 +20,14 @@ import type { OutputBlock } from "@/lib/final-pack-loader";
 
 interface WarningBannerProps {
   blocks: OutputBlock[];
+  /**
+   * W04-C4: FPS-006 volume scope. When a volume is selected the notes must
+   * describe THAT volume — the counts previously covered the whole document,
+   * so a banner could report notes about blocks the selected volume does not
+   * contain (and miss none of its own).
+   */
+  volumeBlockKeys?: string[] | null;
+  volumeTitle?: string | null;
 }
 
 interface Warning {
@@ -28,10 +36,32 @@ interface Warning {
   message: string;
 }
 
-export default function WarningBanner({ blocks }: WarningBannerProps) {
+/**
+ * The blocks the banner speaks about. Filtering only — no reorder, no mutation.
+ * An empty/absent key list means "no volume selected" = the whole document.
+ */
+export function scopeBlocksToVolume(
+  blocks: OutputBlock[],
+  volumeBlockKeys?: string[] | null,
+): OutputBlock[] {
+  const all = Array.isArray(blocks) ? blocks : [];
+  if (!volumeBlockKeys || volumeBlockKeys.length === 0) return all;
+  const allowed = new Set(volumeBlockKeys);
+  return all.filter((b) => allowed.has(b.block_key));
+}
+
+export default function WarningBanner({ blocks, volumeBlockKeys, volumeTitle }: WarningBannerProps) {
   const [collapsed, setCollapsed] = useState(false);
 
-  const warnings = useMemo(() => computeWarnings(blocks), [blocks]);
+  const scoped = useMemo(
+    () => scopeBlocksToVolume(blocks, volumeBlockKeys),
+    [blocks, volumeBlockKeys],
+  );
+  const warnings = useMemo(() => computeWarnings(scoped), [scoped]);
+  const scopeLabel =
+    volumeBlockKeys && volumeBlockKeys.length > 0
+      ? ` · ${volumeTitle || "selected volume"}`
+      : "";
 
   if (warnings.length === 0) return null;
 
@@ -44,7 +74,7 @@ export default function WarningBanner({ blocks }: WarningBannerProps) {
         <div className="flex items-center gap-2">
           <AlertTriangle className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />
           <span className="text-xs font-medium text-foreground">
-            {warnings.length} {warnings.length === 1 ? "note" : "notes"}
+            {warnings.length} {warnings.length === 1 ? "note" : "notes"}{scopeLabel}
           </span>
         </div>
         {collapsed ? (
@@ -76,7 +106,7 @@ export default function WarningBanner({ blocks }: WarningBannerProps) {
 // Warning computation — pure function
 // ═══════════════════════════════════════════════════════════
 
-function computeWarnings(blocks: OutputBlock[]): Warning[] {
+export function computeWarnings(blocks: OutputBlock[]): Warning[] {
   const warnings: Warning[] = [];
 
   // 1. Hidden blocks

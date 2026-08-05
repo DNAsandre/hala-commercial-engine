@@ -95,6 +95,14 @@ export default function PackSelector({ tenderId, onInstanceReady }: PackSelector
   const [tenderTitle, setTenderTitle] = useState<string>("");
   const [customerName, setCustomerName] = useState<string>("");
   const [loadingData, setLoadingData] = useState(true);
+  // W04-T09 — three distinct outcomes for the source read:
+  //   readError  → the read FAILED (unknown truth)
+  //   notFound   → the read succeeded and the tender does not exist / is not visible
+  //   otherwise  → real data
+  const [readError, setReadError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // ── Load tender metadata + pricing scenarios ─────────
   useEffect(() => {
@@ -102,15 +110,23 @@ export default function PackSelector({ tenderId, onInstanceReady }: PackSelector
 
     async function loadTenderData() {
       setLoadingData(true);
+      setReadError(null);
+      setNotFound(false);
 
       // Fetch tender metadata (READ ONLY)
-      const { data: tender } = await supabase
+      const { data: tender, error: tenderErr } = await supabase
         .from("commercial_tickets")
         .select("ticket_title, customer_name, type_details")
         .eq("id", tenderId)
         .maybeSingle();
 
       if (cancelled) return;
+
+      if (tenderErr) {
+        setReadError(tenderErr.message);
+      } else if (!tender) {
+        setNotFound(true);
+      }
 
       if (tender) {
         setTenderTitle(tender.ticket_title || "Not available");
@@ -139,10 +155,11 @@ export default function PackSelector({ tenderId, onInstanceReady }: PackSelector
       // Fetch existing FPS instances
       const existing = await listInstances(tenderId);
       if (!cancelled) {
-        setExistingInstances(existing);
+        setExistingInstances(existing.instances);
+        setListError(existing.error);
       }
 
-      setLoadingData(false);
+      if (!cancelled) setLoadingData(false);
     }
 
     loadTenderData();
@@ -160,6 +177,7 @@ export default function PackSelector({ tenderId, onInstanceReady }: PackSelector
   const handleCreatePack = useCallback(
     async (packType: PackType) => {
       setCreating(true);
+      setCreateError(null);
 
       try {
         const snapshot: BlockSnapshot = await loadTenderPack(
@@ -169,13 +187,19 @@ export default function PackSelector({ tenderId, onInstanceReady }: PackSelector
         );
 
         if (snapshot.error) {
+          // W04-T09: this used to be console-only, so a failed build looked
+          // exactly like nothing happening. Tell the human.
           console.error("[PackSelector] Loader error:", snapshot.error);
+          setCreateError(`Could not build this document pack: ${snapshot.error}`);
           return;
         }
 
         await createInstance(tenderId, snapshot);
       } catch (err) {
         console.error("[PackSelector] Create failed:", err);
+        setCreateError(
+          err instanceof Error ? err.message : "Could not build this document pack.",
+        );
       } finally {
         setCreating(false);
       }
@@ -198,6 +222,46 @@ export default function PackSelector({ tenderId, onInstanceReady }: PackSelector
         <div className="text-center space-y-3">
           <Loader2 className="h-8 w-8 text-muted-foreground mx-auto animate-spin" />
           <p className="text-sm text-muted-foreground">Loading tender data…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Source read FAILED — unknown truth, honest recovery, no fake header ──
+  if (readError) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="max-w-md text-center space-y-3">
+          <AlertTriangle className="h-8 w-8 text-amber-500 mx-auto" />
+          <h2 className="text-base font-semibold text-foreground">
+            Could not load this tender
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            The source record could not be read, so no document can be built from it yet.
+            Details: {readError}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-3 py-1.5 rounded-md border border-border text-sm hover:bg-accent"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Read succeeded, tender genuinely not present/visible ──
+  if (notFound) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="max-w-md text-center space-y-3">
+          <AlertTriangle className="h-8 w-8 text-muted-foreground mx-auto" />
+          <h2 className="text-base font-semibold text-foreground">Tender not found</h2>
+          <p className="text-sm text-muted-foreground">
+            No tender with id <span className="font-mono text-xs">{tenderId}</span> is
+            visible to your account. It may have been removed, or you may not have access.
+          </p>
         </div>
       </div>
     );
@@ -237,7 +301,16 @@ export default function PackSelector({ tenderId, onInstanceReady }: PackSelector
         )}
       </div>
 
-      {/* ── Existing Instances ── */}
+      {/* ── Existing Instances: read failure is stated, never shown as "none" ── */}
+      {listError && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-500/40 bg-amber-500/5 text-amber-700 text-xs">
+          <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>
+            Existing documents for this tender could not be listed ({listError}). Any that
+            exist are not shown — creating a new pack still works.
+          </span>
+        </div>
+      )}
       {existingInstances.length > 0 && (
         <div className="space-y-3">
           <h3 className="text-sm font-medium text-foreground">Resume Existing</h3>
@@ -293,6 +366,14 @@ export default function PackSelector({ tenderId, onInstanceReady }: PackSelector
         </div>
       </div>
 
+      {/* ── Pack build failure (was silent) ── */}
+      {createError && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-md border border-destructive/30 bg-destructive/5 text-destructive text-sm">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          <span>{createError}</span>
+        </div>
+      )}
+
       {/* ── Error Display ── */}
       {error && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-md border border-destructive/30 bg-destructive/5 text-destructive text-sm">
@@ -327,10 +408,17 @@ function formatPackType(type: string): string {
   return labels[type] || type;
 }
 
-function formatDate(iso: string): string {
+/**
+ * W04-C4: the `catch` here never fired. `toLocaleDateString` on an unparseable
+ * date does not throw — it RETURNS the string "Invalid Date", which rendered
+ * verbatim in the pack list. Guard on the timestamp instead.
+ */
+export function formatDate(iso: string): string {
   if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
   try {
-    return new Date(iso).toLocaleDateString("en-GB", {
+    return d.toLocaleDateString("en-GB", {
       day: "2-digit",
       month: "short",
       year: "numeric",

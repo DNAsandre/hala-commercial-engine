@@ -10,12 +10,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { formatSAR } from "@/lib/store";
-import { getTenderStatusDisplayName, getTenderStatusColor, type TenderMilestone } from "@/lib/tender-engine";
-import { getPackStatusLabel, getPackTypeLabel, getSectionStatusLabel, getSectionStatusColor, getSectionApprovalLabel, stageLabelFromInternalStage, type TenderStageRelevance, type TenderWorkspace, type TenderPack } from "@/lib/tender-workspace-data";
+import { getTenderStatusColor, type TenderMilestone } from "@/lib/tender-engine";
+import { getPackStatusLabel, getPackTypeLabel, getSectionStatusLabel, getSectionStatusColor, getSectionApprovalLabel, stageLabelFromInternalStage, buildRequiredDocumentsProgress, type TenderStageRelevance, type TenderWorkspace, type TenderPack } from "@/lib/tender-workspace-data";
 import { useTenderWorkspaceData } from "@/hooks/useTenderWorkspaceData";
 import { toast } from "sonner";
 import { updateTenderPhase, updateTenderCrmStage } from "@/lib/supabase-tender-actions";
-import { mapDbStageToInternalCognitionStage } from "@/lib/supabase-tender-data";
+import { mapDbStageToInternalCognitionStage, isRestorableCrmPipelineStage } from "@/lib/supabase-tender-data";
 import {
   TENDER_INTERNAL_STAGES,
   normalizeTenderInternalStage,
@@ -94,7 +94,31 @@ type StageTaskProgressSegment = {
   key: string;
   label: string;
   percent: number | null;
+  /**
+   * W04-C4: an explicit explanation shown in place of a percentage. Used where
+   * the honest answer is "this was never recorded" rather than a number.
+   */
+  note?: string;
 };
+
+/**
+ * W04-C4: the Required Documents segment of the Submitted → Submission
+ * Checklist tab. Derived from the recorded requirement set only; see
+ * `buildRequiredDocumentsProgress`.
+ */
+function buildRequiredDocumentsSegment(ws: TenderWorkspace): StageTaskProgressSegment {
+  const progress = buildRequiredDocumentsProgress({
+    requiredDocuments: ws.requiredDocuments ?? [],
+    requiredDocumentsAssessed: ws.requiredDocumentsAssessed,
+    uploadedDocumentNames: (ws.documents ?? []).map(d => d.document_name),
+  });
+  return {
+    key: "required_docs",
+    label: "Required Documents",
+    percent: progress.percent,
+    note: progress.note,
+  };
+}
 
 function hasValue(value: unknown): boolean {
   if (value === null || value === undefined) return false;
@@ -1298,16 +1322,13 @@ function buildFinalApprovedTaskProgress(tabId: string, ws: TenderWorkspace): Sta
   }
 
   if (tabId === "submission_checklist") {
-    const uploadedNames = ws.documents.map(d => d.document_name.toLowerCase());
-    const uploaded = [
-      "Final Tender Pack PDF", "OBK Native Excel", "OBK Signed/Stamped PDF", "Bid Statement Signed/Stamped PDF",
-      "Transition Plan", "Continuous Improvement Proposal Form", "Compliance Pack", "Commercial Registration",
-      "VAT Certificate", "ISO Certificates", "Insurance Certificates", "ADR Class 2 Certifications",
-      "Reference Credentials", "Performance Guarantee Confirmation",
-    ].filter(doc => uploadedNames.some(n => n.includes(doc.toLowerCase().split(" ")[0]))).length;
-    return [
-      { key: "required_docs", label: "Required Documents", percent: Math.round((uploaded / 14) * 100) },
-    ];
+    // W04-C4: this used to fuzzy-match uploaded filenames against a hardcoded
+    // 14-item document list and divide by a literal 14. That denominator was
+    // not this tender's requirement set — no such set is stored — so the bar
+    // presented a fabricated completion percentage as progress. It now derives
+    // from the recorded required-document set, and where none is recorded it
+    // states that instead of showing a number.
+    return [buildRequiredDocumentsSegment(ws)];
   }
 
   if (tabId === "approval_record") {
@@ -1387,7 +1408,7 @@ function StageTaskProgressMeter({ segments }: { segments: StageTaskProgressSegme
         <span
           key={segment.key}
           className={`${stageTaskProgressColor(segment.percent)} min-w-0 rounded-sm shadow-[inset_0_0_0_1px_rgba(15,23,42,.12)] first:rounded-l-full last:rounded-r-full`}
-          title={`${segment.label}: ${segment.percent === null ? "Informational" : `${segment.percent}% complete`}`}
+          title={`${segment.label}: ${segment.percent === null ? (segment.note ?? "Informational") : `${segment.percent}% complete`}`}
         />
       ))}
     </div>
@@ -1412,10 +1433,26 @@ function toCleanTabId(name: string): string {
 }
 
 
+/**
+ * W04-C4: this used to fall through to a green "On Track" badge for ANY value
+ * it did not recognise — including the case where the compliance / required-
+ * document collections behind the verdict were never read. A risk verdict is
+ * now only rendered when its inputs were actually loaded; otherwise the badge
+ * says so, in the same spirit as the readiness header ("not measured").
+ */
 function riskBadge(level: string) {
   if (level === "red") return <Badge variant="outline" className="text-[10px] border-red-300 text-red-700 bg-red-50">High Risk</Badge>;
   if (level === "amber") return <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700 bg-amber-50">Amber</Badge>;
-  return <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700 bg-emerald-50">On Track</Badge>;
+  if (level === "green") return <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700 bg-emerald-50">On Track</Badge>;
+  return (
+    <Badge
+      variant="outline"
+      className="text-[10px] border-slate-300 text-slate-600 bg-slate-50"
+      title="Risk is derived from the compliance matrix and the required-document set. Neither is read for this tender in the clean app, so no verdict can be stated."
+    >
+      Risk not assessed
+    </Badge>
+  );
 }
 function PackCard({ pack }: { pack: TenderPack }) {
   return (
@@ -1565,8 +1602,15 @@ export default function TenderWorkspaceDetail() {
 
   if (status === 'error') return (
     <div className="p-6 space-y-3">
-      <h1 className="text-xl font-serif text-red-700">Failed to load tender workspace</h1>
-      <p className="text-sm text-muted-foreground">{errorMessage}</p>
+      <div className="flex items-center gap-2">
+        <AlertTriangle className="w-5 h-5 text-red-600" />
+        <h1 className="text-xl font-serif text-red-700">Could not read this tender</h1>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        The read failed. This is a failure, not an empty tender — nothing can be concluded about the record itself.
+      </p>
+      <p className="text-xs font-mono text-red-700 bg-red-50 border border-red-200 rounded-md p-2">{errorMessage}</p>
+      <p className="text-[11px] text-muted-foreground">Tender ID: {id}</p>
       <div className="flex gap-2">
         <Button variant="outline" size="sm" onClick={reload}>Retry</Button>
           <Link href={cleanHref("/tenders")}><Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4 mr-1.5" />Back</Button></Link>
@@ -1574,11 +1618,33 @@ export default function TenderWorkspaceDetail() {
     </div>
   );
 
+  // W04-T08-A: process isolation skipped the read entirely. Reporting this as
+  // "not found" would assert a database fact that was never checked.
+  if (status === 'isolated') return (
+    <div className="p-6 space-y-3">
+      <div className="flex items-center gap-2">
+        <ZapOff className="w-5 h-5 text-amber-600" />
+        <h1 className="text-xl font-serif text-amber-800">This tender workspace is not connected</h1>
+      </div>
+      <p className="text-sm text-muted-foreground max-w-2xl">{errorMessage}</p>
+      <p className="text-[11px] text-muted-foreground">Tender ID: {id}</p>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={reload}>Retry</Button>
+        <Link href={cleanHref("/tenders")}><Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4 mr-1.5" />Back to Tenders</Button></Link>
+      </div>
+    </div>
+  );
+
   if (status === 'empty' || !ws) return (
-    <div className="p-6">
+    <div className="p-6 space-y-3">
       <h1 className="text-xl font-serif">Tender workspace not found</h1>
-      <p className="text-xs text-muted-foreground mt-1">No Supabase data found for tender ID: {id}</p>
-      <Link href={cleanHref("/tenders")}><Button variant="outline" className="mt-4"><ArrowLeft className="w-4 h-4 mr-1.5" />Back to Tenders</Button></Link>
+      <p className="text-sm text-muted-foreground max-w-2xl">
+        {errorMessage || `No active tender row is visible for id ${id} in commercial_tickets.`}
+      </p>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={reload}>Retry</Button>
+        <Link href={cleanHref("/tenders")}><Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4 mr-1.5" />Back to Tenders</Button></Link>
+      </div>
     </div>
   );
 
@@ -1603,10 +1669,21 @@ export default function TenderWorkspaceDetail() {
         {/* Header */}
         <div className="mb-4">
           <div className="flex items-center gap-3 flex-wrap">
-            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${ws.riskLevel === "red" ? "bg-red-500" : ws.riskLevel === "amber" ? "bg-amber-500" : "bg-emerald-500"}`} />
+            {/* W04-C4: the dot is the same verdict as the badge — a grey dot
+                when risk was never assessed, not a reassuring green one. */}
+            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${ws.riskLevel === "red" ? "bg-red-500" : ws.riskLevel === "amber" ? "bg-amber-500" : ws.riskLevel === "green" ? "bg-emerald-500" : "bg-slate-300"}`} />
             <h1 className="text-xl font-serif font-bold">{t.title}</h1>
             <Badge variant="outline" className="text-[10px] border-[#244f96] text-[#075eea] bg-[#075eea]/10">{ws.tenderType}</Badge>
-            <Badge variant="outline" className={`text-[10px] ${getTenderStatusColor(t.status)}`}>{getTenderStatusDisplayName(t.status)}</Badge>
+            {/* W04-T08-A: this badge used to render `t.status`, which is
+                internal_stage squeezed through the CRM TenderMilestone union —
+                so a tender saved at "clarification" displayed "Prospecting".
+                It now renders the internal stage in its own vocabulary. */}
+            <Badge variant="outline" className="text-[10px] border-[#244f96]/40 text-[#075eea] bg-[#075eea]/10">
+              Internal: {TENDER_INTERNAL_STAGES.find(s => s.value === persistedInternalStage)?.label ?? persistedInternalStage}
+            </Badge>
+            <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700 bg-emerald-50">
+              Saved CRM stage: {ws.crmPipelineStageRaw ?? 'Not set'}
+            </Badge>
             {riskBadge(ws.riskLevel)}
             <Badge variant="outline" className="text-[10px] border-gray-300 text-gray-600">CRM: {getCleanCrmSyncStatusLabel(ws.crmSyncStatus)}</Badge>
             <Badge variant="outline" className="text-[10px] border-emerald-400 text-emerald-700 bg-emerald-50 flex items-center gap-1"><Database className="w-2.5 h-2.5" />Supabase-Backed</Badge>
@@ -1629,7 +1706,12 @@ export default function TenderWorkspaceDetail() {
             <span className="flex items-center gap-1"><CalendarDays className="w-3 h-3" />Due: <span className="font-medium text-foreground">{t.submissionDeadline}</span></span>
             <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{formatSAR(t.estimatedValue)}</span>
             <span className="flex items-center gap-1"><Target className="w-3 h-3" />GP: {t.targetGpPercent}%</span>
-            <span>Readiness: <span className="font-medium text-foreground">{ws.readinessScore}%</span></span>
+            {/* W04-T08-A: readinessScore is the mean over ws.packs. With no
+                packs the mean is 0, which read as "0% ready" rather than "not
+                measured". State which of the two it is. */}
+            <span>Readiness: <span className="font-medium text-foreground">
+              {ws.packs.length > 0 ? `${ws.readinessScore}%` : 'not measured (no packs configured)'}
+            </span></span>
           </div>
         </div>
 
@@ -1642,10 +1724,23 @@ export default function TenderWorkspaceDetail() {
           </Card>
         )}
 
+        {/* W04-T08-A: the strip is fed the PERSISTED stage only. It used to
+            prefer `crmCognitionStage`, a pending dialog selection, which would
+            have shown an unsaved stage as if it were the saved one. */}
         <CrmPipelineStrip
-          activeCrmStage={(crmCognitionStage?.value ?? t.crmPipelineStage ?? 'prospecting') as any}
+          activeCrmStage={t.crmPipelineStage as any}
           onCrmStageChange={async (stage) => {
-            const prev = t.crmPipelineStage ?? 'prospecting';
+            // The read layer coerces any stage key it does not know back to
+            // 'prospecting'. Writing such a key would produce a "persisted"
+            // toast followed by a reload showing a different stage. Refuse and
+            // say so rather than report a persistence that cannot be read back.
+            if (!isRestorableCrmPipelineStage(stage)) {
+              toast.warning('CRM stage not moved', {
+                description: `"${stage}" is not a CRM stage this workspace can store and read back, so nothing was written. The saved stage is unchanged.`,
+              });
+              return;
+            }
+            const prev = ws.crmPipelineStageRaw ?? '(not set)';
             const result = await updateTenderCrmStage(id!, prev, stage, 'Manual CRM stage move');
             if (result.success) { toast.success(`CRM Pipeline moved to ${stage}`, { description: 'Persisted to Supabase.' }); reload(); }
             else toast.warning('CRM stage update failed', { description: result.error });
@@ -2198,7 +2293,14 @@ export default function TenderWorkspaceDetail() {
               <div className="space-y-1">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Move to this stage?</p>
                 <Button className="w-full text-sm" onClick={async () => {
-                  const prev = t.crmPipelineStage ?? 'prospecting';
+                  const prev = ws.crmPipelineStageRaw ?? '(not set)';
+                  if (!isRestorableCrmPipelineStage(crmCognitionStage.value)) {
+                    toast.warning('CRM stage not moved', {
+                      description: `"${crmCognitionStage.value}" is not a CRM stage this workspace can store and read back, so nothing was written.`,
+                    });
+                    setCrmCognitionStage(null);
+                    return;
+                  }
                   const result = await updateTenderCrmStage(id!, prev, crmCognitionStage.value, 'Manual CRM stage move');
                   if (result.success) { toast.success(`CRM Pipeline moved to ${crmCognitionStage.label}`, { description: 'Persisted to Supabase.' }); reload(); }
                   else toast.warning('CRM stage update failed', { description: result.error });

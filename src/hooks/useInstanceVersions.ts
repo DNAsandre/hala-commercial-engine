@@ -39,6 +39,8 @@ function normalize(row: any): InstanceVersion {
 export interface UseInstanceVersionsReturn {
   versions: InstanceVersion[];
   loading: boolean;
+  /** Non-null only when the history read FAILED (≠ "no versions yet"). */
+  error: string | null;
   refresh: () => Promise<void>;
   /** Append a version row. Returns the new version number, or null on failure. */
   append: (
@@ -52,20 +54,30 @@ export interface UseInstanceVersionsReturn {
 export function useInstanceVersions(instanceId: string | null): UseInstanceVersionsReturn {
   const [versions, setVersions] = useState<InstanceVersion[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!instanceId) { setVersions([]); return; }
+    if (!instanceId) { setVersions([]); setError(null); return; }
     setLoading(true);
     try {
-      const { data } = await supabase
+      // Explicit ORDER BY — history order is never left to the server default.
+      const { data, error: readErr } = await supabase
         .from("doc_instance_versions")
         .select("id,doc_instance_id,version_number,blocks,source_snapshot,created_by,created_at,change_reason")
         .eq("doc_instance_id", instanceId)
         .order("version_number", { ascending: false })
         .limit(100);
+      if (readErr) {
+        // A failed read must not render as "no versions yet".
+        setVersions([]);
+        setError(readErr.message);
+        return;
+      }
       setVersions((data ?? []).map(normalize));
-    } catch {
+      setError(null);
+    } catch (err) {
       setVersions([]);
+      setError(err instanceof Error ? err.message : "Could not read version history.");
     } finally {
       setLoading(false);
     }
@@ -109,5 +121,5 @@ export function useInstanceVersions(instanceId: string | null): UseInstanceVersi
     [instanceId],
   );
 
-  return { versions, loading, refresh, append };
+  return { versions, loading, error, refresh, append };
 }

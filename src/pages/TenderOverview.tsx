@@ -20,6 +20,7 @@ import {
   Loader2,
   Clock,
   Briefcase,
+  AlertTriangle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,9 +33,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
 import { useLocation } from "wouter";
-import { fetchTenderPortfolioRows, type TenderPortfolioRow } from "@/lib/tender-ticket-adapter";
+import { fetchTenderPortfolioRead, type TenderPortfolioRow } from "@/lib/tender-ticket-adapter";
+import {
+  resolveReadState,
+  describeRenderedCount,
+  describeEmptyReadCause,
+  describeIsolationWithholding,
+  sumCaptured,
+} from "@/lib/pipeline-tickets";
 import { cleanHref } from "@clean/lib/clean-routing";
 
 type TenderRow = TenderPortfolioRow;
@@ -102,9 +109,15 @@ function formatStage(s: string | null): string {
   return s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 }
 
+/**
+ * W04-C1 defect D: an unparseable date used to reach the screen as "NaNd" and
+ * "NaN days". Same guard shape as tender-ticket-adapter.daysSince.
+ */
 function daysUntilDeadline(d: string | null): number | null {
   if (!d) return null;
-  return Math.ceil((new Date(d).getTime() - Date.now()) / 86400000);
+  const ms = new Date(d).getTime();
+  if (Number.isNaN(ms)) return null;
+  return Math.ceil((ms - Date.now()) / 86400000);
 }
 
 function initials(name: string | null): string {
@@ -114,7 +127,12 @@ function initials(name: string | null): string {
 
 function getDeadlineLabel(tender: TenderRow): { label: string; tone: string } {
   const days = daysUntilDeadline(tender.submission_deadline);
-  if (days == null) return { label: "Not captured yet", tone: "text-muted-foreground" };
+  if (days == null) {
+    // A stored-but-unreadable date is a different fact from an absent one.
+    return tender.submission_deadline
+      ? { label: "Deadline not readable", tone: "text-amber-600" }
+      : { label: "Not captured yet", tone: "text-muted-foreground" };
+  }
   if (days < 0) return { label: `${Math.abs(days)}d overdue`, tone: "text-red-600" };
   if (days === 0) return { label: "Today", tone: "text-red-600" };
   if (days <= 7) return { label: `${days}d`, tone: "text-red-600" };
@@ -131,8 +149,16 @@ function getTenderAttention(tender: TenderRow): { level: "green" | "amber" | "re
 }
 
 function MetricsBar({ tenders }: { tenders: TenderRow[] }) {
+  /*
+   * W04-C1 defect G: "Pipeline SAR" used to be summed over the non-closed
+   * subset while the page header, ~14 lines away, summed the same word
+   * ("pipeline value") over every rendered tender — two different numbers for
+   * one meaning. There is now ONE pipeline figure, computed over the tenders
+   * actually rendered, and it is the same value the header prints. The active
+   * subset keeps its own separately-labelled tiles.
+   */
   const active = tenders.filter(t => !CLOSED_PHASES.has(normalizePhase(t.phase)));
-  const totalSar = active.reduce((sum, t) => sum + (t.estimated_value ?? 0), 0);
+  const totalSar = sumCaptured(tenders.map(t => t.estimated_value));
   const gpValues = active.map(t => t.target_gp_percent).filter((v): v is number => v != null);
   const avgGp = gpValues.length > 0 ? `${(gpValues.reduce((s, v) => s + v, 0) / gpValues.length).toFixed(1)}%` : "Not available";
   const stalled = active.filter(t => (t.days_in_status ?? 0) > 14).length;
@@ -142,10 +168,10 @@ function MetricsBar({ tenders }: { tenders: TenderRow[] }) {
   const winRate = decided > 0 ? `${Math.round((awarded / decided) * 100)}%` : "Not available";
 
   const metrics = [
-    { label: "Total Active", value: active.length.toString() },
-    { label: "Pipeline SAR", value: formatSarCompact(totalSar) },
-    { label: "Avg GP%", value: avgGp },
-    { label: "Stalled", value: stalled.toString(), highlight: stalled > 0 },
+    { label: "Active (not closed)", value: active.length.toString() },
+    { label: "Pipeline SAR (all shown)", value: formatSarCompact(totalSar) },
+    { label: "Avg GP% (active)", value: avgGp },
+    { label: "Stalled (active)", value: stalled.toString(), highlight: stalled > 0 },
     { label: "Win Rate", value: winRate },
   ];
 
@@ -246,7 +272,12 @@ function TenderPreviewPopup({
     { label: "Region", value: tender.region || "Not captured yet" },
     { label: "Source", value: tender.source || "Not captured yet" },
     { label: "Submission Deadline", value: tender.submission_deadline || "Not captured yet" },
-    { label: "Days to Deadline", value: days != null ? (days > 0 ? `${days} days` : days === 0 ? "Today" : `${Math.abs(days)} days overdue`) : "Not available" },
+    {
+      label: "Days to Deadline",
+      value: days != null
+        ? (days > 0 ? `${days} days` : days === 0 ? "Today" : `${Math.abs(days)} days overdue`)
+        : tender.submission_deadline ? "Deadline not readable" : "Not captured yet",
+    },
     { label: "Days in Status", value: tender.days_in_status != null ? `${tender.days_in_status}d` : "Not captured yet" },
   ];
 
@@ -305,7 +336,10 @@ export default function TendersOverview() {
   const [, navigate] = useLocation();
   const [tenders, setTenders] = useState<TenderRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  /** Rows the database returned before client-side process isolation ran. */
+  const [fetchedRowCount, setFetchedRowCount] = useState(0);
   const [search, setSearch] = useState("");
   const [filterCrmStage, setFilterCrmStage] = useState("all");
   const [filterPhase, setFilterPhase] = useState("all");
@@ -316,16 +350,24 @@ export default function TendersOverview() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadError(null);
 
-    fetchTenderPortfolioRows()
-      .then(rows => {
-        if (!cancelled) setTenders(rows);
-      })
-      .catch(error => {
+    fetchTenderPortfolioRead()
+      .then(read => {
         if (cancelled) return;
-        console.error("[Tender Overview] Load error:", error.message);
-        toast.error("Failed to load tenders");
+        // Keep the pre-isolation count so the empty state can say how many rows
+        // the database returned and how many this client withheld.
+        setFetchedRowCount(read.fetched);
+        setTenders(read.rows);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        // A failed read is not "no tender records".
+        const message = error instanceof Error ? error.message : "Tender load failed for an unknown reason";
+        console.error("[Tender Overview] Load error:", message);
+        setLoadError(message);
         setTenders([]);
+        setFetchedRowCount(0);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -360,7 +402,9 @@ export default function TendersOverview() {
     return map;
   }, [filtered]);
 
-  const totalValue = filtered.reduce((s, t) => s + (t.estimated_value ?? 0), 0);
+  // ONE pipeline figure, over the tenders actually rendered. MetricsBar prints
+  // this same sum under "Pipeline SAR (all shown)".
+  const totalValue = sumCaptured(filtered.map(t => t.estimated_value));
   const hasFilters = search || filterCrmStage !== "all" || filterPhase !== "all" || filterOwner !== "all" || filterRegion !== "all";
 
   function clearFilters() {
@@ -371,11 +415,37 @@ export default function TendersOverview() {
     setFilterRegion("all");
   }
 
-  if (loading) {
+  const readState = resolveReadState({ loading, error: loadError, count: tenders.length });
+
+  if (readState === "loading") {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-3">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         <p className="text-xs text-muted-foreground">Loading Tender Pipeline...</p>
+      </div>
+    );
+  }
+
+  if (readState === "error") {
+    return (
+      <div className="p-6 max-w-[1600px] mx-auto">
+        <div className="mx-auto max-w-md rounded-xl border border-red-300 bg-red-50 p-6 text-center">
+          <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-red-600" />
+          <p className="text-sm font-semibold text-red-900">Tender pipeline could not be loaded</p>
+          <p className="mt-1 text-xs text-red-800">
+            The read of <span className="font-mono">commercial_tickets</span> failed. No stage lanes,
+            counts or pipeline value can be shown. This is a failed read, not an empty pipeline.
+          </p>
+          <p className="mt-2 break-words font-mono text-[10px] text-red-700">{loadError}</p>
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => setRefreshKey(k => k + 1)}>
+              <RefreshCw className="w-3 h-3 mr-1.5" /> Retry
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
+              <ExternalLink className="w-3 h-3 mr-1.5" /> Go to CRM Pipeline
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -389,7 +459,7 @@ export default function TendersOverview() {
             <h1 className="text-2xl font-serif font-bold">Tender Pipeline Overview</h1>
           </div>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {filtered.length} tenders · {formatSarCompact(totalValue)} pipeline value
+            {describeRenderedCount(filtered.length, tenders.length, "tender")} · {formatSarCompact(totalValue)} pipeline value
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -402,6 +472,15 @@ export default function TendersOverview() {
           </Button>
         </div>
       </div>
+
+      {/* Rows the database returned that this client removed — disclosed, not hidden */}
+      {describeIsolationWithholding(fetchedRowCount, tenders.length) && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5">
+          <p className="text-xs font-medium text-amber-900">
+            {describeIsolationWithholding(fetchedRowCount, tenders.length)}
+          </p>
+        </div>
+      )}
 
       <MetricsBar tenders={filtered} />
 
@@ -468,7 +547,15 @@ export default function TendersOverview() {
           <Gavel className="w-10 h-10 mx-auto mb-3 opacity-20" />
           {tenders.length === 0 ? (
             <>
-              <p className="text-sm">No tender records found.</p>
+              <p className="text-sm">No tender records are shown.</p>
+              {/*
+                W04-C1 defect E: this claimed the read returned no rows even
+                when rows were returned and then removed client-side by the
+                process-isolation allowlist. It now states which happened.
+              */}
+              <p className="text-xs text-muted-foreground/70 mt-1">
+                {describeEmptyReadCause(fetchedRowCount, tenders.length)}
+              </p>
               <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
                 <ExternalLink className="w-3 h-3 mr-1.5" /> Go to CRM Pipeline
               </Button>
@@ -485,7 +572,7 @@ export default function TendersOverview() {
           {TENDER_STAGES.map(stage => {
             const cards = byStage.get(stage.key) ?? [];
             if (cards.length === 0) return null;
-            const stageValue = cards.reduce((sum, tender) => sum + (tender.estimated_value ?? 0), 0);
+            const stageValue = sumCaptured(cards.map(tender => tender.estimated_value));
 
             return (
               <div key={stage.key} className={`flex gap-0 border-b last:border-b-0 border-border ${stage.border} ${stage.tone}`}>

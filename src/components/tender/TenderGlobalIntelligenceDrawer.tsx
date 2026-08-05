@@ -185,8 +185,10 @@ function ActivityLogPanel({ ws, tenderId, reload }: { ws: TenderWorkspace; tende
     setNoteSubmitting(true);
     const r = await createActivityNote(tenderId, noteTitle, noteDesc);
     setNoteSubmitting(false);
-    if (r.success) { setNoteTitle(""); setNoteDesc(""); toast.success("Note added."); reload(); }
-    else toast.error("Failed to add note.", { description: r.error });
+    // W04-C4: createActivityNote confirms the stored commercial_ticket_audit row
+    // before reporting success; a failure keeps the typed note in the inputs.
+    if (r.success) { setNoteTitle(""); setNoteDesc(""); toast.success("Note added.", { description: "Confirmed stored in commercial_ticket_audit." }); reload(); }
+    else toast.error("Note was NOT saved.", { description: r.error, duration: 10000 });
   }
 
   return (

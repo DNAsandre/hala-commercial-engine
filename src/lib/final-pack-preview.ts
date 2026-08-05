@@ -104,6 +104,41 @@ export const DEFAULT_BRANDING: BrandingProfile = {
 };
 
 // ═══════════════════════════════════════════════════════════
+// Render selection (single source of truth for WHAT renders)
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * The blocks that actually render, in document order.
+ *
+ * W04-T09: this was inlined in buildPreviewHTML, so the editor's "n/m blocks"
+ * counter could not agree with what the preview/export produced (it ignored the
+ * volume filter and the cover_page layout flag). Exported so the counter and the
+ * renderer are computed from ONE function.
+ *
+ * Filtering only — never sorts, never reorders. Array position is document order.
+ */
+export function selectRenderedBlocks(
+  blocks: OutputBlock[],
+  opts: { volumeBlockKeys?: string[] | null; layout?: Record<string, unknown> | null } = {},
+): OutputBlock[] {
+  const layout = normalizeFinalPackLayout(opts.layout);
+  let out = (Array.isArray(blocks) ? blocks : []).filter((b) => b?.visible);
+
+  // FPS-006: volume filter (render-only; block data + order untouched).
+  if (opts.volumeBlockKeys && opts.volumeBlockKeys.length > 0) {
+    const allowed = new Set(opts.volumeBlockKeys);
+    out = out.filter((b) => allowed.has(b.block_key));
+  }
+
+  // cover_page = false → suppress the cover block from RENDER only.
+  if (!layout.cover_page) {
+    out = out.filter((b) => b.render_key !== "cover_hero");
+  }
+
+  return out;
+}
+
+// ═══════════════════════════════════════════════════════════
 // Main function
 // ═══════════════════════════════════════════════════════════
 
@@ -117,18 +152,11 @@ export function buildPreviewHTML(options: PreviewOptions): string {
   // ── FPS-004: normalize layout (never throws; missing/bad → defaults) ──
   const layout = normalizeFinalPackLayout(options.layout);
 
-  let visibleBlocks = blocks.filter((b) => b.visible);
-
-  // FPS-006: volume filter (render-only; block data + order untouched).
-  if (options.volumeBlockKeys && options.volumeBlockKeys.length > 0) {
-    const allowed = new Set(options.volumeBlockKeys);
-    visibleBlocks = visibleBlocks.filter((b) => allowed.has(b.block_key));
-  }
-
-  // cover_page = false → suppress the cover block from RENDER only (block data untouched).
-  if (!layout.cover_page) {
-    visibleBlocks = visibleBlocks.filter((b) => b.render_key !== "cover_hero");
-  }
+  // Preview and export consume the SAME selection, in the SAME order.
+  const visibleBlocks = selectRenderedBlocks(blocks, {
+    volumeBlockKeys: options.volumeBlockKeys,
+    layout: options.layout,
+  });
 
   // Generate real Auto-TOC entries from the visible content blocks.
   const tocEntries = buildTocEntries(visibleBlocks);
@@ -725,7 +753,18 @@ function getPreviewCSS(b: BrandingProfile): string {
 // Helpers
 // ═══════════════════════════════════════════════════════════
 
-function escHtml(str: string): string {
+/**
+ * HTML-escape a value.
+ *
+ * W04-T09: block content is JSON from the database; its TypeScript types are not
+ * enforced at runtime. A number/null/object reaching this function used to throw
+ * (`.replace is not a function`), which aborted buildPreviewHTML and left the
+ * preview blank and the export "failed" with an opaque message. Non-strings are
+ * now rendered as their string form; null/undefined render as nothing.
+ */
+function escHtml(value: unknown): string {
+  if (value == null) return "";
+  const str = typeof value === "string" ? value : String(value);
   return str
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

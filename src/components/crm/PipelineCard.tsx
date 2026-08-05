@@ -24,15 +24,31 @@ interface CardProps {
   isDragging?: boolean;
 }
 
-function formatSar(n: number): string {
+/** A never-captured value is shown as such — never as "SAR 0". */
+function formatSar(n: number | null): string {
+  if (n == null) return "Not captured";
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
   return n.toLocaleString();
 }
 
+function formatPct(n: number | null): string {
+  return n == null ? "Not captured" : `${n}%`;
+}
+
+function formatDays(n: number | null): string {
+  return n == null ? "Not captured" : `${n}d`;
+}
+
+const GP_TONE: Record<string, string> = {
+  green: "text-emerald-600",
+  amber: "text-amber-600",
+  red: "text-red-600",
+  unknown: "text-muted-foreground",
+};
+
 export function PipelineTicketCard({ ticket: t, onDragStart, onDragEnd, isDragging }: CardProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
-  const isTerminal = ["Closed Won", "Closed Lost", "Discontinued", "Go Live"].includes(t.crmStage);
   const didDrag = useRef(false);
 
   return (
@@ -44,7 +60,14 @@ export function PipelineTicketCard({ ticket: t, onDragStart, onDragEnd, isDraggi
           ${isDragging ? "opacity-40 scale-95 ring-2 ring-primary/30" : ""}
           ${t.riskLevel === "red" ? "border-l-2 border-l-red-400" : t.riskLevel === "amber" ? "border-l-2 border-l-amber-400" : "border-border"}
         `}
-        draggable={!isTerminal}
+        /*
+         * W04-C1 defect F: manual stage movement is free. Every card is
+         * draggable, including cards in Closed Won / Actual Go Live. The old
+         * `draggable={!isTerminal}` test also compared against "Go Live" while
+         * the real label is "Actual Go Live", so those cards were grabbable but
+         * no column would accept them and the drag failed silently.
+         */
+        draggable
         onMouseDown={() => { didDrag.current = false; }}
         onDragStart={e => { didDrag.current = true; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", t.id); onDragStart?.(); }}
         onDragEnd={onDragEnd}
@@ -69,16 +92,25 @@ export function PipelineTicketCard({ ticket: t, onDragStart, onDragEnd, isDraggi
 
           {/* Row 3: SAR + GP% */}
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-mono font-medium">{formatSar(t.sarValue)}</span>
-            <span className={`text-[10px] font-mono font-bold ${t.gpPct >= 22 ? "text-emerald-600" : t.gpPct >= 10 ? "text-amber-600" : "text-red-600"}`}>
-              {t.gpPct > 0 ? `${t.gpPct}%` : "—"}
+            <span className={`text-[10px] font-mono font-medium ${t.sarValue == null ? "text-muted-foreground" : ""}`}>
+              {formatSar(t.sarValue)}
+            </span>
+            <span className={`text-[10px] font-mono font-bold ${GP_TONE[t.riskLevel]}`}>
+              {formatPct(t.gpPct)}
             </span>
           </div>
 
           {/* Row 4: Risk + Internal stage */}
           <div className="flex items-center gap-1.5">
             {t.riskLevel !== "green" && (
-              <Badge variant="outline" className={`text-[8px] h-3.5 px-1 ${t.riskLevel === "red" ? "border-red-300 text-red-700 bg-red-50" : "border-amber-300 text-amber-700 bg-amber-50"}`}>
+              <Badge
+                variant="outline"
+                className={`text-[8px] h-3.5 px-1 ${
+                  t.riskLevel === "red" ? "border-red-300 text-red-700 bg-red-50"
+                    : t.riskLevel === "amber" ? "border-amber-300 text-amber-700 bg-amber-50"
+                    : "border-dashed border-border text-muted-foreground"
+                }`}
+              >
                 {t.riskLabel}
               </Badge>
             )}
@@ -97,8 +129,8 @@ export function PipelineTicketCard({ ticket: t, onDragStart, onDragEnd, isDraggi
               <span className="text-[9px] text-muted-foreground">{t.region}</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className={`text-[9px] ${t.daysInStage > 14 ? "text-red-600 font-medium" : "text-muted-foreground"}`}>
-                {t.daysInStage}d
+              <span className={`text-[9px] ${t.daysInStage != null && t.daysInStage > 14 ? "text-red-600 font-medium" : "text-muted-foreground"}`}>
+                {t.daysInStage == null ? "—" : `${t.daysInStage}d`}
               </span>
               {t.syncStatus === "synced" && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="Synced" />}
             </div>
@@ -116,21 +148,96 @@ export function PipelineTicketCard({ ticket: t, onDragStart, onDragEnd, isDraggi
 // TICKET PREVIEW POPUP
 // ═══════════════════════════════════════════
 
-function GaugeMini({ label, value, max = 100 }: { label: string; value: number; max?: number }) {
-  const pct = Math.min(100, (value / max) * 100);
-  const color = pct >= 70 ? "bg-emerald-500" : pct >= 40 ? "bg-amber-500" : "bg-red-400";
-  const textColor = pct >= 70 ? "text-emerald-600" : pct >= 40 ? "text-amber-600" : "text-red-500";
+/**
+ * MEASURE MINI — W04-C1 defect A.
+ *
+ * This replaces a gauge that turned a three-way bucket into a fake percentage:
+ * `gpPct >= 22 ? 85 : gpPct >= 10 ? 50 : 15` was rendered as the literal text
+ * "85%" although nothing measured 85. The text shown here is always the real
+ * measured figure. `fill` only scales the bar and is never printed as a number;
+ * `scaleNote` names the window the bar is drawn over. A never-captured measure
+ * gets a dashed empty bar and "Not captured" — no colour verdict.
+ */
+function MeasureMini({
+  label, text, fill, tone, scaleNote,
+}: {
+  label: string;
+  text: string;
+  fill: number | null;
+  tone: "green" | "amber" | "red" | "none";
+  scaleNote?: string;
+}) {
+  const barColor = tone === "green" ? "bg-emerald-500"
+    : tone === "amber" ? "bg-amber-500"
+    : tone === "red" ? "bg-red-400"
+    : "bg-muted-foreground/20";
+  const textColor = tone === "green" ? "text-emerald-600"
+    : tone === "amber" ? "text-amber-600"
+    : tone === "red" ? "text-red-500"
+    : "text-muted-foreground";
   return (
     <div className="rounded-lg border border-border p-4 bg-muted/10">
       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">{label}</p>
       <div className="flex items-center gap-3">
-        <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-          <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
-        </div>
-        <span className={`text-sm font-bold ${textColor}`}>{Math.round(pct)}%</span>
+        {fill == null ? (
+          <div className="flex-1 h-2 rounded-full border border-dashed border-border" />
+        ) : (
+          <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.max(0, Math.min(100, fill))}%` }} />
+          </div>
+        )}
+        <span className={`text-sm font-bold ${textColor}`}>{text}</span>
       </div>
+      {scaleNote && <p className="mt-1 text-[9px] text-muted-foreground/60">{scaleNote}</p>}
     </div>
   );
+}
+
+export interface TicketMeasure {
+  label: string;
+  /** Exactly what is printed. Always a real figure or "Not captured". */
+  text: string;
+  /** Bar scale only, never printed. null = no bar. */
+  fill: number | null;
+  tone: "green" | "amber" | "red" | "none";
+  scaleNote: string;
+}
+
+/**
+ * The executive strip, as data. Exported so a test can assert that every
+ * printed figure comes from the record and not from a bucket constant.
+ */
+export function ticketMeasures(t: PipelineTicket): TicketMeasure[] {
+  return [
+    {
+      label: "Margin — Target GP%",
+      text: formatPct(t.gpPct),
+      fill: t.gpPct,
+      // Margin verdict comes from the ticket's own derived risk — one source.
+      tone: t.riskLevel === "unknown" ? "none" : t.riskLevel,
+      scaleNote: "Healthy ≥ 22% · Low GP 10–22% · Critical < 10%",
+    },
+    {
+      label: "Age — Days in Stage",
+      text: formatDays(t.daysInStage),
+      fill: t.daysInStage == null ? null : (t.daysInStage / 30) * 100,
+      tone: t.daysInStage == null ? "none"
+        : t.daysInStage <= 7 ? "green"
+        : t.daysInStage <= 14 ? "amber"
+        : "red",
+      scaleNote: "Bar scaled over 30 days · stalled after 14",
+    },
+    {
+      label: "Win Probability",
+      text: formatPct(t.probabilityPct),
+      fill: t.probabilityPct,
+      tone: t.probabilityPct == null ? "none"
+        : t.probabilityPct >= 70 ? "green"
+        : t.probabilityPct >= 40 ? "amber"
+        : "red",
+      scaleNote: "As captured on the ticket",
+    },
+  ];
 }
 
 function StatusChip({ label, status }: { label: string; status: string }) {
@@ -148,8 +255,6 @@ function StatusChip({ label, status }: { label: string; status: string }) {
 
 function TicketPreviewPopup({ ticket: t, open, onOpenChange }: { ticket: PipelineTicket; open: boolean; onOpenChange: (v: boolean) => void }) {
   const [, navigate] = useLocation();
-  const marginHealth = t.gpPct >= 22 ? 85 : t.gpPct >= 10 ? 50 : 15;
-  const timePressure = t.daysInStage <= 7 ? 80 : t.daysInStage <= 14 ? 50 : 20;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -193,9 +298,7 @@ function TicketPreviewPopup({ ticket: t, open, onOpenChange }: { ticket: Pipelin
         {t.ticketType === "proposal" ? (
           <div className="px-8 py-5 border-b border-border">
             <div className="grid grid-cols-3 gap-4">
-              <GaugeMini label="Margin Health" value={marginHealth} />
-              <GaugeMini label="Time Pressure" value={timePressure} />
-              <GaugeMini label="Readiness" value={t.probabilityPct} />
+              {ticketMeasures(t).map(m => <MeasureMini key={m.label} {...m} />)}
             </div>
           </div>
         ) : (
@@ -210,15 +313,15 @@ function TicketPreviewPopup({ ticket: t, open, onOpenChange }: { ticket: Pipelin
           <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">Key Facts</p>
           <div className="grid grid-cols-3 gap-x-8 gap-y-3">
             {[
-              { l: "SAR Value", v: `SAR ${t.sarValue.toLocaleString()}` },
-              { l: "GP%", v: t.gpPct > 0 ? `${t.gpPct}%` : "—" },
+              { l: "SAR Value", v: t.sarValue == null ? "Not captured" : `SAR ${t.sarValue.toLocaleString()}` },
+              { l: "GP%", v: formatPct(t.gpPct) },
               { l: "Region", v: t.region || "—" },
               { l: "Service", v: t.serviceType },
               { l: "Pallets", v: t.volumePallets > 0 ? t.volumePallets.toLocaleString() : "—" },
               { l: "Expected Close", v: t.goLiveDate || "—" },
               { l: "Next Action", v: t.nextAction },
-              { l: "Probability", v: `${t.probabilityPct}%` },
-              { l: "Days in Stage", v: `${t.daysInStage}d` },
+              { l: "Probability", v: formatPct(t.probabilityPct) },
+              { l: "Days in Stage", v: formatDays(t.daysInStage) },
             ].map(f => (
               <div key={f.l} className="flex justify-between">
                 <span className="text-xs text-muted-foreground">{f.l}</span>

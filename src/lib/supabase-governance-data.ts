@@ -69,6 +69,35 @@ export interface ActionResult {
   error?: string;
 }
 
+/**
+ * SC-01 Wave 04 — outcome of a governance read.
+ *
+ * The bare `fetch*` helpers below return `[]` for BOTH "nothing recorded" and
+ * "the read failed", which let the Governance Console render a broken read as
+ * a confident "0 gates configured". The `*Result` variants keep the same
+ * queries but report which of the three things actually happened, so the
+ * console can show three visibly different states.
+ *
+ * `empty` means "no rows were visible to this account" — never "the table is
+ * empty", because row-level security can hide rows from the current client.
+ */
+export type GovernanceRead<T> =
+  | { status: "loaded"; rows: T[] }
+  | { status: "empty"; rows: [] }
+  | { status: "error"; rows: []; error: string };
+
+function classifyGovernanceRead<T>(
+  data: T[] | null,
+  error: { message?: string } | null,
+): GovernanceRead<T> {
+  if (error) {
+    return { status: "error", rows: [], error: error.message || "Unknown Supabase error" };
+  }
+  const rows = data ?? [];
+  if (rows.length === 0) return { status: "empty", rows: [] };
+  return { status: "loaded", rows };
+}
+
 // ─── Helpers ─────────────────────────────────────────────────
 
 function uid(): string {
@@ -85,17 +114,18 @@ function actor() {
 /**
  * Fetch all policy gates from Supabase, ordered by sort_order.
  */
-export async function fetchPolicyGates(): Promise<SupabasePolicyGate[]> {
+export async function fetchPolicyGatesResult(): Promise<GovernanceRead<SupabasePolicyGate>> {
   const { data, error } = await supabase
     .from('governance_policy_gates')
     .select('*')
     .order('sort_order', { ascending: true });
 
-  if (error) {
-    console.warn('[SUPA-009] Failed to fetch policy gates:', error.message);
-    return [];
-  }
-  return (data ?? []) as SupabasePolicyGate[];
+  if (error) console.warn('[SUPA-009] Failed to fetch policy gates:', error.message);
+  return classifyGovernanceRead(data as SupabasePolicyGate[] | null, error);
+}
+
+export async function fetchPolicyGates(): Promise<SupabasePolicyGate[]> {
+  return (await fetchPolicyGatesResult()).rows;
 }
 
 /**
@@ -124,18 +154,21 @@ export async function updatePolicyGateConfig(
 /**
  * Fetch governance audit log entries, most recent first.
  */
-export async function fetchGovernanceAuditLog(limit: number = 200): Promise<SupabaseGovernanceAuditEntry[]> {
+export async function fetchGovernanceAuditLogResult(
+  limit: number = 200,
+): Promise<GovernanceRead<SupabaseGovernanceAuditEntry>> {
   const { data, error } = await supabase
     .from('governance_audit_log')
     .select('*')
     .order('created_at', { ascending: false })
     .limit(limit);
 
-  if (error) {
-    console.warn('[SUPA-009] Failed to fetch governance audit log:', error.message);
-    return [];
-  }
-  return (data ?? []) as SupabaseGovernanceAuditEntry[];
+  if (error) console.warn('[SUPA-009] Failed to fetch governance audit log:', error.message);
+  return classifyGovernanceRead(data as SupabaseGovernanceAuditEntry[] | null, error);
+}
+
+export async function fetchGovernanceAuditLog(limit: number = 200): Promise<SupabaseGovernanceAuditEntry[]> {
+  return (await fetchGovernanceAuditLogResult(limit)).rows;
 }
 
 /**
@@ -220,17 +253,18 @@ export async function upsertTenderGovernanceConfig(
 /**
  * Fetch all commercial governance config entries.
  */
-export async function fetchCommercialGovernanceConfig(): Promise<GovernanceConfigEntry[]> {
+export async function fetchCommercialGovernanceConfigResult(): Promise<GovernanceRead<GovernanceConfigEntry>> {
   const { data, error } = await supabase
     .from('commercial_governance_config')
     .select('*')
     .order('config_key');
 
-  if (error) {
-    console.warn('[SUPA-009] Failed to fetch commercial governance config:', error.message);
-    return [];
-  }
-  return (data ?? []) as GovernanceConfigEntry[];
+  if (error) console.warn('[SUPA-009] Failed to fetch commercial governance config:', error.message);
+  return classifyGovernanceRead(data as GovernanceConfigEntry[] | null, error);
+}
+
+export async function fetchCommercialGovernanceConfig(): Promise<GovernanceConfigEntry[]> {
+  return (await fetchCommercialGovernanceConfigResult()).rows;
 }
 
 /**

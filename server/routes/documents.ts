@@ -110,8 +110,9 @@ function authorize(req: Request, res: Response): AuthorizedContext | null {
 
 // ─── row 26/27 — GET /api/documents ──────────────────────────
 // Live caller: src/components/proposal-workspace/ProposalStageWorkbench.tsx
-//   fetch(`/api/documents?workspace_id=${scopeId}`)
-// Also reachable through api-client `documents.search(filters)`.
+//   via listScopeDocumentsFromCleanServer() in src/lib/document-runtime.ts,
+//   which builds an absolute URL from CLEAN_SERVER_BASE and attaches the
+//   caller's bearer token. (The old api-client was deleted in Wave 03.)
 
 documentRoutes.get("/documents", async (req, res, next) => {
   try {

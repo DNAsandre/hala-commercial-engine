@@ -4,11 +4,12 @@
  * FPS-031 — Source drift detection hook.
  *
  * Compares current tender source hash against the frozen snapshot hash.
- * Uses the shared stableJsonStringify helper to avoid false positives from
- * JSON key reordering.
+ * Re-uses the loader's own projection + hash (buildTenderSourceData /
+ * computeSourceHash), which is stable-stringified, so key reordering cannot
+ * produce a false positive and the two hashes are comparable at all.
  *
  * Source-truth safety:
- * - READS commercial_tickets.type_details for comparison (read only)
+ * - READS commercial_tickets (same projection as the snapshot; read only)
  * - Does NOT write to commercial_tickets
  * - Refresh writes to doc_instances.blocks only
  *
@@ -18,7 +19,11 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
-import { stableJsonStringify } from "@/lib/stable-json";
+import {
+  TENDER_SOURCE_SELECT,
+  buildTenderSourceData,
+  computeSourceHash,
+} from "@/lib/final-pack-loader";
 
 export interface UseSourceDriftReturn {
   /** Whether the source has changed since the snapshot */
@@ -29,6 +34,61 @@ export interface UseSourceDriftReturn {
   recheck: () => void;
   /** Current source hash (null if not yet checked) */
   currentHash: string | null;
+  /**
+   * Set when the check could NOT be performed (read failed / row missing).
+   * "Could not check" must never render as "no drift" — they are different
+   * facts and a human has to be able to tell them apart.
+   */
+  error: string | null;
+}
+
+export interface SourceDriftResult {
+  /** null when the comparison could not be made */
+  drifted: boolean | null;
+  currentHash: string | null;
+  error: string | null;
+}
+
+/**
+ * Read the tender source and compare it to the frozen snapshot hash.
+ *
+ * W04-T09 correction: this used to hash `type_details` alone while the snapshot
+ * hash is computed over the loader's projection (buildTenderSourceData). The two
+ * hashes could never match, so every connected document permanently claimed
+ * "Tender source has changed". Both sides now hash the SAME projection.
+ */
+export async function checkSourceDrift(
+  tenderId: string,
+  snapshotHash: string,
+): Promise<SourceDriftResult> {
+  try {
+    // READ ONLY — same projection the snapshot hash was built from.
+    const { data, error } = await supabase
+      .from("commercial_tickets")
+      .select(TENDER_SOURCE_SELECT)
+      .eq("id", tenderId)
+      .maybeSingle();
+
+    if (error) {
+      return { drifted: null, currentHash: null, error: error.message };
+    }
+    if (!data) {
+      return {
+        drifted: null,
+        currentHash: null,
+        error: `Source tender ${tenderId} is no longer readable.`,
+      };
+    }
+
+    const hash = await computeSourceHash(buildTenderSourceData(data));
+    return { drifted: hash !== snapshotHash, currentHash: hash, error: null };
+  } catch (err) {
+    return {
+      drifted: null,
+      currentHash: null,
+      error: err instanceof Error ? err.message : "Source check failed.",
+    };
+  }
 }
 
 /**
@@ -42,42 +102,31 @@ export function useSourceDrift(
   const [drifted, setDrifted] = useState(false);
   const [checking, setChecking] = useState(false);
   const [currentHash, setCurrentHash] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const checkDrift = useCallback(async () => {
     if (!tenderId || !snapshotHash) {
+      // Nothing to compare against — this is not drift and not an error.
       setDrifted(false);
+      setError(null);
       return;
     }
 
     setChecking(true);
+    const result = await checkSourceDrift(tenderId, snapshotHash);
+    setChecking(false);
 
-    try {
-      // Read current tender source — READ ONLY
-      const { data, error } = await supabase
-        .from("commercial_tickets")
-        .select("type_details")
-        .eq("id", tenderId)
-        .maybeSingle();
-
-      if (error || !data) {
-        console.error("[FPS Drift] Failed to read tender source:", error);
-        setDrifted(false);
-        setChecking(false);
-        return;
-      }
-
-      // Compute hash with stable JSON stringify to avoid key-order drift.
-      const sourceString = stableJsonStringify(data.type_details || {});
-      const hash = await computeHash(sourceString);
-
-      setCurrentHash(hash);
-      setDrifted(hash !== snapshotHash);
-    } catch (err) {
-      console.error("[FPS Drift] Error checking drift:", err);
+    if (result.error || result.drifted === null) {
+      // Unknown ≠ unchanged. Report it instead of showing a clean banner.
       setDrifted(false);
-    } finally {
-      setChecking(false);
+      setCurrentHash(null);
+      setError(result.error ?? "Source check failed.");
+      return;
     }
+
+    setCurrentHash(result.currentHash);
+    setDrifted(result.drifted);
+    setError(null);
   }, [tenderId, snapshotHash]);
 
   // Check on mount and when dependencies change
@@ -90,17 +139,6 @@ export function useSourceDrift(
     checking,
     recheck: checkDrift,
     currentHash,
+    error,
   };
-}
-
-/**
- * Compute SHA-256 hash of a string.
- * Uses Web Crypto API (available in all modern browsers).
- */
-async function computeHash(input: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(input);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }

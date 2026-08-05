@@ -18,7 +18,12 @@
  */
 
 import { supabase } from "./supabase";
-import { buildPreviewHTML, type BrandingProfile, type PreviewOptions } from "./final-pack-preview";
+import {
+  buildPreviewHTML,
+  selectRenderedBlocks,
+  type BrandingProfile,
+  type PreviewOptions,
+} from "./final-pack-preview";
 import type { OutputBlock } from "./final-pack-loader";
 import { tryServerFinalPdf } from "./server-pdf";
 import { htmlToBodyPdfBytes, mergeCoverAndBody } from "./final-pack-pdf";
@@ -58,10 +63,32 @@ export interface ExportRequest {
   volumeBlockKeys?: string[] | null;
 }
 
+/**
+ * W04-C4: what the browser ACTUALLY did.
+ *
+ * `print_dialog_opened` is the honest description of the native "Save as PDF"
+ * path: the print pipeline was invoked. Whether the user then saved a file is
+ * not observable from this page, so it must never be reported as "a PDF was
+ * written".
+ */
+export type ExportDelivery =
+  | "file_downloaded"        // bytes handed to the browser as a download
+  | "print_dialog_opened"    // print pipeline invoked; the file is the user's to save
+  | "server_file_opened";    // a server-rendered file URL was opened
+
 export interface ExportResult {
   success: boolean;
   error?: string;
   auditId?: string;
+  /** What was actually done. Absent on failure. */
+  delivered?: ExportDelivery;
+  /**
+   * W04-C4: whether the doc_compiled_outputs audit row was CONFIRMED stored.
+   * The insert error used to be swallowed, so a lost audit row looked identical
+   * to a recorded one.
+   */
+  auditPersisted?: boolean;
+  auditError?: string;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -70,11 +97,15 @@ export interface ExportResult {
 
 /**
  * Execute an export action.
- * Always succeeds (no conditions, no gates).
- * Writes audit row to doc_compiled_outputs.
+ * No conditions, no gates.
+ * Writes an audit row to doc_compiled_outputs and reports whether it landed.
  */
 export async function executeExport(req: ExportRequest): Promise<ExportResult> {
   const auditId = `dco-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  // W04-C4: the set that is actually exported — the same selection the renderer
+  // consumes, so the audit counts describe the produced document rather than
+  // the whole instance.
+  const exportedBlocks = safeSelectExportedBlocks(req);
 
   try {
     // Build preview HTML
@@ -95,6 +126,7 @@ export async function executeExport(req: ExportRequest): Promise<ExportResult> {
     // FPS-007: Final PDF first attempts a server render (feature-flagged OFF by
     // default); it ALWAYS falls back to the client path, so export never gates.
     let renderer: "client" | "server" | "client-pdf-merge" = "client";
+    let delivered: ExportDelivery = "print_dialog_opened";
 
     // FPS-013: when this document has an imported PDF cover, a PDF export tries
     // the programmatic merge path (pdf-lib prepends the cover as static page 1).
@@ -103,15 +135,18 @@ export async function executeExport(req: ExportRequest): Promise<ExportResult> {
 
     if (req.action === "html") {
       downloadHtml(html, req);
+      delivered = "file_downloaded";
     } else if (importedCover) {
       const merged = await tryImportedPdfExport(html, req, importedCover);
       if (merged) {
         renderer = "client-pdf-merge";
+        delivered = "file_downloaded";
       } else {
         // Fallback: browser-print of the body (with the placeholder cover page).
         // Never blocks — the user still gets a PDF, just without the merged cover.
         renderer = "client";
         openPrintablePdf(html, req);
+        delivered = "print_dialog_opened";
       }
     } else if (req.action === "pdf" && req.exportMode === "final") {
       const serverResult = await tryServerFinalPdf({
@@ -126,27 +161,60 @@ export async function executeExport(req: ExportRequest): Promise<ExportResult> {
       if (serverResult && serverResult.success && serverResult.download_url) {
         renderer = "server";
         window.open(serverResult.download_url, "_blank");
+        delivered = "server_file_opened";
       } else {
         openPrintablePdf(html, req); // client fallback
+        delivered = "print_dialog_opened";
       }
     } else {
       // Draft/Test PDF + Print → native client print.
       openPrintablePdf(html, req);
+      delivered = "print_dialog_opened";
     }
 
-    // Write audit row (records which renderer was used).
-    await writeAuditRow(auditId, req, "success", undefined, renderer);
+    // Write audit row (records which renderer was used, and the exported set).
+    // W04-C4: the insert result is no longer discarded.
+    const audit = await writeAuditRow(auditId, req, "success", undefined, renderer, exportedBlocks);
 
-    return { success: true, auditId };
+    return {
+      success: true,
+      auditId,
+      delivered,
+      auditPersisted: audit.persisted,
+      auditError: audit.error,
+    };
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "Unknown export error";
     console.error("[FPS Export] Error:", err);
 
     // Still write audit row on failure (best-effort; never affects export result).
     // Live doc_compiled_outputs.status CHECK allows only 'success' | 'failed'.
-    await writeAuditRow(auditId, req, "failed", errorMessage, "client");
+    // Nothing was produced, so the exported set is empty — not the whole document.
+    const audit = await writeAuditRow(auditId, req, "failed", errorMessage, "client", []);
 
-    return { success: false, error: errorMessage, auditId };
+    return {
+      success: false,
+      error: errorMessage,
+      auditId,
+      auditPersisted: audit.persisted,
+      auditError: audit.error,
+    };
+  }
+}
+
+/**
+ * The blocks this export actually produces, using the SAME selection function
+ * the renderer uses (visibility + volume filter + cover_page layout flag).
+ * Never throws — audit metadata must not be able to break an export.
+ */
+function safeSelectExportedBlocks(req: ExportRequest): OutputBlock[] {
+  try {
+    return selectRenderedBlocks(req.blocks, {
+      volumeBlockKeys: req.volumeBlockKeys ?? null,
+      layout: req.layout ?? null,
+    });
+  } catch {
+    return [];
   }
 }
 
@@ -291,9 +359,10 @@ async function writeAuditRow(
   auditId: string,
   req: ExportRequest,
   status: "success" | "failed",
-  errorText?: string,
-  renderer: "client" | "server" | "client-pdf-merge" = "client",
-): Promise<void> {
+  errorText: string | undefined,
+  renderer: "client" | "server" | "client-pdf-merge",
+  exportedBlocks: OutputBlock[],
+): Promise<{ persisted: boolean; error?: string }> {
   const watermarkMap: Record<ExportMode, string> = {
     draft: "DRAFT",
     test: "TEST",
@@ -323,15 +392,25 @@ async function writeAuditRow(
     status,
     error_text: errorText || null,
     metadata: {
-      block_count: req.blocks.length,
-      visible_block_count: req.blocks.filter((b) => b.visible).length,
+      // W04-C4: these used to be whole-document counts even for a volume
+      // export, so the audit trail described a document that was never
+      // produced. They now describe the set that was actually exported.
+      block_count: req.blocks.length,                  // the instance, for context
+      visible_block_count: exportedBlocks.length,      // what this export produced
+      exported_block_count: exportedBlocks.length,
+      exported_block_keys: exportedBlocks.map((b) => b.block_key),
+      volume_scoped: Boolean(req.volumeKey),
       renderer,
     },
   });
 
   if (error) {
+    // W04-C4: no longer swallowed — the caller reports that the export ran but
+    // its audit row is not confirmed stored.
     console.error("[FPS Export] Failed to write audit row:", error);
+    return { persisted: false, error: error.message ?? String(error) };
   }
+  return { persisted: true };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -363,7 +442,14 @@ export interface VolumeForExport {
 }
 
 export interface ExportAllVolumesResult {
-  results: { volume_key: string; success: boolean; error?: string }[];
+  results: {
+    volume_key: string;
+    success: boolean;
+    error?: string;
+    /** W04-C4: audit confirmation is per-volume; a lost row is not a silent one. */
+    auditPersisted?: boolean;
+    auditError?: string;
+  }[];
 }
 
 /**
@@ -386,7 +472,13 @@ export async function exportAllVolumes(
     };
     try {
       const r = await executeExport(req);
-      results.push({ volume_key: v.volume_key, success: r.success, error: r.error });
+      results.push({
+        volume_key: v.volume_key,
+        success: r.success,
+        error: r.error,
+        auditPersisted: r.auditPersisted,
+        auditError: r.auditError,
+      });
     } catch (err) {
       results.push({
         volume_key: v.volume_key,

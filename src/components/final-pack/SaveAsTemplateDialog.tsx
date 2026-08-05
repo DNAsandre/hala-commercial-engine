@@ -69,7 +69,7 @@ const SCOPES: TemplateScope[] = ["workspace", "personal", "hala_global"];
 export default function SaveAsTemplateDialog({
   blocks, packType, defaultName, customerName, refNumber, brandingProfileId, layout, createdBy, onClose,
 }: SaveAsTemplateDialogProps) {
-  const { createTemplate } = useTemplates();
+  const { createTemplate, error: templatesError } = useTemplates();
 
   const [name, setName] = useState(defaultName || "New Template");
   const [docType, setDocType] = useState<TemplateDocType>(() => packTypeToDocType(packType));
@@ -118,7 +118,14 @@ export default function SaveAsTemplateDialog({
         created_by: createdBy,
       });
       if (!t) {
-        setError("Couldn’t save the template. Your document is unaffected — keep working.");
+        // W04-C4: surface the hook's specific reason (e.g. "the v1 recipe was
+        // NOT stored") instead of a generic message that hides which half of
+        // the write landed.
+        setError(
+          templatesError
+            ? `Couldn’t save the template — ${templatesError} Your document is unaffected — keep working.`
+            : "Couldn’t save the template. Your document is unaffected — keep working.",
+        );
         return;
       }
       setDone(true);

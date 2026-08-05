@@ -19,17 +19,24 @@ interface VersionHistoryPanelProps {
   onClose: () => void;
 }
 
-function fmt(iso: string): string {
+/**
+ * W04-C4: the `catch` here never fired. `toLocaleString` on an unparseable date
+ * does not throw — it RETURNS the string "Invalid Date", which was rendered on
+ * every version row. Guard on the timestamp instead.
+ */
+export function fmt(iso: string): string {
   if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
   try {
-    return new Date(iso).toLocaleString("en-GB", {
+    return d.toLocaleString("en-GB", {
       day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
     });
-  } catch { return iso; }
+  } catch { return "—"; }
 }
 
 export default function VersionHistoryPanel({ instanceId, onRestore, onClose }: VersionHistoryPanelProps) {
-  const { versions, loading, refresh } = useInstanceVersions(instanceId);
+  const { versions, loading, error, refresh } = useInstanceVersions(instanceId);
   const [selected, setSelected] = useState<InstanceVersion | null>(null);
   const [confirming, setConfirming] = useState(false);
 
@@ -50,7 +57,19 @@ export default function VersionHistoryPanel({ instanceId, onRestore, onClose }: 
           {/* Version list */}
           <div className="border-r border-border overflow-y-auto p-3 space-y-1">
             {loading && <div className="flex justify-center py-6"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>}
-            {!loading && versions.length === 0 && (
+            {/* Failed read ≠ empty history — three distinct states. */}
+            {!loading && error && (
+              <div className="px-2 py-3 space-y-2 text-center">
+                <p className="text-xs text-amber-600">Version history could not be read — {error}</p>
+                <button
+                  onClick={() => { void refresh(); }}
+                  className="text-xs px-2 py-1 rounded border border-border hover:bg-accent"
+                >
+                  Try again
+                </button>
+              </div>
+            )}
+            {!loading && !error && versions.length === 0 && (
               <p className="text-xs text-muted-foreground py-4 text-center">No versions yet — they appear as you edit.</p>
             )}
             {versions.map((v) => (

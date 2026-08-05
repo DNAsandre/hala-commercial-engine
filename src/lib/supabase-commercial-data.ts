@@ -376,3 +376,107 @@ export function getPricingLinesForScenarioFromBundle(
 ): QuotePricingLine[] {
   return bundle.pricingLines.filter((line) => line.scenarioId === scenarioId);
 }
+
+// ============================================================
+// CUSTOMER MASTER READ (SC-01 W04, T08-B correction pass)
+// ============================================================
+//
+// pages/ProposalWorkspace.tsx used to build its `customer` object as an
+// OBJECT LITERAL — `{ grade: 'TBA', dso: 0, paymentStatus: 'Good', … }` — and
+// then rendered a "Healthy customer profile" verdict and a "0 days" DSO from
+// it. Neither was ever read from anywhere. This read replaces that literal.
+//
+// It keeps the three outcomes apart, because "no customer row" and "the read
+// failed" must not look the same to a human:
+//   found  → a row came back for exactly this id
+//   absent → the read succeeded and matched no row
+//   error  → the read failed; the message says why
+//
+// The projection is explicit: only columns the workspace actually renders are
+// requested, so a test mock that honours projections proves what is displayed
+// was really asked for.
+
+/** Exactly the customer-master columns the proposal workspace renders. */
+export const CUSTOMER_MASTER_COLUMNS =
+  "id,code,name,industry,city,region,grade,service_type,account_owner,contract_expiry,contract_value_2025,revenue_2024,revenue_2025,dso,payment_status";
+
+export interface CustomerMasterRecord {
+  id: string;
+  code: string | null;
+  name: string | null;
+  industry: string | null;
+  city: string | null;
+  region: string | null;
+  grade: string | null;
+  serviceType: string | null;
+  accountOwner: string | null;
+  contractExpiry: string | null;
+  contractValue2025: number | null;
+  revenue2024: number | null;
+  revenue2025: number | null;
+  dso: number | null;
+  paymentStatus: string | null;
+}
+
+export interface CustomerMasterRead {
+  status: "found" | "absent" | "error";
+  customer: CustomerMasterRecord | null;
+  /** Set only when status is "error". */
+  message: string | null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function textOrNull(value: unknown): string | null {
+  if (typeof value !== "string") return value === null || value === undefined ? null : String(value);
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function mapCustomerMasterRow(row: Record<string, any>): CustomerMasterRecord {
+  return {
+    id: String(row.id),
+    code: textOrNull(row.code),
+    name: textOrNull(row.name),
+    industry: textOrNull(row.industry),
+    city: textOrNull(row.city),
+    region: textOrNull(row.region),
+    grade: textOrNull(row.grade),
+    serviceType: textOrNull(row.service_type),
+    accountOwner: textOrNull(row.account_owner),
+    contractExpiry: textOrNull(row.contract_expiry),
+    contractValue2025: numberOrNull(row.contract_value_2025),
+    revenue2024: numberOrNull(row.revenue_2024),
+    revenue2025: numberOrNull(row.revenue_2025),
+    dso: numberOrNull(row.dso),
+    paymentStatus: textOrNull(row.payment_status),
+  };
+}
+
+/**
+ * Read one customer master row by exact id.
+ *
+ * Never throws and never invents a customer. A blank id is reported as
+ * "absent" (there is nothing to look up), not as an error and not as a row.
+ */
+export async function readCustomerMasterById(customerId: string): Promise<CustomerMasterRead> {
+  const id = typeof customerId === "string" ? customerId.trim() : "";
+  if (!id) return { status: "absent", customer: null, message: null };
+
+  const { data, error } = await supabase
+    .from("customers")
+    .select(CUSTOMER_MASTER_COLUMNS)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    handleSupabaseError("readCustomerMasterById", error, { silent: true });
+    return { status: "error", customer: null, message: error.message };
+  }
+  if (!data) return { status: "absent", customer: null, message: null };
+  return { status: "found", customer: mapCustomerMasterRow(data as Record<string, any>), message: null };
+}

@@ -20,138 +20,185 @@ import {
   DollarSign, Activity, Shield, Eye, Pencil, AlertTriangle, Hash,
   Cpu, Database, User, ChevronDown, ChevronUp, BarChart3, Zap
 } from 'lucide-react';
-import { supabase } from "@/lib/supabase";
+import {
+  AI_USAGE_LOGS_TABLE,
+  describeBotProvider,
+  readAiBots,
+  readAiProviders,
+  readAiUsageLogs,
+  summariseUsageNumber,
+  type AiBotRecord,
+  type AiProviderRecord,
+  type AiUsageLogRecord,
+  type RecordRead,
+} from "@/lib/ops-runtime";
 
-// SC-01 Wave 02 closure (SX-001/SX-004/SX-011): bot-governance and ai-client
-// are excluded; the old-server API is never called. This page reads REAL
-// records: ai_bots, ai_providers, and the ai_usage_logs invocation history.
-// Fields the log table does not record are honestly defaulted, not invented.
-interface BotInvocation {
-  id: string; botId: string; botVersionId: string; userId: string; userRole: string;
-  timestamp: string; context: string; contextType: string; inputPayloadHash: string;
-  knowledgeSourcesUsed: string[]; connectorCallsMade: string[]; output: string;
-  accepted: boolean | null; edited: boolean; cost: number; latencyMs: number;
-  gateChecks: { globalKillSwitch: boolean; providerEnabled: boolean; botEnabled: boolean; connectorsEnabled: boolean; rbacPassed: boolean };
-}
-async function fetchProviderRows(): Promise<Array<{ id: string; displayName: string; enabled: boolean }>> {
-  const { data, error } = await supabase.from("ai_providers").select("*").order("name");
-  if (error) { console.warn("[BotAudit] ai_providers read failed:", error.message); return []; }
-  return (data ?? []).map((row) => ({ id: row.id, displayName: row.display_name ?? row.name ?? row.id, enabled: !!row.enabled }));
+/*
+ * SC-01 Wave 02 closure (SX-001/SX-004/SX-011): bot-governance and ai-client
+ * are excluded; the old-server API is never called.
+ *
+ * SC-01 Wave 04 corrections on this page:
+ *
+ *  1. FABRICATED GATE CHECKS REMOVED. The old mapper hard-coded
+ *       gateChecks: { globalKillSwitch: false, providerEnabled: true,
+ *                     botEnabled: true, connectorsEnabled: true,
+ *                     rbacPassed: true }
+ *     for every row, and the expanded panel rendered them as five green
+ *     ticks under the heading "Gate Checks (10-Step Runtime Flow)". No such
+ *     check ran and no such column exists in `ai_usage_logs`: this page was
+ *     inventing a passing compliance record and exporting it to CSV as audit
+ *     evidence. Gate checks are now reported as not recorded.
+ *
+ *  2. ACCEPT / EDIT COUNTERS REMOVED. `accepted` was always null and `edited`
+ *     always false, so "Accepted" and "Edited After Accept" could only ever
+ *     read 0 while looking like measured outcomes. The table does record
+ *     `human_action`, so the real recorded value is shown instead.
+ *
+ *  3. Reads are three-state (loading / failed / real empty) and every summary
+ *     figure is computed over recorded values only — a null column reads
+ *     "not recorded", never "$0.000" or "0ms".
+ *
+ *  4. COUNTERS MATCH THE LIST. The five stat tiles were computed over the whole
+ *     `invocations` array while the list below rendered `filteredInvocations`,
+ *     so applying a filter left totals describing rows the reader could not
+ *     see. Every figure is now computed over the rows actually rendered and
+ *     labelled "shown", with the read total stated separately underneath.
+ *
+ * Source of truth: ai_usage_logs (projection AI_USAGE_LOGS_COLUMNS), plus
+ * ai_bots and ai_providers for labels.
+ */
+
+/** Not-recorded gate fields, listed once so the UI and the CSV agree. */
+const GATE_CHECK_LABELS = ['Kill Switch', 'Provider', 'Bot Enabled', 'Connectors', 'RBAC'] as const;
+
+/** The rows the list actually renders. Exported so the counters and the list
+ *  can be proven to be computed over one and the same set. */
+export function filterInvocations(
+  rows: readonly AiUsageLogRecord[],
+  filters: { searchQuery: string; botFilter: string; statusFilter: string },
+): AiUsageLogRecord[] {
+  const q = filters.searchQuery.trim().toLowerCase();
+  return rows.filter(inv => {
+    if (q) {
+      const haystack = [invocationContext(inv), inv.id, invocationOutcome(inv), inv.botName]
+        .join(' ')
+        .toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    if (filters.botFilter !== 'all' && inv.botId !== filters.botFilter) return false;
+    // Filters are over RECORDED values only. There is no accepted/rejected
+    // column, so no filter pretends to offer that distinction.
+    if (filters.statusFilter !== 'all' && inv.status !== filters.statusFilter) return false;
+    return true;
+  });
 }
 
-// Map an ai_usage_logs row to the display shape. Only recorded fields are
-// mapped; everything else is an honest default (never fabricated).
-function mapUsageLog(row: any): BotInvocation {
+/** One figure per meaning, all over the same set of rows. */
+export function summariseInvocations(rows: readonly AiUsageLogRecord[]): {
+  shown: number;
+  cost: ReturnType<typeof summariseUsageNumber>;
+  latency: ReturnType<typeof summariseUsageNumber>;
+  humanActions: number;
+} {
   return {
-    id: row.id,
-    botId: row.bot_id || "",
-    botVersionId: "",
-    userId: row.user_id || "",
-    userRole: "",
-    timestamp: row.created_at || "",
-    context: [row.action, row.workspace_id].filter(Boolean).join(" @ ") || "(not recorded)",
-    contextType: "workspace",
-    inputPayloadHash: "",
-    knowledgeSourcesUsed: [],
-    connectorCallsMade: [],
-    output: row.status === "error" ? ("ERROR: " + (row.error_message || "unknown")) : (row.status || ""),
-    accepted: null,
-    edited: false,
-    cost: Number(row.cost_usd ?? 0),
-    latencyMs: Number(row.latency_ms ?? 0),
-    gateChecks: { globalKillSwitch: false, providerEnabled: true, botEnabled: true, connectorsEnabled: true, rbacPassed: true },
+    shown: rows.length,
+    cost: summariseUsageNumber(rows, r => r.costUsd),
+    latency: summariseUsageNumber(rows, r => r.latencyMs),
+    humanActions: rows.filter(r => r.humanAction !== null).length,
   };
 }
 
+function invocationContext(row: AiUsageLogRecord): string {
+  return [row.action, row.workspaceId].filter(Boolean).join(' @ ') || '(not recorded)';
+}
+
+function invocationOutcome(row: AiUsageLogRecord): string {
+  if (row.status === 'error') return `ERROR: ${row.errorMessage || 'no message recorded'}`;
+  return row.status || '(no status recorded)';
+}
+
 export default function BotAudit() {
-  const [invocations, setInvocations] = useState<BotInvocation[]>([]);
-  const [bots, setBots] = useState<any[]>([]);
-  const [providers, setProviders] = useState<any[]>([]);
+  const [logsRead, setLogsRead] = useState<RecordRead<AiUsageLogRecord> | null>(null);
+  const [botsRead, setBotsRead] = useState<RecordRead<AiBotRecord> | null>(null);
+  const [providersRead, setProvidersRead] = useState<RecordRead<AiProviderRecord> | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [botFilter, setBotFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Load from API — providers from Supabase, rest from API with graceful fallback
   useEffect(() => {
     let mounted = true;
+    setLogsRead(null);
+    setBotsRead(null);
+    setProvidersRead(null);
     (async () => {
-      // Load providers from Supabase (real path)
-      try {
-        const supaProviders = await fetchProviderRows();
-        if (mounted) setProviders(supaProviders.map(p => ({ id: p.id, name: p.displayName, enabled: p.enabled })));
-      } catch { /* empty */ }
-      // Real reads: ai_bots + ai_usage_logs (invocation history). Honest empty on error.
-      try {
-        const [logsRes, botsRes] = await Promise.all([
-          supabase.from("ai_usage_logs").select("*").order("created_at", { ascending: false }).limit(200),
-          supabase.from("ai_bots").select("*").order("created_at", { ascending: false }),
-        ]);
-        if (!mounted) return;
-        if (logsRes.error) console.warn("[BotAudit] ai_usage_logs read failed:", logsRes.error.message);
-        if (botsRes.error) console.warn("[BotAudit] ai_bots read failed:", botsRes.error.message);
-        setInvocations((logsRes.data ?? []).map(mapUsageLog));
-        setBots(botsRes.data ?? []);
-      } catch (e) {
-        console.warn("[BotAudit] load failed:", (e as Error).message);
-      }
+      const [logs, bots, providers] = await Promise.all([
+        readAiUsageLogs(),
+        readAiBots(),
+        readAiProviders(),
+      ]);
+      if (!mounted) return;
+      setLogsRead(logs);
+      setBotsRead(bots);
+      setProvidersRead(providers);
     })();
     return () => { mounted = false; };
-  }, []);
+  }, [reloadKey]);
 
-  const filteredInvocations = useMemo(() => {
-    return invocations.filter(inv => {
-      if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        if (!inv.context.toLowerCase().includes(q) && !inv.id.toLowerCase().includes(q) && !inv.output.toLowerCase().includes(q)) return false;
-      }
-      if (botFilter !== 'all' && inv.botId !== botFilter) return false;
-      if (statusFilter === 'accepted' && inv.accepted !== true) return false;
-      if (statusFilter === 'rejected' && inv.accepted !== false) return false;
-      if (statusFilter === 'pending' && inv.accepted !== null) return false;
-      if (statusFilter === 'blocked' && !inv.output.startsWith('BLOCKED')) return false;
-      return true;
-    });
-  }, [searchQuery, botFilter, statusFilter, invocations]);
+  const invocations = logsRead?.rows ?? [];
+  const bots = botsRead?.rows ?? [];
+  const logsLoaded = logsRead !== null && (logsRead.status === 'loaded' || logsRead.status === 'empty');
 
-  const totalCost = invocations.reduce((sum, i) => sum + i.cost, 0);
-  const avgLatency = invocations.length > 0 ? invocations.reduce((sum, i) => sum + i.latencyMs, 0) / invocations.length : 0;
-  const acceptRate = invocations.filter(i => i.accepted === true).length;
-  const editRate = invocations.filter(i => i.edited).length;
+  const filteredInvocations = useMemo(
+    () => filterInvocations(invocations, { searchQuery, botFilter, statusFilter }),
+    [searchQuery, botFilter, statusFilter, invocations],
+  );
+
+  // Every stat tile below is computed over `filteredInvocations` — the exact
+  // rows the list renders — so no figure can describe rows the reader cannot
+  // see. The filter option lists stay over the full read set, because those
+  // are choices rather than counts.
+  const shownSummary = summariseInvocations(filteredInvocations);
+  const costSummary = shownSummary.cost;
+  const latencySummary = shownSummary.latency;
+  const recordedStatuses = Array.from(new Set(invocations.map(i => i.status).filter(Boolean)));
+  const filtersActive = searchQuery.trim() !== '' || botFilter !== 'all' || statusFilter !== 'all';
 
   const handleExport = () => {
-    const csvHeader = 'ID,Bot,Version,User,Role,Timestamp,Context,Type,Cost,Latency(ms),Accepted,Edited,Kill Switch,Provider,Bot Enabled,Connectors,RBAC\n';
-    const csvRows = invocations.map(inv => {
-      const bot = bots.find((b: any) => b.id === inv.botId || b.id === (inv as any).bot_id);
-      return [
-        inv.id,
-        bot?.name || inv.botId,
-        inv.botVersionId,
-        inv.userId,
-        inv.userRole,
-        inv.timestamp,
-        `"${inv.context.replace(/"/g, '""')}"`,
-        inv.contextType,
-        inv.cost.toFixed(4),
-        inv.latencyMs,
-        inv.accepted === null ? 'pending' : inv.accepted ? 'yes' : 'no',
-        inv.edited ? 'yes' : 'no',
-        inv.gateChecks.globalKillSwitch ? 'blocked' : 'pass',
-        inv.gateChecks.providerEnabled ? 'pass' : 'blocked',
-        inv.gateChecks.botEnabled ? 'pass' : 'blocked',
-        inv.gateChecks.connectorsEnabled ? 'pass' : 'blocked',
-        inv.gateChecks.rbacPassed ? 'pass' : 'blocked',
-      ].join(',');
-    }).join('\n');
+    // The CSV mirrors exactly what the page can prove. The five gate-check
+    // columns are gone: exporting invented "pass" values as audit evidence is
+    // the most damaging form of the defect this wave removes.
+    const csvHeader = 'ID,Bot ID,Bot Name,User ID,User Name,Timestamp,Action,Workspace,Provider,Model,Status,Error,Cost USD,Latency ms,Tokens In,Tokens Out,Human Action,Gate Checks\n';
+    const csvRows = invocations.map(inv => [
+      inv.id,
+      inv.botId,
+      `"${(inv.botName || '').replace(/"/g, '""')}"`,
+      inv.userId,
+      `"${(inv.userName || '').replace(/"/g, '""')}"`,
+      inv.createdAt,
+      inv.action,
+      inv.workspaceId ?? '',
+      inv.provider,
+      inv.model,
+      inv.status,
+      `"${(inv.errorMessage ?? '').replace(/"/g, '""')}"`,
+      inv.costUsd === null ? 'not recorded' : inv.costUsd.toFixed(6),
+      inv.latencyMs === null ? 'not recorded' : String(inv.latencyMs),
+      inv.tokensInput === null ? 'not recorded' : String(inv.tokensInput),
+      inv.tokensOutput === null ? 'not recorded' : String(inv.tokensOutput),
+      inv.humanAction ?? 'not recorded',
+      'not recorded',
+    ].join(',')).join('\n');
 
     const blob = new Blob([csvHeader + csvRows], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `bot-audit-trail-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `bot-usage-log-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success('Audit trail exported as CSV');
+    toast.success(`Exported ${invocations.length} recorded usage rows as CSV`);
   };
 
   return (
@@ -166,182 +213,250 @@ export default function BotAudit() {
       </div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold font-serif text-slate-900">Bot Audit & Trace</h1>
-          <p className="text-sm text-slate-500 mt-1">Every invocation logged. Every gate check recorded. Fully exportable.</p>
+          <h1 className="text-2xl font-bold font-serif text-slate-900">Bot Usage Log</h1>
+          {/* The old strapline — "Every invocation logged. Every gate check
+              recorded." — was false on both counts for this build. */}
+          <p className="text-sm text-slate-500 mt-1">
+            Rows persisted in <span className="font-mono">{AI_USAGE_LOGS_TABLE}</span>. This build performs no bot
+            invocation, so nothing here is produced by this application — these are historical records only, and no
+            gate check is recorded against them.
+          </p>
         </div>
-        <Button variant="outline" onClick={handleExport}>
-          <Download className="w-4 h-4 mr-2" /> Export Audit Trail
+        <Button variant="outline" onClick={handleExport} disabled={!logsLoaded || invocations.length === 0}>
+          <Download className="w-4 h-4 mr-2" /> Export all read rows
         </Button>
       </div>
 
-      {/* Stats */}
+      {/* Read failure / real empty — three visibly different states. */}
+      {logsRead !== null && (logsRead.status === 'error' || logsRead.status === 'unavailable') && (
+        <Card className="border-red-200 bg-red-50/40">
+          <CardContent className="py-6 space-y-2 text-center">
+            <XCircle className="w-8 h-8 text-red-400 mx-auto" />
+            <p className="text-sm font-semibold text-red-700">The usage log could not be read</p>
+            <p className="text-xs text-slate-500 max-w-xl mx-auto">
+              No rows and no totals are shown. The number of recorded usage rows is unknown — it is not zero.
+            </p>
+            <p className="text-[11px] font-mono text-slate-500 break-all">{logsRead.error}</p>
+            <Button variant="outline" size="sm" onClick={() => setReloadKey(k => k + 1)}>Retry</Button>
+          </CardContent>
+        </Card>
+      )}
+      {logsRead === null && (
+        <Card><CardContent className="py-8 text-center text-sm text-slate-500">Reading the usage log…</CardContent></Card>
+      )}
+      {logsRead !== null && logsRead.status === 'empty' && (
+        <Card>
+          <CardContent className="py-10 text-center space-y-1">
+            <Activity className="w-8 h-8 text-slate-300 mx-auto" />
+            <p className="text-sm font-medium">No usage records are visible to this account</p>
+            <p className="text-xs text-slate-500 max-w-xl mx-auto">
+              The read of <span className="font-mono">{AI_USAGE_LOGS_TABLE}</span> succeeded and returned zero rows.
+              Rows hidden by row-level security would not appear here.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {logsRead !== null && logsRead.status === 'loaded' && (
+      <>
+      {/* Stats — computed over recorded values only (a column with no recorded
+          value reads "not recorded", never 0) AND over exactly the rows the
+          list below renders. */}
       <div className="grid grid-cols-5 gap-4">
         <Card>
           <CardContent className="py-3">
-            <p className="text-xs text-slate-500 uppercase tracking-wider">Total Invocations</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{invocations.length}</p>
+            <p className="text-xs text-slate-500 uppercase tracking-wider">Rows Shown</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{shownSummary.shown}</p>
+            <p className="text-[10px] text-slate-400">of {invocations.length} read from the table</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3">
-            <p className="text-xs text-slate-500 uppercase tracking-wider">Total Cost</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">${totalCost.toFixed(3)}</p>
+            <p className="text-xs text-slate-500 uppercase tracking-wider">Cost of Shown Rows</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">
+              {costSummary.total === null ? '—' : `$${costSummary.total.toFixed(3)}`}
+            </p>
+            <p className="text-[10px] text-slate-400">{costSummary.recordedCount} of {shownSummary.shown} shown rows record a cost</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3">
-            <p className="text-xs text-slate-500 uppercase tracking-wider">Avg Latency</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{avgLatency.toFixed(0)}ms</p>
+            <p className="text-xs text-slate-500 uppercase tracking-wider">Avg Latency of Shown Rows</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">
+              {latencySummary.average === null ? '—' : `${latencySummary.average.toFixed(0)}ms`}
+            </p>
+            <p className="text-[10px] text-slate-400">{latencySummary.recordedCount} of {shownSummary.shown} shown rows record latency</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3">
-            <p className="text-xs text-slate-500 uppercase tracking-wider">Accepted</p>
-            <p className="text-2xl font-bold text-emerald-600 mt-1">{acceptRate}</p>
+            <p className="text-xs text-slate-500 uppercase tracking-wider">Human Action Recorded</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{shownSummary.humanActions}</p>
+            <p className="text-[10px] text-slate-400">of {shownSummary.shown} shown rows</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3">
-            <p className="text-xs text-slate-500 uppercase tracking-wider">Edited After Accept</p>
-            <p className="text-2xl font-bold text-amber-600 mt-1">{editRate}</p>
+            <p className="text-xs text-slate-500 uppercase tracking-wider">Gate Checks</p>
+            <p className="text-2xl font-bold text-slate-400 mt-1">—</p>
+            <p className="text-[10px] text-slate-400">Not recorded by this table</p>
           </CardContent>
         </Card>
       </div>
+      <p className="text-[11px] text-slate-400">
+        {filtersActive
+          ? `Every figure above is counted over the ${shownSummary.shown} filtered ${shownSummary.shown === 1 ? 'row' : 'rows'} listed below, not over all ${invocations.length} rows read from ${AI_USAGE_LOGS_TABLE}.`
+          : `No filter is applied, so the figures above cover all ${invocations.length} ${invocations.length === 1 ? 'row' : 'rows'} read from ${AI_USAGE_LOGS_TABLE}.`}
+      </p>
 
-      {/* Filters */}
+      {/* Filters — every option comes from a value actually present in the
+          rows that were read, so no filter can select an empty universe. */}
       <div className="flex gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <Input placeholder="Search invocations..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="pl-10" />
+          <Input placeholder="Search recorded rows..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="pl-10" />
         </div>
         <Select value={botFilter} onValueChange={setBotFilter}>
           <SelectTrigger className="w-48"><SelectValue placeholder="Filter by bot" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Bots</SelectItem>
-            {bots.map((b: any) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+            {Array.from(new Set(invocations.map(i => i.botId).filter(Boolean))).map(id => (
+              <SelectItem key={id} value={id}>
+                {invocations.find(i => i.botId === id)?.botName || bots.find(b => b.id === id)?.name || id}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
+          <SelectTrigger className="w-40"><SelectValue placeholder="Recorded status" /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="accepted">Accepted</SelectItem>
-            <SelectItem value="rejected">Rejected</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="blocked">Blocked</SelectItem>
+            <SelectItem value="all">All recorded statuses</SelectItem>
+            {recordedStatuses.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
 
-      {/* Invocation Log */}
+      {/* Recorded usage rows */}
       <div className="space-y-2">
         {filteredInvocations.map(inv => {
-          const bot = bots.find((b: any) => b.id === inv.botId || b.id === (inv as any).bot_id);
-          const provider = bot ? providers.find((p: any) => p.id === (bot.provider_id || bot.providerId)) : null;
-          const isBlocked = inv.output.startsWith('BLOCKED');
+          const bot = bots.find(b => b.id === inv.botId);
+          const providerLabel = describeBotProvider(bot?.providerId ?? null, providersRead);
+          const isError = inv.status === 'error';
           const isExpanded = expandedId === inv.id;
 
           return (
-            <Card key={inv.id} className={`${isBlocked ? 'border-l-4 border-l-red-400 bg-red-50/30' : ''} hover:shadow-sm transition-shadow`}>
+            <Card key={inv.id} className={`${isError ? 'border-l-4 border-l-red-400 bg-red-50/30' : ''} hover:shadow-sm transition-shadow`}>
               <CardContent className="py-3">
                 <div className="flex items-center justify-between cursor-pointer" onClick={() => setExpandedId(isExpanded ? null : inv.id)}>
                   <div className="flex items-center gap-3 flex-1">
-                    <div className={`w-8 h-8 rounded flex items-center justify-center ${isBlocked ? 'bg-red-100' : inv.accepted === true ? 'bg-emerald-100' : inv.accepted === false ? 'bg-slate-100' : 'bg-amber-100'}`}>
-                      {isBlocked ? <XCircle className="w-4 h-4 text-red-500" /> :
-                       inv.accepted === true ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> :
-                       inv.accepted === false ? <XCircle className="w-4 h-4 text-slate-400" /> :
-                       <Clock className="w-4 h-4 text-amber-500" />}
+                    <div className={`w-8 h-8 rounded flex items-center justify-center ${isError ? 'bg-red-100' : 'bg-slate-100'}`}>
+                      {isError ? <XCircle className="w-4 h-4 text-red-500" /> : <CheckCircle2 className="w-4 h-4 text-slate-400" />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-sm text-slate-900">{bot?.name || inv.botId}</span>
-                        <Badge variant="outline" className="text-xs">{inv.contextType}</Badge>
-                        {inv.edited && <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">Edited</Badge>}
-                        {isBlocked && <Badge variant="outline" className="text-xs bg-red-100 text-red-700 border-red-200">Blocked</Badge>}
+                        <span className="font-medium text-sm text-slate-900">{inv.botName || bot?.name || inv.botId || '(no bot recorded)'}</span>
+                        <Badge variant="outline" className="text-xs">{inv.status || 'no status'}</Badge>
+                        {inv.humanAction && (
+                          <Badge variant="outline" className="text-xs bg-slate-50 text-slate-600 border-slate-200">
+                            human action: {inv.humanAction}
+                          </Badge>
+                        )}
                       </div>
-                      <p className="text-xs text-slate-500 truncate mt-0.5">{inv.context}</p>
+                      <p className="text-xs text-slate-500 truncate mt-0.5">{invocationContext(inv)}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-4 text-xs text-slate-400">
-                    <span className="flex items-center gap-1"><User className="w-3 h-3" />{inv.userId}</span>
-                    <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />${inv.cost.toFixed(4)}</span>
-                    <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{inv.latencyMs}ms</span>
-                    <span>{new Date(inv.timestamp).toLocaleString()}</span>
+                    <span className="flex items-center gap-1"><User className="w-3 h-3" />{inv.userName || inv.userId || 'not recorded'}</span>
+                    <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{inv.costUsd === null ? 'not recorded' : `$${inv.costUsd.toFixed(4)}`}</span>
+                    <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{inv.latencyMs === null ? 'not recorded' : `${inv.latencyMs}ms`}</span>
+                    <span>{inv.createdAt ? new Date(inv.createdAt).toLocaleString() : 'no timestamp recorded'}</span>
                     {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                   </div>
                 </div>
 
                 {isExpanded && (
                   <div className="mt-4 pt-4 border-t space-y-4">
-                    {/* Gate Checks */}
+                    {/* Gate checks: NOT recorded. The previous version painted
+                        five green "pass" tiles here for every row without a
+                        single check having run. */}
                     <div>
-                      <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Gate Checks (10-Step Runtime Flow)</h4>
+                      <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Gate Checks</h4>
                       <div className="grid grid-cols-5 gap-2">
-                        {[
-                          { label: 'Kill Switch', passed: !inv.gateChecks.globalKillSwitch },
-                          { label: 'Provider', passed: inv.gateChecks.providerEnabled },
-                          { label: 'Bot Enabled', passed: inv.gateChecks.botEnabled },
-                          { label: 'Connectors', passed: inv.gateChecks.connectorsEnabled },
-                          { label: 'RBAC', passed: inv.gateChecks.rbacPassed },
-                        ].map(gate => (
-                          <div key={gate.label} className={`flex items-center gap-1.5 p-2 rounded border text-xs ${gate.passed ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-                            {gate.passed ? <CheckCircle2 className="w-3 h-3 text-emerald-500" /> : <XCircle className="w-3 h-3 text-red-500" />}
-                            <span className={gate.passed ? 'text-emerald-700' : 'text-red-700'}>{gate.label}</span>
+                        {GATE_CHECK_LABELS.map(label => (
+                          <div key={label} className="flex items-center gap-1.5 p-2 rounded border border-dashed border-slate-200 bg-slate-50 text-xs">
+                            <AlertTriangle className="w-3 h-3 text-slate-400" />
+                            <span className="text-slate-500">{label}: not recorded</span>
                           </div>
                         ))}
                       </div>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        <span className="font-mono">{AI_USAGE_LOGS_TABLE}</span> stores no gate-check result, and this
+                        build runs no gate check. Neither a pass nor a failure is claimed for any row.
+                      </p>
                     </div>
 
-                    {/* Details Grid */}
+                    {/* Details — recorded columns only. */}
                     <div className="grid grid-cols-3 gap-4 text-xs">
                       <div>
-                        <span className="text-slate-400 block">Invocation ID</span>
+                        <span className="text-slate-400 block">Row ID</span>
                         <span className="font-mono text-slate-700">{inv.id}</span>
                       </div>
                       <div>
-                        <span className="text-slate-400 block">Bot Version</span>
-                        <span className="font-mono text-slate-700">{inv.botVersionId || 'N/A'}</span>
+                        <span className="text-slate-400 block">Bot ID</span>
+                        <span className="font-mono text-slate-700">{inv.botId || 'not recorded'}</span>
                       </div>
                       <div>
-                        <span className="text-slate-400 block">Input Hash</span>
-                        <span className="font-mono text-slate-700">{inv.inputPayloadHash || 'N/A'}</span>
+                        <span className="text-slate-400 block">Workspace</span>
+                        <span className="font-mono text-slate-700">{inv.workspaceId ?? 'not recorded'}</span>
                       </div>
                       <div>
-                        <span className="text-slate-400 block">User / Role</span>
-                        <span className="text-slate-700">{inv.userId} ({inv.userRole})</span>
+                        <span className="text-slate-400 block">User</span>
+                        <span className="text-slate-700">{inv.userName || 'not recorded'} <span className="font-mono text-slate-400">{inv.userId}</span></span>
                       </div>
                       <div>
-                        <span className="text-slate-400 block">Provider</span>
-                        <span className="text-slate-700">{provider?.name || 'N/A'} / {bot?.model || 'N/A'}</span>
+                        <span className="text-slate-400 block">Provider / model recorded on the row</span>
+                        <span className="text-slate-700">{inv.provider || 'not recorded'} / {inv.model || 'not recorded'}</span>
                       </div>
                       <div>
-                        <span className="text-slate-400 block">Knowledge Sources</span>
-                        <span className="text-slate-700">{inv.knowledgeSourcesUsed.length > 0 ? inv.knowledgeSourcesUsed.join(', ') : 'None'}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 block">Connector Calls</span>
-                        <span className="text-slate-700">{inv.connectorCallsMade.length > 0 ? inv.connectorCallsMade.join(', ') : 'None'}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 block">Accepted</span>
-                        <span className={`font-medium ${inv.accepted === true ? 'text-emerald-600' : inv.accepted === false ? 'text-red-600' : 'text-amber-600'}`}>
-                          {inv.accepted === null ? 'Pending' : inv.accepted ? 'Yes' : 'No'}
+                        <span className="text-slate-400 block">Provider on the bot record</span>
+                        {/* "No matching bot record" is only stated when the
+                            bot records were actually read; a failed read says
+                            so instead of asserting absence. */}
+                        <span className={providerLabel.state === 'matched' ? 'text-slate-700' : 'text-amber-600'}>
+                          {bot
+                            ? providerLabel.label
+                            : botsRead === null
+                              ? 'bot records not read yet'
+                              : botsRead.status === 'error' || botsRead.status === 'unavailable'
+                                ? 'the bot records could not be read'
+                                : 'no matching bot record'}
                         </span>
                       </div>
                       <div>
-                        <span className="text-slate-400 block">Edited After Accept</span>
-                        <span className={`font-medium ${inv.edited ? 'text-amber-600' : 'text-slate-600'}`}>
-                          {inv.edited ? 'Yes — human modified output' : 'No'}
+                        <span className="text-slate-400 block">Tokens in / out</span>
+                        <span className="text-slate-700">
+                          {inv.tokensInput ?? 'not recorded'} / {inv.tokensOutput ?? 'not recorded'}
                         </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Recorded human action</span>
+                        <span className="font-medium text-slate-700">{inv.humanAction ?? 'not recorded'}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Accepted / edited</span>
+                        <span className="text-slate-500">Not recorded by this table</span>
                       </div>
                     </div>
 
-                    {/* Output */}
+                    {/* Recorded outcome */}
                     <div>
-                      <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Output</h4>
-                      <div className={`p-3 rounded border text-sm ${isBlocked ? 'bg-red-50 border-red-200 text-red-700' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>
-                        {inv.output}
+                      <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Recorded outcome</h4>
+                      <div className={`p-3 rounded border text-sm ${isError ? 'bg-red-50 border-red-200 text-red-700' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>
+                        {invocationOutcome(inv)}
                       </div>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        This is the recorded status value. The generated text itself is not stored in this table.
+                      </p>
                     </div>
                   </div>
                 )}
@@ -349,27 +464,34 @@ export default function BotAudit() {
             </Card>
           );
         })}
+        {filteredInvocations.length === 0 && (
+          <Card className="bg-slate-50">
+            <CardContent className="py-12 text-center">
+              <Activity className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+              <p className="text-slate-500">No recorded rows match the current filters. {invocations.length} rows were read.</p>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
-      {filteredInvocations.length === 0 && (
-        <Card className="bg-slate-50">
-          <CardContent className="py-12 text-center">
-            <Activity className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-500">No invocations match your filters</p>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Audit Compliance Note */}
-      <Card className="bg-blue-50 border-blue-200">
+      {/* Retention note. The old copy asserted a 365-day retention policy and
+          that all logs are "immutable and retained for compliance" — neither
+          is implemented or verifiable from this application. */}
+      <Card className="bg-slate-50 border-slate-200">
         <CardContent className="py-3">
-          <div className="flex items-center gap-2 text-blue-800 text-sm">
-            <Shield className="w-4 h-4" />
-            <span className="font-medium">Audit Retention: {365} days.</span>
-            <span className="text-blue-600">All invocation logs are immutable and retained for compliance. Export available in CSV format for external audit systems.</span>
+          <div className="flex items-start gap-2 text-slate-700 text-sm">
+            <Shield className="w-4 h-4 shrink-0 mt-0.5" />
+            <span className="text-xs">
+              This build applies no retention policy and enforces no immutability on{' '}
+              <span className="font-mono">{AI_USAGE_LOGS_TABLE}</span>: it neither deletes nor protects these rows.
+              The export writes exactly the recorded columns shown above; fields the table does not record are
+              exported as "not recorded" rather than as a value.
+            </span>
           </div>
         </CardContent>
       </Card>
+      </>
+      )}
     </div>
   );
 }

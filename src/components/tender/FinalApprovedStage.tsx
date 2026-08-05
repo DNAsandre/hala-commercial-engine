@@ -14,6 +14,8 @@
  * AI cannot approve, sign, override, export, or delete. Advisory only.
  */
 import { useState, useMemo, useCallback, useEffect, type ReactNode } from "react";
+import { Link } from "wouter";
+import { cleanHref } from "@/lib/clean-routing";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -531,13 +533,13 @@ function FinalPackTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalI
                 </div>
               ))}
             </div>
-            <a
-              href={`/tenders/${tenderId}/final-pack`}
+            <Link
+              href={cleanHref(`/tenders/${tenderId}/final-pack`)}
               className="flex items-center justify-center gap-2 rounded-md border border-[var(--color-hala-navy)] bg-[var(--color-hala-navy)] px-4 py-2.5 text-xs font-semibold text-white hover:opacity-90 transition-opacity"
             >
               <FileText className="w-3.5 h-3.5" />
               Open Final Pack Studio
-            </a>
+            </Link>
           </CardContent>
         </Card>
         <div className="grid grid-cols-5 gap-2">
