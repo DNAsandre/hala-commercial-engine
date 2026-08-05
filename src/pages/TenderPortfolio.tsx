@@ -10,7 +10,7 @@
 import { useState, useMemo, useEffect } from "react";
 import {
   Search, X, Gavel, ChevronRight, ExternalLink,
-  MapPin, User, RefreshCw, Loader2,
+  MapPin, User, RefreshCw, Loader2, AlertTriangle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,9 +19,9 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { fetchTenderPortfolioRows, type TenderPortfolioRow } from "@/lib/tender-ticket-adapter";
+import { resolveReadState } from "@/lib/pipeline-tickets";
 import { cleanHref } from "@clean/lib/clean-routing";
 
 // ─── TYPES ──────────────────────────────────────────────────
@@ -268,6 +268,7 @@ export default function Tenders() {
   const [, navigate] = useLocation();
   const [tenders, setTenders] = useState<TenderRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   // Filters
@@ -285,14 +286,17 @@ export default function Tenders() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadError(null);
     fetchTenderPortfolioRows()
       .then(rows => {
         if (!cancelled) setTenders(rows);
       })
-      .catch(error => {
+      .catch((error: unknown) => {
         if (cancelled) return;
-        console.error("[Tender Portfolio] Load error:", error.message);
-        toast.error("Failed to load tenders");
+        // A failed read is not "no tender records".
+        const message = error instanceof Error ? error.message : "Tender load failed for an unknown reason";
+        console.error("[Tender Portfolio] Load error:", message);
+        setLoadError(message);
         setTenders([]);
       })
       .finally(() => {
@@ -337,11 +341,37 @@ export default function Tenders() {
     setSearch(""); setFilterCrmStage("all"); setFilterPhase("all"); setFilterOwner("all"); setFilterRegion("all"); setActiveTab("all");
   }
 
-  if (loading) {
+  const readState = resolveReadState({ loading, error: loadError, count: tenders.length });
+
+  if (readState === "loading") {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-3">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         <p className="text-xs text-muted-foreground">Loading tender portfolio…</p>
+      </div>
+    );
+  }
+
+  if (readState === "error") {
+    return (
+      <div className="p-6 max-w-[1400px] mx-auto">
+        <div className="mx-auto max-w-md rounded-xl border border-red-300 bg-red-50 p-6 text-center">
+          <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-red-600" />
+          <p className="text-sm font-semibold text-red-900">Tender portfolio could not be loaded</p>
+          <p className="mt-1 text-xs text-red-800">
+            The read of <span className="font-mono">commercial_tickets</span> failed. No tender count,
+            pipeline value or win rate can be shown. This is a failed read, not an empty portfolio.
+          </p>
+          <p className="mt-2 break-words font-mono text-[10px] text-red-700">{loadError}</p>
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <Button size="sm" variant="outline" className="text-xs" onClick={() => setRefreshKey(k => k + 1)}>
+              <RefreshCw className="w-3 h-3 mr-1.5" /> Retry
+            </Button>
+            <Button size="sm" variant="ghost" className="text-xs" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
+              <ExternalLink className="w-3 h-3 mr-1.5" /> Go to CRM Pipeline
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -439,8 +469,8 @@ export default function Tenders() {
           <Gavel className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
           {tenders.length === 0 ? (
             <>
-              <p className="text-sm font-medium text-muted-foreground">No tender records found.</p>
-              <p className="text-xs text-muted-foreground/60 mt-1">Tenders are managed via the CRM Pipeline or created directly.</p>
+              <p className="text-sm font-medium text-muted-foreground">No tender records are visible to this account.</p>
+              <p className="text-xs text-muted-foreground/60 mt-1">The read succeeded and returned no rows. Tenders are managed via the CRM Pipeline or created directly.</p>
               <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
                 <ExternalLink className="w-3 h-3 mr-1.5" /> Go to CRM Pipeline
               </Button>

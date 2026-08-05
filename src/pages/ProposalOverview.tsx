@@ -18,6 +18,7 @@ import {
   User,
   ExternalLink,
   RefreshCw,
+  AlertTriangle,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,11 +31,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { toast } from "sonner";
 import {
   deriveCommercialTicketPipelineTickets,
   CRM_PIPELINE_COLUMNS,
   STAGE_COLORS,
+  resolveReadState,
+  describeRenderedCount,
   type CrmStageLabel,
   type PipelineTicket,
 } from "@/lib/pipeline-tickets";
@@ -212,11 +214,19 @@ function TicketPreviewPopup({
         </div>
 
         <div className="px-8 py-4 flex items-center gap-3">
+          {/* Primary action keeps the proposal's identity: /proposals/:id. */}
           <Button
+            className="gap-2 h-9"
+            onClick={() => { onOpenChange(false); navigate(cleanHref(`/proposals/${ticket.id}`)); }}
+          >
+            <ExternalLink className="w-4 h-4" />
+            Open Proposal Workspace
+          </Button>
+          <Button
+            variant="outline"
             className="gap-2 h-9"
             onClick={() => { onOpenChange(false); navigate(cleanHref("/crm-pipeline")); }}
           >
-            <ExternalLink className="w-4 h-4" />
             View in CRM Pipeline
           </Button>
         </div>
@@ -319,6 +329,7 @@ export default function CommercialOverview() {
   const [, navigate] = useLocation();
   const [tickets, setTickets] = useState<PipelineTicket[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   // Filters
@@ -333,15 +344,19 @@ export default function CommercialOverview() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadError(null);
     fetchOperationalTicketsByType("proposal")
       .then(result => {
         if (cancelled) return;
         if (result.error) throw new Error(result.error);
         setTickets(deriveCommercialTicketPipelineTickets(result.data));
       })
-      .catch(err => {
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // A failed read is not "no tickets match the filters".
         console.error("Proposal Pipeline load error:", err);
-        toast.error("Failed to load CRM data");
+        setLoadError(err instanceof Error ? err.message : "Proposal load failed for an unknown reason");
+        setTickets([]);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -385,11 +400,37 @@ export default function CommercialOverview() {
     return map;
   }, [filtered]);
 
-  if (loading) {
+  const readState = resolveReadState({ loading, error: loadError, count: tickets.length });
+
+  if (readState === "loading") {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-3">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         <p className="text-xs text-muted-foreground">Loading Proposal Pipeline…</p>
+      </div>
+    );
+  }
+
+  if (readState === "error") {
+    return (
+      <div className="p-6 max-w-[1600px] mx-auto">
+        <div className="mx-auto max-w-md rounded-xl border border-red-300 bg-red-50 p-6 text-center">
+          <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-red-600" />
+          <p className="text-sm font-semibold text-red-900">Proposal pipeline could not be loaded</p>
+          <p className="mt-1 text-xs text-red-800">
+            The read of <span className="font-mono">commercial_tickets</span> failed. No stage lanes,
+            counts or pipeline value can be shown. This is a failed read, not an empty pipeline.
+          </p>
+          <p className="mt-2 break-words font-mono text-[10px] text-red-700">{loadError}</p>
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setRefreshKey(k => k + 1)}>
+              <RefreshCw className="w-3 h-3 mr-1.5" /> Retry
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
+              <ExternalLink className="w-3 h-3 mr-1.5" /> Go to CRM Pipeline
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -401,14 +442,14 @@ export default function CommercialOverview() {
         <div>
           <h1 className="text-2xl font-serif font-bold">Proposal Pipeline Overview</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {filtered.length} tickets · {formatSar(filtered.reduce((s, t) => s + t.sarValue, 0))} pipeline value
+            {describeRenderedCount(filtered.length, tickets.length, "ticket")} · {formatSar(filtered.reduce((s, t) => s + t.sarValue, 0))} pipeline value
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => setRefreshKey(k => k + 1)}>
             <RefreshCw className="w-3 h-3 mr-1.5" /> Refresh
           </Button>
-          <Button variant="outline" onClick={() => navigate(cleanHref("/workspaces/proposals"))}>
+          <Button variant="outline" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
             <Briefcase className="w-4 h-4 mr-1.5" />
             CRM Pipeline
           </Button>
@@ -492,9 +533,29 @@ export default function CommercialOverview() {
 
       {/* Swimlane View */}
       {filtered.length === 0 ? (
-        <div className="text-center py-20 text-muted-foreground">
+        <div className="text-center py-20 text-muted-foreground border border-dashed rounded-xl">
           <Briefcase className="w-10 h-10 mx-auto mb-3 opacity-20" />
-          <p className="text-sm">No tickets match the current filters.</p>
+          {tickets.length === 0 ? (
+            <>
+              <p className="text-sm">No proposal tickets are visible to this account.</p>
+              <p className="text-xs text-muted-foreground/70 mt-1">The read succeeded and returned no rows.</p>
+              <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
+                <ExternalLink className="w-3 h-3 mr-1.5" /> Go to CRM Pipeline
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm">No tickets match the current filters ({tickets.length} loaded).</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2 text-xs"
+                onClick={() => { setFilterSearch(""); setFilterRegion("all"); setFilterOwner("all"); setFilterCrmStage("all"); setFilterRisk("all"); }}
+              >
+                Clear filters
+              </Button>
+            </>
+          )}
         </div>
       ) : (
         <div className="space-y-0 rounded-xl border border-border overflow-hidden">

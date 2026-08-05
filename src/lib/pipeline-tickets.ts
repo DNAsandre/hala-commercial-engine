@@ -189,6 +189,37 @@ export function deriveCommercialTicketPipelineTickets(rows: CommercialTicket[]):
   return valid;
 }
 
+// ─── READ STATE (loading / error / empty / ready) ──────────
+// W04-T07-A. A failed read is NOT an empty result. Every surface that reads
+// commercial_tickets must be able to tell a human which of the four it is
+// looking at, so no page can render "no records" after a read that failed.
+
+export type ReadState = "loading" | "error" | "empty" | "ready";
+
+export function resolveReadState(input: {
+  loading: boolean;
+  error: string | null | undefined;
+  count: number;
+}): ReadState {
+  if (input.loading) return "loading";
+  if (input.error) return "error";
+  return input.count > 0 ? "ready" : "empty";
+}
+
+/**
+ * Counter copy that can never claim more records than are actually rendered.
+ *
+ * `rendered` must be the length of the array the surface paints; `total` is the
+ * unfiltered set it was drawn from. A "12 tickets" headline above six cards is
+ * the defect this exists to prevent.
+ */
+export function describeRenderedCount(rendered: number, total: number, noun: string): string {
+  const plural = rendered === 1 ? noun : `${noun}s`;
+  return rendered === total
+    ? `${rendered} ${plural}`
+    : `${rendered} ${plural} (filtered from ${total})`;
+}
+
 // ─── STAGE COLORS ──────────────────────────────────────────
 
 export const STAGE_COLORS: Record<CrmStageLabel, { bg: string; text: string; border: string; headerBg: string }> = {

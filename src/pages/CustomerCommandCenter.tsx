@@ -4,7 +4,7 @@
  */
 import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
-import { Search, X, Download, Users, ChevronUp, ChevronDown, ExternalLink, Loader2, AlertTriangle } from "lucide-react";
+import { Search, X, Download, Users, ChevronUp, ChevronDown, ExternalLink, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 import { cleanHref } from "@clean/lib/clean-routing";
 
 const GLOW_KEYFRAMES_STYLE = `
@@ -28,7 +28,8 @@ import { fetchCustomers } from "@/lib/supabase-data";
 import { deriveCustomerRowsFromTickets, type CustomerCommandRow } from "@/lib/customer-command-data";
 import { useEffect } from "react";
 import { fetchOperationalTickets } from "@/lib/intake-save";
-import { deriveCommercialTicketPipelineTickets } from "@/lib/pipeline-tickets";
+import { deriveCommercialTicketPipelineTickets, resolveReadState, describeRenderedCount } from "@/lib/pipeline-tickets";
+import { getFetchError } from "@/lib/supabase-error";
 
 // ─── Helpers ────────────────────────────────────────────────
 function fmtSar(n: number) {
@@ -42,6 +43,13 @@ function gpColor(v: number) {
 }
 
 function riskChip(r: string) {
+  if (r === "unknown") {
+    return (
+      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full border border-dashed border-border text-muted-foreground/70">
+        not captured
+      </span>
+    );
+  }
   const c = r === "high" ? "bg-red-100 text-red-700 border-red-200"
     : r === "medium" ? "bg-amber-100 text-amber-700 border-amber-200"
     : "bg-emerald-100 text-emerald-700 border-emerald-200";
@@ -115,6 +123,10 @@ export default function Customers() {
   const [, navigate] = useLocation();
   const [rows, setRows] = useState<CustomerCommandRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  /** Non-fatal: the customers master read failed, so DSO / risk / contract are unknown. */
+  const [customerMasterError, setCustomerMasterError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Filters
   const [search, setSearch] = useState("");
@@ -135,17 +147,29 @@ export default function Customers() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadError(null);
+    setCustomerMasterError(null);
     Promise.all([fetchOperationalTickets(), fetchCustomers()])
       .then(([ticketResult, custs]) => {
         if (cancelled) return;
         if (ticketResult.error) throw new Error(ticketResult.error);
+        // fetchCustomers() resolves to [] on failure as well as on "no visible
+        // rows"; supabase-error records which one it was.
+        const custErr = getFetchError("fetchCustomers");
+        setCustomerMasterError(custErr ? custErr.error.message : null);
         const tickets = deriveCommercialTicketPipelineTickets(ticketResult.data);
         setRows(deriveCustomerRowsFromTickets(tickets, custs));
       })
-      .catch(console.error)
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // A failed read is not an empty portfolio.
+        console.error("[Customer Command Centre] Load error:", err);
+        setLoadError(err instanceof Error ? err.message : "Customer portfolio load failed for an unknown reason");
+        setRows([]);
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [refreshKey]);
 
   // ─── Derived ────────────────────────────────────────────
   const regions = useMemo(() => [...new Set(rows.map(r => r.region).filter(Boolean))].sort(), [rows]);
@@ -184,12 +208,17 @@ export default function Customers() {
     return arr;
   }, [filtered, sortKey, sortDir]);
 
+  // Header metrics describe the rows actually painted in the grid (`sorted`),
+  // never the unfiltered fetch.
   const metrics = useMemo(() => ({
-    total: rows.length,
-    totalValue: rows.reduce((s, r) => s + r.totalPipelineValue, 0),
-    avgGp: rows.length > 0 ? rows.reduce((s, r) => s + r.avgGpPct, 0) / rows.length : 0,
-    atRisk: rows.filter(r => r.paymentRisk === "high").length,
-  }), [rows]);
+    rendered: sorted.length,
+    loaded: rows.length,
+    totalValue: sorted.reduce((s, r) => s + r.totalPipelineValue, 0),
+    avgGp: sorted.length > 0 ? sorted.reduce((s, r) => s + r.avgGpPct, 0) / sorted.length : 0,
+    atRisk: sorted.filter(r => r.paymentRisk === "high").length,
+  }), [sorted, rows]);
+
+  const readState = resolveReadState({ loading, error: loadError, count: rows.length });
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -211,7 +240,13 @@ export default function Customers() {
               <h1 className="text-xl font-semibold">Customer Command Centre</h1>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {metrics.total} customers · SAR {fmtSar(metrics.totalValue)} pipeline · Avg GP: {metrics.avgGp.toFixed(1)}% · <span className={metrics.atRisk > 0 ? "text-red-600 font-medium" : ""}>{metrics.atRisk} high risk</span>
+              {readState === "loading"
+                ? "Loading customer portfolio…"
+                : readState === "error"
+                  ? "Portfolio counts unavailable — the read failed"
+                  : <>
+                      {describeRenderedCount(metrics.rendered, metrics.loaded, "customer")} · SAR {fmtSar(metrics.totalValue)} pipeline · Avg GP: {metrics.avgGp.toFixed(1)}% · <span className={metrics.atRisk > 0 ? "text-red-600 font-medium" : ""}>{metrics.atRisk} high risk</span>
+                    </>}
             </p>
           </div>
           <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => exportCsv(sorted)}>
@@ -257,6 +292,7 @@ export default function Customers() {
               <SelectItem value="high">High</SelectItem>
               <SelectItem value="medium">Medium</SelectItem>
               <SelectItem value="low">Low</SelectItem>
+              <SelectItem value="unknown">Not captured</SelectItem>
             </SelectContent>
           </Select>
           <Select value={marginF} onValueChange={setMarginF}>
@@ -277,11 +313,56 @@ export default function Customers() {
         </div>
       </div>
 
+      {/* Customer master data unavailable — a non-fatal, separately-reported failure */}
+      {readState !== "loading" && readState !== "error" && customerMasterError && (
+        <div className="mx-6 mt-3 shrink-0 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5">
+          <p className="text-xs font-medium text-amber-900">
+            Customer master record read failed — DSO, payment risk, industry, contract and renewal
+            columns are not available for any row.
+          </p>
+          <p className="mt-0.5 font-mono text-[10px] text-amber-800">{customerMasterError}</p>
+        </div>
+      )}
+
       {/* Loading */}
-      {loading && <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}
+      {readState === "loading" && <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}
+
+      {/* Functional error — deliberately NOT an empty grid */}
+      {readState === "error" && (
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-md rounded-lg border border-red-300 bg-red-50 p-5 text-center">
+            <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-red-600" />
+            <p className="text-sm font-semibold text-red-900">Customer portfolio could not be loaded</p>
+            <p className="mt-1 text-xs text-red-800">
+              The read of <span className="font-mono">commercial_tickets</span> failed, so no customer
+              rows or totals can be shown. This is a failed read, not an empty portfolio.
+            </p>
+            <p className="mt-2 break-words font-mono text-[10px] text-red-700">{loadError}</p>
+            <Button size="sm" variant="outline" className="mt-3 gap-1 text-xs" onClick={() => setRefreshKey(k => k + 1)}>
+              <RefreshCw className="h-3 w-3" /> Retry
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Real empty — the read succeeded and returned no visible rows */}
+      {readState === "empty" && (
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-md rounded-lg border border-dashed border-border p-5 text-center">
+            <Users className="mx-auto mb-2 h-6 w-6 text-muted-foreground/40" />
+            <p className="text-sm font-medium text-muted-foreground">No customers are visible to this account.</p>
+            <p className="mt-1 text-xs text-muted-foreground/70">
+              The read succeeded and returned no commercial tickets to aggregate by customer.
+            </p>
+            <Button size="sm" variant="outline" className="mt-3 gap-1 text-xs" onClick={() => setRefreshKey(k => k + 1)}>
+              <RefreshCw className="h-3 w-3" /> Refresh
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Grid */}
-      {!loading && (
+      {readState === "ready" && (
         <div className="flex-1 overflow-auto">
           <table className="w-full text-xs border-collapse">
             <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur-sm">
@@ -339,7 +420,9 @@ export default function Customers() {
                 </tr>
               ))}
               {sorted.length === 0 && (
-                <tr><td colSpan={COLUMNS.length} className="text-center py-12 text-muted-foreground">No customers match filters</td></tr>
+                <tr><td colSpan={COLUMNS.length} className="text-center py-12 text-muted-foreground">
+                  No customers match filters ({rows.length} loaded)
+                </td></tr>
               )}
             </tbody>
           </table>
@@ -351,7 +434,9 @@ export default function Customers() {
         <SheetContent className="w-[560px] sm:max-w-[560px] overflow-y-auto p-0">
           {drawerRow && <CustomerDrawer row={drawerRow} onOpenTicket={ticket => {
             setDrawerRow(null);
-            navigate(cleanHref(ticket.ticketType === "tender" ? `/tenders/${ticket.id}` : "/workspaces/proposals"));
+            // Identity must survive the hop: a "View Proposal" button previously
+            // dropped the ticket id and landed on the whole proposal portfolio.
+            navigate(cleanHref(ticket.ticketType === "tender" ? `/tenders/${ticket.id}` : `/proposals/${ticket.id}`));
           }} />}
         </SheetContent>
       </Sheet>
@@ -384,7 +469,15 @@ function CustomerDrawer({ row, onOpenTicket }: { row: CustomerCommandRow; onOpen
             { label: "Pipeline", value: `SAR ${fmtSar(row.totalPipelineValue)}` },
             { label: "Avg GP%", value: `${row.avgGpPct}%`, color: gpColor(row.avgGpPct), glow: row.avgGpPct >= 22 },
             { label: "Health", value: `${row.healthScore}/100` },
-            { label: "Risk", value: row.paymentRisk, color: row.paymentRisk === "high" ? "text-red-600" : row.paymentRisk === "medium" ? "text-amber-600" : "text-emerald-600", glow: row.paymentRisk === "low" },
+            {
+              label: "Risk",
+              value: row.paymentRisk === "unknown" ? "not captured" : row.paymentRisk,
+              color: row.paymentRisk === "high" ? "text-red-600"
+                : row.paymentRisk === "medium" ? "text-amber-600"
+                : row.paymentRisk === "low" ? "text-emerald-600"
+                : "text-muted-foreground",
+              glow: row.paymentRisk === "low",
+            },
           ].map(kpi => (
             <div key={kpi.label} className={`relative rounded-lg border p-3 bg-card overflow-hidden ${kpi.glow ? "border-emerald-400/50" : ""}`}>
               {kpi.glow && (
@@ -403,7 +496,7 @@ function CustomerDrawer({ row, onOpenTicket }: { row: CustomerCommandRow; onOpen
         <div className="grid grid-cols-3 gap-3 text-xs">
           <div className="flex justify-between"><span className="text-muted-foreground">Active Tickets</span><span className="font-medium">{row.activeTickets}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">Won Revenue</span><span className="font-medium">SAR {fmtSar(row.wonRevenue)}</span></div>
-          <div className="flex justify-between"><span className="text-muted-foreground">DSO</span><span className="font-medium">{row.dso}d</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">DSO</span><span className="font-medium">{row.dso > 0 ? `${row.dso}d` : "Not captured"}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">Contract</span><span className="font-medium">{row.contractStatus}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">Open Risks</span><span className={`font-medium ${row.openRisks > 0 ? "text-red-600" : ""}`}>{row.openRisks}</span></div>
         </div>
