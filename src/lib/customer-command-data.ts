@@ -26,7 +26,8 @@ export interface CustomerCommandRow {
   tenderTickets: number;
   wonRevenue: number;
   avgGpPct: number;
-  paymentRisk: "low" | "medium" | "high";
+  /** "unknown" = no customer master record / no captured payment status. Never guessed. */
+  paymentRisk: "low" | "medium" | "high" | "unknown";
   dso: number;
   contractStatus: string;
   contractExpiry: string;
@@ -60,7 +61,8 @@ function computeHealthScore(row: {
   // Risk penalty
   score -= Math.min(20, row.openRisks * 5);
 
-  // Payment risk (real data)
+  // Payment risk (real data only — "unknown" carries no penalty, because an
+  // absent customer record is not evidence of medium risk)
   if (row.paymentRisk === "high") score -= 15;
   else if (row.paymentRisk === "medium") score -= 5;
 
@@ -84,13 +86,18 @@ function findCustomer(customers: Customer[], name: string): Customer | undefined
 
 /**
  * Map Supabase paymentStatus to risk level.
+ *
+ * An absent/blank payment status is reported as "unknown". It used to default
+ * to "medium", which painted an amber risk chip and docked the health score for
+ * every customer that simply had no master record — an invented metric.
  */
-function mapPaymentRisk(paymentStatus?: string): "low" | "medium" | "high" {
-  if (!paymentStatus) return "medium";
+function mapPaymentRisk(paymentStatus?: string): "low" | "medium" | "high" | "unknown" {
+  if (!paymentStatus) return "unknown";
   const s = paymentStatus.toLowerCase();
   if (s === "bad") return "high";
   if (s === "acceptable") return "medium";
-  return "low"; // "Good"
+  if (s === "good") return "low";
+  return "unknown";
 }
 
 /**
@@ -145,7 +152,7 @@ export function deriveCustomerRowsFromTickets(
       .reverse();
     const goLiveCount = custTickets.filter(t => stageLower(t.crmStage) === "go live" || stageLower(t.crmStage) === "actual go live").length;
 
-    const paymentRisk = cust ? mapPaymentRisk(cust.paymentStatus) : "medium" as const;
+    const paymentRisk = cust ? mapPaymentRisk(cust.paymentStatus) : "unknown" as const;
     const dso = cust ? cust.dso : 0;
     const contractExpiry = cust?.contractExpiry || "";
     const contractStatus = cust ? deriveContractStatus(cust.contractExpiry) : "Unknown";

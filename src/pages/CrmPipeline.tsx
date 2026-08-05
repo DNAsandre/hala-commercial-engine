@@ -6,7 +6,7 @@
  */
 
 import { useState, useMemo, useEffect } from "react";
-import { Kanban, RefreshCw, Plus, X, User, MapPin, Undo2, ArrowUpDown } from "lucide-react";
+import { Kanban, RefreshCw, Plus, X, User, MapPin, Undo2, ArrowUpDown, AlertTriangle } from "lucide-react";
 import UnifiedIntakeModal from "@/components/intake/UnifiedIntakeModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,8 @@ import { toast } from "sonner";
 import {
   deriveCommercialTicketPipelineTickets,
   CRM_PIPELINE_COLUMNS, CRM_TERMINAL,
-  STAGE_COLORS, type CrmStageLabel, type PipelineTicket,
+  STAGE_COLORS, resolveReadState, describeRenderedCount,
+  type CrmStageLabel, type PipelineTicket,
 } from "@/lib/pipeline-tickets";
 import { PipelineTicketCard } from "@/components/crm/PipelineCard";
 import { changeStage, fetchOperationalTickets } from "@/lib/intake-save";
@@ -44,6 +45,7 @@ function SearchIcon({ className }: { className?: string }) {
 export default function CrmPipeline() {
   const [tickets, setTickets] = useState<PipelineTicket[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   // Filters
@@ -65,17 +67,26 @@ export default function CrmPipeline() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadError(null);
 
     fetchOperationalTickets()
       .then(intakeRes => {
         if (cancelled) return;
-        if (intakeRes.error) console.warn("[CRM Pipeline] Intake ticket fetch error:", intakeRes.error);
-        const intakeTickets = deriveCommercialTicketPipelineTickets((intakeRes.data ?? []) as any);
-        setTickets(intakeTickets);
+        // A failed read is not an empty board. Surface it instead of painting
+        // eight empty columns that read as "there is no pipeline".
+        if (intakeRes.error) {
+          console.error("[CRM Pipeline] Intake ticket fetch error:", intakeRes.error);
+          setLoadError(intakeRes.error);
+          setTickets([]);
+          return;
+        }
+        setTickets(deriveCommercialTicketPipelineTickets((intakeRes.data ?? []) as any));
       })
       .catch(err => {
+        if (cancelled) return;
         console.error("Pipeline load error:", err);
-        toast.error("Failed to load pipeline data");
+        setLoadError(err instanceof Error ? err.message : "Pipeline load failed for an unknown reason");
+        setTickets([]);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -132,12 +143,15 @@ export default function CrmPipeline() {
     return map;
   }, [filtered, sortMode]);
 
+  // Header metrics describe the cards actually on the board (`filtered`), not
+  // the unfiltered fetch — a headline count must equal what a human can see.
   const metrics = useMemo(() => {
-    const total = tickets.length;
-    const totalValue = tickets.reduce((s, t) => s + t.sarValue, 0);
-    const avgGp = tickets.length > 0 ? tickets.reduce((s, t) => s + t.gpPct, 0) / tickets.length : 0;
-    return { total, totalValue, avgGp };
-  }, [tickets]);
+    const totalValue = filtered.reduce((s, t) => s + t.sarValue, 0);
+    const avgGp = filtered.length > 0 ? filtered.reduce((s, t) => s + t.gpPct, 0) / filtered.length : 0;
+    return { rendered: filtered.length, loaded: tickets.length, totalValue, avgGp };
+  }, [filtered, tickets]);
+
+  const readState = resolveReadState({ loading, error: loadError, count: tickets.length });
 
   // ─── DRAG HANDLERS ─────────────────────────────────────
   function handleDragStart(ticketId: string, fromStage: CrmStageLabel) {
@@ -168,9 +182,11 @@ export default function CrmPipeline() {
     const ticket = tickets.find(t => t.id === dragTicketId);
     if (!ticket) { handleDragEnd(); return; }
 
-    // Optimistic update — move client-side immediately
+    // Optimistic move is a visual preview only. Success is NOT announced until
+    // the write actually comes back without an error — a submitted request is
+    // not proof of persistence.
     setTickets(prev => prev.map(t => t.id === dragTicketId ? { ...t, crmStage: targetStage } : t));
-    toast.success(`Moved to ${targetStage}`);
+    const pendingToast = toast.loading(`Saving move to ${targetStage}…`);
 
     const { error } = await changeStage(
       dragTicketId,
@@ -183,7 +199,9 @@ export default function CrmPipeline() {
     if (error) {
       // Rollback on failure
       setTickets(prev => prev.map(t => t.id === dragTicketId ? { ...t, crmStage: dragFromStage! } : t));
-      toast.error(`Failed to update stage: ${error}`);
+      toast.error(`Failed to update stage: ${error}`, { id: pendingToast });
+    } else {
+      toast.success(`Moved to ${targetStage}`, { id: pendingToast });
     }
 
     handleDragEnd();
@@ -202,9 +220,15 @@ export default function CrmPipeline() {
             <h1 className="text-xl font-semibold">CRM Pipeline</h1>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {metrics.total} tickets &nbsp;·&nbsp;
-            {formatSar(metrics.totalValue)} pipeline value &nbsp;·&nbsp;
-            Avg GP: {metrics.avgGp.toFixed(1)}%
+            {readState === "loading"
+              ? "Loading pipeline data…"
+              : readState === "error"
+                ? "Pipeline counts unavailable — the read failed"
+                : <>
+                    {describeRenderedCount(metrics.rendered, metrics.loaded, "ticket")} &nbsp;·&nbsp;
+                    {formatSar(metrics.totalValue)} pipeline value &nbsp;·&nbsp;
+                    Avg GP: {metrics.avgGp.toFixed(1)}%
+                  </>}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -269,12 +293,47 @@ export default function CrmPipeline() {
       </div>
 
       {/* Loading */}
-      {loading && (
+      {readState === "loading" && (
         <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">Loading pipeline data...</div>
       )}
 
+      {/* Functional error — deliberately NOT an empty board */}
+      {readState === "error" && (
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-md rounded-lg border border-red-300 bg-red-50 p-5 text-center">
+            <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-red-600" />
+            <p className="text-sm font-semibold text-red-900">Pipeline could not be loaded</p>
+            <p className="mt-1 text-xs text-red-800">
+              The read of <span className="font-mono">commercial_tickets</span> failed, so no ticket
+              count can be shown. This is a failed read, not an empty pipeline.
+            </p>
+            <p className="mt-2 break-words font-mono text-[10px] text-red-700">{loadError}</p>
+            <Button size="sm" variant="outline" className="mt-3 gap-1" onClick={() => setRefreshKey(k => k + 1)}>
+              <RefreshCw className="h-3 w-3" /> Retry
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Real empty — the read succeeded and returned no visible rows */}
+      {readState === "empty" && (
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-md rounded-lg border border-dashed border-border p-5 text-center">
+            <Kanban className="mx-auto mb-2 h-6 w-6 text-muted-foreground/40" />
+            <p className="text-sm font-medium text-muted-foreground">No pipeline tickets are visible to this account.</p>
+            <p className="mt-1 text-xs text-muted-foreground/70">
+              The read succeeded and returned no rows. Add a ticket, or check that your account can
+              see the records you expect.
+            </p>
+            <Button size="sm" className="mt-3 gap-1 bg-[#1B2A4A] hover:bg-[#1B2A4A]/90" onClick={() => setIntakeOpen(true)}>
+              <Plus className="h-3 w-3" /> Add Ticket
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Kanban Board */}
-      {!loading && (
+      {readState === "ready" && (
         <div className="flex-1 overflow-x-auto overflow-y-hidden">
           <div className="flex gap-3 h-full min-w-max px-6 py-4">
             {CRM_PIPELINE_COLUMNS.map(stage => {

@@ -40,6 +40,7 @@ import { supabase } from "@/lib/supabase";
 
 import { createTicket } from "@/lib/intake-save";
 import { fetchUsers } from "@/lib/supabase-data";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   TICKET_TYPE_CONFIG,
   SOURCE_TYPE_CONFIG,
@@ -147,6 +148,7 @@ export default function UnifiedIntakeModal({
   defaultCustomerName,
   onCreated,
 }: UnifiedIntakeModalProps) {
+  const { appUser } = useAuth();
   const [stage, setStage] = useState(1);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<IntakeFormState>(() => ({
@@ -247,7 +249,9 @@ export default function UnifiedIntakeModal({
           source_file: form.source_file || null,
           source_sheet: form.source_sheet || null,
         },
-        "Unknown user"
+        // Audit actor. Falls back to the signed-in email, then to an explicit
+        // "unidentified" marker — never a friendly-looking fake name.
+        appUser?.name || appUser?.email || "Unidentified user (no profile resolved)"
       );
 
       if (result.error) {
