@@ -22,10 +22,10 @@ import {
 } from 'lucide-react';
 import {
   AI_USAGE_LOGS_TABLE,
+  describeBotProvider,
   readAiBots,
   readAiProviders,
   readAiUsageLogs,
-  resolveBotProviderLabel,
   summariseUsageNumber,
   type AiBotRecord,
   type AiProviderRecord,
@@ -58,12 +58,55 @@ import {
  *     figure is computed over recorded values only — a null column reads
  *     "not recorded", never "$0.000" or "0ms".
  *
+ *  4. COUNTERS MATCH THE LIST. The five stat tiles were computed over the whole
+ *     `invocations` array while the list below rendered `filteredInvocations`,
+ *     so applying a filter left totals describing rows the reader could not
+ *     see. Every figure is now computed over the rows actually rendered and
+ *     labelled "shown", with the read total stated separately underneath.
+ *
  * Source of truth: ai_usage_logs (projection AI_USAGE_LOGS_COLUMNS), plus
  * ai_bots and ai_providers for labels.
  */
 
 /** Not-recorded gate fields, listed once so the UI and the CSV agree. */
 const GATE_CHECK_LABELS = ['Kill Switch', 'Provider', 'Bot Enabled', 'Connectors', 'RBAC'] as const;
+
+/** The rows the list actually renders. Exported so the counters and the list
+ *  can be proven to be computed over one and the same set. */
+export function filterInvocations(
+  rows: readonly AiUsageLogRecord[],
+  filters: { searchQuery: string; botFilter: string; statusFilter: string },
+): AiUsageLogRecord[] {
+  const q = filters.searchQuery.trim().toLowerCase();
+  return rows.filter(inv => {
+    if (q) {
+      const haystack = [invocationContext(inv), inv.id, invocationOutcome(inv), inv.botName]
+        .join(' ')
+        .toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    if (filters.botFilter !== 'all' && inv.botId !== filters.botFilter) return false;
+    // Filters are over RECORDED values only. There is no accepted/rejected
+    // column, so no filter pretends to offer that distinction.
+    if (filters.statusFilter !== 'all' && inv.status !== filters.statusFilter) return false;
+    return true;
+  });
+}
+
+/** One figure per meaning, all over the same set of rows. */
+export function summariseInvocations(rows: readonly AiUsageLogRecord[]): {
+  shown: number;
+  cost: ReturnType<typeof summariseUsageNumber>;
+  latency: ReturnType<typeof summariseUsageNumber>;
+  humanActions: number;
+} {
+  return {
+    shown: rows.length,
+    cost: summariseUsageNumber(rows, r => r.costUsd),
+    latency: summariseUsageNumber(rows, r => r.latencyMs),
+    humanActions: rows.filter(r => r.humanAction !== null).length,
+  };
+}
 
 function invocationContext(row: AiUsageLogRecord): string {
   return [row.action, row.workspaceId].filter(Boolean).join(' @ ') || '(not recorded)';
@@ -105,28 +148,22 @@ export default function BotAudit() {
 
   const invocations = logsRead?.rows ?? [];
   const bots = botsRead?.rows ?? [];
-  const providers = providersRead?.rows ?? [];
   const logsLoaded = logsRead !== null && (logsRead.status === 'loaded' || logsRead.status === 'empty');
 
-  const filteredInvocations = useMemo(() => {
-    return invocations.filter(inv => {
-      if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        const haystack = [invocationContext(inv), inv.id, invocationOutcome(inv), inv.botName].join(' ').toLowerCase();
-        if (!haystack.includes(q)) return false;
-      }
-      if (botFilter !== 'all' && inv.botId !== botFilter) return false;
-      // Filters are over RECORDED values only. There is no accepted/rejected
-      // column, so no filter pretends to offer that distinction.
-      if (statusFilter !== 'all' && inv.status !== statusFilter) return false;
-      return true;
-    });
-  }, [searchQuery, botFilter, statusFilter, invocations]);
+  const filteredInvocations = useMemo(
+    () => filterInvocations(invocations, { searchQuery, botFilter, statusFilter }),
+    [searchQuery, botFilter, statusFilter, invocations],
+  );
 
-  const costSummary = summariseUsageNumber(invocations, r => r.costUsd);
-  const latencySummary = summariseUsageNumber(invocations, r => r.latencyMs);
+  // Every stat tile below is computed over `filteredInvocations` — the exact
+  // rows the list renders — so no figure can describe rows the reader cannot
+  // see. The filter option lists stay over the full read set, because those
+  // are choices rather than counts.
+  const shownSummary = summariseInvocations(filteredInvocations);
+  const costSummary = shownSummary.cost;
+  const latencySummary = shownSummary.latency;
   const recordedStatuses = Array.from(new Set(invocations.map(i => i.status).filter(Boolean)));
-  const recordedHumanActions = invocations.filter(i => i.humanAction !== null).length;
+  const filtersActive = searchQuery.trim() !== '' || botFilter !== 'all' || statusFilter !== 'all';
 
   const handleExport = () => {
     // The CSV mirrors exactly what the page can prove. The five gate-check
@@ -186,7 +223,7 @@ export default function BotAudit() {
           </p>
         </div>
         <Button variant="outline" onClick={handleExport} disabled={!logsLoaded || invocations.length === 0}>
-          <Download className="w-4 h-4 mr-2" /> Export recorded rows
+          <Download className="w-4 h-4 mr-2" /> Export all read rows
         </Button>
       </div>
 
@@ -222,38 +259,40 @@ export default function BotAudit() {
 
       {logsRead !== null && logsRead.status === 'loaded' && (
       <>
-      {/* Stats — computed over recorded values only. A column with no recorded
-          value reads "not recorded", never 0. */}
+      {/* Stats — computed over recorded values only (a column with no recorded
+          value reads "not recorded", never 0) AND over exactly the rows the
+          list below renders. */}
       <div className="grid grid-cols-5 gap-4">
         <Card>
           <CardContent className="py-3">
-            <p className="text-xs text-slate-500 uppercase tracking-wider">Recorded Rows</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{invocations.length}</p>
+            <p className="text-xs text-slate-500 uppercase tracking-wider">Rows Shown</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{shownSummary.shown}</p>
+            <p className="text-[10px] text-slate-400">of {invocations.length} read from the table</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3">
-            <p className="text-xs text-slate-500 uppercase tracking-wider">Total Cost</p>
+            <p className="text-xs text-slate-500 uppercase tracking-wider">Cost of Shown Rows</p>
             <p className="text-2xl font-bold text-slate-900 mt-1">
               {costSummary.total === null ? '—' : `$${costSummary.total.toFixed(3)}`}
             </p>
-            <p className="text-[10px] text-slate-400">{costSummary.recordedCount} of {invocations.length} rows record a cost</p>
+            <p className="text-[10px] text-slate-400">{costSummary.recordedCount} of {shownSummary.shown} shown rows record a cost</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3">
-            <p className="text-xs text-slate-500 uppercase tracking-wider">Avg Latency</p>
+            <p className="text-xs text-slate-500 uppercase tracking-wider">Avg Latency of Shown Rows</p>
             <p className="text-2xl font-bold text-slate-900 mt-1">
               {latencySummary.average === null ? '—' : `${latencySummary.average.toFixed(0)}ms`}
             </p>
-            <p className="text-[10px] text-slate-400">{latencySummary.recordedCount} of {invocations.length} rows record latency</p>
+            <p className="text-[10px] text-slate-400">{latencySummary.recordedCount} of {shownSummary.shown} shown rows record latency</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="py-3">
             <p className="text-xs text-slate-500 uppercase tracking-wider">Human Action Recorded</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{recordedHumanActions}</p>
-            <p className="text-[10px] text-slate-400">rows with a human_action value</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{shownSummary.humanActions}</p>
+            <p className="text-[10px] text-slate-400">of {shownSummary.shown} shown rows</p>
           </CardContent>
         </Card>
         <Card>
@@ -264,6 +303,11 @@ export default function BotAudit() {
           </CardContent>
         </Card>
       </div>
+      <p className="text-[11px] text-slate-400">
+        {filtersActive
+          ? `Every figure above is counted over the ${shownSummary.shown} filtered ${shownSummary.shown === 1 ? 'row' : 'rows'} listed below, not over all ${invocations.length} rows read from ${AI_USAGE_LOGS_TABLE}.`
+          : `No filter is applied, so the figures above cover all ${invocations.length} ${invocations.length === 1 ? 'row' : 'rows'} read from ${AI_USAGE_LOGS_TABLE}.`}
+      </p>
 
       {/* Filters — every option comes from a value actually present in the
           rows that were read, so no filter can select an empty universe. */}
@@ -296,7 +340,7 @@ export default function BotAudit() {
       <div className="space-y-2">
         {filteredInvocations.map(inv => {
           const bot = bots.find(b => b.id === inv.botId);
-          const providerLabel = resolveBotProviderLabel(bot?.providerId ?? null, providers);
+          const providerLabel = describeBotProvider(bot?.providerId ?? null, providersRead);
           const isError = inv.status === 'error';
           const isExpanded = expandedId === inv.id;
 
@@ -375,8 +419,17 @@ export default function BotAudit() {
                       </div>
                       <div>
                         <span className="text-slate-400 block">Provider on the bot record</span>
-                        <span className={providerLabel.matched ? 'text-slate-700' : 'text-amber-600'}>
-                          {bot ? providerLabel.label : 'no matching bot record'}
+                        {/* "No matching bot record" is only stated when the
+                            bot records were actually read; a failed read says
+                            so instead of asserting absence. */}
+                        <span className={providerLabel.state === 'matched' ? 'text-slate-700' : 'text-amber-600'}>
+                          {bot
+                            ? providerLabel.label
+                            : botsRead === null
+                              ? 'bot records not read yet'
+                              : botsRead.status === 'error' || botsRead.status === 'unavailable'
+                                ? 'the bot records could not be read'
+                                : 'no matching bot record'}
                         </span>
                       </div>
                       <div>

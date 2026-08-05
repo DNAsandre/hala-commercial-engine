@@ -40,10 +40,19 @@ import {
 //     rows at all — all displayed as though they were the bot's stored setup.
 //  3. Sections whose values are page constants rather than stored
 //     configuration (Allowed Actions) now say so.
+//  4. SC-01 Wave 04 (defect D): "No provider record has this id" was stated
+//     even when the ai_providers read itself failed. A failed read and a
+//     missing record are different facts and now read differently.
+//  5. SC-01 Wave 04 (defect E): the recorded `system_instruction` is rendered.
+//     It was queried and mapped, then discarded in favour of a page constant,
+//     so whatever the database stored never reached the screen. Domains,
+//     regions and roles are rendered FROM THE RECORD rather than from fixed
+//     page lists, which had silently dropped any recorded value not on the
+//     list (`pdf_studio` among them) while the sidebar still counted it.
 import {
   readAiProviders,
   readBotConfiguration,
-  resolveBotProviderLabel,
+  describeBotProvider,
   type AiProviderRecord,
   type BotConfigurationRead,
   type RecordRead,
@@ -60,9 +69,60 @@ function recorded(value: string | number | null | undefined): string {
   return String(value);
 }
 
-const REGIONS = ['East', 'Central', 'West'];
-const ROLES = ['admin', 'manager', 'sales', 'ops', 'finance', 'viewer'];
-const DOMAINS = ['dashboard', 'crm_pipeline', 'customers', 'proposals', 'tenders', 'renewals', 'slas', 'pnl', 'documents', 'commercial_os', 'approvals', 'escalations'];
+/**
+ * SC-01 Wave 04 (defect E). The page previously held fixed `DOMAINS`,
+ * `REGIONS` and `ROLES` arrays and rendered a badge per constant, highlighting
+ * the ones the record happened to contain. Any recorded value absent from the
+ * constant simply vanished: a bot scoped to `pdf_studio` rendered zero domain
+ * badges while the sidebar stated "Domains: 1 recorded". The scope lists are
+ * now rendered from the record, so a stored value can never disappear and the
+ * count can never describe something the reader cannot see.
+ *
+ * Exported so the mapping from a stored record to what the page displays can
+ * be asserted directly — this package has no DOM test environment.
+ */
+export interface BotBuilderView {
+  /** The instruction stored on the latest version row, or null. */
+  systemInstruction: string | null;
+  customInstruction: string;
+  safetyRules: string;
+  temperature: number | null;
+  maxTokens: number | null;
+  knowledgeBaseIds: string[];
+  domains: string[];
+  regions: string[];
+  roles: string[];
+}
+
+export function deriveBotBuilderView(read: BotConfigurationRead): BotBuilderView | null {
+  if (read.status !== 'loaded') return null;
+  const latest = read.versions[0];
+  return {
+    systemInstruction: latest?.systemInstruction ?? null,
+    customInstruction: latest?.customInstruction ?? '',
+    safetyRules: latest?.safetyRules ?? '',
+    temperature: latest?.temperature ?? null,
+    maxTokens: latest?.maxTokens ?? null,
+    knowledgeBaseIds: latest?.knowledgeBaseIds ?? [],
+    domains: read.bot.domainsAllowed,
+    regions: read.bot.regionsAllowed,
+    roles: read.bot.rolesAllowed,
+  };
+}
+
+/** Recorded scope values, or an honest statement that none are recorded. */
+function RecordedScopeBadges({ values, subject }: { values: string[]; subject: string }) {
+  if (values.length === 0) {
+    return <p className="text-xs text-slate-500 mt-1">No {subject} are recorded on this bot record.</p>;
+  }
+  return (
+    <div className="flex flex-wrap gap-2 mt-1">
+      {values.map(v => (
+        <Badge key={v} variant="default" className="bg-[#1B2A4A]">{v}</Badge>
+      ))}
+    </div>
+  );
+}
 
 export default function BotBuilder() {
   const [, navigate] = useLocation();
@@ -92,27 +152,32 @@ export default function BotBuilder() {
       if (result.status !== 'loaded') return;
 
       const b = result.bot;
+      const view = deriveBotBuilderView(result)!;
       // Recorded values only — a null column stays null and renders as
       // "not recorded" rather than as a plausible-looking default.
       setName(b.name);
       setType(b.type === 'monitor' ? 'monitor' : 'action');
       setPurpose(b.purpose);
-      setDomains(b.domainsAllowed);
-      setRegions(b.regionsAllowed);
-      setRoles(b.rolesAllowed);
+      setDomains(view.domains);
+      setRegions(view.regions);
+      setRoles(view.roles);
       setProviderId(b.providerId ?? '');
       setModel(b.model ?? '');
       setRateLimit(b.rateLimit);
       setCostCap(b.costCap);
       setTimeoutSec(b.timeoutSec);
 
+      // The stored system instruction reaches the screen. It was read and
+      // mapped by readBotConfiguration and then thrown away.
+      setSystemInstruction(view.systemInstruction);
+      setCustomInstruction(view.customInstruction);
+      setSafetyRules(view.safetyRules);
+      setTemperature(view.temperature);
+      setMaxTokens(view.maxTokens);
+      setSelectedKB(view.knowledgeBaseIds);
+
       const latest = result.versions[0];
       if (latest) {
-        setCustomInstruction(latest.customInstruction ?? '');
-        setSafetyRules(latest.safetyRules ?? '');
-        setTemperature(latest.temperature);
-        setMaxTokens(latest.maxTokens);
-        setSelectedKB(latest.knowledgeBaseIds);
         if (latest.connectorSnapshot) setConnectorState(latest.connectorSnapshot as any);
         if (latest.chainConfig) {
           setChainNextBotId((latest.chainConfig as any).next_bot_id || 'none');
@@ -154,13 +219,15 @@ export default function BotBuilder() {
   const [type, setType] = useState<BotTypeEnum>('action');
   const [purpose, setPurpose] = useState('');
   const [domains, setDomains] = useState<string[]>([]);
-  const [regions, setRegions] = useState<string[]>(['East']);
+  // No fabricated default: an empty list means nothing is recorded yet.
+  const [regions, setRegions] = useState<string[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
 
-  // Section 2: Instructions
-  const baseSystemInstruction = type === 'action'
-    ? 'You are a commercial assistant for Hala Supply Chain Services. You MUST NOT approve, override, modify pricing, change GP%, change SLA scope, move stages, trigger approvals, trigger workflows, send webhooks, or deploy anything. You generate output ONLY. All output requires human acceptance.'
-    : 'You are a read-only monitor bot for Hala Supply Chain Services. You can ONLY create signal_event, report_snapshot, and dashboard_annotation outputs. You CANNOT modify any data, trigger any actions, or override any policies.';
+  // Section 2: Instructions.
+  // `ai_bot_versions.system_instruction` is queried and mapped by
+  // readBotConfiguration; the page used to display a hard-coded page constant
+  // in its place, so the stored instruction never reached the screen.
+  const [systemInstruction, setSystemInstruction] = useState<string | null>(null);
   const [customInstruction, setCustomInstruction] = useState('');
   const [safetyRules, setSafetyRules] = useState('');
   // null = the version row records no value for this field.
@@ -190,7 +257,7 @@ export default function BotBuilder() {
   const [costCap, setCostCap] = useState<number | null>(null);
   const [timeoutSec, setTimeoutSec] = useState<number | null>(null);
 
-  const providerLabel = resolveBotProviderLabel(providerId || null, apiProviders);
+  const providerLabel = describeBotProvider(providerId || null, providersRead);
   const selectedProvider = apiProviders.find(p => p.id === providerId);
 
   const [changeNote] = useState('');
@@ -369,41 +436,20 @@ export default function BotBuilder() {
                 <Textarea value={purpose} onChange={e => setPurpose(e.target.value)} placeholder="Describe what this bot does and its boundaries..." rows={3} />
               </div>
               <div>
-                <Label>Allowed Domains</Label>
-                <div className="flex flex-wrap gap-2 mt-1">
-                  {DOMAINS.map(d => (
-                    <Badge key={d} variant={domains.includes(d) ? 'default' : 'outline'}
-                      className={`cursor-pointer ${domains.includes(d) ? 'bg-[#1B2A4A]' : ''}`}
-                      onClick={() => setDomains(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d])}>
-                      {d}
-                    </Badge>
-                  ))}
-                </div>
+                {/* Rendered from the bot record, not from a fixed page list.
+                    A domain such as `pdf_studio` used to be dropped on the
+                    floor while the sidebar counted it. */}
+                <Label>Allowed Domains <span className="text-xs text-slate-400 font-normal">(recorded on the bot record)</span></Label>
+                <RecordedScopeBadges values={domains} subject="domains" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label>Regions Allowed</Label>
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {REGIONS.map(r => (
-                      <Badge key={r} variant={regions.includes(r) ? 'default' : 'outline'}
-                        className={`cursor-pointer ${regions.includes(r) ? 'bg-[#1B2A4A]' : ''}`}
-                        onClick={() => setRegions(prev => prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r])}>
-                        {r}
-                      </Badge>
-                    ))}
-                  </div>
+                  <Label>Regions Allowed <span className="text-xs text-slate-400 font-normal">(recorded)</span></Label>
+                  <RecordedScopeBadges values={regions} subject="regions" />
                 </div>
                 <div>
-                  <Label>Roles Allowed to Invoke</Label>
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {ROLES.map(r => (
-                      <Badge key={r} variant={roles.includes(r) ? 'default' : 'outline'}
-                        className={`cursor-pointer text-xs ${roles.includes(r) ? 'bg-[#1B2A4A]' : ''}`}
-                        onClick={() => setRoles(prev => prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r])}>
-                        {r.replace('_', ' ')}
-                      </Badge>
-                    ))}
-                  </div>
+                  <Label>Roles Allowed to Invoke <span className="text-xs text-slate-400 font-normal">(recorded)</span></Label>
+                  <RecordedScopeBadges values={roles} subject="roles" />
                 </div>
               </div>
             </CardContent>
@@ -416,13 +462,26 @@ export default function BotBuilder() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
+                {/* SC-01 Wave 04 (defect E): this rendered a page constant
+                    labelled "Base template — locked" while the value actually
+                    stored in ai_bot_versions.system_instruction was read,
+                    mapped and discarded. The stored text is shown. */}
                 <Label className="flex items-center gap-2">
                   System Instruction <Lock className="w-3 h-3 text-slate-400" />
-                  <span className="text-xs text-slate-400 font-normal">(Base template — locked)</span>
+                  <span className="text-xs text-slate-400 font-normal">(recorded on the latest version row, read-only)</span>
                 </Label>
-                <div className="mt-1 p-3 bg-slate-50 border rounded text-sm text-slate-600 font-mono leading-relaxed">
-                  {baseSystemInstruction}
-                </div>
+                {systemInstruction ? (
+                  <div className="mt-1 p-3 bg-slate-50 border rounded text-sm text-slate-600 font-mono leading-relaxed whitespace-pre-wrap">
+                    {systemInstruction}
+                  </div>
+                ) : (
+                  <div className="mt-1 p-3 bg-slate-50 border border-dashed rounded text-sm text-slate-500">
+                    {versionHistory.length === 0
+                      ? "No version rows are recorded for this bot, so no system instruction is stored against it."
+                      : "The latest version row records no system instruction."}
+                    {" "}Nothing is substituted for it: this build holds no default instruction that the bot would use.
+                  </div>
+                )}
               </div>
               <div>
                 <Label>Custom Instruction <span className="text-xs text-slate-400 font-normal">(recorded value, read-only)</span></Label>
@@ -585,10 +644,23 @@ export default function BotBuilder() {
                 <div>
                   <Label>Provider (recorded on the bot record)</Label>
                   <Input value={providerId || "not recorded"} readOnly className="font-mono text-xs" />
-                  {providerId && !providerLabel.matched && (
+                  {/* SC-01 Wave 04 (defect D): "No provider record has this
+                      id" is a statement about records that were read. When the
+                      ai_providers read itself failed, the page said it anyway. */}
+                  {providerLabel.state === 'unmatched' && (
                     <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3" /> No provider record has this id, so no provider details can be shown for it.
+                      <AlertTriangle className="w-3 h-3" /> The provider records were read and none has this id, so no provider details can be shown for it.
                     </p>
+                  )}
+                  {providerLabel.state === 'unreadable' && (
+                    <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" /> The provider records could not be read
+                      {providersRead && 'error' in providersRead ? ` (${providersRead.error})` : ''}, so it is unknown
+                      whether a provider record has this id. This is not a claim that none does.
+                    </p>
+                  )}
+                  {providerLabel.state === 'unread' && (
+                    <p className="text-xs text-slate-500 mt-1">Reading the provider records…</p>
                   )}
                   {selectedProvider && !selectedProvider.enabled && (
                     <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
@@ -699,10 +771,12 @@ export default function BotBuilder() {
             <CardContent className="space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-slate-500">Type</span><Badge variant="outline">{recorded(existingBot?.type)}</Badge></div>
               <div className="flex justify-between"><span className="text-slate-500">Status</span><Badge variant="outline">{recorded(existingBot?.status)}</Badge></div>
-              <div className="flex justify-between"><span className="text-slate-500">Domains</span><span>{domains.length} recorded</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Regions</span><span>{regions.length > 0 ? regions.join(', ') : 'not recorded'}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Roles</span><span>{roles.length} recorded</span></div>
-              <div className="flex justify-between gap-2"><span className="text-slate-500 shrink-0">Provider</span><span className={`text-right ${providerLabel.matched ? '' : 'text-amber-600'}`}>{providerLabel.label}</span></div>
+              {/* These counts describe exactly the badge lists rendered in
+                  section 1, which are themselves the recorded values. */}
+              <div className="flex justify-between gap-2"><span className="text-slate-500 shrink-0">Domains</span><span className="text-right">{domains.length > 0 ? domains.join(', ') : 'none recorded'}</span></div>
+              <div className="flex justify-between gap-2"><span className="text-slate-500 shrink-0">Regions</span><span className="text-right">{regions.length > 0 ? regions.join(', ') : 'none recorded'}</span></div>
+              <div className="flex justify-between gap-2"><span className="text-slate-500 shrink-0">Roles</span><span className="text-right">{roles.length > 0 ? roles.join(', ') : 'none recorded'}</span></div>
+              <div className="flex justify-between gap-2"><span className="text-slate-500 shrink-0">Provider</span><span className={`text-right ${providerLabel.state === 'matched' ? '' : 'text-amber-600'}`}>{providerLabel.label}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Model</span><span>{model || 'not recorded'}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Knowledge</span><span>{selectedKB.length} recorded</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Connectors enabled in snapshot</span><span>{Object.values(connectorState).filter(Boolean).length}</span></div>

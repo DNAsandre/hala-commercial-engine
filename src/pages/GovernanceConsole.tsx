@@ -31,6 +31,12 @@ import {
   type SupabasePolicyGate,
   type SupabaseGovernanceAuditEntry,
 } from "@/lib/supabase-governance-data";
+/* SC-01 Wave 04 (defect B): `new Date(x).toLocaleDateString()` does not throw
+ * on a malformed or absent timestamp — it returns the literal string
+ * "Invalid Date", which was rendered as though it were a recorded value.
+ * These helpers test `Number.isNaN(d.getTime())` and render an honest
+ * placeholder instead. */
+import { formatRecordedDate, formatRecordedDateTime } from "@/lib/ops-runtime";
 
 /* ── Shared read-failure panel ──────────────────────────────────────────────
  * SC-01 Wave 04. Every governance read below previously collapsed a failure to
@@ -172,7 +178,7 @@ function PolicyGatesPanel() {
                     <div className="grid grid-cols-2 gap-3 text-xs">
                       <div><span className="text-muted-foreground">Scope — Regions:</span> <span className="font-medium">{scope.regions === "all" ? "All Regions" : Array.isArray(scope.regions) ? scope.regions.join(", ") : String(scope.regions)}</span></div>
                       <div><span className="text-muted-foreground">Scope — BU:</span> <span className="font-medium">{scope.businessUnits === "all" ? "All Business Units" : Array.isArray(scope.businessUnits) ? scope.businessUnits.join(", ") : String(scope.businessUnits)}</span></div>
-                      <div><span className="text-muted-foreground">Last Updated:</span> <span className="font-mono">{new Date(gate.updated_at).toLocaleDateString()}</span></div>
+                      <div><span className="text-muted-foreground">Last Updated:</span> <span className="font-mono">{formatRecordedDate(gate.updated_at)}</span></div>
                       <div><span className="text-muted-foreground">Updated By:</span> <span className="font-medium">{gate.updated_by}</span></div>
                     </div>
 
@@ -188,7 +194,7 @@ function PolicyGatesPanel() {
                               <span className="font-mono text-muted-foreground">v{v.version}</span>
                               <Badge variant="outline" className={`text-[9px] ${v.mode === "enforce" ? "text-red-600" : v.mode === "warn" ? "text-amber-600" : "text-gray-500"}`}>{v.mode}</Badge>
                               <span className="text-muted-foreground">{v.changedBy}</span>
-                              <span className="text-muted-foreground ml-auto font-mono">{new Date(v.changedAt).toLocaleDateString()}</span>
+                              <span className="text-muted-foreground ml-auto font-mono">{formatRecordedDate(v.changedAt)}</span>
                             </div>
                           ))}
                         </div>
@@ -268,7 +274,7 @@ function OverrideLogPanel() {
                     <p className="text-xs text-muted-foreground mt-1 ml-6">By: {e.user_name}</p>
                     <p className="text-xs mt-1 ml-6">{e.details}</p>
                   </div>
-                  <span className="text-[10px] font-mono text-muted-foreground">{new Date(e.created_at).toLocaleString()}</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">{formatRecordedDateTime(e.created_at)}</span>
                 </div>
               </CardContent>
             </Card>
@@ -384,7 +390,7 @@ function GovernanceAuditPanel() {
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5">{entry.details}</p>
                   </div>
-                  <span className="text-[9px] font-mono text-muted-foreground shrink-0">{new Date(entry.created_at).toLocaleString()}</span>
+                  <span className="text-[9px] font-mono text-muted-foreground shrink-0">{formatRecordedDateTime(entry.created_at)}</span>
                 </div>
               ))}
             </div>
@@ -478,7 +484,7 @@ function VersioningPanel() {
                 <div key={e.id} className="flex items-center gap-2 p-2 rounded border border-border text-xs">
                   <Lock className="w-3.5 h-3.5 text-[#0b73ff]" />
                   <span className="flex-1">{e.details}</span>
-                  <span className="font-mono text-muted-foreground">{new Date(e.created_at).toLocaleString()}</span>
+                  <span className="font-mono text-muted-foreground">{formatRecordedDateTime(e.created_at)}</span>
                 </div>
               ))
             )}

@@ -17,7 +17,53 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Plus, Pencil, Warehouse, Save, X, Loader2 } from "lucide-react";
 
-import { readFacilities, type FacilityRecord, type RecordRead } from "@/lib/ops-runtime";
+import {
+  readFacilities,
+  updateFacility,
+  type FacilityRecord,
+  type FacilityWriteResult,
+  type RecordRead,
+} from "@/lib/ops-runtime";
+
+/**
+ * SC-01 Wave 04 (requirement: never show success until stored truth is
+ * confirmed). Both edit paths on this page used to run
+ * `.update(...).eq("id", id)` with no read-back and then raise a success
+ * toast. An update that matches zero rows returns no error, so the
+ * administrator was told the change was saved when nothing was stored.
+ *
+ * `updateFacility` reads the row back and compares the stored value with the
+ * requested one. This pure function turns that verdict into exactly what the
+ * user is told, so the rule "success only for `stored`" can be asserted
+ * without a DOM.
+ */
+export type FacilityWriteReport =
+  | { tone: "success"; message: string }
+  | { tone: "error"; message: string; description: string };
+
+export function describeFacilityWrite(
+  result: FacilityWriteResult,
+  subject: string,
+  successMessage: string,
+): FacilityWriteReport {
+  if (result.status === "error") {
+    return { tone: "error", message: `Failed to update ${subject}`, description: result.error };
+  }
+  if (result.status === "not_stored") {
+    return { tone: "error", message: `${subject} was NOT saved`, description: result.error };
+  }
+  return { tone: "success", message: successMessage };
+}
+
+/** Raises the report and answers whether the change is confirmed as stored. */
+function reportFacilityWrite(report: FacilityWriteReport): boolean {
+  if (report.tone === "error") {
+    toast.error(report.message, { description: report.description });
+    return false;
+  }
+  toast.success(report.message);
+  return true;
+}
 
 export default function FacilitiesAdmin() {
   /* SC-01 Wave 04: the previous loader toasted on error and left `facilities`
@@ -74,28 +120,38 @@ export default function FacilitiesAdmin() {
 
   async function handleSaveEdit(id: string) {
     if (!editName.trim()) { toast.error("Name is required"); return; }
-    const { error } = await supabase.from("facilities").update({
+    // The success message is raised ONLY after the stored row has been read
+    // back and matches what was requested.
+    const result = await updateFacility(id, {
       name: editName.trim(),
       code: editCode.trim() || null,
       region: editRegion || null,
-    }).eq("id", id);
-    if (error) {
-      toast.error("Failed to update", { description: error.message });
-    } else {
-      toast.success("Updated");
-      setEditId(null);
+    });
+    const stored = reportFacilityWrite(
+      describeFacilityWrite(result, "This facility", "Saved — the stored record now holds these values"),
+    );
+    if (!stored) {
+      // The edit row stays open with the entered values so nothing is lost.
       load();
+      return;
     }
+    setEditId(null);
+    load();
   }
 
   async function toggleActive(f: FacilityRecord) {
-    const { error } = await supabase.from("facilities")
-      .update({ active: !f.active }).eq("id", f.id);
-    if (error) {
-      toast.error("Failed to toggle", { description: error.message });
-    } else {
-      load();
-    }
+    const requested = !f.active;
+    const result = await updateFacility(f.id, { active: requested });
+    // Re-read either way, so the badge shows the value the database actually
+    // holds rather than the one the click implied.
+    reportFacilityWrite(
+      describeFacilityWrite(
+        result,
+        `"${f.name}"`,
+        `Saved — "${f.name}" is stored as ${requested ? "Active" : "Inactive"}`,
+      ),
+    );
+    load();
   }
 
   return (
