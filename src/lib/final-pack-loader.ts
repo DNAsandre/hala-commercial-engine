@@ -239,6 +239,85 @@ interface BlockLibraryRow {
 }
 
 // ═══════════════════════════════════════════════════════════
+// Shared source projection (loader ⇄ drift check)
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * The exact commercial_tickets projection the snapshot hash is computed from.
+ * W04-T09: the drift checker MUST select the same columns — hashing a different
+ * shape reported "source has changed" on every connected document, which is a
+ * fabricated status, not a comparison.
+ */
+export const TENDER_SOURCE_SELECT =
+  "id, ticket_title, customer_name, estimated_value, target_gp_percent, target_date, internal_stage, type_details, created_at, updated_at";
+
+/** Title resolution used by both the snapshot and the drift projection. */
+export function resolveTenderTitle(tender: Record<string, any>): string {
+  const td = safeObject(tender?.type_details);
+  return tender?.ticket_title || safeString(td.tender?.title) || "Not available";
+}
+
+/** Customer resolution used by both the snapshot and the drift projection. */
+export function resolveTenderCustomer(tender: Record<string, any>): string {
+  const td = safeObject(tender?.type_details);
+  return tender?.customer_name || safeString(td.tender?.customerName) || "Not available";
+}
+
+/**
+ * Build the content-bearing projection of a commercial_tickets row that the
+ * source hash is computed over. Pure — same row in, same object out.
+ */
+export function buildTenderSourceData(tender: Record<string, any>): Record<string, unknown> {
+  const td = safeObject(tender?.type_details);
+  return {
+    tender_id: tender?.id,
+    tender_title: resolveTenderTitle(tender),
+    customer_name: resolveTenderCustomer(tender),
+    estimated_value: tender?.estimated_value,
+    target_gp_percent: tender?.target_gp_percent,
+    target_date: tender?.target_date,
+    pricing: td.pricing ?? null,
+    tender_drafting: td.tender_drafting ?? null,
+    solution_design_data: td.solution_design_data ?? null,
+    sow_data: td.sow_data ?? null,
+    tender_metadata: td.tender ?? null,
+  };
+}
+
+/**
+ * Order a template recipe by its explicit `order` field (stable for ties).
+ * Block position is array position everywhere downstream (canvas, preview,
+ * export), so array position and the displayed `#order` must agree instead of
+ * relying on the stored JSON array happening to be sorted.
+ */
+export function sortRecipeByOrder<T extends { order?: number }>(entries: T[]): T[] {
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => {
+      const ao = typeof a.entry.order === "number" ? a.entry.order : Number.POSITIVE_INFINITY;
+      const bo = typeof b.entry.order === "number" ? b.entry.order : Number.POSITIVE_INFINITY;
+      return ao === bo ? a.index - b.index : ao - bo;
+    })
+    .map((x) => x.entry);
+}
+
+/**
+ * Guarantee block-instance ids are unique within one snapshot. Two recipe rows
+ * sharing a block_key + order would otherwise collide, and every edit to one
+ * would silently apply to both (edits are matched by id).
+ */
+export function uniqueBlockId(candidate: string, used: Set<string>): string {
+  let id = candidate;
+  let n = 2;
+  while (used.has(id)) {
+    id = `${candidate}-${n}`;
+    n += 1;
+  }
+  used.add(id);
+  return id;
+}
+
+// ═══════════════════════════════════════════════════════════
 // Main loader
 // ═══════════════════════════════════════════════════════════
 
@@ -269,7 +348,7 @@ export async function loadTenderPack(
   // ── 1. Fetch tender (READ ONLY) ────────────────────────
   const { data: tender, error: tenderErr } = await supabase
     .from("commercial_tickets")
-    .select("id, ticket_title, customer_name, estimated_value, target_gp_percent, target_date, internal_stage, type_details, created_at, updated_at")
+    .select(TENDER_SOURCE_SELECT)
     .eq("id", tenderId)
     .maybeSingle();
 
@@ -281,8 +360,8 @@ export async function loadTenderPack(
   }
 
   const td = safeObject(tender.type_details);
-  const tenderTitle = tender.ticket_title || safeString(td.tender?.title) || "Not available";
-  const customerName = tender.customer_name || safeString(td.tender?.customerName) || "Not available";
+  const tenderTitle = resolveTenderTitle(tender);
+  const customerName = resolveTenderCustomer(tender);
 
   // ── 2. Fetch template recipe ───────────────────────────
   const { data: templateVersion, error: tvErr } = await supabase
@@ -298,9 +377,9 @@ export async function loadTenderPack(
       `Template version not found for ${templateId}: ${tvErr?.message || "no rows"}`);
   }
 
-  const recipe: RecipeEntry[] = Array.isArray(templateVersion.recipe)
-    ? templateVersion.recipe
-    : [];
+  const recipe: RecipeEntry[] = sortRecipeByOrder(
+    Array.isArray(templateVersion.recipe) ? templateVersion.recipe : [],
+  );
 
   if (recipe.length === 0) {
     return errorSnapshot(tenderId, packType, templateId, "Template recipe is empty");
@@ -354,25 +433,15 @@ export async function loadTenderPack(
   const templateName = templateRow?.name || templateId;
 
   // ── 6. Build source data for hashing ───────────────────
-  // Only include the type_details sections that matter for content
-  const sourceData: Record<string, unknown> = {
-    tender_id: tender.id,
-    tender_title: tenderTitle,
-    customer_name: customerName,
-    estimated_value: tender.estimated_value,
-    target_gp_percent: tender.target_gp_percent,
-    target_date: tender.target_date,
-    pricing: td.pricing ?? null,
-    tender_drafting: td.tender_drafting ?? null,
-    solution_design_data: td.solution_design_data ?? null,
-    sow_data: td.sow_data ?? null,
-    tender_metadata: td.tender ?? null,
-  };
+  // Only include the type_details sections that matter for content.
+  // Built by the SHARED projection so drift re-checks hash the same shape.
+  const sourceData = buildTenderSourceData(tender);
 
   const sourceHash = await computeSourceHash(sourceData);
 
   // ── 7. Map recipe to output blocks ─────────────────────
   const blocks: OutputBlock[] = [];
+  const usedIds = new Set<string>();
 
   for (const entry of recipe) {
     const def = blockMap.get(entry.block_key);
@@ -392,7 +461,7 @@ export async function loadTenderPack(
     );
 
     blocks.push({
-      id: `${entry.block_key}-${entry.order}`,
+      id: uniqueBlockId(`${entry.block_key}-${entry.order}`, usedIds),
       block_key: entry.block_key,
       render_key: def.render_key,
       display_name: def.display_name,
@@ -861,7 +930,7 @@ function extractProposalContent(block: any): string | undefined {
 }
 
 /** Compute SHA-256 hash of stable-stringified data */
-async function computeSourceHash(data: Record<string, unknown>): Promise<string> {
+export async function computeSourceHash(data: Record<string, unknown>): Promise<string> {
   const stableJson = stableJsonStringify(data);
   const encoder = new TextEncoder();
   const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(stableJson));

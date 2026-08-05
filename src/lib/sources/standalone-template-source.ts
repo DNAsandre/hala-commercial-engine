@@ -15,7 +15,13 @@
  */
 
 import { supabase } from "../supabase";
-import type { BlockSnapshot, OutputBlock, PackType } from "../final-pack-loader";
+import {
+  sortRecipeByOrder,
+  uniqueBlockId,
+  type BlockSnapshot,
+  type OutputBlock,
+  type PackType,
+} from "../final-pack-loader";
 import type { DocumentSource } from "../document-source";
 import { makeBlockProvenance } from "../final-pack-snapshot-contract";
 import { resolveTemplateVariables, type TemplateVariableValues } from "../template-variables";
@@ -100,9 +106,10 @@ export async function loadStandaloneTemplatePack(
     );
   }
 
-  const recipe: RecipeEntry[] = Array.isArray(templateVersion.recipe)
-    ? (templateVersion.recipe as RecipeEntry[])
-    : [];
+  // Array position IS document order downstream — order it explicitly.
+  const recipe: RecipeEntry[] = sortRecipeByOrder(
+    Array.isArray(templateVersion.recipe) ? (templateVersion.recipe as RecipeEntry[]) : [],
+  );
 
   if (recipe.length === 0) {
     return errorSnapshot(source, templateId, "Template recipe is empty");
@@ -154,6 +161,7 @@ export async function loadStandaloneTemplatePack(
   };
 
   const blocks: OutputBlock[] = [];
+  const usedIds = new Set<string>();
   for (const entry of recipe) {
     const def = blockMap.get(entry.block_key);
     if (!def) {
@@ -163,7 +171,7 @@ export async function loadStandaloneTemplatePack(
     const rawHtml = entry.default_content_override || def.default_content || "";
     const html = resolveTemplateVariables(rawHtml, variableValues);
     blocks.push({
-      id: `${entry.block_key}-${entry.order}`,
+      id: uniqueBlockId(`${entry.block_key}-${entry.order}`, usedIds),
       block_key: entry.block_key,
       render_key: def.render_key,
       display_name: def.display_name,

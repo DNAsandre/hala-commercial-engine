@@ -46,17 +46,27 @@ export default function TemplatePicker({ onInstanceReady, onBack }: TemplatePick
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [creatingId, setCreatingId] = useState<string | null>(null);
+  // W04-T09 — a failed template read is not "no templates".
+  const [readError, setReadError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const { data } = await supabase
+      setReadError(null);
+      const { data, error: readErr } = await supabase
         .from("doc_templates")
         .select("id, name, doc_type, status, description")
         .order("status", { ascending: true })
         .order("name", { ascending: true });
       if (cancelled) return;
+      if (readErr) {
+        setTemplates([]);
+        setReadError(readErr.message);
+        setLoading(false);
+        return;
+      }
       // Prefer published, but never hide usable templates (advisory only).
       const rows = (data || []) as TemplateRow[];
       rows.sort((a, b) => (a.status === "published" ? -1 : 1) - (b.status === "published" ? -1 : 1));
@@ -69,6 +79,7 @@ export default function TemplatePicker({ onInstanceReady, onBack }: TemplatePick
   const handleSelect = useCallback(
     async (tpl: TemplateRow) => {
       setCreatingId(tpl.id);
+      setCreateError(null);
       try {
         const snapshot = await loadDocumentPack({
           mode: "standalone",
@@ -79,12 +90,16 @@ export default function TemplatePicker({ onInstanceReady, onBack }: TemplatePick
         });
         if (snapshot.error) {
           console.error("[TemplatePicker] Loader error:", snapshot.error);
+          setCreateError(`Could not start a document from "${tpl.name}": ${snapshot.error}`);
           return;
         }
         const instance = await createInstance(null, snapshot);
         if (instance) onInstanceReady(instance);
       } catch (err) {
         console.error("[TemplatePicker] Create failed:", err);
+        setCreateError(
+          err instanceof Error ? err.message : "Could not start a document from this template.",
+        );
       } finally {
         setCreatingId(null);
       }
@@ -110,16 +125,30 @@ export default function TemplatePicker({ onInstanceReady, onBack }: TemplatePick
           </p>
         </div>
 
-        {error && (
+        {(error || createError) && (
           <div className="flex items-center gap-2 px-4 py-3 rounded-md border border-destructive/30 bg-destructive/5 text-destructive text-sm">
             <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-            <span>{error}</span>
+            <span>{createError || error}</span>
           </div>
         )}
 
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : readError ? (
+          /* Read failed — distinct from "there are none". */
+          <div className="text-center space-y-3 py-8">
+            <AlertTriangle className="h-6 w-6 text-amber-500 mx-auto" />
+            <p className="text-sm text-muted-foreground">
+              Templates could not be loaded — {readError}
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-3 py-1.5 rounded-md border border-border text-sm hover:bg-accent"
+            >
+              Retry
+            </button>
           </div>
         ) : templates.length === 0 ? (
           <p className="text-center text-sm text-muted-foreground py-8">
