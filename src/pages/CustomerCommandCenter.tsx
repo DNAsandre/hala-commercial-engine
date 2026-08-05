@@ -27,8 +27,14 @@ import {
 import { fetchCustomers } from "@/lib/supabase-data";
 import { deriveCustomerRowsFromTickets, type CustomerCommandRow } from "@/lib/customer-command-data";
 import { useEffect } from "react";
-import { fetchOperationalTickets } from "@/lib/intake-save";
-import { deriveCommercialTicketPipelineTickets, resolveReadState, describeRenderedCount } from "@/lib/pipeline-tickets";
+import {
+  deriveCommercialTicketPipelineTickets,
+  resolveReadState,
+  describeRenderedCount,
+  describeEmptyReadCause,
+  describeIsolationWithholding,
+  readOperationalTicketsWithIsolation,
+} from "@/lib/pipeline-tickets";
 import { getFetchError } from "@/lib/supabase-error";
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -38,8 +44,18 @@ function fmtSar(n: number) {
   return n.toLocaleString();
 }
 
-function gpColor(v: number) {
+/** A never-captured GP% gets no colour verdict — it is not "red". */
+function gpColor(v: number | null) {
+  if (v == null) return "text-muted-foreground";
   return v >= 22 ? "text-emerald-600" : v >= 10 ? "text-amber-600" : "text-red-600";
+}
+
+function fmtGp(v: number | null) {
+  return v == null ? "Not captured" : `${v}%`;
+}
+
+function fmtSarValue(v: number | null) {
+  return v == null ? "Not captured" : `SAR ${fmtSar(v)}`;
 }
 
 function riskChip(r: string) {
@@ -63,7 +79,22 @@ function workspaceTypeChip(type: CustomerCommandRow["workspaceType"]) {
   return <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${c}`}>{type}</span>;
 }
 
-function healthBar(score: number) {
+/**
+ * W04-C1 defect B: a score whose inputs were never read is not rendered as a
+ * coloured bar and a number. It says it cannot be computed, and why.
+ */
+function healthBar(row: CustomerCommandRow) {
+  if (row.healthScore == null) {
+    return (
+      <span
+        className="text-[10px] text-muted-foreground/70 border border-dashed border-border rounded-full px-1.5 py-0.5"
+        title={row.healthScoreUnavailableReason}
+      >
+        cannot be computed
+      </span>
+    );
+  }
+  const score = row.healthScore;
   const color = score >= 70 ? "bg-emerald-500" : score >= 40 ? "bg-amber-500" : "bg-red-400";
   return (
     <div className="flex items-center gap-1.5 min-w-[80px]">
@@ -104,8 +135,9 @@ function exportCsv(rows: CustomerCommandRow[]) {
   const headers = ["Customer", "Type", "Region", "Owner", "Service", "Pipeline Value", "Tickets", "Proposals", "Tenders", "Won Revenue", "Avg GP%", "Payment Risk", "DSO", "Contract", "Risks", "Last Activity", "Health"];
   const lines = rows.map(r => [
     r.customerName, r.workspaceType, r.region, r.owner, r.serviceType, r.totalPipelineValue, r.activeTickets, r.proposalTickets, r.tenderTickets,
-    r.wonRevenue, r.avgGpPct, r.paymentRisk, r.dso, r.contractStatus,
-    r.openRisks, r.lastActivity, r.healthScore,
+    // "Not captured" travels into the export too — a blank/0 would read as data.
+    r.wonRevenue, r.avgGpPct ?? "Not captured", r.paymentRisk, r.dso ?? "Not captured", r.contractStatus,
+    r.openRisks, r.lastActivity, r.healthScore ?? "Cannot be computed",
   ].join(","));
   const csv = [headers.join(","), ...lines].join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
@@ -127,6 +159,10 @@ export default function Customers() {
   /** Non-fatal: the customers master read failed, so DSO / risk / contract are unknown. */
   const [customerMasterError, setCustomerMasterError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  /** Ticket rows the database returned before client-side process isolation ran. */
+  const [fetchedRowCount, setFetchedRowCount] = useState(0);
+  /** Ticket rows that survived isolation and were aggregated into `rows`. */
+  const [renderedTicketCount, setRenderedTicketCount] = useState(0);
 
   // Filters
   const [search, setSearch] = useState("");
@@ -149,15 +185,19 @@ export default function Customers() {
     setLoading(true);
     setLoadError(null);
     setCustomerMasterError(null);
-    Promise.all([fetchOperationalTickets(), fetchCustomers()])
-      .then(([ticketResult, custs]) => {
+    Promise.all([readOperationalTicketsWithIsolation(), fetchCustomers()])
+      .then(([ticketRead, custs]) => {
         if (cancelled) return;
-        if (ticketResult.error) throw new Error(ticketResult.error);
+        if (ticketRead.error) throw new Error(ticketRead.error);
         // fetchCustomers() resolves to [] on failure as well as on "no visible
         // rows"; supabase-error records which one it was.
         const custErr = getFetchError("fetchCustomers");
         setCustomerMasterError(custErr ? custErr.error.message : null);
-        const tickets = deriveCommercialTicketPipelineTickets(ticketResult.data);
+        // Keep the pre-isolation count so the empty state can say how many rows
+        // the database returned and how many this client withheld.
+        setFetchedRowCount(ticketRead.fetched);
+        setRenderedTicketCount(ticketRead.rows.length);
+        const tickets = deriveCommercialTicketPipelineTickets(ticketRead.rows);
         setRows(deriveCustomerRowsFromTickets(tickets, custs));
       })
       .catch((err: unknown) => {
@@ -166,6 +206,8 @@ export default function Customers() {
         console.error("[Customer Command Centre] Load error:", err);
         setLoadError(err instanceof Error ? err.message : "Customer portfolio load failed for an unknown reason");
         setRows([]);
+        setFetchedRowCount(0);
+        setRenderedTicketCount(0);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -183,9 +225,11 @@ export default function Customers() {
     else if (typeF === "Proposal") f = f.filter(r => r.proposalTickets > 0);
     else if (typeF === "Mixed") f = f.filter(r => r.workspaceType === "Mixed");
     if (riskF !== "all") f = f.filter(r => r.paymentRisk === riskF);
-    if (marginF === "low") f = f.filter(r => r.avgGpPct < 10);
-    else if (marginF === "mid") f = f.filter(r => r.avgGpPct >= 10 && r.avgGpPct < 22);
-    else if (marginF === "high") f = f.filter(r => r.avgGpPct >= 22);
+    // A never-captured GP% belongs to no margin band.
+    if (marginF === "low") f = f.filter(r => r.avgGpPct != null && r.avgGpPct < 10);
+    else if (marginF === "mid") f = f.filter(r => r.avgGpPct != null && r.avgGpPct >= 10 && r.avgGpPct < 22);
+    else if (marginF === "high") f = f.filter(r => r.avgGpPct != null && r.avgGpPct >= 22);
+    else if (marginF === "none") f = f.filter(r => r.avgGpPct == null);
     if (search) {
       const q = search.toLowerCase();
       f = f.filter(r =>
@@ -202,6 +246,10 @@ export default function Customers() {
     const arr = [...filtered];
     arr.sort((a, b) => {
       const av = a[sortKey], bv = b[sortKey];
+      // A null (never captured / cannot be computed) always sorts last.
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
       if (typeof av === "number" && typeof bv === "number") return sortDir === "asc" ? av - bv : bv - av;
       return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
     });
@@ -210,13 +258,17 @@ export default function Customers() {
 
   // Header metrics describe the rows actually painted in the grid (`sorted`),
   // never the unfiltered fetch.
-  const metrics = useMemo(() => ({
-    rendered: sorted.length,
-    loaded: rows.length,
-    totalValue: sorted.reduce((s, r) => s + r.totalPipelineValue, 0),
-    avgGp: sorted.length > 0 ? sorted.reduce((s, r) => s + r.avgGpPct, 0) / sorted.length : 0,
-    atRisk: sorted.filter(r => r.paymentRisk === "high").length,
-  }), [sorted, rows]);
+  const metrics = useMemo(() => {
+    const gpValues = sorted.map(r => r.avgGpPct).filter((v): v is number => v != null);
+    return {
+      rendered: sorted.length,
+      loaded: rows.length,
+      totalValue: sorted.reduce((s, r) => s + r.totalPipelineValue, 0),
+      // Customers with no captured GP% are excluded, not averaged in as zero.
+      avgGp: gpValues.length > 0 ? gpValues.reduce((s, v) => s + v, 0) / gpValues.length : null,
+      atRisk: sorted.filter(r => r.paymentRisk === "high").length,
+    };
+  }, [sorted, rows]);
 
   const readState = resolveReadState({ loading, error: loadError, count: rows.length });
 
@@ -245,7 +297,7 @@ export default function Customers() {
                 : readState === "error"
                   ? "Portfolio counts unavailable — the read failed"
                   : <>
-                      {describeRenderedCount(metrics.rendered, metrics.loaded, "customer")} · SAR {fmtSar(metrics.totalValue)} pipeline · Avg GP: {metrics.avgGp.toFixed(1)}% · <span className={metrics.atRisk > 0 ? "text-red-600 font-medium" : ""}>{metrics.atRisk} high risk</span>
+                      {describeRenderedCount(metrics.rendered, metrics.loaded, "customer")} · SAR {fmtSar(metrics.totalValue)} pipeline · Avg GP: {metrics.avgGp == null ? "not captured" : `${metrics.avgGp.toFixed(1)}%`} · <span className={metrics.atRisk > 0 ? "text-red-600 font-medium" : ""}>{metrics.atRisk} high risk</span>
                     </>}
             </p>
           </div>
@@ -302,6 +354,7 @@ export default function Customers() {
               <SelectItem value="high">≥ 22%</SelectItem>
               <SelectItem value="mid">10-22%</SelectItem>
               <SelectItem value="low">&lt; 10%</SelectItem>
+              <SelectItem value="none">GP not captured</SelectItem>
             </SelectContent>
           </Select>
           {activeFilters > 0 && (
@@ -312,6 +365,15 @@ export default function Customers() {
           <span className="text-[10px] text-muted-foreground ml-auto">{sorted.length} of {rows.length}</span>
         </div>
       </div>
+
+      {/* Ticket rows the database returned that this client removed — disclosed, not hidden */}
+      {readState !== "loading" && readState !== "error" && describeIsolationWithholding(fetchedRowCount, renderedTicketCount) && (
+        <div className="mx-6 mt-3 shrink-0 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5">
+          <p className="text-xs font-medium text-amber-900">
+            {describeIsolationWithholding(fetchedRowCount, renderedTicketCount)}
+          </p>
+        </div>
+      )}
 
       {/* Customer master data unavailable — a non-fatal, separately-reported failure */}
       {readState !== "loading" && readState !== "error" && customerMasterError && (
@@ -350,9 +412,10 @@ export default function Customers() {
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="max-w-md rounded-lg border border-dashed border-border p-5 text-center">
             <Users className="mx-auto mb-2 h-6 w-6 text-muted-foreground/40" />
-            <p className="text-sm font-medium text-muted-foreground">No customers are visible to this account.</p>
+            <p className="text-sm font-medium text-muted-foreground">No customers are shown.</p>
             <p className="mt-1 text-xs text-muted-foreground/70">
-              The read succeeded and returned no commercial tickets to aggregate by customer.
+              {describeEmptyReadCause(fetchedRowCount, renderedTicketCount)} There are no commercial
+              tickets left to aggregate by customer.
             </p>
             <Button size="sm" variant="outline" className="mt-3 gap-1 text-xs" onClick={() => setRefreshKey(k => k + 1)}>
               <RefreshCw className="h-3 w-3" /> Refresh
@@ -399,9 +462,9 @@ export default function Customers() {
                     <Badge variant="secondary" className="text-[10px] h-5 px-1.5">{row.activeTickets}</Badge>
                   </td>
                   <td className="px-3 py-2.5 font-mono">{row.wonRevenue > 0 ? `SAR ${fmtSar(row.wonRevenue)}` : "—"}</td>
-                  <td className={`px-3 py-2.5 font-mono font-bold ${gpColor(row.avgGpPct)}`}>{row.avgGpPct}%</td>
+                  <td className={`px-3 py-2.5 font-mono font-bold ${gpColor(row.avgGpPct)}`}>{fmtGp(row.avgGpPct)}</td>
                   <td className="px-3 py-2.5">{riskChip(row.paymentRisk)}</td>
-                  <td className="px-3 py-2.5 font-mono text-muted-foreground">{row.dso > 0 ? `${row.dso}d` : "—"}</td>
+                  <td className="px-3 py-2.5 font-mono text-muted-foreground">{row.dso == null ? "not captured" : `${row.dso}d`}</td>
                   <td className="px-3 py-2.5">
                     <Badge variant="outline" className={`text-[10px] ${row.contractStatus === "Active" ? "border-emerald-300 text-emerald-700 bg-emerald-50" : row.contractStatus === "Renewing" ? "border-amber-300 text-amber-700 bg-amber-50" : row.contractStatus === "Expired" ? "border-red-300 text-red-700 bg-red-50" : "border-border"}`}>
                       {row.contractStatus}
@@ -416,7 +479,7 @@ export default function Customers() {
                     ) : <span className="text-muted-foreground/50">0</span>}
                   </td>
                   <td className="px-3 py-2.5 text-muted-foreground">{row.lastActivity !== "—" ? row.lastActivity.slice(0, 10) : "—"}</td>
-                  <td className="px-3 py-2.5">{healthBar(row.healthScore)}</td>
+                  <td className="px-3 py-2.5">{healthBar(row)}</td>
                 </tr>
               ))}
               {sorted.length === 0 && (
@@ -467,8 +530,13 @@ function CustomerDrawer({ row, onOpenTicket }: { row: CustomerCommandRow; onOpen
         <div className="grid grid-cols-4 gap-3 mt-4">
           {[
             { label: "Pipeline", value: `SAR ${fmtSar(row.totalPipelineValue)}` },
-            { label: "Avg GP%", value: `${row.avgGpPct}%`, color: gpColor(row.avgGpPct), glow: row.avgGpPct >= 22 },
-            { label: "Health", value: `${row.healthScore}/100` },
+            { label: "Avg GP%", value: fmtGp(row.avgGpPct), color: gpColor(row.avgGpPct), glow: row.avgGpPct != null && row.avgGpPct >= 22 },
+            // W04-C1 defect B: no score is shown when its inputs were not read.
+            {
+              label: "Health",
+              value: row.healthScore == null ? "cannot be computed" : `${row.healthScore}/100`,
+              color: row.healthScore == null ? "text-muted-foreground" : "",
+            },
             {
               label: "Risk",
               value: row.paymentRisk === "unknown" ? "not captured" : row.paymentRisk,
@@ -488,6 +556,11 @@ function CustomerDrawer({ row, onOpenTicket }: { row: CustomerCommandRow; onOpen
             </div>
           ))}
         </div>
+        {row.healthScore == null && row.healthScoreUnavailableReason && (
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            Health score — {row.healthScoreUnavailableReason}
+          </p>
+        )}
       </div>
 
       {/* Summary Stats */}
@@ -496,7 +569,7 @@ function CustomerDrawer({ row, onOpenTicket }: { row: CustomerCommandRow; onOpen
         <div className="grid grid-cols-3 gap-3 text-xs">
           <div className="flex justify-between"><span className="text-muted-foreground">Active Tickets</span><span className="font-medium">{row.activeTickets}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">Won Revenue</span><span className="font-medium">SAR {fmtSar(row.wonRevenue)}</span></div>
-          <div className="flex justify-between"><span className="text-muted-foreground">DSO</span><span className="font-medium">{row.dso > 0 ? `${row.dso}d` : "Not captured"}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">DSO</span><span className="font-medium">{row.dso == null ? "Not captured" : `${row.dso}d`}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">Contract</span><span className="font-medium">{row.contractStatus}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">Open Risks</span><span className={`font-medium ${row.openRisks > 0 ? "text-red-600" : ""}`}>{row.openRisks}</span></div>
         </div>
@@ -519,8 +592,8 @@ function CustomerDrawer({ row, onOpenTicket }: { row: CustomerCommandRow; onOpen
               </div>
               <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
                 <span>CRM: <strong className="text-foreground">{t.crmStage}</strong></span>
-                <span>SAR {fmtSar(t.sarValue)}</span>
-                <span className={gpColor(t.gpPct)}>{t.gpPct}%</span>
+                <span>{fmtSarValue(t.sarValue)}</span>
+                <span className={gpColor(t.gpPct)}>{fmtGp(t.gpPct)}</span>
               </div>
               <div className="flex items-center justify-between mt-2">
                 <span className="text-[10px] text-[#075eea] font-medium">→ {t.nextAction}</span>

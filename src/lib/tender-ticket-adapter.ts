@@ -73,7 +73,21 @@ export function mapCommercialTicketToTenderPortfolioRow(row: CommercialTicket): 
   };
 }
 
-export async function fetchTenderPortfolioRows(): Promise<TenderPortfolioRow[]> {
+/**
+ * A tender read that keeps its own pre-isolation row count.
+ *
+ * W04-C1 defect E: the database returns tender rows that the client-side
+ * allowlist in process-isolation.ts then removes, so a surface that shows
+ * nothing cannot honestly say "the read returned no rows". `fetched` is what
+ * the database returned; `withheld` is what this client dropped.
+ */
+export interface TenderPortfolioRead {
+  rows: TenderPortfolioRow[];
+  fetched: number;
+  withheld: number;
+}
+
+export async function fetchTenderPortfolioRead(): Promise<TenderPortfolioRead> {
   const { data, error } = await supabase
     .from("commercial_tickets")
     .select("*")
@@ -83,6 +97,17 @@ export async function fetchTenderPortfolioRows(): Promise<TenderPortfolioRow[]> 
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return filterAllowedTenderTickets((data ?? []) as CommercialTicket[])
-    .map(mapCommercialTicketToTenderPortfolioRow);
+
+  const fetchedRows = (data ?? []) as CommercialTicket[];
+  const allowed = filterAllowedTenderTickets(fetchedRows);
+
+  return {
+    rows: allowed.map(mapCommercialTicketToTenderPortfolioRow),
+    fetched: fetchedRows.length,
+    withheld: fetchedRows.length - allowed.length,
+  };
+}
+
+export async function fetchTenderPortfolioRows(): Promise<TenderPortfolioRow[]> {
+  return (await fetchTenderPortfolioRead()).rows;
 }

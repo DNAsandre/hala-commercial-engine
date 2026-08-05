@@ -20,8 +20,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useLocation } from "wouter";
-import { fetchTenderPortfolioRows, type TenderPortfolioRow } from "@/lib/tender-ticket-adapter";
-import { resolveReadState } from "@/lib/pipeline-tickets";
+import { fetchTenderPortfolioRead, type TenderPortfolioRow } from "@/lib/tender-ticket-adapter";
+import {
+  resolveReadState,
+  describeEmptyReadCause,
+  describeIsolationWithholding,
+  sumCaptured,
+} from "@/lib/pipeline-tickets";
 import { cleanHref } from "@clean/lib/clean-routing";
 
 // ─── TYPES ──────────────────────────────────────────────────
@@ -48,9 +53,15 @@ function formatStage(s: string | null): string {
   return s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 }
 
+/**
+ * W04-C1 defect D: an unparseable date must not reach the screen as "NaNd".
+ * Same guard shape as tender-ticket-adapter.daysSince.
+ */
 function daysUntilDeadline(d: string | null): number | null {
   if (!d) return null;
-  return Math.ceil((new Date(d).getTime() - Date.now()) / 86400000);
+  const ms = new Date(d).getTime();
+  if (Number.isNaN(ms)) return null;
+  return Math.ceil((ms - Date.now()) / 86400000);
 }
 
 // ─── TAB DEFINITIONS ────────────────────────────────────────
@@ -270,6 +281,8 @@ export default function Tenders() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  /** Rows the database returned before client-side process isolation ran. */
+  const [fetchedRowCount, setFetchedRowCount] = useState(0);
 
   // Filters
   const [search, setSearch] = useState("");
@@ -287,9 +300,11 @@ export default function Tenders() {
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    fetchTenderPortfolioRows()
-      .then(rows => {
-        if (!cancelled) setTenders(rows);
+    fetchTenderPortfolioRead()
+      .then(read => {
+        if (cancelled) return;
+        setFetchedRowCount(read.fetched);
+        setTenders(read.rows);
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -298,6 +313,7 @@ export default function Tenders() {
         console.error("[Tender Portfolio] Load error:", message);
         setLoadError(message);
         setTenders([]);
+        setFetchedRowCount(0);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -334,7 +350,7 @@ export default function Tenders() {
   }, [dropdownFiltered]);
 
   // Summary
-  const totalValue = tenders.reduce((s, t) => s + (t.estimated_value ?? 0), 0);
+  const totalValue = sumCaptured(tenders.map(t => t.estimated_value));
   const hasFilters = search || filterCrmStage !== "all" || filterPhase !== "all" || filterOwner !== "all" || filterRegion !== "all";
 
   function clearFilters() {
@@ -396,6 +412,15 @@ export default function Tenders() {
           <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
         </Button>
       </div>
+
+      {/* Rows the database returned that this client removed — disclosed, not hidden */}
+      {describeIsolationWithholding(fetchedRowCount, tenders.length) && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5">
+          <p className="text-xs font-medium text-amber-900">
+            {describeIsolationWithholding(fetchedRowCount, tenders.length)}
+          </p>
+        </div>
+      )}
 
       {/* Metrics */}
       <MetricsBar tenders={tenders} />
@@ -469,8 +494,15 @@ export default function Tenders() {
           <Gavel className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
           {tenders.length === 0 ? (
             <>
-              <p className="text-sm font-medium text-muted-foreground">No tender records are visible to this account.</p>
-              <p className="text-xs text-muted-foreground/60 mt-1">The read succeeded and returned no rows. Tenders are managed via the CRM Pipeline or created directly.</p>
+              <p className="text-sm font-medium text-muted-foreground">No tender records are shown.</p>
+              {/*
+                W04-C1 defect E: this claimed the read returned no rows even
+                when rows were returned and then removed client-side by the
+                process-isolation allowlist. It now states which happened.
+              */}
+              <p className="text-xs text-muted-foreground/60 mt-1">
+                {describeEmptyReadCause(fetchedRowCount, tenders.length)} Tenders are managed via the CRM Pipeline or created directly.
+              </p>
               <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
                 <ExternalLink className="w-3 h-3 mr-1.5" /> Go to CRM Pipeline
               </Button>

@@ -20,10 +20,11 @@ import { useLocation } from "wouter";
 import { cleanHref } from "@clean/lib/clean-routing";
 import {
   deriveCommercialTicketPipelineTickets, resolveReadState, describeRenderedCount,
+  describeEmptyReadCause, describeIsolationWithholding,
+  readOperationalTicketsWithIsolation, sumCaptured,
   type PipelineTicket, type CrmStageLabel,
 } from "@/lib/pipeline-tickets";
 import { PipelineTicketCard } from "@/components/crm/PipelineCard";
-import { fetchOperationalTicketsByType } from "@/lib/intake-save";
 
 // ─── HELPERS ────────────────────────────────────────────────
 
@@ -57,7 +58,10 @@ const TABS: TabDef[] = [
   {
     key: "needs_action",
     label: "Needs Action",
-    filter: (t) => t.daysInStage > 14 || t.riskLevel !== "green" || t.syncStatus === "none",
+    filter: (t) =>
+      (t.daysInStage != null && t.daysInStage > 14) ||
+      t.riskLevel !== "green" ||
+      t.syncStatus === "none",
   },
   {
     key: "ready_to_send",
@@ -106,6 +110,8 @@ export default function Commercial() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  /** Rows the database returned before client-side process isolation ran. */
+  const [fetchedRowCount, setFetchedRowCount] = useState(0);
 
   // Filters
   const [search, setSearch] = useState("");
@@ -122,11 +128,12 @@ export default function Commercial() {
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    fetchOperationalTicketsByType("proposal")
-      .then((result) => {
+    readOperationalTicketsWithIsolation("proposal")
+      .then((read) => {
         if (cancelled) return;
-        if (result.error) throw new Error(result.error);
-        setAllTickets(deriveCommercialTicketPipelineTickets(result.data));
+        if (read.error) throw new Error(read.error);
+        setFetchedRowCount(read.fetched);
+        setAllTickets(deriveCommercialTicketPipelineTickets(read.rows));
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -134,6 +141,7 @@ export default function Commercial() {
         console.error("Portfolio load error:", err);
         setLoadError(err instanceof Error ? err.message : "Proposal load failed for an unknown reason");
         setAllTickets([]);
+        setFetchedRowCount(0);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -172,7 +180,8 @@ export default function Commercial() {
 
   // Summary metrics — computed over the cards actually rendered (`tabFiltered`),
   // so the headline can never describe a larger set than the grid below it.
-  const totalValue = tabFiltered.reduce((s, t) => s + t.sarValue, 0);
+  // Never-captured values contribute nothing; they are not counted as zero.
+  const totalValue = sumCaptured(tabFiltered.map((t) => t.sarValue));
   const criticalCount = tabFiltered.filter((t) => t.riskLevel === "red").length;
 
   const hasFilters = search || filterCrmStage !== "all" || filterOwner !== "all" || filterRegion !== "all" || filterRisk !== "all";
@@ -246,6 +255,15 @@ export default function Commercial() {
           <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
         </Button>
       </div>
+
+      {/* Rows the database returned that this client removed — disclosed, not hidden */}
+      {describeIsolationWithholding(fetchedRowCount, allTickets.length) && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5">
+          <p className="text-xs font-medium text-amber-900">
+            {describeIsolationWithholding(fetchedRowCount, allTickets.length)}
+          </p>
+        </div>
+      )}
 
       {/* Search + Filters */}
       <div className="space-y-2 mb-4">
@@ -330,8 +348,10 @@ export default function Commercial() {
           <Briefcase className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
           {allTickets.length === 0 ? (
             <>
-              <p className="text-sm font-medium text-muted-foreground">No proposal tickets are visible to this account.</p>
-              <p className="text-xs text-muted-foreground/60 mt-1">The read succeeded and returned no rows. Create or sync proposal tickets from the CRM Pipeline.</p>
+              <p className="text-sm font-medium text-muted-foreground">No proposal tickets are shown.</p>
+              <p className="text-xs text-muted-foreground/60 mt-1">
+                {describeEmptyReadCause(fetchedRowCount, allTickets.length)} Create or sync proposal tickets from the CRM Pipeline.
+              </p>
               <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => navigate(cleanHref("/crm-pipeline"))}>
                 <ExternalLink className="w-3 h-3 mr-1.5" /> Go to CRM Pipeline
               </Button>
