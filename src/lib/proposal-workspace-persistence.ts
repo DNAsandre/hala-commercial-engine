@@ -3425,16 +3425,20 @@ export async function saveProposalGoLiveStageData(
 // Neither reads or writes the other.
 //
 // WHY THESE HELPERS EXIST
-// lib/intake-save.ts#changeStage issues .update(...).eq("id", …) with no
-// .select(), so it reports { error: null } even when the statement matched
-// ZERO rows. That is not a theoretical hole: probed live on 2026-08-05 against
-// commercial_tickets, an unauthorised PATCH of an existing, readable row
-// returned HTTP 200 with an empty row set and left the stored value untouched
-// — "no error" while nothing was written. Announcing success (and writing an
-// audit entry) from that outcome would put a fabricated state change in front
-// of the user. Everything below therefore CONFIRMS the stored value from the
-// returned row before anything is reported, and writes the audit entry only
-// after that confirmation.
+// The hazard they answer is real and was probed live on 2026-08-05 against
+// commercial_tickets: an unauthorised PATCH of an existing, readable row
+// returned HTTP 200 with an EMPTY row set and left the stored value untouched
+// — "no error" while nothing was written. Any writer that reports success from
+// `{ error: null }` alone therefore puts a fabricated state change (and a
+// fabricated audit entry) in front of the user.
+//
+// lib/intake-save.ts#changeStage used to have exactly that hole: it issued
+// .update(...).eq("id", …) with no .select(). It no longer does — as of commit
+// a53717f it selects the row back and compares the stored value before writing
+// any audit row. These helpers cover the proposal workspace's own tracker
+// paths on the same principle: everything below CONFIRMS the stored value from
+// the returned row before anything is reported, and writes the audit entry
+// only after that confirmation.
 //
 // These helpers scope, they do not gate: they never block stage movement,
 // never hide a stage and never require an approval.
