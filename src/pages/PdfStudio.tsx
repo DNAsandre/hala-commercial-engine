@@ -211,10 +211,12 @@ export default function FinalPackStudio() {
   );
 
   // Source drift detection — READ ONLY check against commercial_tickets
-  const { drifted, checking: driftChecking, recheck: recheckDrift } = useSourceDrift(
-    tenderId,
-    activeInstance?.source_snapshot?._hash || null,
-  );
+  const {
+    drifted,
+    checking: driftChecking,
+    recheck: recheckDrift,
+    error: driftError,
+  } = useSourceDrift(tenderId, activeInstance?.source_snapshot?._hash || null);
 
   // FPS-008: discover Bot Builder microbots for the active document ONCE
   // (filtered per-block client-side). Read-only; never blocks editing/export.
@@ -574,6 +576,7 @@ export default function FinalPackStudio() {
                   <SourceDriftBanner
                     drifted={drifted}
                     checking={driftChecking}
+                    error={driftError}
                     onRefreshFromSource={() => {
                       resetAllFromSource(activeInstance.source_snapshot._original_blocks || []);
                     }}
@@ -702,9 +705,11 @@ function StandaloneEntry({
   const [view, setView] = useState<EntryView>("start");
   const { appUser } = useAuth();
   const authoringUser = appUser?.email || appUser?.id || "User";
-  const { instance, loadInstance, listAllInstances } = useFinalPackInstance();
+  const { instance, loadInstance, listAllInstances, error: instanceError } = useFinalPackInstance();
   const [resumeList, setResumeList] = useState<FinalPackInstance[]>([]);
   const [loadingResume, setLoadingResume] = useState(false);
+  // Failed list read ≠ "no documents yet" (W04-T09).
+  const [resumeError, setResumeError] = useState<string | null>(null);
 
   // When an instance is resumed (loaded), hand off to the composer.
   useEffect(() => {
@@ -719,7 +724,8 @@ function StandaloneEntry({
       setLoadingResume(true);
       const list = await listAllInstances();
       if (!cancelled) {
-        setResumeList(list);
+        setResumeList(list.instances);
+        setResumeError(list.error);
         setLoadingResume(false);
       }
     })();
@@ -775,9 +781,32 @@ function StandaloneEntry({
           </p>
         </div>
 
+        {/* Loading, real-empty and failed-read are three visibly different states. */}
+        {instanceError && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-destructive/30 bg-destructive/5 text-destructive text-sm">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+            <span>{instanceError}</span>
+          </div>
+        )}
         {loadingResume ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : resumeError ? (
+          <div className="text-center space-y-3 py-8">
+            <AlertTriangle className="h-6 w-6 text-amber-500 mx-auto" />
+            <p className="text-sm text-muted-foreground">
+              Your documents could not be listed — {resumeError}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              This is a read failure, not an empty list. Existing documents are not lost.
+            </p>
+            <button
+              onClick={() => setView("start")}
+              className="px-3 py-1.5 rounded-md border border-border text-sm hover:bg-accent"
+            >
+              Back to start
+            </button>
           </div>
         ) : resumeList.length === 0 ? (
           <p className="text-center text-sm text-muted-foreground py-8">
@@ -818,17 +847,27 @@ function TenderPicker({ onBack }: { onBack?: () => void }) {
   const [, navigate] = useLocation();
   const [tenders, setTenders] = useState<Array<{ id: string; title: string; customer: string; stage: string }>>([]);
   const [loading, setLoading] = useState(true);
+  // W04-T09 — the read error was discarded, so a failed read rendered as
+  // "No tenders found in Supabase", which is a claim about the data.
+  const [readError, setReadError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("commercial_tickets")
         .select("id, ticket_title, customer_name, internal_stage")
         .order("updated_at", { ascending: false })
         .limit(20);
 
       if (cancelled) return;
+      if (error) {
+        setTenders([]);
+        setReadError(error.message);
+        setLoading(false);
+        return;
+      }
+      setReadError(null);
       setTenders(
         (data || []).map((t: any) => ({
           id: t.id,
@@ -866,9 +905,19 @@ function TenderPicker({ onBack }: { onBack?: () => void }) {
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
+        ) : readError ? (
+          <div className="text-center space-y-2 py-8">
+            <AlertTriangle className="h-6 w-6 text-amber-500 mx-auto" />
+            <p className="text-sm text-muted-foreground">
+              Tenders could not be loaded — {readError}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              This is a read failure, not an empty list.
+            </p>
+          </div>
         ) : tenders.length === 0 ? (
           <p className="text-center text-sm text-muted-foreground py-8">
-            No tenders found in Supabase.
+            No tenders are visible to your account.
           </p>
         ) : (
           <div className="space-y-2">

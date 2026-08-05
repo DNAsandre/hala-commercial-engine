@@ -95,9 +95,20 @@ export interface UseFinalPackInstanceReturn {
   /** Persist the selected branding profile id on the instance (FPS-002) */
   updateBranding: (brandingProfileId: string) => Promise<void>;
   /** List existing FPS instances for a tender (connected picker) */
-  listInstances: (tenderId: string) => Promise<FinalPackInstance[]>;
+  listInstances: (tenderId: string) => Promise<InstanceListResult>;
   /** List all FPS instances (connected + standalone) for Resume Existing */
-  listAllInstances: () => Promise<FinalPackInstance[]>;
+  listAllInstances: () => Promise<InstanceListResult>;
+}
+
+/**
+ * Result of a list read. `error` is non-null ONLY when the read failed —
+ * an empty `instances` array with `error: null` means "really none".
+ * W04-T09: these two states used to be indistinguishable ([] was returned for
+ * both), so a failed read rendered as "No documents yet".
+ */
+export interface InstanceListResult {
+  instances: FinalPackInstance[];
+  error: string | null;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -417,38 +428,14 @@ export function useFinalPackInstance(): UseFinalPackInstanceReturn {
   );
 
   // ── List FPS instances for a tender ──────────────────
-  // Discriminator: pack_type IS NOT NULL (FPS sets pack_type, DocumentComposer does not)
   const listInstances = useCallback(
-    async (tenderId: string): Promise<FinalPackInstance[]> => {
-      const { data, error: listErr } = await supabase
-        .from("doc_instances")
-        .select("*")
-        .eq("linked_entity_type", "tender")
-        .eq("linked_entity_id", tenderId)
-        .not("pack_type", "is", null)
-        .order("updated_at", { ascending: false });
-
-      if (listErr || !data) return [];
-
-      return data.map(mapRowToInstance);
-    },
+    (tenderId: string): Promise<InstanceListResult> => fetchTenderInstances(tenderId),
     [],
   );
 
   // ── List ALL FPS instances (connected + standalone) for Resume Existing ──
-  // Discriminator: doc_type = 'final_pack' (set by createInstance for both modes).
   const listAllInstances = useCallback(
-    async (): Promise<FinalPackInstance[]> => {
-      const { data, error: listErr } = await supabase
-        .from("doc_instances")
-        .select("*")
-        .eq("doc_type", "final_pack")
-        .order("updated_at", { ascending: false })
-        .limit(50);
-
-      if (listErr || !data) return [];
-      return data.map(mapRowToInstance);
-    },
+    (): Promise<InstanceListResult> => fetchAllFinalPackInstances(),
     [],
   );
 
@@ -466,6 +453,44 @@ export function useFinalPackInstance(): UseFinalPackInstanceReturn {
     listInstances,
     listAllInstances,
   };
+}
+
+// ═══════════════════════════════════════════════════════════
+// List reads (exported so the query itself is directly testable)
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * FPS instances for one tender.
+ * Discriminator: pack_type IS NOT NULL (FPS sets pack_type; the legacy
+ * composer did not). Ordered newest-edited first by an explicit ORDER BY.
+ */
+export async function fetchTenderInstances(tenderId: string): Promise<InstanceListResult> {
+  const { data, error } = await supabase
+    .from("doc_instances")
+    .select("*")
+    .eq("linked_entity_type", "tender")
+    .eq("linked_entity_id", tenderId)
+    .not("pack_type", "is", null)
+    .order("updated_at", { ascending: false });
+
+  if (error) return { instances: [], error: error.message };
+  return { instances: (data ?? []).map(mapRowToInstance), error: null };
+}
+
+/**
+ * All FPS instances (connected + standalone) for "Resume Existing".
+ * Discriminator: doc_type = 'final_pack' (set by createInstance in both modes).
+ */
+export async function fetchAllFinalPackInstances(): Promise<InstanceListResult> {
+  const { data, error } = await supabase
+    .from("doc_instances")
+    .select("*")
+    .eq("doc_type", "final_pack")
+    .order("updated_at", { ascending: false })
+    .limit(50);
+
+  if (error) return { instances: [], error: error.message };
+  return { instances: (data ?? []).map(mapRowToInstance), error: null };
 }
 
 // ═══════════════════════════════════════════════════════════

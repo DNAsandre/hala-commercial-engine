@@ -38,9 +38,13 @@ export default function StandaloneBlankPanel({
   const [customerName, setCustomerName] = useState("");
   const [refNumber, setRefNumber] = useState("");
   const [creating, setCreating] = useState(false);
+  // W04-T09 — a failed create used to log to the console and look like nothing
+  // happened. Surface it.
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const handleCreate = useCallback(async () => {
     setCreating(true);
+    setCreateError(null);
     try {
       const snapshot = await loadDocumentPack({
         mode: "standalone",
@@ -53,12 +57,14 @@ export default function StandaloneBlankPanel({
       });
       if (snapshot.error) {
         console.error("[StandaloneBlankPanel] Loader error:", snapshot.error);
+        setCreateError(`Could not create the document: ${snapshot.error}`);
         return;
       }
       const instance = await createInstance(null, snapshot);
       if (instance) onInstanceReady(instance);
     } catch (err) {
       console.error("[StandaloneBlankPanel] Create failed:", err);
+      setCreateError(err instanceof Error ? err.message : "Could not create the document.");
     } finally {
       setCreating(false);
     }
@@ -132,10 +138,10 @@ export default function StandaloneBlankPanel({
           </div>
         </div>
 
-        {error && (
+        {(error || createError) && (
           <div className="flex items-center gap-2 px-4 py-3 rounded-md border border-destructive/30 bg-destructive/5 text-destructive text-sm">
             <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-            <span>{error}</span>
+            <span>{createError || error}</span>
           </div>
         )}
 
