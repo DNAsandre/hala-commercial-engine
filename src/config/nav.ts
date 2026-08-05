@@ -20,7 +20,7 @@
  */
 
 export type CleanNavItem = {
-  /** Base-relative route path. Rendered under /clean. */
+  /** Root-based route path: "/dashboard" renders at "/dashboard" (see ROUTING NOTE above). */
   href: string;
   /** Sidebar label. Wording is approved — do not paraphrase. */
   label: string;

@@ -94,7 +94,6 @@ import {
   type SystemHealthReport,
 } from "@/lib/ops-runtime";
 import { getFetchError } from "@/lib/supabase-error";
-import { fetchEditorBots } from "@/lib/supabase-data";
 import FacilitiesAdmin from "@/pages/FacilitiesAdmin";
 
 function FacilitiesEmbed() {
@@ -825,53 +824,6 @@ function SettingsTabContent() {
           Save Settings
         </Button>
       </div>
-    </>
-  );
-}
-
-function EditorBotsEmbed() {
-  const [total, setTotal] = useState(0);
-  const [blockCount, setBlockCount] = useState(0);
-  const [docCount, setDocCount] = useState(0);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchEditorBots().then(bots => {
-      if (cancelled) return;
-      setTotal(bots.length);
-      setBlockCount(bots.filter(b => b.bot_type === 'block').length);
-      setDocCount(bots.filter(b => b.bot_type === 'document').length);
-      setLoading(false);
-    }).catch(() => setLoading(false));
-    return () => { cancelled = true; };
-  }, []);
-
-  if (loading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin" /></div>;
-
-  return (
-    <>
-      <div className="grid grid-cols-3 gap-3">
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-[#1B2A4A]">{total}</div>
-            <div className="text-xs text-muted-foreground">Total Editor Bots</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-blue-600">{blockCount}</div>
-            <div className="text-xs text-muted-foreground">Block Bots</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-[#075eea]">{docCount}</div>
-            <div className="text-xs text-muted-foreground">Document Bots</div>
-          </CardContent>
-        </Card>
-      </div>
-      <p className="text-xs text-muted-foreground">Use the full page to create, edit, test, and manage editor bots with system prompts, provider configuration, and document type permissions.</p>
     </>
   );
 }

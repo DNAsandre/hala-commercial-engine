@@ -346,38 +346,6 @@ export async function changeStage(
   return { error: null };
 }
 
-/** Verify source metadata for audit traceability. */
-export async function verifyLineage(
-  ticketId: string,
-  userName: string,
-  notes?: string
-): Promise<{ error: string | null }> {
-  await writeAudit({
-    ticket_id: ticketId,
-    action: "lineage_verified",
-    user_name: userName,
-    notes: notes ?? "Lineage verified by user",
-  });
-
-  return { error: null };
-}
-
-/** Record a source concern for audit traceability. */
-export async function rejectLineage(
-  ticketId: string,
-  userName: string,
-  reason: string
-): Promise<{ error: string | null }> {
-  await writeAudit({
-    ticket_id: ticketId,
-    action: "lineage_rejected",
-    user_name: userName,
-    notes: reason,
-  });
-
-  return { error: null };
-}
-
 /** Soft-delete (deactivate) a ticket */
 export async function deactivateTicket(
   ticketId: string,

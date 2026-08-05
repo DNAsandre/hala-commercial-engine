@@ -1687,10 +1687,10 @@ export default function TenderWorkspaceDetail() {
             {riskBadge(ws.riskLevel)}
             <Badge variant="outline" className="text-[10px] border-gray-300 text-gray-600">CRM: {getCleanCrmSyncStatusLabel(ws.crmSyncStatus)}</Badge>
             <Badge variant="outline" className="text-[10px] border-emerald-400 text-emerald-700 bg-emerald-50 flex items-center gap-1"><Database className="w-2.5 h-2.5" />Supabase-Backed</Badge>
-            {/* CLEAN APP: was a raw <a> (full page reload). Raw anchors bypass
-                wouter's <Router base="/clean">, so this would have escaped the
-                clean surface to the legacy /tenders/:id/final-pack route.
-                Converted to <Link> so it resolves to /clean/tenders/:id/final-pack.
+            {/* CLEAN APP: was a raw <a> (full page reload) that bypassed wouter
+                client-side routing. Converted to <Link>. The app is root-mounted
+                (SC-01.6) — cleanHref normalizes any historical /clean-prefixed
+                href to the root-based /tenders/:id/final-pack route.
                 NO-GATE: unchanged — always enabled, no readiness condition. */}
             <Link
                       href={cleanHref(`/tenders/${id}/final-pack`)}

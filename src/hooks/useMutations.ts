@@ -1,7 +1,7 @@
 /**
  * useMutations — React hooks for Supabase write operations
- * Wraps create/update/delete with loading states, error handling,
- * toast notifications, and automatic refetch of related queries.
+ * Wraps create/update with loading states, error handling, and
+ * toast notifications.
  */
 
 import { useState, useCallback } from "react";
@@ -17,7 +17,6 @@ import {
   createHandoverTask, updateHandoverTask,
   createCRMSyncEvent,
 } from "@/lib/supabase-data";
-import { supabase } from "@/lib/supabase";
 import type {
   User, Customer, Workspace, Quote, Proposal, ApprovalRecord,
   Signal, AuditEntry, PolicyGate, PnLModel, HandoverTask, CRMSyncEvent,
@@ -92,17 +91,6 @@ export function useUpdateCustomer(onSuccess?: (c: Customer) => void) {
   );
 }
 
-export function useDeleteCustomer(onSuccess?: () => void) {
-  return useMutation(
-    async (id: string) => {
-      const { error } = await supabase.from("customers").update({ status: "Terminated" }).eq("id", id);
-      if (error) throw error;
-      return { id } as any;
-    },
-    { successMessage: "Customer deactivated", onSuccess: onSuccess ? () => onSuccess() : undefined }
-  );
-}
-
 // ============================================================
 // WORKSPACE MUTATIONS
 // ============================================================
@@ -125,17 +113,6 @@ export function useUpdateWorkspaceStage(onSuccess?: (w: Workspace) => void) {
   return useMutation(
     ({ id, stage }: { id: string; stage: string }) => updateWorkspace(id, { stage } as Partial<Workspace>),
     { successMessage: "Stage updated", onSuccess }
-  );
-}
-
-export function useDeleteWorkspace(onSuccess?: () => void) {
-  return useMutation(
-    async (id: string) => {
-      const { error } = await supabase.from("workspaces").delete().eq("id", id);
-      if (error) throw error;
-      return { id } as any;
-    },
-    { successMessage: "Workspace deleted", onSuccess: onSuccess ? () => onSuccess() : undefined }
   );
 }
 
