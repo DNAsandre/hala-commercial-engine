@@ -1,14 +1,22 @@
 /**
  * Intake Save — Supabase CRUD for commercial_tickets
  *
- * All writes go through this module. No direct Supabase calls
- * from UI components. Every mutation records an audit entry.
+ * All writes go through this module. No direct Supabase calls from UI
+ * components.
  *
  * Doctrine:
  *   - No mock data
  *   - No auto-execution of SQL
  *   - Empty strings are coerced to null before save
- *   - Audit trail is mandatory for every write
+ *   - Every mutation ATTEMPTS an audit entry
+ *
+ * SC-01 Wave 04 — precision about that last point. This file used to claim
+ * "Every mutation records an audit entry" and "Audit trail is mandatory for
+ * every write". Neither is what the code does: `writeAudit` failures reach
+ * `console.error` only, and the mutation still returns success. The primary
+ * write is separately confirmed, so no business record is lost — but the audit
+ * trail can silently miss an entry, and a reader deserves to know that rather
+ * than trust a guarantee the module does not enforce.
  */
 
 import { supabase } from "./supabase";
@@ -376,12 +384,30 @@ export async function deactivateTicket(
   userName: string,
   reason?: string
 ): Promise<{ error: string | null }> {
-  const { error } = await supabase
+  // Confirmed-write shape, matching changeStage: an update matching zero rows
+  // returns no error, so without the read-back this would report success — and
+  // write a "deactivated" audit row — for a record it never touched. This
+  // function currently has no callers; it is corrected rather than left as a
+  // landmine for whoever wires it up.
+  const { data, error } = await supabase
     .from("commercial_tickets")
     .update({ active: false })
-    .eq("id", ticketId);
+    .eq("id", ticketId)
+    .select("id, active");
 
   if (error) return { error: error.message };
+
+  const rows = (data ?? []) as Array<{ active?: boolean }>;
+  if (rows.length === 0) {
+    return {
+      error:
+        "The record was not deactivated: no matching record was updated. " +
+        "It may have been removed, or this account may not be permitted to change it.",
+    };
+  }
+  if (rows[0]?.active !== false) {
+    return { error: "The record was not deactivated: it still reads as active." };
+  }
 
   await writeAudit({
     ticket_id: ticketId,

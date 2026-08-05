@@ -39,9 +39,20 @@ function makeBuilder(table: string) {
       call.filters[col] = val;
       return builder;
     },
+    /**
+     * The projection is ENFORCED, not merely recorded. PostgREST returns only
+     * the columns asked for; a mock that hands back the whole fixture lets a
+     * function read a column it never requested and still pass. That exact
+     * leniency certified a fabricated "GP 0%" in this codebase during Wave 03.
+     */
     select(columns?: string) {
       call.columns = columns;
-      return Promise.resolve(updateResult);
+      const wanted = (columns ?? "*").split(",").map(c => c.trim()).filter(Boolean);
+      if (!updateResult.data || wanted.includes("*")) return Promise.resolve(updateResult);
+      const projected = (updateResult.data as Array<Record<string, unknown>>).map(row =>
+        Object.fromEntries(wanted.filter(c => c in row).map(c => [c, row[c]])),
+      );
+      return Promise.resolve({ data: projected, error: updateResult.error });
     },
     // an `.update().eq()` that is never `.select()`ed still has to resolve
     then: (resolve: (v: unknown) => unknown) => resolve(updateResult),
