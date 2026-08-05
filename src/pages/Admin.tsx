@@ -31,7 +31,7 @@ import { Loader2 } from "lucide-react";
 // the legacy DashboardLayout (and its denylisted route array) into the bundle.
 const navigationV1 = true;
 import { fetchCollections, type KBCollection } from "@/lib/knowledgebase";
-import { fetchConnections, getSyncHealthStats, type CRMConnection } from "@/lib/crm-sync-engine";
+import { fetchConnectionsResult, getSyncHealthStats, type CrmConnectionsResult } from "@/lib/crm-sync-engine";
 import { toast } from "sonner";
 import {
   adminCreateUser,
@@ -58,18 +58,22 @@ interface AIProvider {
 }
 const AI_PROVIDER_CONTROL_UNAVAILABLE =
   "Provider controls are not available in this build (deferred to Sprint X - SX-011).";
-async function fetchProviderRowsAdmin(): Promise<AIProvider[]> {
-  const { data, error } = await supabase.from("ai_providers").select("*").order("name");
-  if (error) { console.warn("[AdminPanel] ai_providers read failed:", error.message); return []; }
-  return (data ?? []).map((row) => ({
+
+/**
+ * SC-01 Wave 04: the provider read goes through ops-runtime's three-state
+ * reader. The previous helper swallowed every failure into `[]`, so a broken
+ * read rendered as "there are no AI providers" — which is not the same thing.
+ */
+function toAdminProvider(row: AiProviderRecord): AIProvider {
+  return {
     id: row.id,
     name: (row.name === "google" ? "google" : "openai") as AIProviderName,
-    displayName: row.display_name ?? row.name ?? row.id,
-    modelDefault: row.model_default ?? row.modelDefault ?? "",
-    models: Array.isArray(row.models) ? row.models : [],
-    enabled: !!row.enabled,
-    config: row.config ?? {},
-  }));
+    displayName: row.displayName,
+    modelDefault: row.modelDefault,
+    models: row.models,
+    enabled: row.enabled,
+    config: row.config as AIProvider["config"],
+  };
 }
 import { supabase } from "@/lib/supabase";
 // SC-01 W03-2: the Admin panel's last four old-server HTTP calls (register rows
@@ -78,14 +82,18 @@ import { supabase } from "@/lib/supabase";
 import {
   CLEAN_SERVER_PROBE_NAME,
   SUPABASE_PROBE_NAME,
+  readAiProviders,
   readIntegrationStatus,
   readSystemHealth,
   readSystemSettings,
   saveSystemSettings,
+  type AiProviderRecord,
   type IntegrationReport,
   type Probe,
+  type RecordRead,
   type SystemHealthReport,
 } from "@/lib/ops-runtime";
+import { getFetchError } from "@/lib/supabase-error";
 import { fetchEditorBots } from "@/lib/supabase-data";
 import FacilitiesAdmin from "@/pages/FacilitiesAdmin";
 
@@ -93,19 +101,72 @@ function FacilitiesEmbed() {
   return <FacilitiesAdmin />;
 }
 
-/* ─── AI Providers Embed (inline in Admin tab) ─── */
+/* ─── CRM Sync Embed ───────────────────────────────────────────────────────
+ * SC-01 Wave 04, Wave 03 observation 1.
+ *
+ * `crm_connections` does not exist in this project (PGRST205, confirmed live).
+ * The previous implementation called fetchConnections(), which collapses that
+ * failure to `[]`, so the panel rendered a failed read as a truthful
+ * "0 Connections" beside three zeroed health counters — a fabricated healthy
+ * picture of a subsystem that has no storage at all.
+ *
+ * It now uses fetchConnectionsResult() and renders the connection read and the
+ * health counters as one honest unit: while the connection read is not `ok`,
+ * getSyncHealthStats() is not presented as health, because its snapshot is
+ * only ever filled by a successful crm_sync_events_v2 read that likewise
+ * cannot happen here.
+ *
+ * Provisioning the table, seeding connections and designing synchronization
+ * are explicitly OUT of scope for this wave. Reporting the truth is not.
+ */
 function CRMSyncEmbed() {
-  const [crmConns, setCrmConns] = useState<CRMConnection[]>([]);
-  const [crmLoading, setCrmLoading] = useState(true);
+  const [read, setRead] = useState<CrmConnectionsResult | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    fetchConnections().then((c) => { if (!cancelled) { setCrmConns(c); setCrmLoading(false); } });
+    setRead(null);
+    fetchConnectionsResult().then((r) => { if (!cancelled) setRead(r); });
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
 
-  if (crmLoading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+  // 1. LOADING — nothing is known yet.
+  if (read === null) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-6 text-muted-foreground">
+        <Loader2 className="w-5 h-5 animate-spin" />
+        <span className="text-xs">Reading CRM connection records…</span>
+      </div>
+    );
+  }
 
+  // 2. UNAVAILABLE / ERROR — no counter is shown, because no count is known.
+  if (read.status !== "ok") {
+    const unavailable = read.status === "unavailable";
+    return (
+      <Card className={`border shadow-none ${unavailable ? "border-amber-200 bg-amber-50/40" : "border-red-200 bg-red-50/40"}`}>
+        <CardContent className="p-6 space-y-2">
+          <p className={`text-sm font-semibold ${unavailable ? "text-amber-800" : "text-red-700"}`}>
+            {unavailable
+              ? "CRM connection storage is not provisioned in this build"
+              : "CRM connections could not be read"}
+          </p>
+          <p className="text-xs text-muted-foreground max-w-2xl">
+            {unavailable
+              ? "The crm_connections table does not exist in this project, so the number of CRM connections is unknown — it is not zero. Sync health counters are not shown, because there is no connection or sync-event data to compute them from."
+              : "The connection read failed, so the number of CRM connections is unknown — it is not zero. Sync health counters are not shown, because they would be computed from data that was never read."}
+          </p>
+          <p className="text-[11px] font-mono text-muted-foreground break-all">{read.message}</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={() => setReloadKey(k => k + 1)}>
+            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // 3. OK — real records (possibly a genuine zero).
+  const crmConns = read.connections;
   const stats = getSyncHealthStats();
   return (
     <div className="space-y-3">
@@ -115,6 +176,18 @@ function CRMSyncEmbed() {
         <Card><CardContent className="p-4"><div className="text-2xl font-bold text-red-600">{stats.failed}</div><div className="text-xs text-muted-foreground">Failed</div></CardContent></Card>
         <Card><CardContent className="p-4"><div className="text-2xl font-bold text-amber-600">{stats.retrying}</div><div className="text-xs text-muted-foreground">Retrying</div></CardContent></Card>
       </div>
+      <p className="text-[11px] text-muted-foreground">
+        Sync counters are computed from the sync events read in this session. Zero means no matching
+        event was read — it is not a claim that a synchronization ran and succeeded.
+      </p>
+      {crmConns.length === 0 && (
+        <Card className="border border-border shadow-none">
+          <CardContent className="p-6 text-center">
+            <p className="text-sm text-muted-foreground">The read succeeded and no CRM connection records are visible to this account.</p>
+            <p className="text-xs text-muted-foreground mt-1">Records hidden by row-level security would not appear here.</p>
+          </CardContent>
+        </Card>
+      )}
       <div className="space-y-2">
         {crmConns.map((c) => (
           <Card key={c.id}>
@@ -151,6 +224,25 @@ function KnowledgebaseEmbed() {
   }, []);
 
   if (kbLoading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+
+  /* SC-01 Wave 04 (requirement D): `fetchCollections` lives in lib/knowledgebase
+   * (outside this lane's write allowlist) and returns [] for BOTH a failed read
+   * and an empty store, so this panel cannot tell them apart. Rather than
+   * asserting "0 collections" as fact, the zero case says what is actually
+   * known. Reported as an observation for the lane that owns that module. */
+  if (collections.length === 0) {
+    return (
+      <Card className="border border-border shadow-none">
+        <CardContent className="p-6 text-center space-y-1">
+          <p className="text-sm font-medium">No knowledgebase collections were returned</p>
+          <p className="text-xs text-muted-foreground max-w-xl mx-auto">
+            No collections are visible to this account. This read cannot currently distinguish an empty store from a
+            failed read, so no count is asserted and none is shown.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-3">
@@ -194,7 +286,8 @@ function KnowledgebaseEmbed() {
 
 function AIProvidersEmbed() {
   const [providers, setProviders] = useState<AIProvider[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [read, setRead] = useState<RecordRead<AiProviderRecord> | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
   const [showKeyInput, setShowKeyInput] = useState<Record<string, boolean>>({});
@@ -202,9 +295,14 @@ function AIProvidersEmbed() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchProviderRowsAdmin().then((p) => { if (!cancelled) { setProviders(p); setLoading(false); } });
+    setRead(null);
+    readAiProviders().then((r) => {
+      if (cancelled) return;
+      setRead(r);
+      setProviders(r.rows.map(toAdminProvider));
+    });
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
 
   const handleToggle = async (id: string, enabled: boolean) => {
     void id; void enabled;
@@ -269,7 +367,43 @@ function AIProvidersEmbed() {
     }
   };
 
-  if (loading) return <div className="flex justify-center py-8"><RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+  // Three visibly different states: loading / failed read / real empty.
+  if (read === null) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
+        <RefreshCw className="w-5 h-5 animate-spin" />
+        <span className="text-xs">Reading AI provider records…</span>
+      </div>
+    );
+  }
+
+  if (read.status === "error" || read.status === "unavailable") {
+    return (
+      <Card className="border border-red-200 shadow-none">
+        <CardContent className="p-6 space-y-2">
+          <p className="text-sm font-semibold text-red-700">AI provider records could not be read</p>
+          <p className="text-xs text-muted-foreground">
+            The number of configured providers is unknown — it is not zero. No provider state is shown.
+          </p>
+          <p className="text-[11px] font-mono text-muted-foreground break-all">{read.error}</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={() => setReloadKey(k => k + 1)}>
+            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (read.status === "empty") {
+    return (
+      <Card className="border border-border shadow-none">
+        <CardContent className="p-6 text-center">
+          <p className="text-sm text-muted-foreground">The read succeeded and no AI provider records are visible to this account.</p>
+          <p className="text-xs text-muted-foreground mt-1">Records hidden by row-level security would not appear here.</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1179,7 +1313,7 @@ function ResetPasswordModal({ user, onClose }: { user: any; onClose: () => void 
 }
 
 export default function AdminPanel() {
-  const { data: users, loading, refetch } = useUsers();
+  const { data: users, loading, error: usersError, refetch } = useUsers();
   const { appUser } = useAuth();
   const [userSearch, setUserSearch] = useState("");
   const [showAddUser, setShowAddUser] = useState(false);
@@ -1273,6 +1407,12 @@ export default function AdminPanel() {
 
   if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
 
+  /* SC-01 Wave 04 (requirement D): `fetchUsers` routes through safeFetchList,
+   * which returns [] on failure and records the real error in the shared
+   * fetch-error state. Without consulting it, a failed `users` read was
+   * indistinguishable from an account with no team members. */
+  const usersFetchError = usersError ?? getFetchError("fetchUsers")?.error.message ?? null;
+
   const filteredUsers = users.filter((u: any) =>
     u.name.toLowerCase().includes(userSearch.toLowerCase()) ||
     u.email.toLowerCase().includes(userSearch.toLowerCase()) ||
@@ -1297,7 +1437,7 @@ export default function AdminPanel() {
               <TabsTrigger value="ecr"><BarChart3 className="w-3.5 h-3.5 mr-1.5" />ECR</TabsTrigger>
             </>
           )}
-          <TabsTrigger value="users"><Users className="w-3.5 h-3.5 mr-1.5" />Users ({users.length})</TabsTrigger>
+          <TabsTrigger value="users"><Users className="w-3.5 h-3.5 mr-1.5" />Users {usersFetchError ? "(unavailable)" : `(${users.length})`}</TabsTrigger>
           <TabsTrigger value="system"><Server className="w-3.5 h-3.5 mr-1.5" />System Modules</TabsTrigger>
           <TabsTrigger value="integrations"><Link2 className="w-3.5 h-3.5 mr-1.5" />Integrations</TabsTrigger>
           <TabsTrigger value="settings"><Settings className="w-3.5 h-3.5 mr-1.5" />Settings</TabsTrigger>
@@ -1347,6 +1487,21 @@ export default function AdminPanel() {
 
         {/* ─── Users Tab — Full CRUD ─── */}
         <TabsContent value="users" className="space-y-4">
+          {/* SC-01 Wave 04: a failed user read is now visibly different from
+              an empty team. Without this the table simply said "No users
+              match your search." for both. */}
+          {usersFetchError && (
+            <Card className="border border-red-200 bg-red-50/40 shadow-none">
+              <CardContent className="p-4 space-y-1">
+                <p className="text-sm font-semibold text-red-700">User records could not be read</p>
+                <p className="text-xs text-muted-foreground">
+                  The number of team members is unknown — it is not zero. The table below is empty because
+                  the read failed, not because no users exist.
+                </p>
+                <p className="text-[11px] font-mono text-muted-foreground break-all">{usersFetchError}</p>
+              </CardContent>
+            </Card>
+          )}
           <div className="flex items-center justify-between">
             <div className="relative w-72">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -1535,7 +1690,11 @@ export default function AdminPanel() {
               </table>
               {filteredUsers.length === 0 && (
                 <div className="p-8 text-center text-sm text-muted-foreground">
-                  No users match your search.
+                  {usersFetchError
+                    ? "No user records are shown because the read failed — see the message above."
+                    : userSearch
+                      ? "No users match your search."
+                      : "The read succeeded and no user records are visible to this account. Records hidden by row-level security would not appear here."}
                 </div>
               )}
               {filteredUsers.length > 10 && (

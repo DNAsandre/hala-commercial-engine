@@ -24,14 +24,34 @@ import { toast } from "sonner";
 // TenderGovernanceConfig are excluded. Panels below either show REAL records
 // (policy gates, governance audit log) or an honest deferred state. Nothing
 // here enforces workflow behavior - governance is advisory before Sprint X.
-import { type GateMode } from "@/lib/store";
-import { useCurrentUser } from "@/hooks/useSupabase";
 import {
-  fetchPolicyGates,
-  fetchGovernanceAuditLog,
+  fetchPolicyGatesResult,
+  fetchGovernanceAuditLogResult,
+  type GovernanceRead,
   type SupabasePolicyGate,
   type SupabaseGovernanceAuditEntry,
 } from "@/lib/supabase-governance-data";
+
+/* ── Shared read-failure panel ──────────────────────────────────────────────
+ * SC-01 Wave 04. Every governance read below previously collapsed a failure to
+ * `[]`, so a broken read rendered as "0 gates configured" / "No overrides
+ * recorded yet" — a confident statement about data the page never saw. */
+function GovernanceReadError({ subject, error, onRetry }: { subject: string; error: string; onRetry: () => void }) {
+  return (
+    <Card className="border border-red-200 bg-red-50/40 shadow-none">
+      <CardContent className="p-6 space-y-2">
+        <p className="text-sm font-semibold text-red-700">{subject} could not be read</p>
+        <p className="text-xs text-muted-foreground max-w-2xl">
+          Nothing is listed and no totals are shown. The number of records is unknown — it is not zero.
+        </p>
+        <p className="text-[11px] font-mono text-muted-foreground break-all">{error}</p>
+        <Button variant="outline" size="sm" className="mt-1" onClick={onRetry}>
+          <RefreshCw className="w-3.5 h-3.5 mr-1" /> Retry
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
 
 /* ── Shared honest deferred panel ── */
 function DeferredGovernancePanel({ title, note }: { title: string; note?: string }) {
@@ -57,41 +77,63 @@ function ComplianceDashboard() {
 
 /* ── Policy Gates ── */
 function PolicyGatesPanel() {
-  const { data: currentUser } = useCurrentUser();
   const [expandedGate, setExpandedGate] = useState<string | null>(null);
-  const [gates, setGates] = useState<SupabasePolicyGate[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [read, setRead] = useState<GovernanceRead<SupabasePolicyGate> | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const loadGates = async () => {
-    setLoading(true);
-    const data = await fetchPolicyGates();
-    setGates(data);
-    setLoading(false);
-  };
+  useEffect(() => {
+    let cancelled = false;
+    setRead(null);
+    fetchPolicyGatesResult().then(r => { if (!cancelled) setRead(r); });
+    return () => { cancelled = true; };
+  }, [reloadKey]);
 
-  useEffect(() => { loadGates(); }, []);
+  if (read === null) return <p className="text-sm text-muted-foreground py-8 text-center">Loading policy gates from Supabase…</p>;
+  if (read.status === "error") {
+    return <GovernanceReadError subject="Policy gates" error={read.error} onRetry={() => setReloadKey(k => k + 1)} />;
+  }
 
-  if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading policy gates from Supabase…</p>;
+  const gates = read.rows;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-serif font-bold">Policy Gates</h3>
-          <p className="text-xs text-muted-foreground">{gates.length} gates configured - advisory only until production enforcement is approved</p>
+          <p className="text-xs text-muted-foreground">
+            {gates.length} recorded gate {gates.length === 1 ? "row" : "rows"} — advisory display only; no gate in this build
+            blocks, locks or restricts any workflow
+          </p>
         </div>
         <div className="flex gap-2">
-          <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">✓ Supabase-Backed</Badge>
-          <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700">{gates.filter(g => g.mode === "enforce").length} Enforce</Badge>
-          <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700">{gates.filter(g => g.mode === "warn").length} Warn</Badge>
-          <Badge variant="outline" className="text-[10px] bg-gray-50 text-gray-500">{gates.filter(g => g.mode === "off").length} Off</Badge>
+          <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700">{gates.filter(g => g.mode === "enforce").length} recorded "enforce"</Badge>
+          <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700">{gates.filter(g => g.mode === "warn").length} recorded "warn"</Badge>
+          <Badge variant="outline" className="text-[10px] bg-gray-50 text-gray-500">{gates.filter(g => g.mode === "off").length} recorded "off"</Badge>
         </div>
       </div>
 
-      <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/50 flex items-center gap-2">
-        <Shield className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-        <p className="text-xs text-blue-800">Advisory display only: recorded gate configuration is shown read-only. Configuration changes are not available in this build (deferred to Sprint X) and nothing here enforces or restricts any workflow.</p>
+      <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/50 flex items-start gap-2">
+        <Shield className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
+        <p className="text-xs text-blue-800">
+          Advisory display only. The <span className="font-mono">mode</span> value beside each gate is the value stored in the
+          database; it is <strong>not</strong> applied to any workflow by this build — a gate recorded as "enforce" enforces
+          nothing here. Gate configuration cannot be changed on this page: <span className="font-mono">updatePolicyGateConfig</span>
+          {" "}refuses every write and performs no update, so no change made here could persist.
+        </p>
       </div>
+
+      {gates.length === 0 && (
+        <Card className="border border-border shadow-none">
+          <CardContent className="py-8 text-center space-y-1">
+            <Shield className="w-8 h-8 text-muted-foreground/40 mx-auto" />
+            <p className="text-sm font-medium">No policy gate records are visible to this account</p>
+            <p className="text-xs text-muted-foreground max-w-xl mx-auto">
+              The read of <span className="font-mono">governance_policy_gates</span> succeeded and returned zero rows.
+              Rows hidden by row-level security would not appear here.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="space-y-2">
         {gates.map(gate => {
@@ -172,29 +214,32 @@ function AIRestrictionsPanel() {
 
 /* ── Override Log ── */
 function OverrideLogPanel() {
-  const [entries, setEntries] = useState<SupabaseGovernanceAuditEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [read, setRead] = useState<GovernanceRead<SupabaseGovernanceAuditEntry> | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    (async () => {
-      const all = await fetchGovernanceAuditLog();
-      setEntries(all.filter(e => e.category === "override" || e.category === "override_attempt"));
-      setLoading(false);
-    })();
-  }, []);
+    let cancelled = false;
+    setRead(null);
+    fetchGovernanceAuditLogResult().then(r => { if (!cancelled) setRead(r); });
+    return () => { cancelled = true; };
+  }, [reloadKey]);
 
-  if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading override log from Supabase…</p>;
+  if (read === null) return <p className="text-sm text-muted-foreground py-8 text-center">Loading override log from Supabase…</p>;
+  if (read.status === "error") {
+    return <GovernanceReadError subject="The governance audit log" error={read.error} onRetry={() => setReloadKey(k => k + 1)} />;
+  }
+
+  const entries = read.rows.filter(e => e.category === "override" || e.category === "override_attempt");
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-serif font-bold">Override Log</h3>
-          <p className="text-xs text-muted-foreground">"Break Glass" doctrine — all overrides are auditable</p>
+          <p className="text-xs text-muted-foreground">Recorded override entries in <span className="font-mono">governance_audit_log</span></p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">✓ Supabase-Backed</Badge>
-          <Badge variant="outline" className="text-xs">{entries.length} override events</Badge>
+          <Badge variant="outline" className="text-xs">{entries.length} recorded override {entries.length === 1 ? "entry" : "entries"}</Badge>
         </div>
       </div>
 
@@ -202,8 +247,11 @@ function OverrideLogPanel() {
         <Card className="border border-border shadow-none">
           <CardContent className="py-8 text-center">
             <Shield className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">No overrides recorded yet</p>
-            <p className="text-xs text-muted-foreground mt-1">Overrides will appear here when gates are overridden via the "Break Glass" doctrine</p>
+            <p className="text-sm font-medium">No override records are visible to this account</p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-xl mx-auto">
+              The read succeeded and returned {read.rows.length} governance audit {read.rows.length === 1 ? "row" : "rows"},
+              none of them in the override categories. Rows hidden by row-level security would not appear here.
+            </p>
           </CardContent>
         </Card>
       ) : (
@@ -234,17 +282,17 @@ function OverrideLogPanel() {
 /* ── Governance Audit Stream ── */
 function GovernanceAuditPanel() {
   const [catFilter, setCatFilter] = useState<string>("all");
-  const [auditLog, setAuditLog] = useState<SupabaseGovernanceAuditEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [read, setRead] = useState<GovernanceRead<SupabaseGovernanceAuditEntry> | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    (async () => {
-      const data = await fetchGovernanceAuditLog();
-      setAuditLog(data);
-      setLoading(false);
-    })();
-  }, []);
+    let cancelled = false;
+    setRead(null);
+    fetchGovernanceAuditLogResult().then(r => { if (!cancelled) setRead(r); });
+    return () => { cancelled = true; };
+  }, [reloadKey]);
 
+  const auditLog = read?.rows ?? [];
   const categories = Array.from(new Set(auditLog.map(e => e.category)));
   const filtered = catFilter === "all" ? auditLog : auditLog.filter(e => e.category === catFilter);
 
@@ -264,18 +312,24 @@ function GovernanceAuditPanel() {
     user_action: "bg-gray-100 text-gray-800",
   };
 
-  if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading governance audit log from Supabase…</p>;
+  if (read === null) return <p className="text-sm text-muted-foreground py-8 text-center">Loading governance audit log from Supabase…</p>;
+  if (read.status === "error") {
+    return <GovernanceReadError subject="The governance audit log" error={read.error} onRetry={() => setReloadKey(k => k + 1)} />;
+  }
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-serif font-bold">Governance Audit Stream</h3>
-          <p className="text-xs text-muted-foreground">Unified log — every write, approval, gate evaluation, override, and admin change</p>
+          {/* The old subtitle claimed the log captured "every write, approval,
+              gate evaluation, override and admin change". This build has no
+              gate evaluation and no approval enforcement, so it describes the
+              source instead of promising coverage. */}
+          <p className="text-xs text-muted-foreground">Entries recorded in <span className="font-mono">governance_audit_log</span> (most recent first, 200 max)</p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">✓ Supabase-Backed</Badge>
-          <Badge variant="outline" className="text-xs">{auditLog.length} entries</Badge>
+          <Badge variant="outline" className="text-xs">{auditLog.length} recorded {auditLog.length === 1 ? "entry" : "entries"}</Badge>
         </div>
       </div>
 
@@ -306,8 +360,16 @@ function GovernanceAuditPanel() {
           {filtered.length === 0 ? (
             <div className="py-8 text-center">
               <Activity className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">No audit entries yet</p>
-              <p className="text-xs text-muted-foreground mt-1">Governance events will appear here as the system is used</p>
+              <p className="text-sm font-medium">
+                {auditLog.length === 0
+                  ? "No governance audit records are visible to this account"
+                  : "No records match the selected category"}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-xl mx-auto">
+                {auditLog.length === 0
+                  ? "The read succeeded and returned zero rows. Rows hidden by row-level security would not appear here."
+                  : `${auditLog.length} records were read.`}
+              </p>
             </div>
           ) : (
             <div className="divide-y divide-border">
@@ -342,27 +404,42 @@ function EnvironmentPanel() {
 
 /* ── Versioning & Immutability ── */
 function VersioningPanel() {
-  const [versionEvents, setVersionEvents] = useState<SupabaseGovernanceAuditEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [read, setRead] = useState<GovernanceRead<SupabaseGovernanceAuditEntry> | null>(null);
 
   useEffect(() => {
-    (async () => {
-      const all = await fetchGovernanceAuditLog();
-      setVersionEvents(all.filter((e: any) => e.category === "versioning"));
-      setLoading(false);
-    })();
+    let cancelled = false;
+    fetchGovernanceAuditLogResult().then(r => { if (!cancelled) setRead(r); });
+    return () => { cancelled = true; };
   }, []);
+
+  const versionEvents = (read?.rows ?? []).filter((e) => e.category === "versioning");
 
   return (
     <div className="space-y-4">
       <div>
         <h3 className="text-lg font-serif font-bold">Versioning & Immutability</h3>
-        <p className="text-xs text-muted-foreground">Document version control — approved versions are locked and immutable</p>
+        {/* SC-01 Wave 04 (requirement C): the old subtitle and the green
+            checkmark list asserted that approved versions ARE locked and that
+            edit attempts ARE blocked. This build enforces nothing — it holds
+            no lock, no gate and no block — so the list is presented as the
+            written doctrine it is, not as active system behaviour. */}
+        <p className="text-xs text-muted-foreground">Written doctrine for document version control — recorded here for reference, not enforced by this build</p>
       </div>
+
+      <Card className="border border-amber-200 bg-amber-50/40 shadow-none">
+        <CardContent className="p-3 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-800">
+            The rules below are the organisation's written doctrine. This build does <strong>not</strong> implement them:
+            it applies no version lock, blocks no edit and writes no audit entry when a version is changed. Treat them as
+            policy text, not as a description of what the software currently does.
+          </p>
+        </CardContent>
+      </Card>
 
       <Card className="border border-border shadow-none">
         <CardContent className="p-4 space-y-3">
-          <div className="flex items-center gap-2 text-sm font-medium"><Lock className="w-4 h-4 text-emerald-600" /> Immutability Rules</div>
+          <div className="flex items-center gap-2 text-sm font-medium"><Lock className="w-4 h-4 text-muted-foreground" /> Immutability rules (doctrine text — not enforced here)</div>
           {[
             "Quote versions are immutable once approved — no edits possible",
             "Proposal versions are immutable once approved — locked with pricing snapshot",
@@ -371,8 +448,8 @@ function VersioningPanel() {
             "Historical versions cannot be edited — only new versions can be created",
             "Edit attempts on immutable versions are blocked and logged to audit trail",
           ].map((rule, i) => (
-            <div key={i} className="flex items-center gap-2 p-2 rounded bg-emerald-50/50 border border-emerald-100">
-              <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <div key={i} className="flex items-center gap-2 p-2 rounded bg-muted/40 border border-border">
+              <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
               <span className="text-xs">{rule}</span>
             </div>
           ))}
@@ -385,10 +462,17 @@ function VersioningPanel() {
         </CardHeader>
         <CardContent className="pt-0">
           <div className="space-y-1.5">
-            {loading ? (
+            {read === null ? (
               <p className="text-xs text-muted-foreground text-center py-4">Loading version events…</p>
+            ) : read.status === "error" ? (
+              <p className="text-xs text-red-700 text-center py-4">
+                The governance audit log could not be read, so it is unknown whether any version events exist.
+                <span className="block font-mono text-[10px] text-muted-foreground mt-1 break-all">{read.error}</span>
+              </p>
             ) : versionEvents.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-4">No version lock events yet — events will appear when documents are approved</p>
+              <p className="text-xs text-muted-foreground text-center py-4">
+                The read succeeded and no version-lock records are visible to this account.
+              </p>
             ) : (
               versionEvents.map((e: any) => (
                 <div key={e.id} className="flex items-center gap-2 p-2 rounded border border-border text-xs">
@@ -411,8 +495,23 @@ function ApprovalMatrixPanel() {
     <div className="space-y-6">
       <div>
         <h3 className="text-lg font-serif font-bold">Approval Matrix</h3>
-        <p className="text-xs text-muted-foreground">Multi-dimensional approval authority — GP% bands x pallet volume</p>
+        <p className="text-xs text-muted-foreground">Written approval authority — GP% bands x pallet volume. Reference documentation, not enforced by this build.</p>
       </div>
+
+      {/* SC-01 Wave 04 (requirement C): these tables are hard-coded policy
+          text, not configuration this build reads or applies. Nothing in the
+          application checks a GP% band or a pallet count before allowing an
+          action. */}
+      <Card className="border border-amber-200 bg-amber-50/40 shadow-none">
+        <CardContent className="p-3 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-800">
+            Reference documentation of the organisation's approval policy. The values are fixed page content, not stored
+            configuration, and this build does not evaluate them: no workflow is gated, blocked or routed for approval
+            on the basis of this matrix.
+          </p>
+        </CardContent>
+      </Card>
 
       <Card className="border border-border shadow-none">
         <CardHeader className="pb-3"><CardTitle className="text-base font-serif">Pallet Volume Approval</CardTitle></CardHeader>
@@ -480,7 +579,7 @@ function ApprovalMatrixPanel() {
           <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200">
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span className="text-xs text-amber-800"><strong>Note:</strong> Director approval must be obtained <strong>in writing</strong>. All approvals are logged in the audit trail.</span>
+              <span className="text-xs text-amber-800"><strong>Note:</strong> Director approval must be obtained <strong>in writing</strong>. Recording approvals in the audit trail is a policy requirement carried out by people — this build does not write an audit entry when an approval is given.</span>
             </div>
           </div>
         </CardContent>
@@ -506,8 +605,26 @@ function RolesPanel() {
     <div className="space-y-4">
       <div>
         <h3 className="text-lg font-serif font-bold">Roles & Access Control</h3>
-        <p className="text-xs text-muted-foreground">RBAC hierarchy — Level 1 (highest) to Level 4</p>
+        <p className="text-xs text-muted-foreground">Written RBAC hierarchy — Level 1 (highest) to Level 4. Reference documentation, not live account data.</p>
       </div>
+
+      {/* SC-01 Wave 04: the role rows below — including the names listed
+          against each role — are fixed page content, not a read of the `users`
+          table. Presenting them without this label implied the console was
+          showing who currently holds each role. Live accounts and their roles
+          are in Admin -> Users, which reads `users` directly. */}
+      <Card className="border border-amber-200 bg-amber-50/40 shadow-none">
+        <CardContent className="p-3 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-800">
+            Reference documentation. The roles, permissions and names below are fixed page content — they are not read
+            from the user directory and do not reflect who currently holds an account or what any account can do.
+            For real accounts and their assigned roles, use <strong>Admin → Users</strong>. Permissions are not enforced
+            from this page.
+          </p>
+        </CardContent>
+      </Card>
+
       <div className="space-y-3">
         {roles.map(role => (
           <Card key={role.name} className="border border-border shadow-none">
@@ -560,11 +677,21 @@ export default function AdminGovernance() {
             <Shield className="w-8 h-8 text-[var(--color-hala-navy)] shrink-0 mt-0.5" />
             <div>
               <h3 className="text-sm font-semibold mb-1">Override Doctrine — Truthpack Principle</h3>
+              {/* SC-01 Wave 04 (requirement C): the previous text described
+                  Enforce as "blocks action", Warn as "logs override", and
+                  claimed gate modes are changeable by named roles and that all
+                  overrides are permanently logged. None of that is true of
+                  this build: it evaluates no gate, blocks no action, logs no
+                  override, and supabase-governance-data.updatePolicyGateConfig
+                  refuses every gate-mode write. */}
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Every policy gate operates in one of three modes: <strong>Enforce</strong> (blocks action, requires approval),
-                <strong> Warn</strong> (allows action but logs override with reason), or <strong>Off</strong> (no check).
-                Only the Commercial Director or CEO can change gate modes. All overrides are permanently logged.
-                AI cannot approve, sign, override, or delete. Human judgment always has final authority.
+                This console is <strong>advisory</strong>. It displays recorded governance configuration and recorded
+                governance audit entries; it does not evaluate, gate, lock, block or restrict any workflow, and it does
+                not change anyone's permissions. A gate stored with mode <strong>Enforce</strong>, <strong>Warn</strong>
+                {" "}or <strong>Off</strong> has that value stored against it — no mode is applied to anything here.
+                Gate modes cannot be changed on this page: the write path refuses every change and persists nothing.
+                No AI or bot can approve, sign, override or delete in this build, because it contains no bot execution
+                path at all. Human judgment has final authority.
               </p>
             </div>
           </div>

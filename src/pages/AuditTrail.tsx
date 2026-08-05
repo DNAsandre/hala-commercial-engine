@@ -1,9 +1,34 @@
-import { Clock, Filter, Shield, FileText, Users, AlertTriangle, CheckCircle, Activity } from "lucide-react";
-import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+/*
+ * Audit Trail — SC-01 Wave 04 (requirement D: data truth).
+ *
+ * WHAT THIS PAGE READS: the established `audit_log` table, via
+ * ops-runtime.readAuditTrail() (projection AUDIT_LOG_COLUMNS). It is the only
+ * source on this page; nothing here is derived, inferred or seeded.
+ *
+ * WHY IT CHANGED: the page previously used useAuditLog() -> fetchAuditLog(),
+ * which routes through safeFetchList and returns `[]` for a failed read. The
+ * header then stated "Complete system activity log — immutable record — 0
+ * entries" and the four stat tiles all read 0. A broken read, an RLS-filtered
+ * read and a genuinely empty table were one indistinguishable screen, and the
+ * word "Complete" asserted completeness the page could not know.
+ *
+ * Live probe 2026-08-05 (anonymous client): `audit_log` returns HTTP 200 with
+ * 0 rows. The read SUCCEEDS and the visible row set is empty. Because RLS can
+ * hide rows from an unauthenticated client, that is reported as "no records
+ * are visible to this account", never as "there are no audit records".
+ */
+import { Filter, Shield, FileText, Users, AlertTriangle, CheckCircle, Activity, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useAuditLog } from "@/hooks/useSupabase";
+import {
+  AUDIT_LOG_TABLE,
+  readAuditTrail,
+  type AuditTrailRecord,
+  type RecordRead,
+} from "@/lib/ops-runtime";
 import { Loader2 } from "lucide-react";
 
 const actionColors: Record<string, string> = {
@@ -27,10 +52,57 @@ const entityIcons: Record<string, React.ElementType> = {
 };
 
 export default function AuditTrail() {
-  const { data: auditLog, loading } = useAuditLog();
+  const [read, setRead] = useState<RecordRead<AuditTrailRecord> | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [actionFilter, setActionFilter] = useState<string>("all");
-  if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
+
+  useEffect(() => {
+    let cancelled = false;
+    setRead(null);
+    readAuditTrail().then(r => { if (!cancelled) setRead(r); });
+    return () => { cancelled = true; };
+  }, [reloadKey]);
+
+  // ── State 1 of 3: LOADING ──────────────────────────────────
+  if (read === null) {
+    return (
+      <div className="flex items-center justify-center h-96 gap-2 text-muted-foreground">
+        <Loader2 className="w-8 h-8 animate-spin" />
+        <span className="text-sm">Reading the audit log…</span>
+      </div>
+    );
+  }
+
+  // ── State 2 of 3: FAILED / UNAVAILABLE READ ────────────────
+  // No counters are rendered: nothing is known, so nothing is counted.
+  if (read.status === "error" || read.status === "unavailable") {
+    return (
+      <div className="p-6 max-w-[1400px] mx-auto">
+        <h1 className="text-2xl font-serif font-bold mb-4">Audit Trail</h1>
+        <Card className="border border-red-200 bg-red-50/40 shadow-none">
+          <CardContent className="p-6 space-y-2">
+            <p className="text-sm font-semibold text-red-700">
+              {read.status === "unavailable"
+                ? `The ${AUDIT_LOG_TABLE} table does not exist in this project`
+                : "The audit log could not be read"}
+            </p>
+            <p className="text-xs text-muted-foreground max-w-2xl">
+              No audit entries are shown and no totals are calculated. This is not a claim that
+              zero events occurred — the number of recorded events is unknown.
+            </p>
+            <p className="text-[11px] font-mono text-muted-foreground break-all">{read.error}</p>
+            <Button variant="outline" size="sm" className="mt-2" onClick={() => setReloadKey(k => k + 1)}>
+              <RefreshCw className="w-3.5 h-3.5 mr-1" /> Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // ── State 3 of 3: SUCCESSFUL READ (rows, or a visible-zero) ─
+  const auditLog = read.rows;
   const filtered = auditLog
     .filter(e => typeFilter === "all" || e.entityType === typeFilter)
     .filter(e => actionFilter === "all" || e.action === actionFilter);
@@ -43,13 +115,39 @@ export default function AuditTrail() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-serif font-bold">Audit Trail</h1>
+          {/* "Complete" and "immutable" were claims this page cannot verify.
+              It reports what it read, and from where. */}
           <p className="text-sm text-muted-foreground mt-0.5">
-            Complete system activity log — immutable record — {auditLog.length} entries
+            {auditLog.length} audit {auditLog.length === 1 ? "record" : "records"} read from <span className="font-mono">{AUDIT_LOG_TABLE}</span>
           </p>
         </div>
+        <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => setReloadKey(k => k + 1)}>
+          <RefreshCw className="w-3.5 h-3.5 mr-1" /> Reload
+        </Button>
       </div>
 
-      {/* Summary Stats */}
+      {auditLog.length === 0 && (
+        <Card className="border border-border shadow-none mb-6">
+          <CardContent className="p-8 text-center space-y-1">
+            <Activity className="w-8 h-8 text-muted-foreground/40 mx-auto" />
+            <p className="text-sm font-medium">No audit records are visible to this account</p>
+            <p className="text-xs text-muted-foreground max-w-xl mx-auto">
+              The read of <span className="font-mono">{AUDIT_LOG_TABLE}</span> succeeded and returned zero rows.
+              Records hidden from this account by row-level security would not appear here, so this is not
+              a statement that the table is empty.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Counters, filters and the event list only exist once there are
+          records. Rendering a row of zeroes over a failed-or-empty read is the
+          exact defect Wave 04 asks us to remove. */}
+      {auditLog.length > 0 && (
+      <>
+      {/* Summary Stats — each counter is computed over the same `auditLog`
+          array that the list below renders, so a counter can never disagree
+          with the data set it summarises. */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
         {[
           { label: "Total Events", value: auditLog.length, icon: Activity, color: "bg-blue-100 text-blue-800" },
@@ -116,9 +214,16 @@ export default function AuditTrail() {
                 </div>
               );
             })}
+            {filtered.length === 0 && (
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                No records match the selected filters. {auditLog.length} records were read.
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
+      </>
+      )}
     </div>
   );
 }

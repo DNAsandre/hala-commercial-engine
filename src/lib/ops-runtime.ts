@@ -363,6 +363,11 @@ const CRM_CONNECTIONS_TABLE = "crm_connections";
  * `crm_connections` table is readable and how many rows it holds. It cannot
  * probe Zoho itself, so each connection's stored `health_status` is reported
  * as a RECORDED value, explicitly not a live check.
+ *
+ * SC-01 Wave 04: a table that does not exist in this project (PGRST205 /
+ * 42P01) is reported as NOT PROVISIONED rather than as a generic check
+ * failure, so a reader can tell "no CRM storage was ever created here" apart
+ * from "the read broke".
  */
 async function readCrmIntegration(): Promise<IntegrationEntry> {
   const { data, error } = await supabase
@@ -370,6 +375,14 @@ async function readCrmIntegration(): Promise<IntegrationEntry> {
     .select("name, provider, health_status, last_sync_at");
 
   if (error) {
+    if (isMissingTableError(error)) {
+      return {
+        name: "CRM connections",
+        status: "not_measured",
+        detail: `${CRM_CONNECTIONS_TABLE} does not exist in this project — CRM connection storage is not provisioned in this build.`,
+        connectionInfo: "Not measured — there is no connection storage to read.",
+      };
+    }
     return {
       name: "CRM connections",
       status: "failed",
@@ -445,4 +458,465 @@ export async function readIntegrationStatus(): Promise<IntegrationReport> {
   ];
 
   return { integrations, reportedAt: new Date().toISOString() };
+}
+
+// ─────────────────────────────────────────────────────────────
+// SC-01 Wave 04 — three-state record reads for the System surfaces
+// ─────────────────────────────────────────────────────────────
+//
+// Wave 04's central rule: a failed read is not an empty result, and the two
+// must not look the same to a human. Every reader below therefore answers with
+// FOUR distinguishable outcomes instead of a bare array:
+//
+//   loaded      — the read succeeded and returned rows
+//   empty       — the read succeeded and the visible row set is genuinely zero
+//   unavailable — the table does not exist in this project (PGRST205 / 42P01)
+//   error       — the read failed for any other reason (RLS, network, syntax)
+//
+// A zero-row read is reported as `empty`, never as proof that the table is
+// empty for every caller: row-level security can hide rows from the current
+// client. Callers must phrase `empty` as "no records are visible", which is
+// what the System pages now do.
+
+/** Postgres/PostgREST codes that mean "this relation does not exist here". */
+const MISSING_TABLE_CODES: ReadonlySet<string> = new Set(["PGRST205", "42P01"]);
+
+function isMissingTableError(error: unknown): boolean {
+  const code = (error as { code?: string } | null)?.code ?? "";
+  return MISSING_TABLE_CODES.has(code);
+}
+
+function errorText(error: unknown): string {
+  const message = (error as { message?: string } | null)?.message;
+  return message || "Unknown Supabase error";
+}
+
+export type RecordRead<T> =
+  | { status: "loaded"; rows: T[] }
+  | { status: "empty"; rows: [] }
+  | { status: "unavailable"; rows: []; error: string }
+  | { status: "error"; rows: []; error: string };
+
+/**
+ * Classify one PostgREST list response. Shared by every reader below so the
+ * four outcomes are produced in exactly one place and cannot drift apart.
+ */
+function classifyListRead<TRow, TOut>(
+  table: string,
+  data: TRow[] | null,
+  error: unknown,
+  map: (row: TRow) => TOut,
+): RecordRead<TOut> {
+  if (error) {
+    if (isMissingTableError(error)) {
+      return {
+        status: "unavailable",
+        rows: [],
+        error: `The table "${table}" does not exist in this project.`,
+      };
+    }
+    return { status: "error", rows: [], error: errorText(error) };
+  }
+  const rows = (data ?? []).map(map);
+  if (rows.length === 0) return { status: "empty", rows: [] };
+  return { status: "loaded", rows };
+}
+
+/** Human sentence for a non-loaded read, used verbatim by the System pages. */
+export function describeRecordRead(
+  read: RecordRead<unknown>,
+  subject: string,
+): string {
+  switch (read.status) {
+    case "loaded":
+      return `${read.rows.length} ${subject} read from the database.`;
+    case "empty":
+      return `The read succeeded and no ${subject} are visible to this account. Records hidden by row-level security would not appear here.`;
+    case "unavailable":
+      return `${subject} cannot be shown: ${read.error}`;
+    case "error":
+      return `${subject} could not be read: ${read.error}`;
+  }
+}
+
+// ── Audit trail (audit_log) ──────────────────────────────────
+
+export const AUDIT_LOG_TABLE = "audit_log";
+
+/** Projection actually requested from `audit_log` — every field is rendered. */
+export const AUDIT_LOG_COLUMNS =
+  "id, entity_type, entity_id, action, user_id, user_name, timestamp, details";
+
+export interface AuditTrailRecord {
+  id: string;
+  entityType: string;
+  entityId: string;
+  action: string;
+  userId: string;
+  userName: string;
+  timestamp: string;
+  details: string;
+}
+
+function mapAuditRow(row: any): AuditTrailRecord {
+  return {
+    id: row.id,
+    entityType: row.entity_type ?? "",
+    entityId: row.entity_id ?? "",
+    action: row.action ?? "",
+    userId: row.user_id ?? "",
+    userName: row.user_name ?? "",
+    timestamp: row.timestamp ?? "",
+    details: row.details ?? "",
+  };
+}
+
+/**
+ * Read the persisted audit trail.
+ *
+ * This is the same established `audit_log` table the previous implementation
+ * used; the only change is that the outcome is no longer collapsed to `[]`,
+ * so the Audit Trail page can say which of the four things happened.
+ */
+export async function readAuditTrail(): Promise<RecordRead<AuditTrailRecord>> {
+  const { data, error } = await supabase
+    .from(AUDIT_LOG_TABLE)
+    .select(AUDIT_LOG_COLUMNS)
+    .order("timestamp", { ascending: false });
+  return classifyListRead(AUDIT_LOG_TABLE, data, error, mapAuditRow);
+}
+
+// ── AI providers (ai_providers) ──────────────────────────────
+
+export const AI_PROVIDERS_TABLE = "ai_providers";
+export const AI_PROVIDERS_COLUMNS =
+  "id, name, display_name, model_default, models, enabled, config";
+
+export interface AiProviderRecord {
+  id: string;
+  name: string;
+  displayName: string;
+  modelDefault: string;
+  models: string[];
+  enabled: boolean;
+  config: Record<string, unknown>;
+}
+
+function mapProviderRow(row: any): AiProviderRecord {
+  return {
+    id: row.id,
+    name: row.name ?? "",
+    displayName: row.display_name ?? row.name ?? row.id,
+    modelDefault: row.model_default ?? "",
+    models: Array.isArray(row.models) ? row.models : [],
+    enabled: row.enabled === true,
+    config: (row.config ?? {}) as Record<string, unknown>,
+  };
+}
+
+export async function readAiProviders(): Promise<RecordRead<AiProviderRecord>> {
+  const { data, error } = await supabase
+    .from(AI_PROVIDERS_TABLE)
+    .select(AI_PROVIDERS_COLUMNS)
+    .order("name");
+  return classifyListRead(AI_PROVIDERS_TABLE, data, error, mapProviderRow);
+}
+
+// ── Bots (ai_bots) ───────────────────────────────────────────
+
+export const AI_BOTS_TABLE = "ai_bots";
+export const AI_BOTS_COLUMNS =
+  "id, name, display_name, type, status, purpose, domains_allowed, regions_allowed, " +
+  "roles_allowed, current_version_id, provider_id, model, rate_limit, cost_cap, " +
+  "timeout_sec, created_at, updated_at";
+
+export interface AiBotRecord {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  purpose: string;
+  domainsAllowed: string[];
+  regionsAllowed: string[];
+  rolesAllowed: string[];
+  currentVersionId: string | null;
+  /** Recorded provider id. It may not match any `ai_providers.id`. */
+  providerId: string | null;
+  model: string | null;
+  rateLimit: number | null;
+  costCap: number | null;
+  timeoutSec: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Map an `ai_bots` row. Fields the table leaves null stay null: this build
+ * does not substitute plausible-looking defaults (20 / 10 / 30 / "gpt-4o")
+ * for configuration that was never recorded, because the System pages render
+ * these values as though they were the bot's stored configuration.
+ */
+function mapBotRow(row: any): AiBotRecord {
+  return {
+    id: row.id,
+    name: row.display_name ?? row.name ?? row.id,
+    type: row.type ?? "",
+    status: row.status ?? "",
+    purpose: row.purpose ?? "",
+    domainsAllowed: Array.isArray(row.domains_allowed) ? row.domains_allowed : [],
+    regionsAllowed: Array.isArray(row.regions_allowed) ? row.regions_allowed : [],
+    rolesAllowed: Array.isArray(row.roles_allowed) ? row.roles_allowed : [],
+    currentVersionId: row.current_version_id ?? null,
+    providerId: row.provider_id ?? null,
+    model: row.model ?? null,
+    rateLimit: row.rate_limit ?? null,
+    costCap: row.cost_cap ?? null,
+    timeoutSec: row.timeout_sec ?? null,
+    createdAt: row.created_at ?? "",
+    updatedAt: row.updated_at ?? "",
+  };
+}
+
+export async function readAiBots(): Promise<RecordRead<AiBotRecord>> {
+  const { data, error } = await supabase
+    .from(AI_BOTS_TABLE)
+    .select(AI_BOTS_COLUMNS)
+    .order("created_at", { ascending: false });
+  return classifyListRead(AI_BOTS_TABLE, data, error, mapBotRow);
+}
+
+/**
+ * Resolve a bot's recorded `provider_id` against the provider records that
+ * were actually read.
+ *
+ * The live data does not always line up: `ai_bots.provider_id` holds values
+ * such as "prov-openai" while `ai_providers.id` holds "aip-openai-001". The
+ * previous UI rendered `provider?.name` directly and printed the literal
+ * string "undefined" for every such bot. There is no defensible way to guess
+ * the intended link, so an unmatched id is reported as unmatched and the
+ * recorded value is shown verbatim.
+ */
+export function resolveBotProviderLabel(
+  providerId: string | null,
+  providers: readonly AiProviderRecord[],
+): { matched: boolean; label: string } {
+  if (!providerId) return { matched: false, label: "No provider recorded" };
+  const provider = providers.find((p) => p.id === providerId);
+  if (provider) return { matched: true, label: provider.displayName };
+  return { matched: false, label: `${providerId} (no matching provider record)` };
+}
+
+// ── Bot versions (ai_bot_versions) ───────────────────────────
+
+export const AI_BOT_VERSIONS_TABLE = "ai_bot_versions";
+export const AI_BOT_VERSIONS_COLUMNS =
+  "id, bot_id, version, system_instruction, custom_instruction, safety_rules, " +
+  "temperature, max_tokens, knowledge_base_ids, connector_snapshot, chain_config, " +
+  "change_note, created_at, created_by";
+
+export interface AiBotVersionRecord {
+  id: string;
+  botId: string;
+  version: number | null;
+  systemInstruction: string | null;
+  customInstruction: string | null;
+  safetyRules: string | null;
+  temperature: number | null;
+  maxTokens: number | null;
+  knowledgeBaseIds: string[];
+  connectorSnapshot: Record<string, unknown> | null;
+  chainConfig: Record<string, unknown> | null;
+  changeNote: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+function mapBotVersionRow(row: any): AiBotVersionRecord {
+  const isObject = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  return {
+    id: row.id,
+    botId: row.bot_id ?? "",
+    version: row.version ?? null,
+    systemInstruction: row.system_instruction ?? null,
+    customInstruction: row.custom_instruction ?? null,
+    safetyRules: row.safety_rules ?? null,
+    temperature: row.temperature ?? null,
+    maxTokens: row.max_tokens ?? null,
+    knowledgeBaseIds: Array.isArray(row.knowledge_base_ids) ? row.knowledge_base_ids : [],
+    connectorSnapshot: isObject(row.connector_snapshot) ? row.connector_snapshot : null,
+    chainConfig: isObject(row.chain_config) ? row.chain_config : null,
+    changeNote: row.change_note ?? "",
+    createdAt: row.created_at ?? "",
+    createdBy: row.created_by ?? "",
+  };
+}
+
+export type BotConfigurationRead =
+  | { status: "loaded"; bot: AiBotRecord; versions: AiBotVersionRecord[] }
+  /** The read succeeded and no bot with that id is visible to this account. */
+  | { status: "not_found"; bot: null; versions: [] }
+  | { status: "error"; bot: null; versions: []; error: string };
+
+/**
+ * Read one bot's recorded configuration plus its version history.
+ *
+ * "Not visible" is deliberately separate from "read failed": the previous
+ * implementation logged both to the console and left the page displaying
+ * "Loading recorded configuration…" forever.
+ */
+export async function readBotConfiguration(botId: string): Promise<BotConfigurationRead> {
+  const botRes = await supabase
+    .from(AI_BOTS_TABLE)
+    .select(AI_BOTS_COLUMNS)
+    .eq("id", botId)
+    .maybeSingle();
+
+  if (botRes.error) {
+    return { status: "error", bot: null, versions: [], error: errorText(botRes.error) };
+  }
+  if (!botRes.data) {
+    return { status: "not_found", bot: null, versions: [] };
+  }
+
+  const versionsRes = await supabase
+    .from(AI_BOT_VERSIONS_TABLE)
+    .select(AI_BOT_VERSIONS_COLUMNS)
+    .eq("bot_id", botId)
+    .order("version", { ascending: false });
+
+  if (versionsRes.error) {
+    return { status: "error", bot: null, versions: [], error: errorText(versionsRes.error) };
+  }
+
+  return {
+    status: "loaded",
+    bot: mapBotRow(botRes.data),
+    versions: (versionsRes.data ?? []).map(mapBotVersionRow),
+  };
+}
+
+// ── Bot usage log (ai_usage_logs) ────────────────────────────
+
+export const AI_USAGE_LOGS_TABLE = "ai_usage_logs";
+export const AI_USAGE_LOGS_COLUMNS =
+  "id, bot_id, bot_name, user_id, user_name, provider, model, action, status, " +
+  "error_message, cost_usd, latency_ms, tokens_input, tokens_output, workspace_id, " +
+  "human_action, created_at";
+
+export interface AiUsageLogRecord {
+  id: string;
+  botId: string;
+  botName: string;
+  userId: string;
+  userName: string;
+  provider: string;
+  model: string;
+  action: string;
+  status: string;
+  errorMessage: string | null;
+  /** null when the column holds no value — never coerced to 0. */
+  costUsd: number | null;
+  latencyMs: number | null;
+  tokensInput: number | null;
+  tokensOutput: number | null;
+  workspaceId: string | null;
+  /** Recorded human decision, e.g. "apply" / "preview_generated". */
+  humanAction: string | null;
+  createdAt: string;
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function mapUsageLogRow(row: any): AiUsageLogRecord {
+  return {
+    id: row.id,
+    botId: row.bot_id ?? "",
+    botName: row.bot_name ?? "",
+    userId: row.user_id ?? "",
+    userName: row.user_name ?? "",
+    provider: row.provider ?? "",
+    model: row.model ?? "",
+    action: row.action ?? "",
+    status: row.status ?? "",
+    errorMessage: row.error_message ?? null,
+    costUsd: numberOrNull(row.cost_usd),
+    latencyMs: numberOrNull(row.latency_ms),
+    tokensInput: numberOrNull(row.tokens_input),
+    tokensOutput: numberOrNull(row.tokens_output),
+    workspaceId: row.workspace_id ?? null,
+    humanAction: row.human_action ?? null,
+    createdAt: row.created_at ?? "",
+  };
+}
+
+export const AI_USAGE_LOGS_DEFAULT_LIMIT = 200;
+
+export async function readAiUsageLogs(
+  limit: number = AI_USAGE_LOGS_DEFAULT_LIMIT,
+): Promise<RecordRead<AiUsageLogRecord>> {
+  const { data, error } = await supabase
+    .from(AI_USAGE_LOGS_TABLE)
+    .select(AI_USAGE_LOGS_COLUMNS)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return classifyListRead(AI_USAGE_LOGS_TABLE, data, error, mapUsageLogRow);
+}
+
+/**
+ * Averages over the recorded values only.
+ *
+ * `null` (nothing recorded) is excluded rather than counted as zero, so an
+ * empty or unrecorded column reads as "not recorded" instead of a confident
+ * "0ms" / "$0.000" that no row actually supports.
+ */
+export function summariseUsageNumber(
+  rows: readonly AiUsageLogRecord[],
+  pick: (row: AiUsageLogRecord) => number | null,
+): { recordedCount: number; total: number | null; average: number | null } {
+  const values = rows.map(pick).filter((v): v is number => v !== null);
+  if (values.length === 0) return { recordedCount: 0, total: null, average: null };
+  const total = values.reduce((a, b) => a + b, 0);
+  return { recordedCount: values.length, total, average: total / values.length };
+}
+
+// ── Facilities (facilities) ──────────────────────────────────
+
+export const FACILITIES_TABLE = "facilities";
+export const FACILITIES_COLUMNS = "id, name, code, region, active, sort_order, created_at, updated_at";
+
+export interface FacilityRecord {
+  id: string;
+  name: string;
+  code: string | null;
+  region: string | null;
+  active: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function mapFacilityRow(row: any): FacilityRecord {
+  return {
+    id: row.id,
+    name: row.name ?? "",
+    code: row.code ?? null,
+    region: row.region ?? null,
+    active: row.active === true,
+    sortOrder: typeof row.sort_order === "number" ? row.sort_order : 0,
+    createdAt: row.created_at ?? "",
+    updatedAt: row.updated_at ?? "",
+  };
+}
+
+export async function readFacilities(): Promise<RecordRead<FacilityRecord>> {
+  const { data, error } = await supabase
+    .from(FACILITIES_TABLE)
+    .select(FACILITIES_COLUMNS)
+    .order("sort_order", { ascending: true });
+  return classifyListRead(FACILITIES_TABLE, data, error, mapFacilityRow);
 }
