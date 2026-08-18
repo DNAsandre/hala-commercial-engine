@@ -57,7 +57,7 @@ interface AIProvider {
   config?: { api_key_configured?: boolean; api_key_last4?: string } & Record<string, unknown>;
 }
 const AI_PROVIDER_CONTROL_UNAVAILABLE =
-  "Provider controls are not available in this build (deferred to Sprint X - SX-011).";
+  "Provider activation controls are excluded from the approved clean-app scope (manifest A-10; architect ruling 2026-08-18).";
 
 /**
  * SC-01 Wave 04: the provider read goes through ops-runtime's three-state
@@ -444,7 +444,7 @@ function AIProvidersEmbed() {
 
   const handleTest = async (name: AIProviderName, id: string) => {
     void name; void id;
-    toast.error("Provider connection testing is not available in this build (deferred to Sprint X - SX-001/SX-011).");
+    toast.error("Provider connection testing is excluded from the approved clean-app scope (manifest A-11: model invocation is out of scope).");
   };
 
   const handleSaveApiKey = async (id: string) => {

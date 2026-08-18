@@ -223,7 +223,7 @@ function PolicyGatesPanel() {
 function AIRestrictionsPanel() {
   // SX-001/SX-006/SX-011: AI kill switch, module toggles and restriction
   // config are AI-infrastructure controls - deferred, honest state only.
-  return <DeferredGovernancePanel title="AI restriction controls are not available in this build" />;
+  return <DeferredGovernancePanel title="AI restriction controls are excluded from the approved clean-app scope (manifest A-39; enforcement is out of scope)" />;
 }
 
 /* ── Override Log ── */
