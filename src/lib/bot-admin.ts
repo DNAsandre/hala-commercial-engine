@@ -595,31 +595,6 @@ export async function archiveBot(botId: string): Promise<BotAdminWriteResult> {
 }
 
 // ─────────────────────────────────────────────────────────────
-// B-08 — provider enable/disable
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Enable/disable an AI provider (manifest B-08): UPDATE ai_providers SET
- * enabled, updated_at WHERE id = :exact_provider_id, confirmed by read-back.
- * This writes the SAME store the registry displays — the old page wrote
- * bot_providers (0 rows) and could never change what it showed.
- */
-export async function setProviderEnabled(
-  providerId: string,
-  enabled: boolean,
-): Promise<BotAdminWriteResult> {
-  if (!providerId || !providerId.trim()) {
-    return { status: "error", error: "A provider id is required." };
-  }
-  if (typeof enabled !== "boolean") {
-    return { status: "error", error: "enabled must be a boolean." };
-  }
-  return toWriteResult(
-    await updateConfirmed(AI_PROVIDERS_TABLE, providerId, { enabled, updated_at: nowIso() }),
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
 // B-14 — create bot (bot row + first version + repoint)
 // ─────────────────────────────────────────────────────────────
 

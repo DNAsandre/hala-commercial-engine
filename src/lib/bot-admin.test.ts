@@ -124,7 +124,6 @@ import {
   publishBotVersion,
   readKnowledgeCollections,
   setBotStatus,
-  setProviderEnabled,
   summariseProviderUsage,
   validateBotDefinition,
   type AiBotRecord,
@@ -305,39 +304,6 @@ describe("archiveBot — status -> archived with confirmed persistence (B-04)", 
   it("zero matched rows is a failure, not the old app's silent success toast", async () => {
     queue(AI_BOTS_TABLE, "update", { data: [], error: null });
     const result = await archiveBot(BOT_ID);
-    expect(result.status).toBe("not_stored");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────
-// B-08 — setProviderEnabled
-// ─────────────────────────────────────────────────────────────
-
-describe("setProviderEnabled — writes the store the registry displays (B-08)", () => {
-  it("updates ai_providers (NOT the old disconnected bot_providers) by exact id", async () => {
-    queue(AI_PROVIDERS_TABLE, "update", echoUpdate());
-    const result = await setProviderEnabled("aip-openai-001", false);
-
-    expect(result.status).toBe("stored");
-    const write = callsFor(AI_PROVIDERS_TABLE, "update")[0];
-    expect(write.table).toBe("ai_providers");
-    expect(write.payload).toMatchObject({ enabled: false });
-    expect(write.filters).toEqual([["id", "aip-openai-001"]]);
-    expect(callsFor("bot_providers")).toHaveLength(0);
-  });
-
-  it("reports NOT stored when the read-back still shows the old enabled value", async () => {
-    queue(AI_PROVIDERS_TABLE, "update", (call) => {
-      const idFilter = call.filters.find(([c]) => c === "id");
-      return { data: [{ id: idFilter?.[1], enabled: true, updated_at: "x" }], error: null };
-    });
-    const result = await setProviderEnabled("aip-openai-001", false);
-    expect(result.status).toBe("not_stored");
-  });
-
-  it("reports NOT stored when the update matched zero rows", async () => {
-    queue(AI_PROVIDERS_TABLE, "update", { data: [], error: null });
-    const result = await setProviderEnabled("aip-missing", true);
     expect(result.status).toBe("not_stored");
   });
 });
