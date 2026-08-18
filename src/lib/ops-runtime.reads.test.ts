@@ -321,6 +321,48 @@ describe("readBotConfiguration", () => {
     expect(read.versions[0].connectorSnapshot).toBeNull();
     expect(read.versions[0].knowledgeBaseIds).toEqual([]);
   });
+
+  // ── SC-01 Wave 06 (T13): the version projection carries the live columns a
+  // Wave-04 comment wrongly claimed did not exist. `allowed_actions` is real
+  // and populated (live probe 2026-08-18: ["suggest","draft"]), as are the
+  // per-version provider_id / model / permission_snapshot columns.
+  it("selects allowed_actions, provider_id, model and permission_snapshot on the version row", async () => {
+    results.set(AI_BOTS_TABLE, { data: { id: "b1" }, error: null });
+    results.set(AI_BOT_VERSIONS_TABLE, { data: [], error: null });
+    await readBotConfiguration("b1");
+    const columns = lastCallFor(AI_BOT_VERSIONS_TABLE).columns ?? "";
+    for (const column of ["allowed_actions", "provider_id", "model", "permission_snapshot"]) {
+      expect(columns).toContain(column);
+    }
+  });
+
+  it("carries the RECORDED allowed_actions selection through, and maps absence to []", async () => {
+    results.set(AI_BOTS_TABLE, { data: { id: "b1" }, error: null });
+    results.set(AI_BOT_VERSIONS_TABLE, {
+      data: [
+        {
+          id: "v2", bot_id: "b1", version: 2,
+          allowed_actions: ["signal_event", "report_snapshot"],
+          provider_id: "aip-openai-001", model: "gpt-4o-mini",
+          permission_snapshot: { rolesAllowed: ["admin"] },
+        },
+        { id: "v1", bot_id: "b1", version: 1, allowed_actions: null, provider_id: null, model: null, permission_snapshot: null },
+      ],
+      error: null,
+    });
+    const read = await readBotConfiguration("b1");
+    expect(read.status).toBe("loaded");
+    // Recorded values reach the caller verbatim — not invented, not dropped.
+    expect(read.versions[0].allowedActions).toEqual(["signal_event", "report_snapshot"]);
+    expect(read.versions[0].providerId).toBe("aip-openai-001");
+    expect(read.versions[0].model).toBe("gpt-4o-mini");
+    expect(read.versions[0].permissionSnapshot).toEqual({ rolesAllowed: ["admin"] });
+    // Absence stays honest: no selection recorded -> [], null -> null.
+    expect(read.versions[1].allowedActions).toEqual([]);
+    expect(read.versions[1].providerId).toBeNull();
+    expect(read.versions[1].model).toBeNull();
+    expect(read.versions[1].permissionSnapshot).toBeNull();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
