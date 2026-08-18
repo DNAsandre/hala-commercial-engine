@@ -83,26 +83,77 @@ interface BotRun {
 // COLLECTIONS
 // ============================================================
 
-export async function fetchCollections(): Promise<KBCollection[]> {
+/** Established table + projection for the collection list read. */
+export const KB_COLLECTIONS_TABLE = "kb_collections";
+export const KB_COLLECTIONS_SELECT = "*, kb_documents(count), kb_chunks(count)";
+
+/** Postgres/PostgREST codes meaning "this relation does not exist here". */
+const KB_MISSING_TABLE_CODES: ReadonlySet<string> = new Set(["PGRST205", "42P01"]);
+
+/**
+ * SC-01 Wave 06 (T13, manifest row B-19): classified KB-collection read.
+ *
+ * `ok` — the read succeeded; `collections` holds the visible rows (possibly
+ * zero: the live table exists with 0 rows visible to anon, verified
+ * 2026-08-18). A zero-row `ok` is an honest empty picker, NOT a failure.
+ * `unavailable` — the table does not exist in this project (PGRST205/42P01).
+ * `error` — the read genuinely failed (RLS, network, anything else); nothing
+ * is known about stored collections and the caller must not render "empty".
+ */
+export type KBCollectionsResult =
+  | { status: "ok"; collections: KBCollection[] }
+  | { status: "unavailable"; collections: []; error: string }
+  | { status: "error"; collections: []; error: string };
+
+export async function fetchCollectionsResult(): Promise<KBCollectionsResult> {
   const { data, error } = await supabase
-    .from("kb_collections")
-    .select("*, kb_documents(count), kb_chunks(count)")
+    .from(KB_COLLECTIONS_TABLE)
+    .select(KB_COLLECTIONS_SELECT)
     .order("created_at", { ascending: false });
 
   if (error) {
-    throw new Error(`Failed to load knowledgebase collections: ${error.message}`);
+    const code = (error as { code?: string }).code ?? "";
+    if (KB_MISSING_TABLE_CODES.has(code)) {
+      return {
+        status: "unavailable",
+        collections: [],
+        error: `The table "${KB_COLLECTIONS_TABLE}" does not exist in this project.`,
+      };
+    }
+    return {
+      status: "error",
+      collections: [],
+      error: error.message || "Unknown Supabase error",
+    };
   }
 
-  return (data ?? []).map((row: any) => ({
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    visibility: row.visibility,
-    created_by: row.created_by,
-    created_at: row.created_at,
-    doc_count: row.kb_documents?.[0]?.count || 0,
-    chunk_count: row.kb_chunks?.[0]?.count || 0,
-  }));
+  return {
+    status: "ok",
+    collections: (data ?? []).map((row: any) => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      visibility: row.visibility,
+      created_by: row.created_by,
+      created_at: row.created_at,
+      doc_count: row.kb_documents?.[0]?.count || 0,
+      chunk_count: row.kb_chunks?.[0]?.count || 0,
+    })),
+  };
+}
+
+/**
+ * Compatibility wrapper — the pre-Wave-06 surface, preserved exactly for the
+ * existing callers (src/pages/Admin.tsx catches this throw and renders its own
+ * failed state; src/lib/ai-runs.ts imports only the RetrievedChunk type).
+ * New callers should prefer `fetchCollectionsResult`, which does not throw.
+ */
+export async function fetchCollections(): Promise<KBCollection[]> {
+  const result = await fetchCollectionsResult();
+  if (result.status !== "ok") {
+    throw new Error(`Failed to load knowledgebase collections: ${result.error}`);
+  }
+  return result.collections;
 }
 
 // ============================================================

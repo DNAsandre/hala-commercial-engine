@@ -780,9 +780,22 @@ export function describeBotProvider(
 // ── Bot versions (ai_bot_versions) ───────────────────────────
 
 export const AI_BOT_VERSIONS_TABLE = "ai_bot_versions";
+/**
+ * SC-01 Wave 06 (T13) correction of record: this projection previously omitted
+ * `allowed_actions`, `provider_id`, `model` and `permission_snapshot`, and a
+ * Wave-04 page comment claimed `ai_bots` / `ai_bot_versions` record no per-bot
+ * action-mode selection. That claim is WRONG about the live schema: the
+ * `allowed_actions` column exists and holds real recorded selections (live
+ * probe 2026-08-18, e.g. ["suggest","draft"] and
+ * ["signal_event","report_snapshot"]), and the version rows also carry
+ * `provider_id`, `model` and `permission_snapshot`. All four columns are
+ * verified live and now part of the projection, so the Bot Builder surfaces
+ * can display the recorded selection instead of mislabelling it non-existent.
+ */
 export const AI_BOT_VERSIONS_COLUMNS =
   "id, bot_id, version, system_instruction, custom_instruction, safety_rules, " +
-  "temperature, max_tokens, knowledge_base_ids, connector_snapshot, chain_config, " +
+  "temperature, max_tokens, allowed_actions, provider_id, model, " +
+  "knowledge_base_ids, connector_snapshot, permission_snapshot, chain_config, " +
   "change_note, created_at, created_by";
 
 export interface AiBotVersionRecord {
@@ -794,6 +807,18 @@ export interface AiBotVersionRecord {
   safetyRules: string | null;
   temperature: number | null;
   maxTokens: number | null;
+  /**
+   * Recorded action-mode / monitor-output selection (Wave 06, row B-17).
+   * Optional in the TYPE only so pre-existing fixtures stay valid;
+   * `mapBotVersionRow` always populates it ([] when nothing is recorded).
+   */
+  allowedActions?: string[];
+  /** Recorded per-version provider id (may not match any ai_providers.id). */
+  providerId?: string | null;
+  /** Recorded per-version model string. */
+  model?: string | null;
+  /** Recorded permission snapshot jsonb; null when nothing is recorded. */
+  permissionSnapshot?: Record<string, unknown> | null;
   knowledgeBaseIds: string[];
   connectorSnapshot: Record<string, unknown> | null;
   chainConfig: Record<string, unknown> | null;
@@ -814,6 +839,10 @@ function mapBotVersionRow(row: any): AiBotVersionRecord {
     safetyRules: row.safety_rules ?? null,
     temperature: row.temperature ?? null,
     maxTokens: row.max_tokens ?? null,
+    allowedActions: Array.isArray(row.allowed_actions) ? row.allowed_actions : [],
+    providerId: row.provider_id ?? null,
+    model: row.model ?? null,
+    permissionSnapshot: isObject(row.permission_snapshot) ? row.permission_snapshot : null,
     knowledgeBaseIds: Array.isArray(row.knowledge_base_ids) ? row.knowledge_base_ids : [],
     connectorSnapshot: isObject(row.connector_snapshot) ? row.connector_snapshot : null,
     chainConfig: isObject(row.chain_config) ? row.chain_config : null,
