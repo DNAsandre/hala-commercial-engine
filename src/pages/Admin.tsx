@@ -135,6 +135,51 @@ export function matchesUserSearch(user: { name?: unknown; email?: unknown; role?
   );
 }
 
+/* ─── User activation status — SC-01 Wave 06 GAP-1 (manifest row A-05) ──────
+ * DATABASE-CONTRACT-GAP, BLOCKED: no readable source reflects whether an
+ * account is active or deactivated. `users.status` and `users.active` do not
+ * exist live (probed 2026-08-18), and the deployed admin-user-management edge
+ * function's ban effect is not surfaced by any readable contract.
+ *
+ * The tab previously rendered `user.status === "inactive"` from a column that
+ * does not exist, so every account carried a green "Active" badge presented as
+ * stored state, and the Reactivate action was unreachable. The smallest honest
+ * presentation replaces that fabricated badge with an explicit "not readable"
+ * one, offers both Deactivate and Reactivate (the server-side contracts are
+ * real and confirmed per-request), and reports exactly what was confirmed —
+ * never a list state this build cannot read. No contract is invented here.
+ */
+export const USER_ACTIVATION_NOT_READABLE =
+  "Activation state is not stored in any readable contract in this build, so the list cannot display it.";
+
+export type UserActivationReport = {
+  tone: "success" | "error";
+  message: string;
+  description: string;
+};
+
+export function describeUserActivationAction(
+  kind: "deactivate" | "reactivate",
+  result: { success: boolean; error?: string },
+  userName: string,
+): UserActivationReport {
+  const verb = kind === "deactivate" ? "Deactivation" : "Reactivation";
+  if (result.success !== true) {
+    return {
+      tone: "error",
+      message: `${verb} failed`,
+      description: result.error || "The server did not confirm the request. Nothing is reported as changed.",
+    };
+  }
+  // Success claims only what the edge function confirmed — the request — and
+  // says plainly that the resulting state cannot be shown in the list.
+  return {
+    tone: "success",
+    message: `${verb} confirmed by the server`,
+    description: `${userName} — the admin function confirmed this request. ${USER_ACTIVATION_NOT_READABLE}`,
+  };
+}
+
 /* ─── CRM Sync Embed ───────────────────────────────────────────────────────
  * SC-01 Wave 04, Wave 03 observation 1.
  *
@@ -356,7 +401,13 @@ function KnowledgebaseEmbed() {
           </Card>
         ))}
       </div>
-      <p className="text-xs text-muted-foreground">Use the full page to create collections, upload documents, and manage chunks for AI bot context retrieval.</p>
+      {/* SC-01 Wave 06 (A-14 note): the old copy invited using "the full page"
+          to create collections — no such page exists in the clean surface. */}
+      <p className="text-xs text-muted-foreground">
+        These figures are read live from <span className="font-mono">kb_collections</span> (with document and chunk
+        counts embedded). This embed is a view of the stored collections; no collection-management page exists in this
+        build.
+      </p>
     </div>
   );
 }
@@ -1316,7 +1367,7 @@ function ResetPasswordModal({ user, onClose }: { user: any; onClose: () => void 
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="Enter new password (min 6 characters)"
+                placeholder="Enter new password (min 8 characters)"
                 className="pr-10"
               />
               <Button
@@ -1410,30 +1461,33 @@ export default function AdminPanel() {
     }
   }, [newUserName, newUserEmail, newUserPassword, newUserRole, newUserDepartment, newUserRegion, newUserOffice, refetch]);
 
+  /* GAP-1 (A-05): both handlers report the server's confirmation of the
+   * REQUEST. Neither claims a list state — activation has no readable
+   * contract, so no badge or refetch could ever show the effect. */
   const handleDeactivate = useCallback(async (user: any) => {
     if (user.id === appUser?.id) {
       toast.error("You cannot deactivate your own account");
       return;
     }
-    if (!confirm(`Are you sure you want to deactivate ${user.name}? They will no longer be able to sign in.`)) return;
+    if (!confirm(`Deactivate ${userField(user.name)}? The server will block sign-in for this account. The list cannot display activation state, so the row will look unchanged.`)) return;
     const result = await adminDeactivateUser(user.auth_id, user.id);
-    if (result.success) {
-      toast.success("User deactivated", { description: `${user.name} can no longer sign in` });
-      refetch();
+    const report = describeUserActivationAction("deactivate", result, userField(user.name));
+    if (report.tone === "success") {
+      toast.success(report.message, { description: report.description });
     } else {
-      toast.error("Failed to deactivate user", { description: result.error });
+      toast.error(report.message, { description: report.description });
     }
-  }, [appUser, refetch]);
+  }, [appUser]);
 
   const handleReactivate = useCallback(async (user: any) => {
     const result = await adminReactivateUser(user.auth_id, user.id);
-    if (result.success) {
-      toast.success("User reactivated", { description: `${user.name} can now sign in again` });
-      refetch();
+    const report = describeUserActivationAction("reactivate", result, userField(user.name));
+    if (report.tone === "success") {
+      toast.success(report.message, { description: report.description });
     } else {
-      toast.error("Failed to reactivate user", { description: result.error });
+      toast.error(report.message, { description: report.description });
     }
-  }, [refetch]);
+  }, []);
 
   if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
 
@@ -1659,13 +1713,15 @@ export default function AdminPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredUsers.slice((userPage - 1) * 10, userPage * 10).map((user: any) => {
-                    const isInactive = user.status === "inactive";
-                    return (
-                      <tr key={user.id} className={`border-b border-border last:border-0 hover:bg-muted/30 transition-colors ${isInactive ? "opacity-50" : ""}`}>
+                  {/* GAP-1 (A-05): no row is styled or badged from `user.status` —
+                      that column does not exist live, and rendering a green
+                      "Active" from its absence presented fabricated stored
+                      state. Activation is shown as explicitly not readable. */}
+                  {filteredUsers.slice((userPage - 1) * 10, userPage * 10).map((user: any) => (
+                      <tr key={user.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isInactive ? "bg-gray-300 text-gray-600" : "bg-[var(--color-hala-navy)] text-white"}`}>
+                            <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold bg-[var(--color-hala-navy)] text-white">
                               {userInitials(user.name)}
                             </div>
                             <div>
@@ -1682,8 +1738,12 @@ export default function AdminPanel() {
                         <td className="px-4 py-3 text-sm text-muted-foreground">{user.department || "—"}</td>
                         <td className="px-4 py-3 text-sm text-muted-foreground">{user.region || "All"}</td>
                         <td className="px-4 py-3">
-                          <Badge variant="outline" className={`text-[10px] ${isInactive ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}>
-                            {isInactive ? "Inactive" : "Active"}
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] bg-gray-50 text-gray-500 border-gray-200"
+                            title={USER_ACTIVATION_NOT_READABLE}
+                          >
+                            Not readable
                           </Badge>
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -1695,23 +1755,22 @@ export default function AdminPanel() {
                               <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Reset password" onClick={() => setResetPasswordUser(user)}>
                                 <Lock className="w-3.5 h-3.5" />
                               </Button>
-                              {isInactive ? (
-                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-emerald-600 hover:text-emerald-700" title="Reactivate user" onClick={() => handleReactivate(user)}>
-                                  <UserCheck className="w-3.5 h-3.5" />
-                                </Button>
-                              ) : (
-                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500 hover:text-red-600" title="Deactivate user" onClick={() => handleDeactivate(user)}>
-                                  <UserX className="w-3.5 h-3.5" />
-                                </Button>
-                              )}
+                              {/* Both actions are offered because the current
+                                  activation state cannot be read; each request
+                                  is confirmed (or refused) by the server. */}
+                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-emerald-600 hover:text-emerald-700" title="Reactivate (allow sign-in) — stored activation state is not readable" onClick={() => handleReactivate(user)}>
+                                <UserCheck className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500 hover:text-red-600" title="Deactivate (block sign-in) — stored activation state is not readable" onClick={() => handleDeactivate(user)}>
+                                <UserX className="w-3.5 h-3.5" />
+                              </Button>
                             </div>
                           ) : (
                             <span className="text-xs text-muted-foreground">Admin only</span>
                           )}
                         </td>
                       </tr>
-                    );
-                  })}
+                  ))}
                 </tbody>
               </table>
               {filteredUsers.length === 0 && (
@@ -1734,6 +1793,14 @@ export default function AdminPanel() {
               )}
             </CardContent>
           </Card>
+
+          {/* GAP-1 (A-05): stated once for the whole table, so the "Not
+              readable" badge above is never mistaken for a health problem. */}
+          <p className="text-xs text-muted-foreground">
+            <span className="font-semibold">Status:</span> {USER_ACTIVATION_NOT_READABLE}{" "}
+            Deactivate and Reactivate send the request to the admin server function, which confirms or refuses each
+            one — the outcome is reported in the toast, not by this list.
+          </p>
 
           {!isAdmin && (
             <p className="text-xs text-muted-foreground text-center">
