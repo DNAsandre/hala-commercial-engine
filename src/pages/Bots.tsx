@@ -2,10 +2,41 @@ import { Link } from "wouter";
 import { cleanHref } from "@clean/lib/clean-routing";
 import { ArrowLeft } from "lucide-react";
 /**
- * BOT REGISTRY PAGE
+ * BOT REGISTRY PAGE — /system/bots
  * Design: Swiss Precision Instrument — Deep navy + warm white
- * Sections: Global Controls, Bot List, Provider Status, Connector Status
- * All controls are explicit, configurable, auditable, reversible.
+ *
+ * SC-01 Wave 06 (T15, manifest rows B-01..B-06): this page is the bot
+ * DEFINITION registry. It lists the persisted `ai_bots` records and performs
+ * the real definition-management writes through the T13 service layer
+ * (src/lib/bot-admin.ts):
+ *
+ *   B-03 enable/disable — setBotStatus, read-back confirmed
+ *   B-04 archive        — archiveBot, read-back confirmed
+ *   B-05 duplicate      — duplicateBot (full copy incl. FPS-008 columns
+ *                         + current version row), every step confirmed
+ *   B-06 delete         — deleteBot (draft/disabled only), zero-row = failure
+ *
+ * HONESTY RULES CARRIED FROM WAVE 04 (unchanged):
+ *  - Reads are three-state: LOADING, FAILED READ and REAL EMPTY are three
+ *    visibly different screens, and no counter is asserted unless the rows
+ *    behind it were actually read.
+ *  - No per-bot runtime metrics: `ai_bots` records no run count, cost, error
+ *    rate or last-run time, and this build never invokes a bot (manifest B-12).
+ *  - Provider labels are resolved honestly against the ai_providers rows that
+ *    were actually read (describeBotProvider).
+ *
+ * WAVE 06 WRITE RULES (the codebase's law):
+ *  - No optimistic mutation. The list changes ONLY after the service confirms
+ *    the stored row AND the page re-reads from the database (reload truth).
+ *  - UI success comes ONLY from a confirmed service result
+ *    (status "stored" / "completed"). Anything else surfaces the service's
+ *    honest reason and the display does not change.
+ *  - Status language describes the DEFINITION record (stored configuration).
+ *    Nothing on this page runs, executes or activates a bot — there is no
+ *    invocation path in this build (architect correction #5, 2026-08-18).
+ *  - Provider records are METADATA: their recorded enabled/disabled value is
+ *    displayed as data. There is no provider toggle — enable/disable of a
+ *    provider is rejected scope (architect correction #4; manifest B-08).
  */
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,43 +49,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { useLocation } from 'wouter';
 import {
-  Bot, ShieldAlert, Power, PowerOff, Activity, Cpu, Database, Eye, Pencil,
-  AlertTriangle, CheckCircle2, XCircle, Clock, DollarSign, Zap, Search,
-  Filter, ToggleLeft, ToggleRight, Radio, Wifi, WifiOff, Shield,
-  Copy, Archive, Upload, ChevronRight, AlertOctagon, Bot as BotIcon
+  Bot, ShieldAlert, PowerOff, Cpu, Eye, Pencil,
+  AlertTriangle, XCircle, Clock, DollarSign, Search,
+  Radio, WifiOff, Copy, Archive, AlertOctagon, Bot as BotIcon
 } from 'lucide-react';
-// SC-01 Wave 02 boundary correction (SX-001/SX-004/SX-011): bot-governance
-// (mock) and ai-client are excluded from this build. Bot and AI records are
-// displayed as REAL READ-ONLY records (ai_bots / ai_providers) or honest
-// empty states. Bot activation, status mutation, archive, delete, cloning
-// and infrastructure-control writes are current-wave excluded write paths -
-// no such write exists in this page. No old-server calls.
-//
-// SC-01 Wave 04 corrections on this page:
-//  1. Reads go through ops-runtime's three-state readers, so LOADING, a FAILED
-//     READ and a REAL EMPTY set are three visibly different screens. Before
-//     this, all three rendered as "0 total registered" with no explanation.
-//  2. Per-bot runtime metrics are gone. `ai_bots` has no last_run_at,
-//     total_invocations, cost_usage or error_rate column — the old mapper
-//     defaulted them to 0/null and the card printed "0 runs · $0.00 · Never"
-//     as if that were recorded operational history of bots that have never
-//     been invoked by this build at all.
-//  3. The provider label is resolved honestly. `ai_bots.provider_id` holds
-//     values like "prov-openai" while `ai_providers.id` holds
-//     "aip-openai-001", so the previous `provider?.name` printed the literal
-//     string "undefined" for every bot on the page.
-//  4. SC-01 Wave 04 (defect D): a failed `ai_providers` read used to be
-//     indistinguishable from "no provider record has this id", and a failed
-//     `ai_bots` read printed a confident "0" bot records against every
-//     provider. Both now say that the read failed.
 import {
+  BOT_DELETABLE_STATUSES,
+  archiveBot,
+  deleteBot,
   describeBotProvider,
+  duplicateBot,
   readAiBots,
   readAiProviders,
+  setBotStatus,
+  summariseProviderUsage,
   type AiBotRecord,
   type AiProviderRecord,
+  type BotToggleStatus,
   type RecordRead,
-} from '@/lib/ops-runtime';
+} from '@/lib/bot-admin';
 
 const statusColors: Record<string, string> = {
   active: 'bg-emerald-100 text-emerald-800 border-emerald-200',
@@ -62,6 +75,119 @@ const statusColors: Record<string, string> = {
   disabled: 'bg-slate-100 text-slate-600 border-slate-200',
   archived: 'bg-slate-50 text-slate-400 border-slate-100',
 };
+
+// ─────────────────────────────────────────────────────────────
+// Registry action logic — exported so the write rules can be
+// asserted without a DOM (no DOM test environment exists here).
+// Every function returns an outcome the component applies:
+// ok:true  → toast the message and RE-READ from the database;
+// ok:false → toast the reason; the rendered list is NOT touched.
+// ─────────────────────────────────────────────────────────────
+
+export interface RegistryActionOutcome {
+  ok: boolean;
+  message: string;
+}
+
+/** The status the registry toggle writes next (old-app rule: anything
+ *  non-active toggles to "active"; "active" toggles to "disabled"). */
+export function toggleTargetStatus(currentStatus: string): BotToggleStatus {
+  return currentStatus === 'active' ? 'disabled' : 'active';
+}
+
+/** Delete is offered only for draft/disabled definitions (manifest B-06). */
+export function canDeleteBot(status: string): boolean {
+  return BOT_DELETABLE_STATUSES.has(status);
+}
+
+/**
+ * B-03: write the definition's status and report ONLY the confirmed stored
+ * value. A resolved-but-zero-row write ("not_stored") is a failure — the
+ * definition keeps its previous displayed status and the reason is shown.
+ */
+export async function performBotStatusToggle(
+  bot: Pick<AiBotRecord, 'id' | 'name' | 'status'>,
+): Promise<RegistryActionOutcome> {
+  const target = toggleTargetStatus(bot.status);
+  const result = await setBotStatus(bot.id, target);
+  if (result.status === 'stored') {
+    return {
+      ok: true,
+      message:
+        `Stored: definition "${bot.name}" now records status "${target}". ` +
+        'This is stored configuration only — no bot runs in this build.',
+    };
+  }
+  return {
+    ok: false,
+    message: `The status of "${bot.name}" was not changed. ${result.error}`,
+  };
+}
+
+/** B-04: archive = status "archived" on the definition record, confirmed. */
+export async function performArchiveBot(
+  bot: Pick<AiBotRecord, 'id' | 'name'>,
+): Promise<RegistryActionOutcome> {
+  const result = await archiveBot(bot.id);
+  if (result.status === 'stored') {
+    return {
+      ok: true,
+      message:
+        `Stored: definition "${bot.name}" is archived. It stays listed under the ` +
+        '"Archived" status filter. An archived pdf_studio bot also leaves FinalStudio discovery, ' +
+        'which lists active definitions only.',
+    };
+  }
+  return { ok: false, message: `"${bot.name}" was not archived. ${result.error}` };
+}
+
+/** B-05: duplicate as a confirmed draft copy (definition + current version). */
+export async function performDuplicateBot(
+  bot: Pick<AiBotRecord, 'id' | 'name'>,
+): Promise<RegistryActionOutcome> {
+  const result = await duplicateBot(bot.id);
+  if (result.status === 'completed') {
+    const versionNote = result.value.copiedVersion
+      ? 'its current version row was copied with it'
+      : 'the source has no version row, so the copy is definition-only too';
+    return {
+      ok: true,
+      message: `Stored: "${result.value.name}" created as a draft copy (${versionNote}).`,
+    };
+  }
+  return { ok: false, message: `"${bot.name}" was not duplicated. ${result.error}` };
+}
+
+/** B-06: delete a draft/disabled definition; a zero-row delete is an error. */
+export async function performDeleteBot(
+  bot: Pick<AiBotRecord, 'id' | 'name' | 'status'>,
+): Promise<RegistryActionOutcome> {
+  const result = await deleteBot(bot.id);
+  if (result.status === 'completed') {
+    return {
+      ok: true,
+      message:
+        `Deleted: definition "${bot.name}" and its ${result.value.deletedVersionCount} ` +
+        `version row(s) were removed (confirmed by the database).`,
+    };
+  }
+  return { ok: false, message: `"${bot.name}" was not deleted. ${result.error}` };
+}
+
+/** Client-side filter over the rows that were actually read (manifest B-02).
+ *  Archived definitions are not vanished: they appear under "all" and under
+ *  the dedicated "archived" status filter (manifest B-04). */
+export function filterBots(
+  bots: readonly AiBotRecord[],
+  filters: { searchQuery: string; typeFilter: string; statusFilter: string },
+): AiBotRecord[] {
+  return bots.filter(b => {
+    if (filters.searchQuery && !b.name.toLowerCase().includes(filters.searchQuery.toLowerCase())) return false;
+    if (filters.typeFilter !== 'all' && b.type !== filters.typeFilter) return false;
+    if (filters.statusFilter !== 'all' && b.status !== filters.statusFilter) return false;
+    return true;
+  });
+}
 
 /** Loading / failed / empty are rendered by this one component everywhere. */
 function ReadStatePanel({
@@ -108,6 +234,8 @@ export default function BotRegistry() {
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  /** Bot id with a write in flight — that bot's controls wait for the result. */
+  const [pendingBotId, setPendingBotId] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -126,14 +254,29 @@ export default function BotRegistry() {
   const providers = providersRead?.rows ?? [];
   const botsLoaded = botsRead !== null && (botsRead.status === 'loaded' || botsRead.status === 'empty');
 
-  const filteredBots = bots.filter(b => {
-    if (searchQuery && !b.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    if (typeFilter !== 'all' && b.type !== typeFilter) return false;
-    if (statusFilter !== 'all' && b.status !== statusFilter) return false;
-    return true;
-  });
-
+  const filteredBots = filterBots(bots, { searchQuery, typeFilter, statusFilter });
   const activeCount = bots.filter(b => b.status === 'active').length;
+  const providerUsage = botsLoaded ? summariseProviderUsage(providers, bots) : null;
+
+  /** Apply an action outcome: confirmed → toast + RE-READ from the database;
+   *  anything else → the reason is shown and the rendered list is untouched. */
+  const runAction = async (
+    botId: string,
+    action: () => Promise<RegistryActionOutcome>,
+  ) => {
+    setPendingBotId(botId);
+    try {
+      const outcome = await action();
+      if (outcome.ok) {
+        toast.success(outcome.message);
+        setReloadKey(k => k + 1); // reload truth: the list re-reads ai_bots
+      } else {
+        toast.error(outcome.message);
+      }
+    } finally {
+      setPendingBotId(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -153,12 +296,13 @@ export default function BotRegistry() {
           <h1 className="text-2xl font-bold font-serif text-slate-900">Bots</h1>
           <p className="text-sm text-slate-500 mt-1">Human-First. AI assists. Humans decide. Bots have zero inherent authority.</p>
         </div>
-        {/* SC-01 boundary correction: bot creation is a current-wave excluded
-            write path — no creation entry point exists on this page. */}
+        {/* B-14 entry point: the Bot Builder create workflow. */}
+        <Button onClick={() => navigate(cleanHref('/system/bot-builder'))} className="bg-[#1B2A4A] hover:bg-[#2a3d66]">
+          <BotIcon className="w-4 h-4 mr-2" /> Create New Bot
+        </Button>
       </div>
 
-      {/* Read-only / no-execution banner. There is no bot invocation path in
-          this build, so there is nothing for a kill switch to switch off. */}
+      {/* Scope disclosure: definition management, no execution path. */}
       <Card className="border-2 border-slate-200">
         <CardContent className="py-4">
           <div className="flex items-center justify-between">
@@ -167,16 +311,16 @@ export default function BotRegistry() {
                 <PowerOff className="w-6 h-6 text-slate-400" />
               </div>
               <div>
-                <h3 className="font-semibold text-lg">No bot execution in this build</h3>
+                <h3 className="font-semibold text-lg">Definitions only — no execution path in this build</h3>
                 <p className="text-sm text-slate-500 max-w-3xl">
-                  This page lists persisted bot records only. Nothing on it invokes a bot, activates a provider or
-                  produces an AI result, and no control here changes a stored record. A global kill switch is
-                  therefore not configured — there is no running behaviour for it to stop. Bot execution is deferred
-                  to Sprint X.
+                  This page manages persisted bot definition records: status, archive, duplicate and delete are
+                  changes to stored configuration in <span className="font-mono">ai_bots</span>. Nothing on it
+                  invokes a bot, calls a model or produces an AI result — a definition recorded "active" is a
+                  configuration value, not a running process. A global kill switch is therefore not configured:
+                  there is no running behaviour for it to stop. Bot execution is deferred to Sprint X.
                 </p>
               </div>
             </div>
-            <Badge variant="outline" className="text-[10px] text-muted-foreground shrink-0">Read-only</Badge>
           </div>
         </CardContent>
       </Card>
@@ -275,6 +419,8 @@ export default function BotRegistry() {
                 <SelectItem value="active">Active</SelectItem>
                 <SelectItem value="draft">Draft</SelectItem>
                 <SelectItem value="disabled">Disabled</SelectItem>
+                {/* Archived definitions stay reachable here (manifest B-04). */}
+                <SelectItem value="archived">Archived</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -290,6 +436,7 @@ export default function BotRegistry() {
             )}
             {filteredBots.map(bot => {
               const providerLabel = describeBotProvider(bot.providerId, providersRead);
+              const pending = pendingBotId === bot.id;
               return (
                 <Card key={bot.id} className="hover:shadow-md transition-shadow">
                   <CardContent className="py-4">
@@ -323,14 +470,50 @@ export default function BotRegistry() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        {/* SC-01 Wave 02 boundary correction (SX-011): bot records are
-                            read-only in this build. Activation, status
-                            mutation, archive, delete and cloning are
-                            current-wave excluded write paths. */}
-                        <Badge variant="outline" className="text-[10px] text-muted-foreground">Read-only in this build</Badge>
-                        <Button variant="outline" size="sm" onClick={() => navigate(cleanHref(`/system/bot-builder?id=${bot.id}`))}>
-                          <Eye className="w-3 h-3 mr-1" /> View
+                        {pending && <span className="text-xs text-slate-400">Writing…</span>}
+                        {/* B-03: definition status toggle. The switch reflects
+                            the STORED status and only changes after the write
+                            is confirmed and the list is re-read — there is no
+                            optimistic flip. Archived definitions have no
+                            toggle (old registry rule). */}
+                        {bot.status !== 'archived' && (
+                          <Switch
+                            checked={bot.status === 'active'}
+                            disabled={pending}
+                            aria-label={`Definition status for ${bot.name}: currently "${bot.status}". Toggling stores "${toggleTargetStatus(bot.status)}" — configuration only, nothing runs.`}
+                            onCheckedChange={() => runAction(bot.id, () => performBotStatusToggle(bot))}
+                          />
+                        )}
+                        <Button variant="outline" size="sm" disabled={pending}
+                          onClick={() => navigate(cleanHref(`/system/bot-builder?id=${bot.id}`))}>
+                          <Pencil className="w-3 h-3 mr-1" /> Edit
                         </Button>
+                        {/* B-05: duplicate as draft. */}
+                        <Button variant="ghost" size="sm" disabled={pending} title="Duplicate as a draft definition"
+                          onClick={() => runAction(bot.id, () => performDuplicateBot(bot))}>
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                        {/* B-04: archive. */}
+                        {bot.status !== 'archived' && (
+                          <Button variant="ghost" size="sm" disabled={pending} title="Archive this definition (stays listed under the Archived filter)"
+                            onClick={() => {
+                              if (!confirm(`Archive the definition "${bot.name}"? It stays listed under the "Archived" status filter. An archived pdf_studio bot also leaves FinalStudio discovery, which lists active definitions only.`)) return;
+                              void runAction(bot.id, () => performArchiveBot(bot));
+                            }}>
+                            <Archive className="w-3 h-3" />
+                          </Button>
+                        )}
+                        {/* B-06: delete — draft/disabled definitions only. */}
+                        {canDeleteBot(bot.status) && (
+                          <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700" disabled={pending}
+                            title="Delete this draft/disabled definition and its version rows"
+                            onClick={() => {
+                              if (!confirm(`Delete the definition "${bot.name}" and its version rows? This cannot be undone.`)) return;
+                              void runAction(bot.id, () => performDeleteBot(bot));
+                            }}>
+                            <XCircle className="w-3 h-3" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -341,27 +524,46 @@ export default function BotRegistry() {
           )}
         </TabsContent>
 
-        {/* Providers Tab */}
+        {/* Providers Tab — provider records are METADATA. The recorded
+            enabled/disabled value is displayed as data; no control here
+            activates or deactivates a provider (rejected scope — architect
+            correction #4; manifest B-08). Provider/model SELECTION for a bot
+            definition lives in the Bot Builder (B-16). */}
         <TabsContent value="providers" className="space-y-4">
           {providersRead === null || providersRead.status !== 'loaded' ? (
             <ReadStatePanel read={providersRead} subject="AI provider records" onRetry={() => setReloadKey(k => k + 1)} />
           ) : (
+          <>
           <div className="grid grid-cols-3 gap-4">
-            {providers.map(provider => (
-              <Card key={provider.id} className={`${!provider.enabled ? 'opacity-60' : ''}`}>
+            {providers.map(provider => {
+              const matched = providerUsage?.matchedByProvider[provider.id];
+              return (
+              <Card key={provider.id}>
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-base">{provider.displayName}</CardTitle>
-                    <Switch checked={provider.enabled} disabled aria-readonly="true" />
+                    <Badge
+                      variant="outline"
+                      className={provider.enabled
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-100 text-slate-500 border-slate-200'}
+                    >
+                      recorded {provider.enabled ? 'enabled' : 'disabled'}
+                    </Badge>
                   </div>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2 text-sm">
-                    {/* SC-01 boundary correction: only recorded fields are
-                        shown. Health, rate limits and cost are not measured
-                        in this build and are not claimed. */}
+                    {/* Recorded fields only. Health, rate limits and cost are
+                        not measured in this build and are not claimed. The
+                        enabled value is stored metadata — this build neither
+                        activates nor deactivates a provider. */}
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-500">Enabled (recorded)</span>
+                      <span className="text-slate-500">Provider id</span>
+                      <span className="font-mono text-xs text-slate-700">{provider.id}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">Enabled (recorded value)</span>
                       <span className="font-medium text-slate-700">{provider.enabled ? "Yes" : "No"}</span>
                     </div>
                     <div className="flex items-center justify-between">
@@ -373,13 +575,12 @@ export default function BotRegistry() {
                     </div>
                     <div className="pt-1">
                       {/* A count of zero is only stated when the bot records
-                          were actually read. If that read failed, `bots` is []
-                          and "0" would be an assertion about data nobody
-                          saw. */}
+                          were actually read. If that read failed, "0" would be
+                          an assertion about data nobody saw. */}
                       <p className="text-xs text-slate-400">
-                        Bot records whose provider_id equals this provider id:{' '}
-                        {botsLoaded
-                          ? bots.filter(b => b.providerId === provider.id).length
+                        Bot definitions whose provider_id equals this provider id:{' '}
+                        {matched
+                          ? `${matched.total} (${matched.active} recorded active)`
                           : botsRead === null
                             ? 'bot records not read yet'
                             : 'unknown — the bot records could not be read'}
@@ -388,14 +589,40 @@ export default function BotRegistry() {
                   </div>
                 </CardContent>
               </Card>
-            ))}
+              );
+            })}
           </div>
+          {/* The recorded provider_id values on ai_bots do not all match a
+              provider record (live data holds legacy and null ids). Those
+              populations are stated rather than silently dropped. */}
+          {providerUsage && (providerUsage.unmatched.length > 0 || providerUsage.unrecorded.total > 0) && (
+            <Card className="border-amber-200 bg-amber-50/40">
+              <CardContent className="py-3 space-y-1">
+                <p className="text-xs font-semibold text-amber-800 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" /> Bot definitions not counted against any provider card above
+                </p>
+                {providerUsage.unmatched.map(u => (
+                  <p key={u.providerId} className="text-xs text-amber-800">
+                    {u.total} definition(s) record provider_id <span className="font-mono">"{u.providerId}"</span>, which
+                    matches no provider record ({u.active} recorded active).
+                  </p>
+                ))}
+                {providerUsage.unrecorded.total > 0 && (
+                  <p className="text-xs text-amber-800">
+                    {providerUsage.unrecorded.total} definition(s) record no provider id at all
+                    ({providerUsage.unrecorded.active} recorded active).
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+          </>
           )}
         </TabsContent>
 
         {/* Connectors Tab — there is no connector store in this build. The
-            previous markup mapped over an array that was never populated, so
-            the tab rendered as a blank panel with no explanation. */}
+            old page mapped over an array that was never populated, so the tab
+            rendered as a blank panel with no explanation. */}
         <TabsContent value="connectors" className="space-y-4">
           <Card>
             <CardContent className="py-10 text-center space-y-1">
