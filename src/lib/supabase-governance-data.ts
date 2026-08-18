@@ -129,23 +129,26 @@ export async function fetchPolicyGates(): Promise<SupabasePolicyGate[]> {
 }
 
 /**
- * Update a policy gate's mode and/or overridable flag.
- * Bumps rule_version and appends to version history.
- * Logs to governance_audit_log.
+ * Policy-gate configuration writes are EXCLUDED — refusal, not a stub.
+ *
+ * SC-01 Wave 02 boundary (SX-011), reaffirmed by the Wave 06 architect
+ * correction #3 (2026-08-18): writes to gate mode, overridable state or gate
+ * configuration are excluded from this build. Zero writes, zero audit entries,
+ * no version bump — the refusal is returned honestly for the caller to
+ * display, and the stored gate records remain visible as advisory display
+ * (A-26). Reads (fetchPolicyGates, fetchGovernanceAuditLog) remain real.
  */
 export async function updatePolicyGateConfig(
   gateId: string,
   updates: { mode?: GateMode; overridable?: boolean },
   reason: string = "Admin Console change",
 ): Promise<ActionResult> {
-  // SC-01 Wave 02 boundary (SX-011): policy-gate configuration changes are
-  // excluded from this build. Zero writes, zero audit entries, no version
-  // bump - the refusal is returned honestly for the caller to display.
-  // Reads (fetchPolicyGates, fetchGovernanceAuditLog) remain real.
   void gateId; void updates; void reason;
   return {
     success: false,
-    error: "Policy-gate configuration changes are not available in this build (deferred to Sprint X - SX-011).",
+    error:
+      "Policy-gate configuration writes are excluded from this build (Wave 06 architect correction #3; SX-011). " +
+      "Nothing was changed — stored gate records are advisory display only.",
   };
 }
 
@@ -215,23 +218,33 @@ export interface GovernanceConfigEntry {
 }
 
 /**
- * Fetch all tender governance config entries.
+ * SC-01 Wave 06 (T14, manifest row A-35) — classified tender-config read.
+ *
+ * Same query the legacy helper ran, but the outcome is reported instead of
+ * being collapsed to `[]`: the Tender Config tab must render a failed read,
+ * a zero-row read and real rows as three visibly different screens. The live
+ * table exists with 4 rows (tgc-tender_templates, tgc-tender_gate_rules,
+ * tgc-tender_compliance_categories, tgc-tender_role_matrix; probed
+ * 2026-08-18) — this read is the display's ONLY source; nothing is hardcoded.
  */
-export async function fetchTenderGovernanceConfig(): Promise<GovernanceConfigEntry[]> {
+export async function fetchTenderGovernanceConfigResult(): Promise<GovernanceRead<GovernanceConfigEntry>> {
   const { data, error } = await supabase
     .from('tender_governance_config')
     .select('*')
     .order('config_key');
 
-  if (error) {
-    console.warn('[SUPA-009] Failed to fetch tender governance config:', error.message);
-    return [];
-  }
-  return (data ?? []) as GovernanceConfigEntry[];
+  if (error) console.warn('[SUPA-009] Failed to fetch tender governance config:', error.message);
+  return classifyGovernanceRead(data as GovernanceConfigEntry[] | null, error);
+}
+
+export async function fetchTenderGovernanceConfig(): Promise<GovernanceConfigEntry[]> {
+  return (await fetchTenderGovernanceConfigResult()).rows;
 }
 
 /**
- * Upsert a tender governance config entry.
+ * Tender governance config writes are EXCLUDED — refusal, not a stub.
+ * SC-01 Wave 02 boundary (SX-011); the Wave 06 Tender Config tab is an
+ * advisory read-only view (A-35) and never calls this.
  */
 export async function upsertTenderGovernanceConfig(
   configKey: string,
@@ -239,12 +252,12 @@ export async function upsertTenderGovernanceConfig(
   category: string = "",
   description: string = "",
 ): Promise<ActionResult> {
-  // SC-01 Wave 02 boundary (SX-011): governance configuration writes are
-  // excluded from this build. Zero writes; honest refusal.
   void configKey; void configValue; void category; void description;
   return {
     success: false,
-    error: "Governance configuration changes are not available in this build (deferred to Sprint X - SX-011).",
+    error:
+      "Governance configuration writes are excluded from this build (SX-011). " +
+      "Nothing was changed — stored configuration is advisory display only.",
   };
 }
 
@@ -268,7 +281,8 @@ export async function fetchCommercialGovernanceConfig(): Promise<GovernanceConfi
 }
 
 /**
- * Upsert a commercial governance config entry.
+ * Commercial governance config writes are EXCLUDED — refusal, not a stub.
+ * SC-01 Wave 02 boundary (SX-011): zero writes; honest refusal.
  */
 export async function upsertCommercialGovernanceConfig(
   configKey: string,
@@ -276,11 +290,11 @@ export async function upsertCommercialGovernanceConfig(
   category: string = "",
   description: string = "",
 ): Promise<ActionResult> {
-  // SC-01 Wave 02 boundary (SX-011): governance configuration writes are
-  // excluded from this build. Zero writes; honest refusal.
   void configKey; void configValue; void category; void description;
   return {
     success: false,
-    error: "Governance configuration changes are not available in this build (deferred to Sprint X - SX-011).",
+    error:
+      "Governance configuration writes are excluded from this build (SX-011). " +
+      "Nothing was changed — stored configuration is advisory display only.",
   };
 }

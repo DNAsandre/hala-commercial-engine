@@ -15,6 +15,10 @@ import {
   type GovernanceConfigEntry,
   type GovernanceRead,
 } from "@/lib/supabase-governance-data";
+/* SC-01 Wave 06 (T14): `new Date(x).toLocaleString()` renders the literal
+ * string "Invalid Date" for a malformed stored value; the shared formatter
+ * degrades to an honest placeholder instead. */
+import { formatRecordedDateTime } from "@/lib/ops-runtime";
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
@@ -135,7 +139,7 @@ export default function CommercialGovernanceConfig() {
                       {e.description && <p className="text-[11px] text-muted-foreground">{e.description}</p>}
                       <pre className="text-[10px] bg-muted/30 rounded p-2 whitespace-pre-wrap break-words font-mono">{formatValue(e.config_value)}</pre>
                       {e.updated_at && (
-                        <p className="text-[9px] text-muted-foreground">Updated {new Date(e.updated_at).toLocaleString()}</p>
+                        <p className="text-[9px] text-muted-foreground">Updated {formatRecordedDateTime(e.updated_at)}</p>
                       )}
                     </div>
                   ))}
