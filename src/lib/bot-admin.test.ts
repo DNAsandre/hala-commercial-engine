@@ -116,13 +116,10 @@ import {
   AI_BOT_VERSIONS_TABLE,
   AI_PROVIDERS_TABLE,
   archiveBot,
-  attachKnowledge,
   createBot,
   deleteBot,
-  detachKnowledge,
   duplicateBot,
   publishBotVersion,
-  readKnowledgeCollections,
   restoreArchivedBot,
   summariseProviderUsage,
   validateBotDefinition,
@@ -153,40 +150,6 @@ const callsFor = (table: string, op?: RecordedCall["op"]) =>
 const writeCalls = () => calls.filter((c) => c.op !== "select");
 
 const BOT_ID = "8d12a4a5-be1a-4636-a8ff-f0499d6d03bd";
-
-// ─────────────────────────────────────────────────────────────
-// Reads
-// ─────────────────────────────────────────────────────────────
-
-describe("readKnowledgeCollections — classified KB read for the builder picker (B-19)", () => {
-  it("reads kb_collections and reports rows as loaded", async () => {
-    queue("kb_collections", "select", {
-      data: [{ id: "kbc-1", name: "SLA Library", description: "", visibility: "internal", created_by: "u", created_at: "2026-06-01" }],
-      error: null,
-    });
-    const read = await readKnowledgeCollections();
-    expect(read.status).toBe("loaded");
-    expect(read.rows[0].id).toBe("kbc-1");
-    expect(callsFor("kb_collections", "select")).toHaveLength(1);
-  });
-
-  it("reports the live zero-row state as EMPTY — never a seed list", async () => {
-    queue("kb_collections", "select", { data: [], error: null });
-    const read = await readKnowledgeCollections();
-    expect(read.status).toBe("empty");
-    expect(read.rows).toEqual([]);
-  });
-
-  it("keeps unavailable (missing table) distinct from error distinct from empty", async () => {
-    queue("kb_collections", "select", { data: null, error: { code: "PGRST205", message: "Could not find the table" } });
-    expect((await readKnowledgeCollections()).status).toBe("unavailable");
-
-    queue("kb_collections", "select", { data: null, error: { code: "42501", message: "permission denied" } });
-    const failedRead = await readKnowledgeCollections();
-    expect(failedRead.status).toBe("error");
-    if (failedRead.status === "error") expect(failedRead.error).toBe("permission denied");
-  });
-});
 
 describe("summariseProviderUsage — the live id-scheme mix must surface, not vanish (B-08/B-16)", () => {
   const provider = (id: string): AiProviderRecord => ({
@@ -300,6 +263,7 @@ const CREATE_INPUT: CreateBotInput = {
   timeoutSec: 30,
   version: {
     systemInstruction: "You summarise tenders.",
+    knowledgeBaseText: "Hala tender services and operating facts.",
     allowedActions: ["suggest", "draft"],
     temperature: 0.4,
     maxTokens: 2000,
@@ -348,6 +312,8 @@ describe("createBot — bot row + first version + repoint, each confirmed (B-14)
       bot_id: "bot-new-1",
       version: 1,
       system_instruction: "You summarise tenders.",
+      knowledge_base_text: "Hala tender services and operating facts.",
+      knowledge_base_ids: [],
       allowed_actions: ["suggest", "draft"],
       temperature: 0.4,
       max_tokens: 2000,
@@ -469,7 +435,7 @@ const EDIT_FIELDS: BotDefinitionFields = {
 
 function queueLatestVersion(version: number, extra: Record<string, unknown> = {}): void {
   queue(AI_BOT_VERSIONS_TABLE, "select", {
-    data: [{ id: `ver-${version}`, bot_id: BOT_ID, version, knowledge_base_ids: [], ...extra }],
+    data: [{ id: `ver-${version}`, bot_id: BOT_ID, version, knowledge_base_text: null, ...extra }],
     error: null,
   });
 }
@@ -477,6 +443,7 @@ function queueLatestVersion(version: number, extra: Record<string, unknown> = {}
 describe("publishBotVersion — edit + immutable version + REPOINT (B-15/B-17/B-18)", () => {
   const DRAFT = {
     systemInstruction: "New instruction.",
+    knowledgeBaseText: "Pricing and service facts for this bot.",
     allowedActions: ["draft"],
     chainConfig: { next_bot_id: "bot-other", prompt_user: true, chain_label: "Draft all" },
     changeNote: "Tightened the instruction",
@@ -508,6 +475,8 @@ describe("publishBotVersion — edit + immutable version + REPOINT (B-15/B-17/B-
       bot_id: BOT_ID,
       version: 5,
       allowed_actions: ["draft"],
+      knowledge_base_text: "Pricing and service facts for this bot.",
+      knowledge_base_ids: [],
       chain_config: { next_bot_id: "bot-other", prompt_user: true, chain_label: "Draft all" },
       change_note: "Tightened the instruction",
     });
@@ -659,7 +628,8 @@ const SOURCE_VERSION_ROW: Record<string, unknown> = {
   model: "gpt-4o-mini",
   connector_snapshot: {},
   permission_snapshot: { rolesAllowed: ["admin"] },
-  knowledge_base_ids: ["kbc-a"],
+  knowledge_base_text: "Source bot facts.",
+  knowledge_base_ids: ["legacy-kbc-a"],
   chain_config: {},
   change_note: "v3",
   created_at: "2026-06-02",
@@ -711,7 +681,8 @@ describe("duplicateBot — full copy as draft, version included, repointed (B-05
       version: 1,
       system_instruction: "Refine the block.",
       allowed_actions: ["suggest", "draft"],
-      knowledge_base_ids: ["kbc-a"],
+      knowledge_base_text: "Source bot facts.",
+      knowledge_base_ids: [],
     });
 
     // And the copy's current_version_id points at the copied version.
@@ -892,107 +863,6 @@ describe("deleteBot — draft/disabled only, exact ids, every step confirmed (B-
       expect(result.error).toContain("version row(s) WERE deleted");
       expect(result.error).toContain("matched nothing");
       expect(result.steps[3].outcome).toBe("failed");
-    }
-  });
-});
-
-// ─────────────────────────────────────────────────────────────
-// B-19 — attachKnowledge / detachKnowledge
-// ─────────────────────────────────────────────────────────────
-
-describe("attachKnowledge / detachKnowledge — version-column contract (B-19)", () => {
-  function queueBotRead(): void {
-    queue(AI_BOTS_TABLE, "select", {
-      data: { id: BOT_ID, name: "Refine Bot", current_version_id: "ver-3" },
-      error: null,
-    });
-  }
-
-  it("attach publishes a new version whose knowledge_base_ids adds the exact collection id", async () => {
-    queueBotRead();
-    queue(AI_BOT_VERSIONS_TABLE, "select", { data: [SOURCE_VERSION_ROW], error: null }); // latest v3, ids ["kbc-a"]
-    queue(AI_BOT_VERSIONS_TABLE, "insert", echoInsert("ver-new-4"));
-    queue(AI_BOTS_TABLE, "update", echoUpdate());
-
-    const result = await attachKnowledge(BOT_ID, "kbc-b", "Attach pricing KB");
-
-    expect(result.status).toBe("completed");
-    if (result.status === "completed") {
-      expect(result.value).toEqual({
-        botId: BOT_ID, versionId: "ver-new-4", version: 4,
-        knowledgeBaseIds: ["kbc-a", "kbc-b"],
-      });
-    }
-
-    const versionInsert = callsFor(AI_BOT_VERSIONS_TABLE, "insert")[0];
-    expect(versionInsert.payload).toMatchObject({
-      bot_id: BOT_ID,
-      version: 4,
-      knowledge_base_ids: ["kbc-a", "kbc-b"],
-      change_note: "Attach pricing KB",
-      // Carried forward VERBATIM from the latest version — nothing invented.
-      system_instruction: "Refine the block.",
-      allowed_actions: ["suggest", "draft"],
-      permission_snapshot: { rolesAllowed: ["admin"] },
-    });
-
-    // And the repoint happened.
-    const repoint = callsFor(AI_BOTS_TABLE, "update")[0];
-    expect(repoint.payload).toEqual({ current_version_id: "ver-new-4" });
-  });
-
-  it("detach publishes a new version without the exact collection id", async () => {
-    queueBotRead();
-    queue(AI_BOT_VERSIONS_TABLE, "select", { data: [SOURCE_VERSION_ROW], error: null });
-    queue(AI_BOT_VERSIONS_TABLE, "insert", echoInsert("ver-new-4"));
-    queue(AI_BOTS_TABLE, "update", echoUpdate());
-
-    const result = await detachKnowledge(BOT_ID, "kbc-a", "Remove stale KB");
-
-    expect(result.status).toBe("completed");
-    if (result.status === "completed") expect(result.value.knowledgeBaseIds).toEqual([]);
-    expect(callsFor(AI_BOT_VERSIONS_TABLE, "insert")[0].payload).toMatchObject({
-      knowledge_base_ids: [],
-    });
-  });
-
-  it("attaching an already-linked collection fails with no write and no version bump", async () => {
-    queueBotRead();
-    queue(AI_BOT_VERSIONS_TABLE, "select", { data: [SOURCE_VERSION_ROW], error: null });
-    const result = await attachKnowledge(BOT_ID, "kbc-a", "again");
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") expect(result.error).toContain("already linked");
-    expect(writeCalls()).toHaveLength(0);
-  });
-
-  it("detaching a collection that is not linked fails with no write", async () => {
-    queueBotRead();
-    queue(AI_BOT_VERSIONS_TABLE, "select", { data: [SOURCE_VERSION_ROW], error: null });
-    const result = await detachKnowledge(BOT_ID, "kbc-zzz", "remove");
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") expect(result.error).toContain("not linked");
-    expect(writeCalls()).toHaveLength(0);
-  });
-
-  it("requires a change note — knowledge changes publish a version", async () => {
-    const result = await attachKnowledge(BOT_ID, "kbc-b", "   ");
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") expect(result.error).toContain("change note");
-    expect(calls).toHaveLength(0);
-  });
-
-  it("reports the exact partial state when the repoint fails after the version insert", async () => {
-    queueBotRead();
-    queue(AI_BOT_VERSIONS_TABLE, "select", { data: [SOURCE_VERSION_ROW], error: null });
-    queue(AI_BOT_VERSIONS_TABLE, "insert", echoInsert("ver-new-4"));
-    queue(AI_BOTS_TABLE, "update", { data: [], error: null });
-
-    const result = await attachKnowledge(BOT_ID, "kbc-b", "Attach pricing KB");
-
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
-      expect(result.error).toContain("current_version_id was NOT repointed");
-      expect(result.error).toContain("still serve the previous version");
     }
   });
 });

@@ -9,7 +9,8 @@
  *   ai_bots          (40 rows live)   — bot definitions
  *   ai_bot_versions  (39 rows live)   — immutable per-version configuration
  *   ai_providers     (2 rows live)    — provider registry
- *   kb_collections   (0 rows live)    — knowledge collections (via knowledgebase.ts)
+ * Bot knowledge is stored directly on each ai_bot_versions row. The separate
+ * kb_collections system is intentionally not part of this administration plane.
  *
  * Every column written or read here was verified against the live schema on
  * 2026-08-18 (probe evidence in the manifest rows). The old Express
@@ -53,7 +54,6 @@ import {
   type AiProviderRecord,
   type RecordRead,
 } from "./ops-runtime";
-import { fetchCollectionsResult, type KBCollection } from "./knowledgebase";
 
 // ─────────────────────────────────────────────────────────────
 // One import surface for the System pages (T15): the classified
@@ -83,7 +83,6 @@ export type {
   BotProviderState,
   RecordRead,
 } from "./ops-runtime";
-export type { KBCollection, KBCollectionsResult } from "./knowledgebase";
 
 // ─────────────────────────────────────────────────────────────
 // Shared result vocabulary
@@ -196,8 +195,8 @@ export interface BotVersionDraft {
   /** Carried forward verbatim (or {}) — never invented (manifest B-20). */
   connectorSnapshot?: Record<string, unknown>;
   permissionSnapshot?: Record<string, unknown>;
-  /** Exact kb collection ids (manifest B-19). */
-  knowledgeBaseIds?: string[];
+  /** Knowledge authored for this bot and version, stored verbatim. */
+  knowledgeBaseText?: string | null;
   /** {} when no chain, else the full ChainConfig (manifest B-18). */
   chainConfig?: ChainConfig | null;
   changeNote?: string;
@@ -465,34 +464,13 @@ function buildVersionPayload(
     model: draft.model ?? null,
     connector_snapshot: draft.connectorSnapshot ?? {},
     permission_snapshot: draft.permissionSnapshot ?? {},
-    knowledge_base_ids: draft.knowledgeBaseIds ?? [],
+    knowledge_base_text: draft.knowledgeBaseText ?? null,
+    knowledge_base_ids: [],
     change_note: changeNote,
     chain_config: draft.chainConfig ?? {},
     created_at: nowIso(),
     created_by: createdBy,
   };
-}
-
-// ─────────────────────────────────────────────────────────────
-// Reads
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Classified KB-collection read for the Bot Builder knowledge picker
- * (manifest B-19), adapted to the RecordRead vocabulary the System pages
- * already render. Live state 2026-08-18: the table exists with 0 visible rows,
- * so the honest result today is `empty` — never a fabricated seed list.
- */
-export async function readKnowledgeCollections(): Promise<RecordRead<KBCollection>> {
-  const result = await fetchCollectionsResult();
-  if (result.status === "unavailable") {
-    return { status: "unavailable", rows: [], error: result.error };
-  }
-  if (result.status === "error") {
-    return { status: "error", rows: [], error: result.error };
-  }
-  if (result.collections.length === 0) return { status: "empty", rows: [] };
-  return { status: "loaded", rows: result.collections };
 }
 
 /**
@@ -689,7 +667,7 @@ async function readLatestVersion(
  *      touched (the form does not edit them);
  *   2) INSERT ai_bot_versions with version = latest + 1 and a mandatory,
  *      non-empty change note (carries allowed_actions, chain_config,
- *      knowledge_base_ids, snapshots — B-17/B-18/B-19 payloads);
+ *      knowledge_base_text and snapshots);
  *   3) UPDATE ai_bots.current_version_id to the new version id — the REPOINT
  *      the old app forgot, which left consumers serving the stale instruction.
  */
@@ -923,7 +901,8 @@ export async function duplicateBot(
     model: sourceVersion.model ?? null,
     connector_snapshot: sourceVersion.connector_snapshot ?? {},
     permission_snapshot: sourceVersion.permission_snapshot ?? {},
-    knowledge_base_ids: sourceVersion.knowledge_base_ids ?? [],
+    knowledge_base_text: sourceVersion.knowledge_base_text ?? null,
+    knowledge_base_ids: [],
     change_note: `Duplicated from "${sourceName}" (version ${String(sourceVersion.version ?? "?")}).`,
     chain_config: sourceVersion.chain_config ?? {},
     created_at: now,
@@ -1113,193 +1092,4 @@ export async function deleteBot(
     value: { botId, deletedVersionCount: deletedVersionIds.length },
     steps,
   };
-}
-
-// ─────────────────────────────────────────────────────────────
-// B-19 — attach / detach knowledge collections
-// ─────────────────────────────────────────────────────────────
-
-export interface KnowledgeLinkOutcome {
-  botId: string;
-  versionId: string;
-  version: number;
-  knowledgeBaseIds: string[];
-}
-
-/**
- * Shared implementation for attach/detach (manifest B-19). The established,
- * verified contract is the VERSION-COLUMN one: `ai_bot_versions
- * .knowledge_base_ids` is a text[] of exact collection ids written with each
- * new version row (the bot_kb_links table belongs to the rejected
- * EditorBotBuilder surface, row B-28 — not used here). Changing the linked
- * collections therefore publishes a new version row that carries every other
- * recorded field forward VERBATIM from the latest version (nothing invented),
- * then repoints current_version_id.
- */
-async function writeKnowledgeLink(
-  botId: string,
-  collectionId: string,
-  changeNote: string,
-  mode: "attach" | "detach",
-  createdBy?: string,
-): Promise<BotAdminOperationResult<KnowledgeLinkOutcome>> {
-  const steps = [
-    makeStep('read bot from "ai_bots"', AI_BOTS_TABLE),
-    makeStep('read latest version from "ai_bot_versions"', AI_BOT_VERSIONS_TABLE),
-    makeStep('insert new version with the updated knowledge_base_ids', AI_BOT_VERSIONS_TABLE),
-    makeStep('repoint "ai_bots".current_version_id at the new version', AI_BOTS_TABLE),
-  ];
-  const [readBotStep, readVersionStep, insertStep, repointStep] = steps;
-
-  const verb = mode === "attach" ? "attached" : "detached";
-  if (!botId || !botId.trim()) {
-    return failed(`Nothing was ${verb}: a bot id is required.`, steps);
-  }
-  if (!collectionId || !collectionId.trim()) {
-    return failed(`Nothing was ${verb}: a knowledge collection id is required.`, steps);
-  }
-  const note = changeNote.trim();
-  if (!note) {
-    return failed(
-      `Nothing was ${verb}: a change note is required — knowledge changes publish a new version.`,
-      steps,
-    );
-  }
-
-  const botRes = await supabase
-    .from(AI_BOTS_TABLE)
-    .select("id, name, current_version_id")
-    .eq("id", botId)
-    .maybeSingle();
-  if (botRes.error) {
-    failStep(readBotStep, errorText(botRes.error));
-    return failed(`Nothing was ${verb}: the bot could not be read. ${errorText(botRes.error)}`, steps);
-  }
-  if (!botRes.data) {
-    failStep(readBotStep, `No bot with id "${botId}" is visible to this account.`);
-    return failed(`Nothing was ${verb}: no bot with id "${botId}" is visible to this account.`, steps);
-  }
-  confirmStep(readBotStep, "Bot read.");
-
-  const latest = await readLatestVersion(botId);
-  if (!latest.ok) {
-    failStep(readVersionStep, latest.error);
-    return failed(
-      `Nothing was ${verb}: the recorded version history could not be read. ${latest.error}`,
-      steps,
-    );
-  }
-  const latestRow = latest.row;
-  confirmStep(
-    readVersionStep,
-    latestRow
-      ? `Latest version ${String(latestRow.version ?? "?")} read.`
-      : "The bot has no version row yet — the new version starts from an empty configuration.",
-  );
-
-  const currentIds: string[] = Array.isArray(latestRow?.knowledge_base_ids)
-    ? [...(latestRow!.knowledge_base_ids as string[])]
-    : [];
-  let nextIds: string[];
-  if (mode === "attach") {
-    if (currentIds.includes(collectionId)) {
-      return failed(
-        `Nothing was attached: collection "${collectionId}" is already linked to this bot — ` +
-          "no new version was published.",
-        steps,
-      );
-    }
-    nextIds = [...currentIds, collectionId];
-  } else {
-    if (!currentIds.includes(collectionId)) {
-      return failed(
-        `Nothing was detached: collection "${collectionId}" is not linked to this bot — ` +
-          "no new version was published.",
-        steps,
-      );
-    }
-    nextIds = currentIds.filter((id) => id !== collectionId);
-  }
-
-  const latestNumber = typeof latestRow?.version === "number" ? (latestRow.version as number) : 0;
-  const nextVersion = latestNumber + 1;
-  const actor = resolveActor(createdBy);
-
-  // Carry every recorded field forward verbatim; only knowledge_base_ids and
-  // the change note differ from the latest version.
-  const carryForward: BotVersionDraft = {
-    systemInstruction: (latestRow?.system_instruction as string | null) ?? null,
-    customInstruction: (latestRow?.custom_instruction as string | null) ?? null,
-    safetyRules: (latestRow?.safety_rules as string | null) ?? null,
-    temperature: (latestRow?.temperature as number | null) ?? null,
-    maxTokens: (latestRow?.max_tokens as number | null) ?? null,
-    allowedActions: Array.isArray(latestRow?.allowed_actions)
-      ? (latestRow!.allowed_actions as string[])
-      : [],
-    providerId: (latestRow?.provider_id as string | null) ?? null,
-    model: (latestRow?.model as string | null) ?? null,
-    connectorSnapshot:
-      latestRow && typeof latestRow.connector_snapshot === "object" && latestRow.connector_snapshot !== null
-        ? (latestRow.connector_snapshot as Record<string, unknown>)
-        : {},
-    permissionSnapshot:
-      latestRow && typeof latestRow.permission_snapshot === "object" && latestRow.permission_snapshot !== null
-        ? (latestRow.permission_snapshot as Record<string, unknown>)
-        : {},
-    knowledgeBaseIds: nextIds,
-    chainConfig:
-      latestRow && typeof latestRow.chain_config === "object" && latestRow.chain_config !== null
-        ? (latestRow.chain_config as unknown as ChainConfig)
-        : null,
-  };
-
-  const versionInsert = await insertConfirmed(
-    AI_BOT_VERSIONS_TABLE,
-    buildVersionPayload(botId, nextVersion, carryForward, note, actor),
-  );
-  if (!versionInsert.ok) {
-    failStep(insertStep, versionInsert.error);
-    return failed(`Nothing was ${verb}: the new version row was not created. ${versionInsert.error}`, steps);
-  }
-  confirmStep(insertStep, `Version ${nextVersion} stored with id "${versionInsert.id}".`);
-
-  const repoint = await updateConfirmed(AI_BOTS_TABLE, botId, {
-    current_version_id: versionInsert.id,
-  });
-  if (!repoint.ok) {
-    failStep(repointStep, repoint.error);
-    return failed(
-      `PARTIAL: version ${nextVersion} ("${versionInsert.id}") records the ${verb} collection ` +
-        `but current_version_id was NOT repointed — consumers still serve the previous version. ` +
-        repoint.error,
-      steps,
-    );
-  }
-  confirmStep(repointStep, `current_version_id now reads "${versionInsert.id}".`);
-
-  return {
-    status: "completed",
-    value: { botId, versionId: versionInsert.id, version: nextVersion, knowledgeBaseIds: nextIds },
-    steps,
-  };
-}
-
-/** Attach a knowledge collection to a bot (manifest B-19). */
-export async function attachKnowledge(
-  botId: string,
-  collectionId: string,
-  changeNote: string,
-  options?: { createdBy?: string },
-): Promise<BotAdminOperationResult<KnowledgeLinkOutcome>> {
-  return writeKnowledgeLink(botId, collectionId, changeNote, "attach", options?.createdBy);
-}
-
-/** Detach a knowledge collection from a bot (manifest B-19). */
-export async function detachKnowledge(
-  botId: string,
-  collectionId: string,
-  changeNote: string,
-  options?: { createdBy?: string },
-): Promise<BotAdminOperationResult<KnowledgeLinkOutcome>> {
-  return writeKnowledgeLink(botId, collectionId, changeNote, "detach", options?.createdBy);
 }

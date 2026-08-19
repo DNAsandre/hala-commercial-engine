@@ -30,7 +30,6 @@ import { Loader2 } from "lucide-react";
 // CLEAN APP: inlined — see GovernanceConsole.tsx for rationale. Avoids pulling
 // the legacy DashboardLayout (and its denylisted route array) into the bundle.
 const navigationV1 = true;
-import { fetchCollections, type KBCollection } from "@/lib/knowledgebase";
 import { fetchConnectionsResult, fetchSyncEvents, getSyncHealthStats, type CrmConnectionsResult } from "@/lib/crm-sync-engine";
 import { toast } from "sonner";
 import {
@@ -271,126 +270,6 @@ function CRMSyncEmbed() {
           </Card>
         ))}
       </div>
-    </div>
-  );
-}
-
-/* ─── Knowledgebase read state ─────────────────────────────────────────────
- * SC-01 Wave 04 (defect D). `fetchCollections` (src/lib/knowledgebase.ts:92-94)
- * THROWS on a failed read — it does not return []. The previous comment here
- * claimed the opposite, and the effect had no `.catch`, so a rejected promise
- * left `kbLoading` true forever: the Knowledgebase tab spun indefinitely and a
- * read failure was indistinguishable from loading.
- *
- * `lib/knowledgebase.ts` is not on this lane's write allowlist, so the throw is
- * handled here at the call site and the three outcomes are kept apart.
- */
-export type KnowledgebaseEmbedRead =
-  | { status: "loaded"; collections: KBCollection[] }
-  | { status: "empty" }
-  | { status: "error"; error: string };
-
-export async function loadKnowledgebaseCollections(): Promise<KnowledgebaseEmbedRead> {
-  try {
-    const collections = await fetchCollections();
-    if (collections.length === 0) return { status: "empty" };
-    return { status: "loaded", collections };
-  } catch (err) {
-    return { status: "error", error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-function KnowledgebaseEmbed() {
-  const [read, setRead] = useState<KnowledgebaseEmbedRead | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    setRead(null);
-    loadKnowledgebaseCollections().then((r) => { if (!cancelled) setRead(r); });
-    return () => { cancelled = true; };
-  }, [reloadKey]);
-
-  // 1. LOADING — nothing is known yet.
-  if (read === null) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin" /></div>;
-
-  // 2. FAILED READ — no count is shown, because no count is known.
-  if (read.status === "error") {
-    return (
-      <Card className="border border-red-200 bg-red-50/40 shadow-none">
-        <CardContent className="p-6 space-y-2">
-          <p className="text-sm font-semibold text-red-700">Knowledgebase collections could not be read</p>
-          <p className="text-xs text-muted-foreground max-w-2xl">
-            Nothing is listed and no totals are shown. The number of recorded collections is unknown — it is not zero.
-          </p>
-          <p className="text-[11px] font-mono text-muted-foreground break-all">{read.error}</p>
-          <Button variant="outline" size="sm" className="mt-2" onClick={() => setReloadKey(k => k + 1)}>
-            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Retry
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // 3. REAL EMPTY — the read succeeded and returned nothing.
-  if (read.status === "empty") {
-    return (
-      <Card className="border border-border shadow-none">
-        <CardContent className="p-6 text-center space-y-1">
-          <p className="text-sm font-medium">No knowledgebase collections are visible to this account</p>
-          <p className="text-xs text-muted-foreground max-w-xl mx-auto">
-            The read of the knowledgebase collections succeeded and returned zero rows. Collections hidden by
-            row-level security would not appear here, so this is not a statement that none exist.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const collections = read.collections;
-
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-[#1B2A4A]">{collections.length}</div>
-            <div className="text-xs text-muted-foreground">Collections</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-blue-600">{collections.reduce((s, c) => s + (c.doc_count || 0), 0)}</div>
-            <div className="text-xs text-muted-foreground">Documents</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-emerald-600">{collections.reduce((s, c) => s + (c.chunk_count || 0), 0)}</div>
-            <div className="text-xs text-muted-foreground">Total Chunks</div>
-          </CardContent>
-        </Card>
-      </div>
-      <div className="space-y-2">
-        {collections.map(col => (
-          <Card key={col.id}>
-            <CardContent className="p-3 flex items-center justify-between">
-              <div className="min-w-0">
-                <div className="text-sm font-medium truncate">{col.name}</div>
-                <div className="text-[10px] text-muted-foreground">{col.doc_count || 0} docs · {col.chunk_count || 0} chunks · {col.visibility}</div>
-              </div>
-              <Badge variant={col.visibility === "admin-only" ? "destructive" : "secondary"} className="text-[10px]">{col.visibility}</Badge>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-      {/* SC-01 Wave 06 (A-14 note): the old copy invited using "the full page"
-          to create collections — no such page exists in the clean surface. */}
-      <p className="text-xs text-muted-foreground">
-        These figures are read live from <span className="font-mono">kb_collections</span> (with document and chunk
-        counts embedded). This embed is a view of the stored collections; no collection-management page exists in this
-        build.
-      </p>
     </div>
   );
 }
@@ -1501,7 +1380,6 @@ export default function AdminPanel() {
           <TabsTrigger value="ai-providers"><Brain className="w-3.5 h-3.5 mr-1.5" />AI Providers</TabsTrigger>
           {/* CLEAN APP: "Editor Bots" tab removed — it managed editor_bots used by
               the Document Composer and linked to /editor-bot-builder. Denylisted. */}
-          <TabsTrigger value="knowledgebase"><Database className="w-3.5 h-3.5 mr-1.5" />Knowledgebase</TabsTrigger>
           <TabsTrigger value="crm-sync"><Link2 className="w-3.5 h-3.5 mr-1.5" />CRM Sync</TabsTrigger>
           <TabsTrigger value="facilities"><Warehouse className="w-3.5 h-3.5 mr-1.5" />Facilities</TabsTrigger>
         </TabsList>
@@ -1803,20 +1681,6 @@ export default function AdminPanel() {
             legacy `editor_bots` table for Document Composer block/document AI and
             linked to /editor-bot-builder. Bot governance in the clean app runs
             through Bot Builder (ai_bots) under System. */}
-
-        <TabsContent value="knowledgebase" className="space-y-4">
-          <div className="flex items-center justify-between mb-2">
-            <div>
-              <h2 className="text-base font-semibold">Knowledgebase</h2>
-              <p className="text-xs text-muted-foreground">Manage document collections used by AI bots for context retrieval and citations</p>
-            </div>
-            <Button variant="outline" size="sm" className="gap-1.5" disabled>
-              <Database className="w-3.5 h-3.5" />
-              Embedded Only
-            </Button>
-          </div>
-          <KnowledgebaseEmbed />
-        </TabsContent>
 
         <TabsContent value="crm-sync" className="space-y-4">
           <div className="flex items-center justify-between mb-2">

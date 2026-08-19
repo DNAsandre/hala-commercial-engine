@@ -15,7 +15,16 @@
  */
 
 import { supabase } from "@/lib/supabase";
-import { type RetrievedChunk } from "@/lib/knowledgebase";
+
+interface RetrievedChunk {
+  chunk_id: string;
+  document_id: string;
+  document_title: string;
+  collection_name: string;
+  chunk_index: number;
+  content: string;
+  relevance_score: number;
+}
 
 // SC-01 WAVE 02 BOUNDARY (SX-001 / SX-011): AI execution and AI-run recording
 // are excluded from this build. This module keeps bot METADATA reads (display
@@ -254,6 +263,9 @@ export async function loadGovernedBotByName(
     const systemParts = [
       latestVersion?.system_instruction,
       latestVersion?.custom_instruction,
+      latestVersion?.knowledge_base_text
+        ? `Knowledge Base:\n${latestVersion.knowledge_base_text}`
+        : null,
     ].filter(Boolean);
     const systemPrompt = systemParts.join("\n\n") || "";
 
@@ -313,6 +325,9 @@ async function loadGovernedBot(domain: string): Promise<EditorBot | null> {
     const systemParts = [
       latestVersion?.system_instruction,
       latestVersion?.custom_instruction,
+      latestVersion?.knowledge_base_text
+        ? `Knowledge Base:\n${latestVersion.knowledge_base_text}`
+        : null,
     ].filter(Boolean);
     const systemPrompt = systemParts.join("\n\n") || "You are a helpful commercial assistant for Hala Supply Chain Services.";
 
@@ -323,7 +338,7 @@ async function loadGovernedBot(domain: string): Promise<EditorBot | null> {
       provider: providerName,
       model: latestVersion?.model || bot.model || "gpt-4o",
       system_prompt: systemPrompt,
-      knowledge_base_refs: latestVersion?.knowledge_base_ids || [],
+      knowledge_base_refs: [],
       allowed_doc_types: bot.domains_allowed || [],
       allowed_block_types: null,
       enabled: true,
@@ -396,8 +411,12 @@ export async function getEditorBotById(botId: string): Promise<EditorBot | null>
         bot_type: "block",
         provider: providerName,
         model: v?.model || (bot as any).model || "gpt-4o",
-        system_prompt: [v?.system_instruction, v?.custom_instruction].filter(Boolean).join("\n\n") || "",
-        knowledge_base_refs: v?.knowledge_base_ids || [],
+        system_prompt: [
+          v?.system_instruction,
+          v?.custom_instruction,
+          v?.knowledge_base_text ? `Knowledge Base:\n${v.knowledge_base_text}` : null,
+        ].filter(Boolean).join("\n\n") || "",
+        knowledge_base_refs: [],
         allowed_doc_types: (bot as any).domains_allowed || [],
         allowed_block_types: null,
         enabled: (bot as any).status === "active",

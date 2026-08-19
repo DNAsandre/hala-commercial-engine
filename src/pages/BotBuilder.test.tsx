@@ -37,8 +37,6 @@ import type { AiBotRecord, AiBotVersionRecord, AiProviderRecord, BotConfiguratio
 const mocks = vi.hoisted(() => ({
   createBot: vi.fn(),
   publishBotVersion: vi.fn(),
-  attachKnowledge: vi.fn(),
-  detachKnowledge: vi.fn(),
 }));
 
 vi.mock("@/lib/bot-admin", async (importOriginal) => {
@@ -53,8 +51,6 @@ import {
   deriveModelOptions,
   deriveProviderOptions,
   parseNumberInput,
-  performAttachKnowledge,
-  performDetachKnowledge,
   selectionUnion,
   submitCreateBot,
   submitPublishVersion,
@@ -95,7 +91,7 @@ function version(over: Partial<AiBotVersionRecord>): AiBotVersionRecord {
     providerId: null,
     model: null,
     permissionSnapshot: null,
-    knowledgeBaseIds: [],
+    knowledgeBaseText: null,
     connectorSnapshot: null,
     chainConfig: null,
     changeNote: "",
@@ -108,8 +104,6 @@ function version(over: Partial<AiBotVersionRecord>): AiBotVersionRecord {
 beforeEach(() => {
   mocks.createBot.mockReset();
   mocks.publishBotVersion.mockReset();
-  mocks.attachKnowledge.mockReset();
-  mocks.detachKnowledge.mockReset();
 });
 
 describe("deriveBotBuilderView — defect E", () => {
@@ -176,12 +170,12 @@ describe("deriveBotBuilderView — defect E", () => {
     const read: BotConfigurationRead = {
       status: "loaded",
       bot,
-      versions: [version({ temperature: 0.2, maxTokens: 1200, knowledgeBaseIds: ["kb-1"] })],
+      versions: [version({ temperature: 0.2, maxTokens: 1200, knowledgeBaseText: "Hala service facts" })],
     };
     const view = deriveBotBuilderView(read)!;
     expect(view.temperature).toBe(0.2);
     expect(view.maxTokens).toBe(1200);
-    expect(view.knowledgeBaseIds).toEqual(["kb-1"]);
+    expect(view.knowledgeBaseText).toBe("Hala service facts");
 
     const bare = deriveBotBuilderView({ status: "loaded", bot, versions: [version({})] })!;
     expect(bare.temperature).toBeNull();
@@ -274,7 +268,7 @@ function makeForm(over?: Partial<BuilderFormState>): BuilderFormState {
     temperature: 0.2,
     maxTokens: 1200,
     allowedActions: ["suggest", "draft"],
-    knowledgeBaseIds: ["kb-1"],
+    knowledgeBaseText: "Hala service facts and reference material.",
     connectorSnapshot: { finance: false },
     chainNextBotId: "none",
     chainPromptUser: true,
@@ -319,11 +313,15 @@ describe("buildDefinitionFields / buildVersionDraft — the exact stored shape",
     ).toEqual({ next_bot_id: "bot-9", prompt_user: false, chain_label: "Run next" });
   });
 
-  it("writes the recorded selections: allowed_actions, knowledge ids, connector snapshot verbatim", () => {
+  it("writes allowed actions, bot-owned knowledge, and connector snapshot verbatim", () => {
     const draft = buildVersionDraft(makeForm());
     expect(draft.allowedActions).toEqual(["suggest", "draft"]);
-    expect(draft.knowledgeBaseIds).toEqual(["kb-1"]);
+    expect(draft.knowledgeBaseText).toBe("Hala service facts and reference material.");
     expect(draft.connectorSnapshot).toEqual({ finance: false });
+  });
+
+  it("records an empty bot knowledge base as null", () => {
+    expect(buildVersionDraft(makeForm({ knowledgeBaseText: "   " })).knowledgeBaseText).toBeNull();
   });
 
   it("snapshots the scope fields as the established permission_snapshot", () => {
@@ -408,33 +406,6 @@ describe("submitPublishVersion (B-15)", () => {
     const outcome = await submitPublishVersion("bot-1", makeForm({ changeNote: "" }));
     expect(outcome.ok).toBe(false);
     expect(outcome.message).toBe("Nothing was published: A change note is required to publish a new version.");
-  });
-});
-
-describe("attach/detach knowledge (B-19)", () => {
-  it("attaches through the service with the exact ids and note", async () => {
-    mocks.attachKnowledge.mockResolvedValue({
-      status: "completed",
-      value: { botId: "bot-1", versionId: "v-4", version: 4, knowledgeBaseIds: ["kb-1", "kb-2"] },
-      steps: [],
-    });
-    const outcome = await performAttachKnowledge("bot-1", "kb-2", "Attach pricing KB");
-    expect(mocks.attachKnowledge).toHaveBeenCalledTimes(1);
-    expect(mocks.attachKnowledge).toHaveBeenCalledWith("bot-1", "kb-2", "Attach pricing KB");
-    expect(outcome.ok).toBe(true);
-    expect(outcome.message).toContain("version 4");
-  });
-
-  it("detaches through the service and reports failure verbatim when not completed", async () => {
-    mocks.detachKnowledge.mockResolvedValue({
-      status: "failed",
-      error: 'Nothing was detached: collection "kb-9" is not linked to this bot — no new version was published.',
-      steps: [],
-    });
-    const outcome = await performDetachKnowledge("bot-1", "kb-9", "note");
-    expect(mocks.detachKnowledge).toHaveBeenCalledWith("bot-1", "kb-9", "note");
-    expect(outcome.ok).toBe(false);
-    expect(outcome.message).toContain('collection "kb-9" is not linked');
   });
 });
 

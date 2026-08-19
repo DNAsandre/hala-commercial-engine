@@ -795,7 +795,7 @@ export const AI_BOT_VERSIONS_TABLE = "ai_bot_versions";
 export const AI_BOT_VERSIONS_COLUMNS =
   "id, bot_id, version, system_instruction, custom_instruction, safety_rules, " +
   "temperature, max_tokens, allowed_actions, provider_id, model, " +
-  "knowledge_base_ids, connector_snapshot, permission_snapshot, chain_config, " +
+  "knowledge_base_text, connector_snapshot, permission_snapshot, chain_config, " +
   "change_note, created_at, created_by";
 
 export interface AiBotVersionRecord {
@@ -819,7 +819,7 @@ export interface AiBotVersionRecord {
   model?: string | null;
   /** Recorded permission snapshot jsonb; null when nothing is recorded. */
   permissionSnapshot?: Record<string, unknown> | null;
-  knowledgeBaseIds: string[];
+  knowledgeBaseText: string | null;
   connectorSnapshot: Record<string, unknown> | null;
   chainConfig: Record<string, unknown> | null;
   changeNote: string;
@@ -843,7 +843,7 @@ function mapBotVersionRow(row: any): AiBotVersionRecord {
     providerId: row.provider_id ?? null,
     model: row.model ?? null,
     permissionSnapshot: isObject(row.permission_snapshot) ? row.permission_snapshot : null,
-    knowledgeBaseIds: Array.isArray(row.knowledge_base_ids) ? row.knowledge_base_ids : [],
+    knowledgeBaseText: typeof row.knowledge_base_text === "string" ? row.knowledge_base_text : null,
     connectorSnapshot: isObject(row.connector_snapshot) ? row.connector_snapshot : null,
     chainConfig: isObject(row.chain_config) ? row.chain_config : null,
     changeNote: row.change_note ?? "",

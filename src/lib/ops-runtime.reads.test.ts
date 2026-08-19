@@ -311,7 +311,7 @@ describe("readBotConfiguration", () => {
   it("keeps unrecorded version fields null rather than defaulting temperature/tokens", async () => {
     results.set(AI_BOTS_TABLE, { data: { id: "b1" }, error: null });
     results.set(AI_BOT_VERSIONS_TABLE, {
-      data: [{ id: "v1", bot_id: "b1", version: 3, temperature: null, max_tokens: null, connector_snapshot: null, chain_config: null }],
+      data: [{ id: "v1", bot_id: "b1", version: 3, temperature: null, max_tokens: null, knowledge_base_text: null, connector_snapshot: null, chain_config: null }],
       error: null,
     });
     const read = await readBotConfiguration("b1");
@@ -319,7 +319,7 @@ describe("readBotConfiguration", () => {
     expect(read.versions[0].temperature).toBeNull();
     expect(read.versions[0].maxTokens).toBeNull();
     expect(read.versions[0].connectorSnapshot).toBeNull();
-    expect(read.versions[0].knowledgeBaseIds).toEqual([]);
+    expect(read.versions[0].knowledgeBaseText).toBeNull();
   });
 
   // ── SC-01 Wave 06 (T13): the version projection carries the live columns a

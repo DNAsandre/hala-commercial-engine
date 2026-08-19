@@ -28,12 +28,8 @@
  *                   been deleted — the column is live and populated.)
  *   B-18 chaining — chain_config {next_bot_id, prompt_user, chain_label} read
  *                   and written per version; {} when no chain; no self-chain.
- *   B-19 knowledge— picker reads kb_collections (readKnowledgeCollections,
- *                   distinct loading/empty/error; live table holds 0 rows →
- *                   honest EMPTY state). Attach/detach persist through T13's
- *                   confirmed operations, which publish a new version carrying
- *                   every other recorded field forward verbatim. Recorded ids
- *                   with no backing collection row render verbatim.
+ *   Knowledge       — pasted text belongs to this bot definition and is stored
+ *                   directly on each immutable ai_bot_versions row.
  *
  * HONESTY RULES (carried from Wave 04, still binding):
  *  - The bot read is three-state: loading, "no such record visible" and
@@ -67,25 +63,21 @@ import { cleanHref } from '@clean/lib/clean-routing';
 import { supabase } from '@/lib/supabase';
 import {
   Bot, Save, ArrowLeft, Shield, Cpu, Database, FileText, Zap,
-  AlertTriangle, History, BookOpen, Link2, XCircle,
+  AlertTriangle, History, BookOpen, Link2,
 } from 'lucide-react';
 import {
-  attachKnowledge,
   createBot,
-  detachKnowledge,
   describeBotProvider,
   publishBotVersion,
   readAiBots,
   readAiProviders,
   readBotConfiguration,
-  readKnowledgeCollections,
   validateBotDefinition,
   type AiBotRecord,
   type AiProviderRecord,
   type BotConfigurationRead,
   type BotDefinitionFields,
   type BotVersionDraft,
-  type KBCollection,
   type RecordRead,
 } from '@/lib/bot-admin';
 
@@ -162,7 +154,7 @@ export interface BotBuilderView {
   safetyRules: string;
   temperature: number | null;
   maxTokens: number | null;
-  knowledgeBaseIds: string[];
+  knowledgeBaseText: string;
   domains: string[];
   regions: string[];
   roles: string[];
@@ -192,7 +184,7 @@ export function deriveBotBuilderView(read: BotConfigurationRead): BotBuilderView
     safetyRules: latest?.safetyRules ?? '',
     temperature: latest?.temperature ?? null,
     maxTokens: latest?.maxTokens ?? null,
-    knowledgeBaseIds: latest?.knowledgeBaseIds ?? [],
+    knowledgeBaseText: latest?.knowledgeBaseText ?? '',
     domains: read.bot.domainsAllowed,
     regions: read.bot.regionsAllowed,
     roles: read.bot.rolesAllowed,
@@ -227,7 +219,7 @@ export interface BuilderFormState {
   temperature: number | null;
   maxTokens: number | null;
   allowedActions: string[];
-  knowledgeBaseIds: string[];
+  knowledgeBaseText: string;
   connectorSnapshot: Record<string, unknown>;
   chainNextBotId: string;
   chainPromptUser: boolean;
@@ -271,7 +263,7 @@ export function buildVersionDraft(form: BuilderFormState): BotVersionDraft {
       regionsAllowed: form.regions,
       rolesAllowed: form.roles,
     },
-    knowledgeBaseIds: form.knowledgeBaseIds,
+    knowledgeBaseText: form.knowledgeBaseText.trim() === '' ? null : form.knowledgeBaseText,
     // 'none' → null, which the service stores as {} (the established
     // "no chain" value, manifest B-18).
     chainConfig:
@@ -335,47 +327,6 @@ export async function submitPublishVersion(
       message:
         `Stored: version ${result.value.version} published and current_version_id repointed — ` +
         'all steps confirmed by the database.',
-    };
-  }
-  return { ok: false, message: result.error };
-}
-
-export interface KnowledgeActionOutcome {
-  ok: boolean;
-  message: string;
-}
-
-/** B-19 attach: success ONLY from the confirmed operation result. */
-export async function performAttachKnowledge(
-  botId: string,
-  collectionId: string,
-  changeNote: string,
-): Promise<KnowledgeActionOutcome> {
-  const result = await attachKnowledge(botId, collectionId, changeNote);
-  if (result.status === 'completed') {
-    return {
-      ok: true,
-      message:
-        `Stored: collection "${collectionId}" attached — version ${result.value.version} ` +
-        'published and confirmed.',
-    };
-  }
-  return { ok: false, message: result.error };
-}
-
-/** B-19 detach: success ONLY from the confirmed operation result. */
-export async function performDetachKnowledge(
-  botId: string,
-  collectionId: string,
-  changeNote: string,
-): Promise<KnowledgeActionOutcome> {
-  const result = await detachKnowledge(botId, collectionId, changeNote);
-  if (result.status === 'completed') {
-    return {
-      ok: true,
-      message:
-        `Stored: collection "${collectionId}" detached — version ${result.value.version} ` +
-        'published and confirmed.',
     };
   }
   return { ok: false, message: result.error };
@@ -487,7 +438,6 @@ export default function BotBuilder() {
   const [reloadKey, setReloadKey] = useState(0);
   const [providersRead, setProvidersRead] = useState<RecordRead<AiProviderRecord> | null>(null);
   const [allBotsRead, setAllBotsRead] = useState<RecordRead<AiBotRecord> | null>(null);
-  const [kbRead, setKbRead] = useState<RecordRead<KBCollection> | null>(null);
   const [versionHistory, setVersionHistory] = useState<Array<{ id: string; version: number | null; changeNote: string; createdAt: string; createdBy: string }>>([]);
 
   const existingBot = botRead?.status === 'loaded' ? botRead.bot : null;
@@ -523,10 +473,8 @@ export default function BotBuilder() {
   const [allowedActions, setAllowedActions] = useState<string[]>([]);
   const [recordedActions, setRecordedActions] = useState<string[]>([]);
 
-  // Section 4: Knowledge (B-19)
-  const [selectedKB, setSelectedKB] = useState<string[]>([]);
-  const [kbChangeNote, setKbChangeNote] = useState('');
-  const [kbPendingId, setKbPendingId] = useState<string | null>(null);
+  // Section 4: knowledge authored for this bot and version.
+  const [knowledgeBaseText, setKnowledgeBaseText] = useState('');
 
   // Section 5: Connector snapshot — displayed as data, carried forward
   // verbatim on publish (manifest B-20: no connector store exists to pick
@@ -574,7 +522,7 @@ export default function BotBuilder() {
       setMaxTokens(null);
       setAllowedActions([]);
       setRecordedActions([]);
-      setSelectedKB([]);
+      setKnowledgeBaseText('');
       setConnectorSnapshot({});
       setProviderId(null);
       setModel(null);
@@ -645,7 +593,7 @@ export default function BotBuilder() {
       setMaxTokens(view.maxTokens);
       setAllowedActions(view.allowedActions);
       setRecordedActions(view.allowedActions);
-      setSelectedKB(view.knowledgeBaseIds);
+      setKnowledgeBaseText(view.knowledgeBaseText);
       setConnectorSnapshot(view.connectorSnapshot);
       setChainNextBotId(view.chainNextBotId);
       setChainPromptUser(view.chainPromptUser);
@@ -681,17 +629,6 @@ export default function BotBuilder() {
     return () => { mounted = false; };
   }, [reloadKey]);
 
-  // Knowledge collections (B-19) — live kb_collections read, three-state.
-  useEffect(() => {
-    let mounted = true;
-    setKbRead(null);
-    readKnowledgeCollections().then(r => {
-      if (!mounted) return;
-      setKbRead(r);
-    });
-    return () => { mounted = false; };
-  }, [reloadKey]);
-
   const collectForm = (): BuilderFormState => ({
     name,
     displayName,
@@ -711,7 +648,7 @@ export default function BotBuilder() {
     temperature,
     maxTokens,
     allowedActions,
-    knowledgeBaseIds: selectedKB,
+    knowledgeBaseText,
     connectorSnapshot,
     chainNextBotId,
     chainPromptUser,
@@ -743,25 +680,6 @@ export default function BotBuilder() {
       }
     } finally {
       setSaving(false);
-    }
-  };
-
-  const runKnowledgeAction = async (
-    collectionId: string,
-    action: () => Promise<KnowledgeActionOutcome>,
-  ) => {
-    setKbPendingId(collectionId);
-    try {
-      const outcome = await action();
-      if (outcome.ok) {
-        toast.success(outcome.message);
-        setKbChangeNote('');
-        setReloadKey(k => k + 1); // re-read: the new version is stored truth
-      } else {
-        toast.error(outcome.message);
-      }
-    } finally {
-      setKbPendingId(null);
     }
   };
 
@@ -838,10 +756,6 @@ export default function BotBuilder() {
   const chainBots = (allBotsRead?.rows ?? []).filter(b => b.id !== editId);
   const chainTargetUnmatched =
     chainNextBotId !== NO_CHAIN_VALUE && !chainBots.some(b => b.id === chainNextBotId);
-
-  const kbCollections = kbRead?.rows ?? [];
-  /** Recorded ids with no backing collection row — rendered verbatim (B-19). */
-  const unmatchedKbIds = selectedKB.filter(id => !kbCollections.some(c => c.id === id));
 
   const actionVocabulary = type === 'action' ? ACTION_MODES : MONITOR_OUTPUTS;
   const actionOptions = selectionUnion(
@@ -1054,118 +968,29 @@ export default function BotBuilder() {
             </CardContent>
           </Card>
 
-          {/* Section 4: Knowledge Base (B-19) */}
+          {/* Section 4: knowledge authored for this bot. */}
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base"><BookOpen className="w-4 h-4" /> 4. Knowledge Base Configuration</CardTitle>
+              <CardTitle className="flex items-center gap-2 text-base"><BookOpen className="w-4 h-4" /> 4. Knowledge Base</CardTitle>
               <CardDescription>
-                Linked collection ids are stored per version
-                (<span className="font-mono">ai_bot_versions.knowledge_base_ids</span>).
-                {editId
-                  ? ' Attaching or detaching publishes a new version carrying every other recorded field forward verbatim.'
-                  : ' The selection below is stored with version 1.'}
+                Paste the reference material this bot must know. It is stored with this bot version, not in a separate Admin library.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {/* The picker reads the real kb_collections table. Loading, a
-                  failed read and a real empty list are three different
-                  statements. */}
-              {kbRead === null && (
-                <p className="text-sm text-slate-500 p-3">Reading knowledge collections…</p>
-              )}
-              {kbRead !== null && (kbRead.status === 'error' || kbRead.status === 'unavailable') && (
-                <div className="p-3 border border-red-200 bg-red-50/40 rounded space-y-1">
-                  <p className="text-sm font-medium text-red-700 flex items-center gap-1">
-                    <XCircle className="w-4 h-4" /> The knowledge collections could not be read
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    No collection list is shown. The number of collections is unknown — it is not zero.
-                    The recorded ids below are unaffected.
-                  </p>
-                  <p className="text-[11px] font-mono text-slate-500 break-all">{kbRead.error}</p>
-                  <Button variant="outline" size="sm" onClick={() => setReloadKey(k => k + 1)}>Retry</Button>
-                </div>
-              )}
-              {kbRead !== null && kbRead.status === 'empty' && (
-                <p className="text-sm text-slate-500 p-3">
-                  The read of <span className="font-mono">kb_collections</span> succeeded and returned zero rows —
-                  no knowledge collection exists to {editId ? 'attach' : 'select'}. Rows hidden by row-level
-                  security would not appear here.
-                </p>
-              )}
-              {kbRead !== null && kbRead.status === 'loaded' && (
-                <div className="space-y-2">
-                  {kbCollections.map(kb => {
-                    const linked = selectedKB.includes(kb.id);
-                    const pending = kbPendingId === kb.id;
-                    return (
-                      <div key={kb.id} className="flex items-center gap-3 p-3 border rounded hover:bg-slate-50">
-                        {!editId && (
-                          <Checkbox checked={linked}
-                            onCheckedChange={() => toggleIn(setSelectedKB)(kb.id)} />
-                        )}
-                        <div className="flex-1">
-                          <p className="text-sm font-medium">{kb.name}</p>
-                          <p className="text-xs text-slate-400">
-                            {kb.doc_count ?? 0} document(s) · {kb.chunk_count ?? 0} chunk(s) · visibility: {kb.visibility}
-                          </p>
-                        </div>
-                        {linked && <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">linked</Badge>}
-                        {editId && (
-                          linked ? (
-                            <Button variant="outline" size="sm" disabled={pending}
-                              onClick={() => runKnowledgeAction(kb.id, () => performDetachKnowledge(editId, kb.id, kbChangeNote))}>
-                              {pending ? 'Writing…' : 'Detach'}
-                            </Button>
-                          ) : (
-                            <Button variant="outline" size="sm" disabled={pending}
-                              onClick={() => runKnowledgeAction(kb.id, () => performAttachKnowledge(editId, kb.id, kbChangeNote))}>
-                              {pending ? 'Writing…' : 'Attach'}
-                            </Button>
-                          )
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Recorded ids with no backing collection row are shown
-                  verbatim — never resolved away or dropped (manifest B-19
-                  note: live seeded bots carry such ids). */}
-              {unmatchedKbIds.length > 0 && (
-                <div className="space-y-2 pt-2 border-t">
-                  <p className="text-xs font-medium text-amber-700 flex items-center gap-1">
-                    <AlertTriangle className="w-3 h-3" /> Recorded knowledge ids with no matching collection record
-                  </p>
-                  {unmatchedKbIds.map(id => {
-                    const pending = kbPendingId === id;
-                    return (
-                      <div key={id} className="flex items-center gap-3 p-2 border border-amber-200 bg-amber-50/40 rounded">
-                        <span className="flex-1 font-mono text-xs text-slate-700">{id}</span>
-                        {editId ? (
-                          <Button variant="outline" size="sm" disabled={pending}
-                            onClick={() => runKnowledgeAction(id, () => performDetachKnowledge(editId, id, kbChangeNote))}>
-                            {pending ? 'Writing…' : 'Detach'}
-                          </Button>
-                        ) : (
-                          <Button variant="outline" size="sm" onClick={() => toggleIn(setSelectedKB)(id)}>
-                            Remove from selection
-                          </Button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {editId && (
-                <div className="pt-2 border-t">
-                  <Label className="text-xs">Change note for knowledge attach/detach</Label>
-                  <Input value={kbChangeNote} onChange={e => setKbChangeNote(e.target.value)}
-                    placeholder="Required — knowledge changes publish a new version" />
-                </div>
-              )}
+              <Label htmlFor="bot-knowledge-base">Knowledge Base</Label>
+              <Textarea
+                id="bot-knowledge-base"
+                value={knowledgeBaseText}
+                onChange={event => setKnowledgeBaseText(event.target.value)}
+                placeholder="Paste the facts, services, policies, examples, and reference material this bot should use."
+                rows={12}
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-slate-500">
+                {knowledgeBaseText.trim().length > 0
+                  ? `${knowledgeBaseText.length.toLocaleString()} characters will be stored with this version.`
+                  : 'No knowledge base is recorded for this bot version.'}
+              </p>
             </CardContent>
           </Card>
 
@@ -1405,7 +1230,7 @@ export default function BotBuilder() {
               <div className="flex justify-between gap-2"><span className="text-slate-500 shrink-0">Provider</span><span className={`text-right ${providerLabel.state === 'matched' ? '' : 'text-amber-600'}`}>{providerLabel.label}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Model</span><span>{model ?? 'not recorded'}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Allowed actions</span><span>{allowedActions.length} selected</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Knowledge</span><span>{selectedKB.length} linked</span></div>
+                <div className="flex justify-between gap-3"><span className="text-slate-500">Knowledge</span><span>{knowledgeBaseText.trim().length > 0 ? `${knowledgeBaseText.length.toLocaleString()} characters` : 'Not provided'}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Connector snapshot keys</span><span>{Object.keys(connectorSnapshot).length}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Temperature</span><span>{recorded(temperature)}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Max Tokens</span><span>{recorded(maxTokens)}</span></div>
