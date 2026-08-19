@@ -678,6 +678,12 @@ export default function BotBuilder() {
         // Reload truth for create: LOAD the created bot from the database.
         navigate(cleanHref(`/system/bot-builder?id=${outcome.botId}`));
       }
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'The bot could not be saved. Nothing was confirmed as stored.',
+      );
     } finally {
       setSaving(false);
     }

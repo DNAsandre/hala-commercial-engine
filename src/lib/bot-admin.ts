@@ -229,6 +229,36 @@ function errorText(error: unknown): string {
   return message || "Unknown Supabase error";
 }
 
+const BOT_ADMIN_REQUEST_TIMEOUT_MS = 12_000;
+
+async function runBotAdminRequest<T>(
+  label: string,
+  buildRequest: (signal: AbortSignal) => PromiseLike<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(
+        new Error(
+          `${label} did not finish within ${BOT_ADMIN_REQUEST_TIMEOUT_MS / 1000} seconds. ` +
+            "Nothing was confirmed as stored; reload before trying again.",
+        ),
+      );
+    }, BOT_ADMIN_REQUEST_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([
+      Promise.resolve(buildRequest(controller.signal)),
+      timeout,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function resolveActor(explicit?: string): string {
   if (explicit && explicit.trim()) return explicit.trim();
   // Session user id, recorded verbatim ("anonymous" when unauthenticated —
@@ -286,7 +316,16 @@ async function insertConfirmed(
   const compareColumns = Object.keys(payload).filter((c) => !CONFIRM_EXCLUDED_COLUMNS.has(c));
   const projection = ["id", ...compareColumns].join(", ");
 
-  const { data, error } = await supabase.from(table).insert(payload).select(projection);
+  let response: { data: unknown; error: unknown };
+  try {
+    response = await runBotAdminRequest(
+      `Saving to "${table}"`,
+      (signal) => supabase.from(table).insert(payload).select(projection).abortSignal(signal),
+    );
+  } catch (error) {
+    return { ok: false, error: errorText(error) };
+  }
+  const { data, error } = response;
   if (error) return { ok: false, error: errorText(error) };
 
   const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
@@ -329,7 +368,17 @@ async function updateConfirmed(
   const compareColumns = Object.keys(patch).filter((c) => !CONFIRM_EXCLUDED_COLUMNS.has(c));
   const projection = ["id", ...compareColumns].join(", ");
 
-  const { data, error } = await supabase.from(table).update(patch).eq("id", id).select(projection);
+  let response: { data: unknown; error: unknown };
+  try {
+    response = await runBotAdminRequest(
+      `Updating "${table}"`,
+      (signal) =>
+        supabase.from(table).update(patch).eq("id", id).select(projection).abortSignal(signal),
+    );
+  } catch (error) {
+    return { ok: false, resolved: false, error: errorText(error) };
+  }
+  const { data, error } = response;
   if (error) return { ok: false, resolved: false, error: errorText(error) };
 
   const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;

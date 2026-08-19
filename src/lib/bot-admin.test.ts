@@ -88,6 +88,7 @@ function makeBuilder(table: string) {
     eq: (column: string, value: unknown) => { call.filters.push([column, value]); return builder; },
     order: (col: string, opts?: { ascending?: boolean }) => { call.order.push([col, opts?.ascending]); return builder; },
     limit: (n: number) => { call.limit = n; return builder; },
+    abortSignal: (_signal: AbortSignal) => builder,
     maybeSingle: () => { call.terminal = "maybeSingle"; return Promise.resolve(resolve()); },
     then: (onFulfilled: (v: Terminal) => unknown, onRejected?: (e: unknown) => unknown) => {
       call.terminal = call.terminal ?? "list";

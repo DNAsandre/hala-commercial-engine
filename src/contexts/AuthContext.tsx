@@ -5,8 +5,8 @@
  *  - navigated to the old app's /login via window.location on sign-out, and
  *  - mirrored the profile into an old-app module-global store (auth-state.ts).
  * Neither behaviour belongs in the clean boundary. Sign-out here resolves to
- * THIS app's own /login route; there is no global mirror until a copied module
- * actually needs one (SC-01.3 decides that with its real callers).
+ * THIS app's own /login route. The small auth-state mirror is updated only for
+ * clean-owned non-React data services that must record the signed-in actor.
  *
  * Session storage is namespaced via the clean supabase client (storageKey
  * "hala-clean-auth") — see src/lib/supabase.ts.
@@ -14,6 +14,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { clearGlobalAuthUser, setGlobalAuthUser } from "@/lib/auth-state";
 
 export interface AppUser {
   id: string;
@@ -63,22 +64,65 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    let profileRequest = 0;
+    const deferredLoads = new Set<ReturnType<typeof setTimeout>>();
+
+    const applyProfile = (profile: AppUser | null) => {
+      setAppUser(profile);
+      if (profile) {
+        setGlobalAuthUser({
+          id: profile.id,
+          name: profile.name,
+          email: profile.email,
+          role: profile.role,
+          region: profile.region ?? "",
+        });
+      } else {
+        clearGlobalAuthUser();
+      }
+    };
+
+    const loadProfile = async (authId: string, request: number) => {
+      const profile = await fetchAppUser(authId);
+      if (!cancelled && request === profileRequest) applyProfile(profile);
+    };
 
     supabase.auth.getSession().then(async ({ data }) => {
       if (cancelled) return;
       setSession(data.session);
-      if (data.session?.user) setAppUser(await fetchAppUser(data.session.user.id));
+      const request = ++profileRequest;
+      if (data.session?.user) {
+        await loadProfile(data.session.user.id, request);
+      } else {
+        applyProfile(null);
+      }
       setLoading(false);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, next) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
       if (cancelled) return;
       setSession(next);
-      setAppUser(next?.user ? await fetchAppUser(next.user.id) : null);
+      const request = ++profileRequest;
+      if (!next?.user) {
+        applyProfile(null);
+        return;
+      }
+
+      // Supabase can deadlock every later API call when its auth callback
+      // awaits another Supabase request. Run the profile read after the auth
+      // callback has returned instead.
+      const timer = setTimeout(() => {
+        deferredLoads.delete(timer);
+        void loadProfile(next.user.id, request);
+      }, 0);
+      deferredLoads.add(timer);
     });
 
     return () => {
       cancelled = true;
+      profileRequest += 1;
+      for (const timer of deferredLoads) clearTimeout(timer);
+      deferredLoads.clear();
       sub.subscription.unsubscribe();
     };
   }, []);
