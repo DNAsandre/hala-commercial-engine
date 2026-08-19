@@ -17,12 +17,13 @@
  * hide rows from an unauthenticated client, that is reported as "no records
  * are visible to this account", never as "there are no audit records".
  */
-import { Filter, Shield, FileText, Users, AlertTriangle, CheckCircle, Activity, RefreshCw } from "lucide-react";
+import { Filter, Shield, FileText, Users, AlertTriangle, CheckCircle, Activity, RefreshCw, Download } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { toast } from "sonner";
 import {
   AUDIT_LOG_TABLE,
   formatRecordedDateTime,
@@ -79,6 +80,69 @@ export function summariseAuditEntries(rows: readonly AuditTrailRecord[]): {
     overrides: rows.filter(e => e.action === "override").length,
     users: new Set(rows.map(e => e.userName).filter(Boolean)).size,
   };
+}
+
+/* ── CSV export — SC-01 Wave 06 (T14, manifest row A-24, REBUILD-CLEAN) ─────
+ *
+ * The OLD app never implemented this: the only artefact was a persisted
+ * `feature_audit_export` settings flag with no consumer (old AdminPanel.tsx:363
+ * + 472-475), classified FABRICATED and rejected as evidence. This is a clean
+ * rebuild on the honest pattern BotAudit.tsx already uses, with one deliberate
+ * tightening: the CSV is built from the EXACT filtered rows the list renders
+ * (`filterAuditEntries` output), so the exported values can never disagree
+ * with the visible truth. Columns are exactly the fields the page reads from
+ * `audit_log` (projection AUDIT_LOG_COLUMNS) — no gate checks, no statuses,
+ * no derived verdicts are invented for the file. The recorded timestamp is
+ * exported both as stored and as the page displays it (formatRecordedDateTime,
+ * which never emits "Invalid Date").
+ *
+ * PDF export is NOT built: it had no real implementation in the old app either
+ * and is recorded in the left-behind inventory, not silently faked here.
+ */
+export const AUDIT_CSV_COLUMNS = [
+  "ID",
+  "Timestamp (stored)",
+  "Timestamp (as shown)",
+  "User ID",
+  "User Name",
+  "Action",
+  "Entity Type",
+  "Entity ID",
+  "Details",
+] as const;
+
+/** Every cell is quoted and inner quotes doubled, so commas, quotes and
+ *  newlines in stored values survive the round trip instead of splitting rows. */
+function csvCell(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+/** Build the CSV for exactly the rows given — the caller passes the filtered
+ *  set the list renders. Pure; exported so tests can compare file content
+ *  against the record values with no DOM. */
+export function auditTrailCsv(rows: readonly AuditTrailRecord[]): string {
+  const header = AUDIT_CSV_COLUMNS.join(",");
+  const lines = rows.map(entry =>
+    [
+      entry.id,
+      entry.timestamp,
+      formatRecordedDateTime(entry.timestamp),
+      entry.userId,
+      entry.userName,
+      entry.action,
+      entry.entityType,
+      entry.entityId,
+      entry.details,
+    ]
+      .map(csvCell)
+      .join(","),
+  );
+  return [header, ...lines].join("\n");
+}
+
+/** audit-trail-YYYY-MM-DD.csv (UTC date of the export). */
+export function auditTrailExportFileName(now: Date): string {
+  return `audit-trail-${now.toISOString().split("T")[0]}.csv`;
 }
 
 const actionColors: Record<string, string> = {
@@ -159,6 +223,36 @@ export default function AuditTrail() {
 
   const { types: uniqueTypes, actions: uniqueActions } = selectableAuditValues(auditLog);
 
+  /* A-24: the file holds exactly the rows the list below renders. When there
+   * is nothing on screen, nothing is exported and the reason is stated —
+   * an empty file implying "zero events occurred" would be a fabrication. */
+  const handleExport = () => {
+    if (filtered.length === 0) {
+      toast.error("Nothing was exported", {
+        description:
+          auditLog.length === 0
+            ? `The read of ${AUDIT_LOG_TABLE} succeeded and returned zero visible rows, so there is nothing to export.`
+            : `The current filters match none of the ${auditLog.length} records read, so there is nothing to export. Clear the filters to export what is shown.`,
+      });
+      return;
+    }
+    const blob = new Blob([auditTrailCsv(filtered)], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = auditTrailExportFileName(new Date());
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(
+      `Exported ${filtered.length} ${filtered.length === 1 ? "row" : "rows"} as CSV`,
+      {
+        description: filtersActive
+          ? `The filtered set currently listed on screen (${filtered.length} of ${auditLog.length} records read).`
+          : `All ${auditLog.length} records read from ${AUDIT_LOG_TABLE} — no filter is applied.`,
+      },
+    );
+  };
+
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
       <div className="flex items-center justify-between mb-6">
@@ -170,9 +264,14 @@ export default function AuditTrail() {
             {auditLog.length} audit {auditLog.length === 1 ? "record" : "records"} read from <span className="font-mono">{AUDIT_LOG_TABLE}</span>
           </p>
         </div>
-        <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => setReloadKey(k => k + 1)}>
-          <RefreshCw className="w-3.5 h-3.5 mr-1" /> Reload
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="text-xs h-8" onClick={handleExport}>
+            <Download className="w-3.5 h-3.5 mr-1" /> Export shown rows (CSV)
+          </Button>
+          <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => setReloadKey(k => k + 1)}>
+            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Reload
+          </Button>
+        </div>
       </div>
 
       {auditLog.length === 0 && (

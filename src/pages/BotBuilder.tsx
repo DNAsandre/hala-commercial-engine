@@ -1,11 +1,56 @@
 /**
- * BOT BUILDER PAGE
+ * BOT BUILDER PAGE — /system/bot-builder[?id=<bot id>]
  * Design: Swiss Precision Instrument — Deep navy + warm white
- * 6 Sections: Identity, Instructions, Allowed Actions, Knowledge Base, Connectors, Provider & Model
- * All configuration explicit, versioned, auditable.
+ *
+ * SC-01 Wave 06 (T15, manifest rows B-13..B-19): the bot DEFINITION builder.
+ * Without an id it CREATES a new definition (B-14); with an id it loads the
+ * recorded definition (B-13) and publishes edits as a new immutable version
+ * row (B-15). All persistence goes through the T13 service layer
+ * (src/lib/bot-admin.ts) — this page issues no direct database writes.
+ *
+ *   B-14 create   — createBot: ai_bots insert + version 1 + current_version_id,
+ *                   every step read-back confirmed; success ONLY from the
+ *                   confirmed result, then the created bot is LOADED from the
+ *                   database (reload truth).
+ *   B-15 publish  — publishBotVersion: ai_bots update + version latest+1 with a
+ *                   mandatory change note + the current_version_id REPOINT the
+ *                   old app forgot (its consumers kept serving the stale
+ *                   instruction after every publish). After publish the page
+ *                   re-reads and shows the new version as current.
+ *   B-16 provider — options come from the LIVE ai_providers read, never a
+ *                   hardcoded list. Recorded ids that match no provider record
+ *                   (live data holds legacy "prov-openai" and NULL values) are
+ *                   rendered verbatim with an honest unmatched/unrecorded
+ *                   state — never "undefined", never silently remapped.
+ *   B-17 actions  — allowed_actions is READ from and WRITTEN to the version
+ *                   row. (A Wave-04 comment here claimed the column does not
+ *                   exist; that claim was wrong about the live schema and has
+ *                   been deleted — the column is live and populated.)
+ *   B-18 chaining — chain_config {next_bot_id, prompt_user, chain_label} read
+ *                   and written per version; {} when no chain; no self-chain.
+ *   B-19 knowledge— picker reads kb_collections (readKnowledgeCollections,
+ *                   distinct loading/empty/error; live table holds 0 rows →
+ *                   honest EMPTY state). Attach/detach persist through T13's
+ *                   confirmed operations, which publish a new version carrying
+ *                   every other recorded field forward verbatim. Recorded ids
+ *                   with no backing collection row render verbatim.
+ *
+ * HONESTY RULES (carried from Wave 04, still binding):
+ *  - The bot read is three-state: loading, "no such record visible" and
+ *    "read failed" are different screens.
+ *  - No configuration value is invented: a null column renders as
+ *    "not recorded", never as a plausible default (the old loader substituted
+ *    'gpt-4o' / 20 / 10 / 30 / 0.7 / 2000).
+ *  - Recorded scope values (domains/regions/roles) can never vanish: the
+ *    selectable option lists are the union of the established vocabulary and
+ *    whatever the record actually holds (`pdf_studio` among them).
+ *  - UI success comes ONLY from a confirmed service result
+ *    (status "completed"). A failed or partial outcome surfaces the service's
+ *    exact reason and the page stays put.
+ *  - Definitions only — no execution path in this build: nothing here invokes
+ *    a bot, and no wording implies a bot runs (architect correction #5).
  */
-import { useState, useMemo, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -13,55 +58,67 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Slider } from '@/components/ui/slider';
-import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
 import { Link, useLocation, useSearch } from 'wouter';
 import { cleanHref } from '@clean/lib/clean-routing';
+import { supabase } from '@/lib/supabase';
 import {
-  Bot, Save, ArrowLeft, Shield, Cpu, Database, FileText, Settings, Zap,
-  Lock, Eye, Pencil, AlertTriangle, CheckCircle2, Info, History,
-  ChevronRight, Plus, Trash2, BookOpen, Table, Plug, Link2
+  Bot, Save, ArrowLeft, Shield, Cpu, Database, FileText, Zap,
+  AlertTriangle, History, BookOpen, Link2, XCircle,
 } from 'lucide-react';
-// SC-01 Wave 02 closure (SX-001/SX-004/SX-011): bot-governance (mock) and
-// ai-client are excluded. UI value types are declared locally from this
-// page own literal values; providers are read directly from ai_providers.
-//
-// SC-01 Wave 04 corrections on this page:
-//  1. The bot read is three-state. Previously a failed read and a bot id that
-//     does not exist both logged to the console and left the header saying
-//     "Loading recorded configuration…" indefinitely.
-//  2. No configuration value is invented. The old loader substituted
-//     'gpt-4o' / 20 / 10 / 30 / temperature 0.7 / 2000 tokens for columns that
-//     were null, and the header printed "Version 1" for a bot with no version
-//     rows at all — all displayed as though they were the bot's stored setup.
-//  3. Sections whose values are page constants rather than stored
-//     configuration (Allowed Actions) now say so.
-//  4. SC-01 Wave 04 (defect D): "No provider record has this id" was stated
-//     even when the ai_providers read itself failed. A failed read and a
-//     missing record are different facts and now read differently.
-//  5. SC-01 Wave 04 (defect E): the recorded `system_instruction` is rendered.
-//     It was queried and mapped, then discarded in favour of a page constant,
-//     so whatever the database stored never reached the screen. Domains,
-//     regions and roles are rendered FROM THE RECORD rather than from fixed
-//     page lists, which had silently dropped any recorded value not on the
-//     list (`pdf_studio` among them) while the sidebar still counted it.
 import {
+  attachKnowledge,
+  createBot,
+  detachKnowledge,
+  describeBotProvider,
+  publishBotVersion,
+  readAiBots,
   readAiProviders,
   readBotConfiguration,
-  describeBotProvider,
+  readKnowledgeCollections,
+  validateBotDefinition,
+  type AiBotRecord,
   type AiProviderRecord,
   type BotConfigurationRead,
+  type BotDefinitionFields,
+  type BotVersionDraft,
+  type KBCollection,
   type RecordRead,
-} from '@/lib/ops-runtime';
+} from '@/lib/bot-admin';
 
-type BotTypeEnum = "action" | "monitor";
-type ActionBotMode = "suggest" | "draft" | "explain";
-type MonitorBotOutput = "signal_event" | "report_snapshot" | "dashboard_annotation";
-type ConnectorType = "finance" | "ops" | "tableau" | "crm" | "custom";
+// ─────────────────────────────────────────────────────────────
+// Established selection vocabularies (old builder lists). They are FORM
+// AFFORDANCES — choices offered to a human — not stored records. `pdf_studio`
+// is added to the old DOMAINS list because it is a real recorded domain on the
+// live rows (33 of 40 live bots carry it; manifest B-01 note): omitting it
+// made recorded scope invisible in Wave 04 (defect E).
+// ─────────────────────────────────────────────────────────────
+
+const REGIONS = ['East', 'Central', 'West'];
+const ROLES = ['admin', 'manager', 'sales', 'ops', 'finance', 'viewer'];
+const DOMAINS = [
+  'dashboard', 'crm_pipeline', 'customers', 'proposals', 'tenders', 'renewals',
+  'slas', 'pnl', 'documents', 'commercial_os', 'approvals', 'escalations', 'pdf_studio',
+];
+const ACTION_MODES = ['suggest', 'draft', 'explain'];
+const MONITOR_OUTPUTS = ['signal_event', 'report_snapshot', 'dashboard_annotation'];
+
+const MODE_DESCRIPTIONS: Record<string, string> = {
+  suggest: 'Recommend options for human consideration',
+  draft: 'Generate draft text for human review and editing',
+  explain: 'Explain concepts, clauses, or data in plain language',
+  signal_event: 'Generate threshold/trend/anomaly signals for human review',
+  report_snapshot: 'Create periodic report snapshots (read-only)',
+  dashboard_annotation: 'Add annotations to dashboard views (advisory only)',
+};
+
+/** Sentinel select values ("" is not a legal Radix Select item value). */
+export const NO_PROVIDER_VALUE = '__no_provider_recorded__';
+export const NO_MODEL_VALUE = '__no_model_recorded__';
+const NO_CHAIN_VALUE = 'none';
 
 /** Renders a recorded value, or an explicit "not recorded" marker. */
 function recorded(value: string | number | null | undefined): string {
@@ -69,17 +126,34 @@ function recorded(value: string | number | null | undefined): string {
   return String(value);
 }
 
+// ─────────────────────────────────────────────────────────────
+// Pure page logic — exported so it can be asserted without a DOM
+// (this package has no DOM test environment).
+// ─────────────────────────────────────────────────────────────
+
 /**
- * SC-01 Wave 04 (defect E). The page previously held fixed `DOMAINS`,
- * `REGIONS` and `ROLES` arrays and rendered a badge per constant, highlighting
- * the ones the record happened to contain. Any recorded value absent from the
- * constant simply vanished: a bot scoped to `pdf_studio` rendered zero domain
- * badges while the sidebar stated "Domains: 1 recorded". The scope lists are
- * now rendered from the record, so a stored value can never disappear and the
- * count can never describe something the reader cannot see.
- *
- * Exported so the mapping from a stored record to what the page displays can
- * be asserted directly — this package has no DOM test environment.
+ * Union of an established vocabulary and recorded/selected values, vocabulary
+ * order first. A recorded value absent from the vocabulary stays offered and
+ * visible — a stored selection can never vanish from the form (Wave 04
+ * defect E: fixed page lists silently dropped `pdf_studio`).
+ */
+export function selectionUnion(
+  vocabulary: readonly string[],
+  recordedValues: readonly string[],
+): string[] {
+  const out = [...vocabulary];
+  for (const value of recordedValues) {
+    if (!out.includes(value)) out.push(value);
+  }
+  return out;
+}
+
+/**
+ * What the page displays/edits for a loaded bot, derived from the stored
+ * record only — no invented defaults. The four Wave-06 version fields
+ * (allowed_actions, provider_id, model, permission_snapshot) were added to the
+ * version projection by T13; this view carries allowed_actions, the chain
+ * fields and the connector snapshot into the form.
  */
 export interface BotBuilderView {
   /** The instruction stored on the latest version row, or null. */
@@ -92,11 +166,26 @@ export interface BotBuilderView {
   domains: string[];
   regions: string[];
   roles: string[];
+  /** Recorded allowed_actions selection on the latest version row (B-17). */
+  allowedActions: string[];
+  /** Recorded connector snapshot, carried forward verbatim on publish (B-20). */
+  connectorSnapshot: Record<string, unknown>;
+  /** 'none' when the latest version records no chain (B-18). */
+  chainNextBotId: string;
+  chainPromptUser: boolean;
+  chainLabel: string;
 }
 
 export function deriveBotBuilderView(read: BotConfigurationRead): BotBuilderView | null {
   if (read.status !== 'loaded') return null;
   const latest = read.versions[0];
+  const chain = (latest?.chainConfig ?? null) as
+    | { next_bot_id?: unknown; prompt_user?: unknown; chain_label?: unknown }
+    | null;
+  const chainNextBotId =
+    chain && typeof chain.next_bot_id === 'string' && chain.next_bot_id !== ''
+      ? chain.next_bot_id
+      : NO_CHAIN_VALUE;
   return {
     systemInstruction: latest?.systemInstruction ?? null,
     customInstruction: latest?.customInstruction ?? '',
@@ -107,18 +196,281 @@ export function deriveBotBuilderView(read: BotConfigurationRead): BotBuilderView
     domains: read.bot.domainsAllowed,
     regions: read.bot.regionsAllowed,
     roles: read.bot.rolesAllowed,
+    allowedActions: latest?.allowedActions ?? [],
+    connectorSnapshot: latest?.connectorSnapshot ?? {},
+    chainNextBotId,
+    chainPromptUser: chainNextBotId === NO_CHAIN_VALUE ? true : chain?.prompt_user !== false,
+    chainLabel:
+      chainNextBotId !== NO_CHAIN_VALUE && typeof chain?.chain_label === 'string'
+        ? chain.chain_label
+        : '',
   };
 }
 
+/** Everything the form edits, in one plain object (the submit input). */
+export interface BuilderFormState {
+  name: string;
+  displayName: string;
+  type: string;
+  purpose: string;
+  domains: string[];
+  regions: string[];
+  roles: string[];
+  providerId: string | null;
+  model: string | null;
+  rateLimit: number | null;
+  costCap: number | null;
+  timeoutSec: number | null;
+  systemInstruction: string;
+  customInstruction: string;
+  safetyRules: string;
+  temperature: number | null;
+  maxTokens: number | null;
+  allowedActions: string[];
+  knowledgeBaseIds: string[];
+  connectorSnapshot: Record<string, unknown>;
+  chainNextBotId: string;
+  chainPromptUser: boolean;
+  chainLabel: string;
+  changeNote: string;
+}
+
+export function buildDefinitionFields(form: BuilderFormState): BotDefinitionFields {
+  return {
+    name: form.name,
+    displayName: form.displayName,
+    type: form.type,
+    purpose: form.purpose,
+    domainsAllowed: form.domains,
+    regionsAllowed: form.regions,
+    rolesAllowed: form.roles,
+    providerId: form.providerId,
+    model: form.model,
+    rateLimit: form.rateLimit,
+    costCap: form.costCap,
+    timeoutSec: form.timeoutSec,
+  };
+}
+
+export function buildVersionDraft(form: BuilderFormState): BotVersionDraft {
+  return {
+    // Empty text is recorded as null ("not recorded"), never as ''.
+    systemInstruction: form.systemInstruction.trim() === '' ? null : form.systemInstruction,
+    customInstruction: form.customInstruction.trim() === '' ? null : form.customInstruction,
+    safetyRules: form.safetyRules.trim() === '' ? null : form.safetyRules,
+    temperature: form.temperature,
+    maxTokens: form.maxTokens,
+    allowedActions: form.allowedActions,
+    providerId: form.providerId,
+    model: form.model,
+    // Carried forward verbatim from the loaded version — never invented (B-20).
+    connectorSnapshot: form.connectorSnapshot,
+    // Established old-contract snapshot of the scope fields at publish time.
+    permissionSnapshot: {
+      domainsAllowed: form.domains,
+      regionsAllowed: form.regions,
+      rolesAllowed: form.roles,
+    },
+    knowledgeBaseIds: form.knowledgeBaseIds,
+    // 'none' → null, which the service stores as {} (the established
+    // "no chain" value, manifest B-18).
+    chainConfig:
+      form.chainNextBotId && form.chainNextBotId !== NO_CHAIN_VALUE
+        ? {
+            next_bot_id: form.chainNextBotId,
+            prompt_user: form.chainPromptUser,
+            chain_label: form.chainLabel,
+          }
+        : null,
+    changeNote: form.changeNote,
+  };
+}
+
+export type BuilderSubmitOutcome =
+  | { ok: true; botId: string; versionNumber: number; message: string }
+  | { ok: false; message: string };
+
+/**
+ * B-14: create the definition through the service. Success comes ONLY from
+ * the confirmed operation result (status "completed") — a failed or partial
+ * outcome returns the service's exact reason and creates no success signal.
+ */
+export async function submitCreateBot(form: BuilderFormState): Promise<BuilderSubmitOutcome> {
+  const problems = validateBotDefinition(buildDefinitionFields(form));
+  if (problems.length > 0) {
+    return { ok: false, message: `Nothing was created: ${problems.join(' ')}` };
+  }
+  const result = await createBot({
+    ...buildDefinitionFields(form),
+    version: buildVersionDraft(form),
+  });
+  if (result.status === 'completed') {
+    return {
+      ok: true,
+      botId: result.value.botId,
+      versionNumber: result.value.version,
+      message:
+        `Stored: bot definition created as draft (id "${result.value.botId}") with version 1 — ` +
+        'all three steps confirmed by the database.',
+    };
+  }
+  return { ok: false, message: result.error };
+}
+
+/**
+ * B-15: publish the edited definition as a new version through the service
+ * (which also repoints current_version_id — the old app's forgotten step).
+ * Success comes ONLY from the confirmed operation result.
+ */
+export async function submitPublishVersion(
+  botId: string,
+  form: BuilderFormState,
+): Promise<BuilderSubmitOutcome> {
+  const result = await publishBotVersion(botId, buildDefinitionFields(form), buildVersionDraft(form));
+  if (result.status === 'completed') {
+    return {
+      ok: true,
+      botId,
+      versionNumber: result.value.version,
+      message:
+        `Stored: version ${result.value.version} published and current_version_id repointed — ` +
+        'all steps confirmed by the database.',
+    };
+  }
+  return { ok: false, message: result.error };
+}
+
+export interface KnowledgeActionOutcome {
+  ok: boolean;
+  message: string;
+}
+
+/** B-19 attach: success ONLY from the confirmed operation result. */
+export async function performAttachKnowledge(
+  botId: string,
+  collectionId: string,
+  changeNote: string,
+): Promise<KnowledgeActionOutcome> {
+  const result = await attachKnowledge(botId, collectionId, changeNote);
+  if (result.status === 'completed') {
+    return {
+      ok: true,
+      message:
+        `Stored: collection "${collectionId}" attached — version ${result.value.version} ` +
+        'published and confirmed.',
+    };
+  }
+  return { ok: false, message: result.error };
+}
+
+/** B-19 detach: success ONLY from the confirmed operation result. */
+export async function performDetachKnowledge(
+  botId: string,
+  collectionId: string,
+  changeNote: string,
+): Promise<KnowledgeActionOutcome> {
+  const result = await detachKnowledge(botId, collectionId, changeNote);
+  if (result.status === 'completed') {
+    return {
+      ok: true,
+      message:
+        `Stored: collection "${collectionId}" detached — version ${result.value.version} ` +
+        'published and confirmed.',
+    };
+  }
+  return { ok: false, message: result.error };
+}
+
+export interface ProviderOption {
+  value: string;
+  label: string;
+  /** False for a recorded id that matches no provider record (verbatim). */
+  matched: boolean;
+}
+
+/**
+ * B-16: provider options from the rows actually read, plus the recorded id
+ * rendered VERBATIM when it matches no provider record. Live data fact
+ * (2026-08-18): 34 bots record "aip-openai-001" (matches), 2 record legacy
+ * "prov-openai" (matches nothing), 4 record NULL. The unmatched id is offered
+ * as itself — never remapped to a "probably intended" provider.
+ */
+export function deriveProviderOptions(
+  providers: readonly AiProviderRecord[],
+  recordedProviderId: string | null,
+): ProviderOption[] {
+  const options: ProviderOption[] = providers.map(p => ({
+    value: p.id,
+    label: `${p.displayName}${p.enabled ? '' : ' (recorded disabled)'}`,
+    matched: true,
+  }));
+  if (recordedProviderId && !providers.some(p => p.id === recordedProviderId)) {
+    options.unshift({
+      value: recordedProviderId,
+      label: `${recordedProviderId} (recorded value — no matching provider record)`,
+      matched: false,
+    });
+  }
+  return options;
+}
+
+/**
+ * B-16: model options from the selected provider's recorded models array,
+ * plus the recorded model verbatim when it is absent from that array (or when
+ * no provider is selected at all).
+ */
+export function deriveModelOptions(
+  providers: readonly AiProviderRecord[],
+  selectedProviderId: string | null,
+  recordedModel: string | null,
+): ProviderOption[] {
+  const provider = selectedProviderId
+    ? providers.find(p => p.id === selectedProviderId)
+    : undefined;
+  const models = provider?.models ?? [];
+  const options: ProviderOption[] = models.map(m => ({ value: m, label: m, matched: true }));
+  if (recordedModel && !models.includes(recordedModel)) {
+    options.unshift({
+      value: recordedModel,
+      label: provider
+        ? `${recordedModel} (recorded value — not in this provider's model list)`
+        : `${recordedModel} (recorded value)`,
+      matched: false,
+    });
+  }
+  return options;
+}
+
+/** Number-input parsing: empty → null (not recorded); no NaN can escape. */
+export function parseNumberInput(raw: string): number | null {
+  if (raw.trim() === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
 /** Recorded scope values, or an honest statement that none are recorded. */
-function RecordedScopeBadges({ values, subject }: { values: string[]; subject: string }) {
-  if (values.length === 0) {
-    return <p className="text-xs text-slate-500 mt-1">No {subject} are recorded on this bot record.</p>;
+function ScopeToggleBadges({
+  options, selected, onToggle, subject,
+}: {
+  options: string[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  subject: string;
+}) {
+  if (options.length === 0) {
+    return <p className="text-xs text-slate-500 mt-1">No {subject} are available to select.</p>;
   }
   return (
     <div className="flex flex-wrap gap-2 mt-1">
-      {values.map(v => (
-        <Badge key={v} variant="default" className="bg-[#1B2A4A]">{v}</Badge>
+      {options.map(v => (
+        <Badge
+          key={v}
+          variant={selected.includes(v) ? 'default' : 'outline'}
+          className={`cursor-pointer ${selected.includes(v) ? 'bg-[#1B2A4A]' : ''}`}
+          onClick={() => onToggle(v)}
+        >
+          {v}
+        </Badge>
       ))}
     </div>
   );
@@ -130,20 +482,111 @@ export default function BotBuilder() {
   const params = new URLSearchParams(search);
   const editId = params.get('id');
 
-  // Three-state read of the bot's recorded configuration.
+  // Three-state read of the bot's recorded configuration (edit mode).
   const [botRead, setBotRead] = useState<BotConfigurationRead | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const [apiProviders, setApiProviders] = useState<AiProviderRecord[]>([]);
   const [providersRead, setProvidersRead] = useState<RecordRead<AiProviderRecord> | null>(null);
-  const [apiConnectors] = useState<any[]>([]);
-  const [apiKnowledgeBase] = useState<any[]>([]);
+  const [allBotsRead, setAllBotsRead] = useState<RecordRead<AiBotRecord> | null>(null);
+  const [kbRead, setKbRead] = useState<RecordRead<KBCollection> | null>(null);
   const [versionHistory, setVersionHistory] = useState<Array<{ id: string; version: number | null; changeNote: string; createdAt: string; createdBy: string }>>([]);
 
   const existingBot = botRead?.status === 'loaded' ? botRead.bot : null;
 
+  // Section 1: Identity
+  const [name, setName] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  /** True when the raw name/display_name split could not be read and both
+   *  fields were initialised from the recorded display label. */
+  const [identityCollapsed, setIdentityCollapsed] = useState(false);
+  const [type, setType] = useState<string>('action');
+  const [purpose, setPurpose] = useState('');
+  const [domains, setDomains] = useState<string[]>([]);
+  const [regions, setRegions] = useState<string[]>([]);
+  const [roles, setRoles] = useState<string[]>([]);
+  // Option lists: established vocabulary ∪ whatever the record holds, so a
+  // recorded value can never vanish from the form.
+  const [domainOptions, setDomainOptions] = useState<string[]>([...DOMAINS]);
+  const [regionOptions, setRegionOptions] = useState<string[]>([...REGIONS]);
+  const [roleOptions, setRoleOptions] = useState<string[]>([...ROLES]);
+
+  // Section 2: Instructions — editable; loaded values come from the stored
+  // latest version row and publish carries them into the next version.
+  const [systemInstruction, setSystemInstruction] = useState('');
+  const [customInstruction, setCustomInstruction] = useState('');
+  const [safetyRules, setSafetyRules] = useState('');
+  const [temperature, setTemperature] = useState<number | null>(null);
+  const [maxTokens, setMaxTokens] = useState<number | null>(null);
+  /** True in edit mode when the loaded bot has no version rows at all. */
+  const noVersionRows = botRead?.status === 'loaded' && botRead.versions.length === 0;
+
+  // Section 3: Allowed actions — recorded per-version selection (B-17).
+  const [allowedActions, setAllowedActions] = useState<string[]>([]);
+  const [recordedActions, setRecordedActions] = useState<string[]>([]);
+
+  // Section 4: Knowledge (B-19)
+  const [selectedKB, setSelectedKB] = useState<string[]>([]);
+  const [kbChangeNote, setKbChangeNote] = useState('');
+  const [kbPendingId, setKbPendingId] = useState<string | null>(null);
+
+  // Section 5: Connector snapshot — displayed as data, carried forward
+  // verbatim on publish (manifest B-20: no connector store exists to pick
+  // from, and connector access is invocation-time behaviour).
+  const [connectorSnapshot, setConnectorSnapshot] = useState<Record<string, unknown>>({});
+
+  // Section 6: Provider & model (B-16) — null = the record stores no value.
+  const [providerId, setProviderId] = useState<string | null>(null);
+  const [model, setModel] = useState<string | null>(null);
+  const [rateLimit, setRateLimit] = useState<number | null>(null);
+  const [costCap, setCostCap] = useState<number | null>(null);
+  const [timeoutSec, setTimeoutSec] = useState<number | null>(null);
+
+  // Section 7: Chaining (B-18)
+  const [chainNextBotId, setChainNextBotId] = useState(NO_CHAIN_VALUE);
+  const [chainPromptUser, setChainPromptUser] = useState(true);
+  const [chainLabel, setChainLabel] = useState('');
+
+  // Change note (mandatory for publish; service enforces it too).
+  const [changeNote, setChangeNote] = useState('');
+  const [saving, setSaving] = useState(false);
+
   useEffect(() => {
-    if (!editId) return;
     let mounted = true;
+    if (!editId) {
+      // Create mode: a blank form, no read. (Also the reset path when
+      // navigating from an edit URL back to plain /system/bot-builder.)
+      setBotRead(null);
+      setVersionHistory([]);
+      setName('');
+      setDisplayName('');
+      setIdentityCollapsed(false);
+      setType('action');
+      setPurpose('');
+      setDomains([]);
+      setRegions([]);
+      setRoles([]);
+      setDomainOptions([...DOMAINS]);
+      setRegionOptions([...REGIONS]);
+      setRoleOptions([...ROLES]);
+      setSystemInstruction('');
+      setCustomInstruction('');
+      setSafetyRules('');
+      setTemperature(null);
+      setMaxTokens(null);
+      setAllowedActions([]);
+      setRecordedActions([]);
+      setSelectedKB([]);
+      setConnectorSnapshot({});
+      setProviderId(null);
+      setModel(null);
+      setRateLimit(null);
+      setCostCap(null);
+      setTimeoutSec(null);
+      setChainNextBotId(NO_CHAIN_VALUE);
+      setChainPromptUser(true);
+      setChainLabel('');
+      setChangeNote('');
+      return;
+    }
     setBotRead(null);
     (async () => {
       const result = await readBotConfiguration(editId);
@@ -155,36 +598,60 @@ export default function BotBuilder() {
       const view = deriveBotBuilderView(result)!;
       // Recorded values only — a null column stays null and renders as
       // "not recorded" rather than as a plausible-looking default.
-      setName(b.name);
+      //
+      // Identity columns: the mapped record collapses display_name ?? name
+      // into one label, but the form edits BOTH columns (manifest B-15 note:
+      // live rows distinguish name "test-bot-verify" from display_name
+      // "Test Bot Verify", and the old page's mirroring overwrote the
+      // distinction on every save). A supplemental READ of the two raw
+      // columns keeps them separate; if it fails, both fields fall back to
+      // the recorded display label and the difference is stated.
+      const identityRes = await supabase
+        .from('ai_bots')
+        .select('id, name, display_name')
+        .eq('id', editId)
+        .maybeSingle();
+      if (!mounted) return;
+      const identity = identityRes.error
+        ? null
+        : (identityRes.data as { name?: string | null; display_name?: string | null } | null);
+      if (identity) {
+        setName(identity.name ?? '');
+        setDisplayName(identity.display_name ?? '');
+        setIdentityCollapsed(false);
+      } else {
+        setName(b.name);
+        setDisplayName(b.name);
+        setIdentityCollapsed(true);
+      }
       setType(b.type === 'monitor' ? 'monitor' : 'action');
       setPurpose(b.purpose);
       setDomains(view.domains);
       setRegions(view.regions);
       setRoles(view.roles);
-      setProviderId(b.providerId ?? '');
-      setModel(b.model ?? '');
+      setDomainOptions(selectionUnion(DOMAINS, view.domains));
+      setRegionOptions(selectionUnion(REGIONS, view.regions));
+      setRoleOptions(selectionUnion(ROLES, view.roles));
+      setProviderId(b.providerId ?? null);
+      setModel(b.model ?? null);
       setRateLimit(b.rateLimit);
       setCostCap(b.costCap);
       setTimeoutSec(b.timeoutSec);
 
-      // The stored system instruction reaches the screen. It was read and
-      // mapped by readBotConfiguration and then thrown away.
-      setSystemInstruction(view.systemInstruction);
+      setSystemInstruction(view.systemInstruction ?? '');
       setCustomInstruction(view.customInstruction);
       setSafetyRules(view.safetyRules);
       setTemperature(view.temperature);
       setMaxTokens(view.maxTokens);
+      setAllowedActions(view.allowedActions);
+      setRecordedActions(view.allowedActions);
       setSelectedKB(view.knowledgeBaseIds);
+      setConnectorSnapshot(view.connectorSnapshot);
+      setChainNextBotId(view.chainNextBotId);
+      setChainPromptUser(view.chainPromptUser);
+      setChainLabel(view.chainLabel);
+      setChangeNote('');
 
-      const latest = result.versions[0];
-      if (latest) {
-        if (latest.connectorSnapshot) setConnectorState(latest.connectorSnapshot as any);
-        if (latest.chainConfig) {
-          setChainNextBotId((latest.chainConfig as any).next_bot_id || 'none');
-          setChainPromptUser((latest.chainConfig as any).prompt_user !== false);
-          setChainLabel((latest.chainConfig as any).chain_label || '');
-        }
-      }
       setVersionHistory(result.versions.map(v => ({
         id: v.id, version: v.version, changeNote: v.changeNote,
         createdAt: v.createdAt, createdBy: v.createdBy,
@@ -193,113 +660,114 @@ export default function BotBuilder() {
     return () => { mounted = false; };
   }, [editId, reloadKey]);
 
-  // Load providers (same source as Admin → AI Providers tab)
+  // Providers — live ai_providers read (same source as Admin → AI Providers).
   useEffect(() => {
     let mounted = true;
     readAiProviders().then(r => {
       if (!mounted) return;
       setProvidersRead(r);
-      setApiProviders(r.rows);
     });
     return () => { mounted = false; };
-  }, []);
+  }, [reloadKey]);
 
-  // Load all bots for chain dropdown
+  // All bots for the chain dropdown — the classified service read, so a
+  // failed read is stated rather than rendered as an empty dropdown.
   useEffect(() => {
     let mounted = true;
-    supabase.from('ai_bots').select('id, name, display_name, type, status, domains_allowed').order('name').then(({ data }) => {
-      if (!mounted || !data) return;
-      setAllBots(data);
+    readAiBots().then(r => {
+      if (!mounted) return;
+      setAllBotsRead(r);
     });
     return () => { mounted = false; };
-  }, []);
+  }, [reloadKey]);
 
-  // Section 1: Identity
-  const [name, setName] = useState('');
-  const [type, setType] = useState<BotTypeEnum>('action');
-  const [purpose, setPurpose] = useState('');
-  const [domains, setDomains] = useState<string[]>([]);
-  // No fabricated default: an empty list means nothing is recorded yet.
-  const [regions, setRegions] = useState<string[]>([]);
-  const [roles, setRoles] = useState<string[]>([]);
+  // Knowledge collections (B-19) — live kb_collections read, three-state.
+  useEffect(() => {
+    let mounted = true;
+    setKbRead(null);
+    readKnowledgeCollections().then(r => {
+      if (!mounted) return;
+      setKbRead(r);
+    });
+    return () => { mounted = false; };
+  }, [reloadKey]);
 
-  // Section 2: Instructions.
-  // `ai_bot_versions.system_instruction` is queried and mapped by
-  // readBotConfiguration; the page used to display a hard-coded page constant
-  // in its place, so the stored instruction never reached the screen.
-  const [systemInstruction, setSystemInstruction] = useState<string | null>(null);
-  const [customInstruction, setCustomInstruction] = useState('');
-  const [safetyRules, setSafetyRules] = useState('');
-  // null = the version row records no value for this field.
-  const [temperature, setTemperature] = useState<number | null>(null);
-  const [maxTokens, setMaxTokens] = useState<number | null>(null);
+  const collectForm = (): BuilderFormState => ({
+    name,
+    displayName,
+    type,
+    purpose,
+    domains,
+    regions,
+    roles,
+    providerId,
+    model,
+    rateLimit,
+    costCap,
+    timeoutSec,
+    systemInstruction,
+    customInstruction,
+    safetyRules,
+    temperature,
+    maxTokens,
+    allowedActions,
+    knowledgeBaseIds: selectedKB,
+    connectorSnapshot,
+    chainNextBotId,
+    chainPromptUser,
+    chainLabel,
+    changeNote,
+  });
 
-  // Section 3: Allowed Actions — page constants, NOT stored configuration.
-  // `ai_bots` / `ai_bot_versions` record no per-bot action-mode or
-  // monitor-output selection, so these boxes describe the doctrine's mode
-  // vocabulary and are labelled as such rather than shown as this bot's setup.
-  const [actionModes] = useState<ActionBotMode[]>([]);
-  const [monitorOutputs] = useState<MonitorBotOutput[]>([]);
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const form = collectForm();
+      const outcome = editId
+        ? await submitPublishVersion(editId, form)
+        : await submitCreateBot(form);
+      if (!outcome.ok) {
+        // The service's reason verbatim — including exact partial outcomes
+        // ("the bot record WAS created but its first version row was NOT").
+        toast.error(outcome.message);
+        return;
+      }
+      toast.success(outcome.message);
+      if (editId) {
+        // Reload truth: re-read the stored configuration; the new version
+        // appears in the history and as the recorded current version.
+        setReloadKey(k => k + 1);
+      } else {
+        // Reload truth for create: LOAD the created bot from the database.
+        navigate(cleanHref(`/system/bot-builder?id=${outcome.botId}`));
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
 
-  // Section 4: Knowledge Base
-  const [selectedKB, setSelectedKB] = useState<string[]>([]);
+  const runKnowledgeAction = async (
+    collectionId: string,
+    action: () => Promise<KnowledgeActionOutcome>,
+  ) => {
+    setKbPendingId(collectionId);
+    try {
+      const outcome = await action();
+      if (outcome.ok) {
+        toast.success(outcome.message);
+        setKbChangeNote('');
+        setReloadKey(k => k + 1); // re-read: the new version is stored truth
+      } else {
+        toast.error(outcome.message);
+      }
+    } finally {
+      setKbPendingId(null);
+    }
+  };
 
-  // Section 5: Connectors
-  const [connectorState, setConnectorState] = useState<Record<ConnectorType, boolean>>(
-    { finance: false, ops: false, tableau: false, crm: false, custom: false }
-  );
+  const toggleIn = (setter: (fn: (prev: string[]) => string[]) => void) => (value: string) =>
+    setter(prev => (prev.includes(value) ? prev.filter(x => x !== value) : [...prev, value]));
 
-  // Section 6: Provider & Model — no implicit defaults. An empty string means
-  // the bot record stores no value for that field.
-  const [providerId, setProviderId] = useState('');
-  const [model, setModel] = useState('');
-  const [rateLimit, setRateLimit] = useState<number | null>(null);
-  const [costCap, setCostCap] = useState<number | null>(null);
-  const [timeoutSec, setTimeoutSec] = useState<number | null>(null);
-
-  const providerLabel = describeBotProvider(providerId || null, providersRead);
-  const selectedProvider = apiProviders.find(p => p.id === providerId);
-
-  const [changeNote] = useState('');
-
-  // Section 7: Bot Chaining
-  const [chainNextBotId, setChainNextBotId] = useState('none');
-  const [chainPromptUser, setChainPromptUser] = useState(true);
-  const [chainLabel, setChainLabel] = useState('');
-  const [allBots, setAllBots] = useState<any[]>([]);
-
-  // SC-01 boundary correction (SX-011): bot creation and editing are
-  // current-wave excluded write paths. Without an existing bot id there is
-  // nothing to view - show an honest unavailable state, never an editable
-  // creation form. With an id, the recorded configuration renders inside a
-  // disabled <fieldset>, which makes every native input, textarea, select,
-  // switch, checkbox, slider and button genuinely inert at the DOM level.
-  if (!editId) {
-    return (
-      <div className="space-y-6">
-        <div className="mb-4">
-          <Link href={cleanHref("/system/bots")}>
-            <Button variant="ghost" size="sm" className="text-slate-500 hover:text-slate-700">
-              <ArrowLeft className="w-4 h-4 mr-1" /> Back to Bots
-            </Button>
-          </Link>
-        </div>
-        <Card className="border border-dashed">
-          <CardContent className="py-12 text-center space-y-2">
-            <Bot className="w-8 h-8 mx-auto text-muted-foreground opacity-40" />
-            <h2 className="text-base font-semibold">Bot creation is not available in this build</h2>
-            <p className="text-sm text-muted-foreground max-w-md mx-auto">
-              Creating and editing bots is deferred to Sprint X (SX-011). Open an
-              existing bot from the Bots page to view its recorded configuration
-              read-only.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  /* Loading, "no such bot", and "read failed" are three different screens. */
   const backLink = (
     <div className="mb-4">
       <Link href={cleanHref("/system/bots")}>
@@ -310,7 +778,9 @@ export default function BotBuilder() {
     </div>
   );
 
-  if (botRead === null) {
+  /* Edit mode: loading, "no such bot", and "read failed" are three different
+     screens (unchanged Wave 04 behaviour). */
+  if (editId && botRead === null) {
     return (
       <div className="space-y-6">
         {backLink}
@@ -319,7 +789,7 @@ export default function BotBuilder() {
     );
   }
 
-  if (botRead.status === 'error') {
+  if (editId && botRead && botRead.status === 'error') {
     return (
       <div className="space-y-6">
         {backLink}
@@ -338,7 +808,7 @@ export default function BotBuilder() {
     );
   }
 
-  if (botRead.status === 'not_found') {
+  if (editId && botRead && botRead.status === 'not_found') {
     return (
       <div className="space-y-6">
         {backLink}
@@ -357,56 +827,74 @@ export default function BotBuilder() {
   }
 
   const latestVersion = versionHistory[0];
+  const providers = providersRead?.rows ?? [];
+  const providersReadable =
+    providersRead !== null && (providersRead.status === 'loaded' || providersRead.status === 'empty');
+  const providerOptions = deriveProviderOptions(providers, providerId);
+  const modelOptions = deriveModelOptions(providers, providerId, model);
+  const providerLabel = describeBotProvider(providerId, providersRead);
+  const selectedProvider = providers.find(p => p.id === providerId);
+
+  const chainBots = (allBotsRead?.rows ?? []).filter(b => b.id !== editId);
+  const chainTargetUnmatched =
+    chainNextBotId !== NO_CHAIN_VALUE && !chainBots.some(b => b.id === chainNextBotId);
+
+  const kbCollections = kbRead?.rows ?? [];
+  /** Recorded ids with no backing collection row — rendered verbatim (B-19). */
+  const unmatchedKbIds = selectedKB.filter(id => !kbCollections.some(c => c.id === id));
+
+  const actionVocabulary = type === 'action' ? ACTION_MODES : MONITOR_OUTPUTS;
+  const actionOptions = selectionUnion(
+    actionVocabulary,
+    selectionUnion(recordedActions, allowedActions),
+  );
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="mb-4">
-        <Link href={cleanHref("/system/admin")}>
-          <Button variant="ghost" size="sm" className="text-slate-500 hover:text-slate-700">
-            <ArrowLeft className="w-4 h-4 mr-1" /> Back to Admin
-          </Button>
-        </Link>
-      </div>
+      {backLink}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate(cleanHref('/system/bots'))}>
-            <ArrowLeft className="w-4 h-4 mr-1" /> Back to Registry
-          </Button>
           <div>
-            <h1 className="text-2xl font-bold font-serif text-slate-900">View: {existingBot?.name}</h1>
+            <h1 className="text-2xl font-bold font-serif text-slate-900">
+              {editId ? `Edit: ${existingBot?.name}` : 'Create New Bot'}
+            </h1>
             {/* No version number is invented: a bot with no rows in
                 ai_bot_versions previously displayed "Version 1". */}
             <p className="text-sm text-slate-500">
-              {versionHistory.length === 0
-                ? "No version rows recorded for this bot"
-                : `Version ${recorded(latestVersion?.version)} of ${versionHistory.length} recorded`}
-              {" — read-only view; editing is deferred to Sprint X"}
+              {editId
+                ? versionHistory.length === 0
+                  ? 'No version rows recorded for this bot — saving publishes version 1'
+                  : `Version ${recorded(latestVersion?.version)} of ${versionHistory.length} recorded — saving publishes version ${typeof latestVersion?.version === 'number' ? latestVersion.version + 1 : 'latest + 1'}`
+                : 'All new bots start in Draft status'}
+              {' — definitions only; no execution path in this build'}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-[10px] text-muted-foreground">Read-only in this build</Badge>
-          <Button variant="outline" onClick={() => navigate(cleanHref("/system/bots"))}>Back</Button>
+          <Button variant="outline" disabled={saving} onClick={() => navigate(cleanHref("/system/bots"))}>Cancel</Button>
+          <Button className="bg-[#1B2A4A] hover:bg-[#2a3d66]" disabled={saving} onClick={handleSave}>
+            <Save className="w-4 h-4 mr-2" />
+            {saving ? 'Writing…' : editId ? 'Publish New Version' : 'Create Bot'}
+          </Button>
         </div>
       </div>
 
-      {versionHistory.length === 0 && (
+      {noVersionRows && (
         <Card className="border-amber-200 bg-amber-50/40">
           <CardContent className="py-3 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <p className="text-xs text-amber-800">
               This bot has no rows in <span className="font-mono">ai_bot_versions</span>. Instructions, temperature,
-              token limit, knowledge sources and connector selection below are therefore shown as not recorded — they
-              are not defaults that the bot would use.
+              token limit, knowledge sources and connector snapshot below start empty because nothing is recorded —
+              they are not defaults the bot would use. Saving publishes version 1.
             </p>
           </CardContent>
         </Card>
       )}
 
-      <fieldset disabled aria-readonly="true" className="contents">
       <div className="grid grid-cols-3 gap-6">
-        {/* Main Form — 2 columns (read-only: disabled fieldset) */}
+        {/* Main Form — 2 columns */}
         <div className="col-span-2 space-y-6">
 
           {/* Section 1: Identity */}
@@ -418,38 +906,52 @@ export default function BotBuilder() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Bot Name</Label>
-                  <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g., Proposal Drafter" />
+                  <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g., proposal-drafter" />
                 </div>
                 <div>
-                  <Label>Bot Type</Label>
-                  <Select value={type} onValueChange={(v: BotTypeEnum) => setType(v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="action">Action Bot (Suggest / Draft / Explain)</SelectItem>
-                      <SelectItem value="monitor">Monitor Bot (Read-only signals)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  {/* Edited explicitly — NOT mirrored from the name (manifest
+                      B-15 note: live rows distinguish name from display_name).
+                      Blank falls back to the name on save. */}
+                  <Label>Display Name</Label>
+                  <Input value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="e.g., Proposal Drafter (blank = same as name)" />
                 </div>
+              </div>
+              {identityCollapsed && (
+                <p className="text-xs text-amber-600 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" /> The raw name / display_name split could not be read, so both
+                  fields show the recorded display label. Saving stores the values exactly as shown here.
+                </p>
+              )}
+              <div>
+                <Label>Bot Type</Label>
+                <Select value={type} onValueChange={setType}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="action">Action Bot (Suggest / Draft / Explain)</SelectItem>
+                    <SelectItem value="monitor">Monitor Bot (Read-only signals)</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <Label>Purpose</Label>
                 <Textarea value={purpose} onChange={e => setPurpose(e.target.value)} placeholder="Describe what this bot does and its boundaries..." rows={3} />
               </div>
               <div>
-                {/* Rendered from the bot record, not from a fixed page list.
-                    A domain such as `pdf_studio` used to be dropped on the
-                    floor while the sidebar counted it. */}
-                <Label>Allowed Domains <span className="text-xs text-slate-400 font-normal">(recorded on the bot record)</span></Label>
-                <RecordedScopeBadges values={domains} subject="domains" />
+                {/* The option list is the established vocabulary PLUS every
+                    value the record holds, so a recorded domain such as
+                    `pdf_studio` can never vanish from the form. */}
+                <Label>Allowed Domains</Label>
+                <ScopeToggleBadges options={domainOptions} selected={domains} onToggle={toggleIn(setDomains)} subject="domains" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label>Regions Allowed <span className="text-xs text-slate-400 font-normal">(recorded)</span></Label>
-                  <RecordedScopeBadges values={regions} subject="regions" />
+                  <Label>Regions Allowed</Label>
+                  <ScopeToggleBadges options={regionOptions} selected={regions} onToggle={toggleIn(setRegions)} subject="regions" />
                 </div>
                 <div>
-                  <Label>Roles Allowed to Invoke <span className="text-xs text-slate-400 font-normal">(recorded)</span></Label>
-                  <RecordedScopeBadges values={roles} subject="roles" />
+                  <Label>Roles Allowed to Invoke</Label>
+                  <ScopeToggleBadges options={roleOptions} selected={roles} onToggle={toggleIn(setRoles)} subject="roles" />
+                  <p className="text-[10px] text-slate-500 mt-1">Stored scope configuration — nothing invokes a bot in this build.</p>
                 </div>
               </div>
             </CardContent>
@@ -459,106 +961,91 @@ export default function BotBuilder() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base"><FileText className="w-4 h-4" /> 2. Instructions</CardTitle>
+              <CardDescription>
+                Stored on each version row. Publishing writes these values to a new
+                <span className="font-mono"> ai_bot_versions</span> row; earlier versions stay unchanged.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                {/* SC-01 Wave 04 (defect E): this rendered a page constant
-                    labelled "Base template — locked" while the value actually
-                    stored in ai_bot_versions.system_instruction was read,
-                    mapped and discarded. The stored text is shown. */}
                 <Label className="flex items-center gap-2">
-                  System Instruction <Lock className="w-3 h-3 text-slate-400" />
-                  <span className="text-xs text-slate-400 font-normal">(recorded on the latest version row, read-only)</span>
+                  System Instruction
+                  <span className="text-xs text-slate-400 font-normal">(stored on the version row)</span>
                 </Label>
-                {systemInstruction ? (
-                  <div className="mt-1 p-3 bg-slate-50 border rounded text-sm text-slate-600 font-mono leading-relaxed whitespace-pre-wrap">
-                    {systemInstruction}
-                  </div>
-                ) : (
-                  <div className="mt-1 p-3 bg-slate-50 border border-dashed rounded text-sm text-slate-500">
-                    {versionHistory.length === 0
-                      ? "No version rows are recorded for this bot, so no system instruction is stored against it."
-                      : "The latest version row records no system instruction."}
-                    {" "}Nothing is substituted for it: this build holds no default instruction that the bot would use.
-                  </div>
-                )}
+                <Textarea
+                  value={systemInstruction}
+                  onChange={e => setSystemInstruction(e.target.value)}
+                  placeholder={editId
+                    ? (noVersionRows
+                        ? 'No version rows are recorded for this bot, so no system instruction is stored against it.'
+                        : 'The latest version row records no system instruction.')
+                    : 'The stored instruction for this bot. Leaving it empty records no instruction — this build holds no default instruction that a bot would use.'}
+                  rows={6}
+                  className="font-mono text-sm"
+                />
               </div>
               <div>
-                <Label>Custom Instruction <span className="text-xs text-slate-400 font-normal">(recorded value, read-only)</span></Label>
+                <Label>Custom Instruction</Label>
                 <Textarea value={customInstruction} onChange={e => setCustomInstruction(e.target.value)}
-                  placeholder="Not recorded on the latest version row" rows={4} />
+                  placeholder="Additional instructions stored with this version (empty records none)" rows={4} />
               </div>
               <div>
                 <Label className="flex items-center gap-2">
-                  Safety / Refusal Rules <span className="text-xs text-slate-400 font-normal">(recorded value, read-only)</span>
+                  Safety / Refusal Rules <span className="text-xs text-slate-400 font-normal">(optional)</span>
                 </Label>
                 <Textarea value={safetyRules} onChange={e => setSafetyRules(e.target.value)}
-                  placeholder="Not recorded on the latest version row" rows={4}
+                  placeholder="Define what this bot must NEVER do (empty records none)" rows={4}
                   />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   {/* A null temperature is stated as not recorded rather than
-                      shown as 0.7 with the slider at that position. */}
+                      shown as a value with the slider at that position. */}
                   <Label>Temperature: {recorded(temperature)}</Label>
-                  <Slider value={[temperature ?? 0]} min={0} max={1} step={0.1} className="mt-2" />
+                  <Slider value={[temperature ?? 0]} onValueChange={([v]) => setTemperature(v)}
+                    min={0} max={1} step={0.1} className="mt-2" />
+                  <p className="text-xs text-slate-400 mt-1">Lower = more deterministic, Higher = more creative. Stored configuration only.</p>
                 </div>
                 <div>
                   <Label>Max Tokens</Label>
-                  <Input value={recorded(maxTokens)} readOnly />
+                  <Input type="number" value={maxTokens ?? ''} min={100} max={8000}
+                    placeholder="not recorded"
+                    onChange={e => setMaxTokens(parseNumberInput(e.target.value))} />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Section 3: Allowed Actions */}
+          {/* Section 3: Allowed Actions (B-17) */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base"><Zap className="w-4 h-4" /> 3. Allowed Actions</CardTitle>
-              {/* The old description claimed all other actions were "hard
-                  blocked at the system level". Nothing is blocked here: this
-                  build has no bot execution path to block. */}
               <CardDescription>
-                Doctrine reference. These modes are page constants, not per-bot stored configuration — no bot record
-                selects any of them, and nothing here is applied or blocked by this build.
+                Recorded per-version selection (<span className="font-mono">ai_bot_versions.allowed_actions</span>).
+                Stored configuration only — nothing executes, applies or blocks any action in this build.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {type === 'action' ? (
-                <div className="space-y-3">
-                  <p className="text-sm text-slate-600 mb-3">The doctrine defines these action-bot modes (selection is not recorded per bot):</p>
-                  {(['suggest', 'draft', 'explain'] as ActionBotMode[]).map(mode => (
-                    <div key={mode} className="flex items-center gap-3 p-3 border rounded">
-                      <Checkbox checked={actionModes.includes(mode)} />
-                      <div>
-                        <p className="font-medium capitalize">{mode}</p>
-                        <p className="text-xs text-slate-400">
-                          {mode === 'suggest' ? 'Recommend options for human consideration' :
-                           mode === 'draft' ? 'Generate draft text for human review and editing' :
-                           'Explain concepts, clauses, or data in plain language'}
-                        </p>
-                      </div>
+              <div className="space-y-3">
+                <p className="text-sm text-slate-600 mb-3">
+                  {type === 'action'
+                    ? 'Doctrine action-bot modes (the recorded selection is stored with each version):'
+                    : 'Doctrine monitor-bot output types (the recorded selection is stored with each version):'}
+                </p>
+                {actionOptions.map(mode => (
+                  <div key={mode} className="flex items-center gap-3 p-3 border rounded">
+                    <Checkbox checked={allowedActions.includes(mode)}
+                      onCheckedChange={() => toggleIn(setAllowedActions)(mode)} />
+                    <div>
+                      <p className={`font-medium ${actionVocabulary.includes(mode) ? 'capitalize' : 'font-mono text-sm'}`}>{mode}</p>
+                      <p className="text-xs text-slate-400">
+                        {MODE_DESCRIPTIONS[mode] ??
+                          "Recorded value on this bot's latest version (not part of the standard vocabulary) — kept verbatim."}
+                      </p>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <p className="text-sm text-slate-600 mb-3">The doctrine defines these monitor-bot output types (selection is not recorded per bot):</p>
-                  {(['signal_event', 'report_snapshot', 'dashboard_annotation'] as MonitorBotOutput[]).map(output => (
-                    <div key={output} className="flex items-center gap-3 p-3 border rounded">
-                      <Checkbox checked={monitorOutputs.includes(output)} />
-                      <div>
-                        <p className="font-medium font-mono text-sm">{output}</p>
-                        <p className="text-xs text-slate-400">
-                          {output === 'signal_event' ? 'Generate threshold/trend/anomaly signals for human review' :
-                           output === 'report_snapshot' ? 'Create periodic report snapshots (read-only)' :
-                           'Add annotations to dashboard views (advisory only)'}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                  </div>
+                ))}
+              </div>
               <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded">
                 <p className="text-xs text-red-700 font-medium flex items-center gap-1">
                   <Shield className="w-3 h-3" /> System-level action deny policies are not configured in this build (deferred to Sprint X).
@@ -567,124 +1054,254 @@ export default function BotBuilder() {
             </CardContent>
           </Card>
 
-          {/* Section 4: Knowledge Base */}
+          {/* Section 4: Knowledge Base (B-19) */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base"><BookOpen className="w-4 h-4" /> 4. Knowledge Base Configuration</CardTitle>
+              <CardDescription>
+                Linked collection ids are stored per version
+                (<span className="font-mono">ai_bot_versions.knowledge_base_ids</span>).
+                {editId
+                  ? ' Attaching or detaching publishes a new version carrying every other recorded field forward verbatim.'
+                  : ' The selection below is stored with version 1.'}
+              </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {apiKnowledgeBase.length > 0 ? apiKnowledgeBase.map((kb: any) => (
-                  <div key={kb.id} className="flex items-center gap-3 p-3 border rounded hover:bg-slate-50">
-                    <Checkbox checked={selectedKB.includes(kb.id)}
-                      onCheckedChange={(checked) => {
-                        if (checked) setSelectedKB(prev => [...prev, kb.id]);
-                        else setSelectedKB(prev => prev.filter(id => id !== kb.id));
-                      }} />
-                    <div className={`w-8 h-8 rounded flex items-center justify-center ${kb.type === 'document' ? 'bg-blue-100' : kb.type === 'data_table' ? 'bg-emerald-100' : 'bg-[#075eea]/15'}`}>
-                      {kb.type === 'document' ? <FileText className="w-4 h-4 text-blue-600" /> :
-                       kb.type === 'data_table' ? <Table className="w-4 h-4 text-emerald-600" /> :
-                       <Plug className="w-4 h-4 text-[#075eea]" />}
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">{kb.name}</p>
-                      <p className="text-xs text-slate-400">v{kb.version} · Updated {kb.lastUpdated} · Scope: {kb.scopeRegion?.join(', ') || 'All'}</p>
-                    </div>
-                    <Badge variant="outline" className="text-xs">{String(kb.type).replace('_', ' ')}</Badge>
-                  </div>
-                )) : <p className="text-sm text-slate-500 p-3">No knowledge base entries found — configure knowledge sources in the Admin panel.</p>}
-              </div>
+            <CardContent className="space-y-3">
+              {/* The picker reads the real kb_collections table. Loading, a
+                  failed read and a real empty list are three different
+                  statements. */}
+              {kbRead === null && (
+                <p className="text-sm text-slate-500 p-3">Reading knowledge collections…</p>
+              )}
+              {kbRead !== null && (kbRead.status === 'error' || kbRead.status === 'unavailable') && (
+                <div className="p-3 border border-red-200 bg-red-50/40 rounded space-y-1">
+                  <p className="text-sm font-medium text-red-700 flex items-center gap-1">
+                    <XCircle className="w-4 h-4" /> The knowledge collections could not be read
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    No collection list is shown. The number of collections is unknown — it is not zero.
+                    The recorded ids below are unaffected.
+                  </p>
+                  <p className="text-[11px] font-mono text-slate-500 break-all">{kbRead.error}</p>
+                  <Button variant="outline" size="sm" onClick={() => setReloadKey(k => k + 1)}>Retry</Button>
+                </div>
+              )}
+              {kbRead !== null && kbRead.status === 'empty' && (
+                <p className="text-sm text-slate-500 p-3">
+                  The read of <span className="font-mono">kb_collections</span> succeeded and returned zero rows —
+                  no knowledge collection exists to {editId ? 'attach' : 'select'}. Rows hidden by row-level
+                  security would not appear here.
+                </p>
+              )}
+              {kbRead !== null && kbRead.status === 'loaded' && (
+                <div className="space-y-2">
+                  {kbCollections.map(kb => {
+                    const linked = selectedKB.includes(kb.id);
+                    const pending = kbPendingId === kb.id;
+                    return (
+                      <div key={kb.id} className="flex items-center gap-3 p-3 border rounded hover:bg-slate-50">
+                        {!editId && (
+                          <Checkbox checked={linked}
+                            onCheckedChange={() => toggleIn(setSelectedKB)(kb.id)} />
+                        )}
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">{kb.name}</p>
+                          <p className="text-xs text-slate-400">
+                            {kb.doc_count ?? 0} document(s) · {kb.chunk_count ?? 0} chunk(s) · visibility: {kb.visibility}
+                          </p>
+                        </div>
+                        {linked && <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">linked</Badge>}
+                        {editId && (
+                          linked ? (
+                            <Button variant="outline" size="sm" disabled={pending}
+                              onClick={() => runKnowledgeAction(kb.id, () => performDetachKnowledge(editId, kb.id, kbChangeNote))}>
+                              {pending ? 'Writing…' : 'Detach'}
+                            </Button>
+                          ) : (
+                            <Button variant="outline" size="sm" disabled={pending}
+                              onClick={() => runKnowledgeAction(kb.id, () => performAttachKnowledge(editId, kb.id, kbChangeNote))}>
+                              {pending ? 'Writing…' : 'Attach'}
+                            </Button>
+                          )
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Recorded ids with no backing collection row are shown
+                  verbatim — never resolved away or dropped (manifest B-19
+                  note: live seeded bots carry such ids). */}
+              {unmatchedKbIds.length > 0 && (
+                <div className="space-y-2 pt-2 border-t">
+                  <p className="text-xs font-medium text-amber-700 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" /> Recorded knowledge ids with no matching collection record
+                  </p>
+                  {unmatchedKbIds.map(id => {
+                    const pending = kbPendingId === id;
+                    return (
+                      <div key={id} className="flex items-center gap-3 p-2 border border-amber-200 bg-amber-50/40 rounded">
+                        <span className="flex-1 font-mono text-xs text-slate-700">{id}</span>
+                        {editId ? (
+                          <Button variant="outline" size="sm" disabled={pending}
+                            onClick={() => runKnowledgeAction(id, () => performDetachKnowledge(editId, id, kbChangeNote))}>
+                            {pending ? 'Writing…' : 'Detach'}
+                          </Button>
+                        ) : (
+                          <Button variant="outline" size="sm" onClick={() => toggleIn(setSelectedKB)(id)}>
+                            Remove from selection
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {editId && (
+                <div className="pt-2 border-t">
+                  <Label className="text-xs">Change note for knowledge attach/detach</Label>
+                  <Input value={kbChangeNote} onChange={e => setKbChangeNote(e.target.value)}
+                    placeholder="Required — knowledge changes publish a new version" />
+                </div>
+              )}
             </CardContent>
           </Card>
 
-          {/* Section 5: Connector Access */}
+          {/* Section 5: Connector snapshot — recorded data only. There is no
+              connector store in this build to pick from, and connector access
+              is invocation-time behaviour (manifest B-20, recorded not
+              migrated). The snapshot is carried forward verbatim on publish. */}
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base"><Database className="w-4 h-4" /> 5. Connector Access</CardTitle>
-              <CardDescription>Each connector must be explicitly enabled. All default OFF. {type === 'monitor' ? 'Monitor bots: read-only mode only.' : ''}</CardDescription>
+              <CardTitle className="flex items-center gap-2 text-base"><Database className="w-4 h-4" /> 5. Connector Snapshot (recorded)</CardTitle>
+              <CardDescription>
+                No connector store exists in this build, so no connector can be selected here. The snapshot recorded
+                on the latest version row is shown below and carried forward verbatim when a new version is published.
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
-                {apiConnectors.length > 0 ? apiConnectors.map((conn: any) => (
-                  <div key={conn.id} className="flex items-center justify-between p-3 border rounded">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded flex items-center justify-center ${connectorState[conn.type as ConnectorType] ? 'bg-emerald-100' : 'bg-slate-100'}`}>
-                        <Database className={`w-4 h-4 ${connectorState[conn.type as ConnectorType] ? 'text-emerald-600' : 'text-slate-400'}`} />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium">{conn.name}</p>
-                        <p className="text-xs text-slate-400">{conn.type.toUpperCase()} · {conn.status} · {type === 'monitor' ? 'Read-only' : 'Read-only or None'}</p>
-                      </div>
+              {Object.keys(connectorSnapshot).length > 0 ? (
+                <div className="space-y-2">
+                  {Object.entries(connectorSnapshot).map(([key, value]) => (
+                    <div key={key} className="flex items-center justify-between p-2 border rounded text-sm">
+                      <span className="font-mono text-xs">{key}</span>
+                      <span className="text-slate-500 text-xs">recorded: {String(value)}</span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {!conn.enabled && <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700">Connector disabled globally</Badge>}
-                      <Switch
-                        checked={connectorState[conn.type as ConnectorType]}
-                        onCheckedChange={(v) => setConnectorState(prev => ({ ...prev, [conn.type]: v }))}
-                      />
-                    </div>
-                  </div>
-                )) : <p className="text-sm text-slate-500 p-3">No connectors found — run the automation migration sprint to create connector records.</p>}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500 p-3">
+                  {editId
+                    ? 'The latest version row records no connector snapshot ({} is stored with the next version).'
+                    : 'A new bot starts with an empty connector snapshot ({}).'}
+                </p>
+              )}
             </CardContent>
           </Card>
 
-          {/* Section 6: Provider & Model */}
+          {/* Section 6: Provider & Model (B-16) */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base"><Cpu className="w-4 h-4" /> 6. Provider & Model Selection</CardTitle>
-              <CardDescription>No implicit defaults in production. All must be explicitly selected.</CardDescription>
+              <CardDescription>
+                Options come from the live <span className="font-mono">ai_providers</span> records. Selection is stored
+                configuration on the definition and its versions — this build never calls a provider.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* The recorded provider_id is displayed verbatim. In the live
-                  data it is a value such as "prov-openai" while ai_providers
-                  ids are "aip-openai-001", so a select bound to the provider
-                  list simply rendered blank. The mismatch is now stated. */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Provider (recorded on the bot record)</Label>
-                  <Input value={providerId || "not recorded"} readOnly className="font-mono text-xs" />
-                  {/* SC-01 Wave 04 (defect D): "No provider record has this
-                      id" is a statement about records that were read. When the
-                      ai_providers read itself failed, the page said it anyway. */}
-                  {providerLabel.state === 'unmatched' && (
-                    <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3" /> The provider records were read and none has this id, so no provider details can be shown for it.
-                    </p>
-                  )}
-                  {providerLabel.state === 'unreadable' && (
-                    <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3" /> The provider records could not be read
-                      {providersRead && 'error' in providersRead ? ` (${providersRead.error})` : ''}, so it is unknown
-                      whether a provider record has this id. This is not a claim that none does.
-                    </p>
-                  )}
-                  {providerLabel.state === 'unread' && (
-                    <p className="text-xs text-slate-500 mt-1">Reading the provider records…</p>
-                  )}
-                  {selectedProvider && !selectedProvider.enabled && (
-                    <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3" /> Matching provider record is marked disabled.
-                    </p>
+              {providersReadable ? (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Provider</Label>
+                    <Select
+                      value={providerId ?? NO_PROVIDER_VALUE}
+                      onValueChange={v => setProviderId(v === NO_PROVIDER_VALUE ? null : v)}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NO_PROVIDER_VALUE}>No provider recorded</SelectItem>
+                        {providerOptions.map(o => (
+                          <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {providerLabel.state === 'unmatched' && (
+                      <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" /> The recorded id <span className="font-mono">{providerId}</span> matches
+                        no provider record. It is kept verbatim unless a listed provider is selected.
+                      </p>
+                    )}
+                    {selectedProvider && !selectedProvider.enabled && (
+                      <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" /> This provider record is marked disabled (recorded metadata; nothing runs either way).
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <Label>Model</Label>
+                    <Select
+                      value={model ?? NO_MODEL_VALUE}
+                      onValueChange={v => setModel(v === NO_MODEL_VALUE ? null : v)}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NO_MODEL_VALUE}>No model recorded</SelectItem>
+                        {modelOptions.map(o => (
+                          <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {!providerId && model && (
+                      <p className="text-xs text-amber-600 mt-1">
+                        A model is recorded without a provider id; it is shown verbatim.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {/* A failed provider read and "no provider has this id" are
+                      different facts (Wave 04 defect D). When the read failed
+                      the recorded values are kept verbatim and no option list
+                      is invented. */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label>Provider (recorded on the bot record)</Label>
+                      <Input value={providerId ?? 'not recorded'} readOnly className="font-mono text-xs" />
+                    </div>
+                    <div>
+                      <Label>Model (recorded)</Label>
+                      <Input value={model ?? 'not recorded'} readOnly className="font-mono text-xs" />
+                    </div>
+                  </div>
+                  <p className="text-xs text-amber-600 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" />
+                    {providersRead === null
+                      ? 'Reading the provider records…'
+                      : `The provider records could not be read (${'error' in providersRead ? providersRead.error : 'unknown error'}), so no selection list can be offered. The recorded values above are kept verbatim and are still written on save.`}
+                  </p>
+                  {providersRead !== null && (
+                    <Button variant="outline" size="sm" onClick={() => setReloadKey(k => k + 1)}>Retry</Button>
                   )}
                 </div>
-                <div>
-                  <Label>Model (recorded)</Label>
-                  <Input value={model || "not recorded"} readOnly className="font-mono text-xs" />
-                </div>
-              </div>
+              )}
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <Label>Rate Limit (per min)</Label>
-                  <Input value={recorded(rateLimit)} readOnly />
+                  <Input type="number" value={rateLimit ?? ''} min={1} max={100} placeholder="not recorded"
+                    onChange={e => setRateLimit(parseNumberInput(e.target.value))} />
                 </div>
                 <div>
                   <Label>Cost Cap (USD)</Label>
-                  <Input value={recorded(costCap)} readOnly />
+                  <Input type="number" value={costCap ?? ''} min={1} max={100} placeholder="not recorded"
+                    onChange={e => setCostCap(parseNumberInput(e.target.value))} />
                 </div>
                 <div>
                   <Label>Timeout (seconds)</Label>
-                  <Input value={recorded(timeoutSec)} readOnly />
+                  <Input type="number" value={timeoutSec ?? ''} min={5} max={120} placeholder="not recorded"
+                    onChange={e => setTimeoutSec(parseNumberInput(e.target.value))} />
                 </div>
               </div>
               <p className="text-xs text-slate-400">
@@ -694,71 +1311,77 @@ export default function BotBuilder() {
             </CardContent>
           </Card>
 
-          {/* Section 7: Bot Chaining */}
+          {/* Section 7: Bot Chaining (B-18) */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base"><Link2 className="w-4 h-4" /> 7. Bot Chaining Pipeline</CardTitle>
-              {/* The old description said the next bot "runs automatically".
-                  Nothing runs: this build has no bot execution path, so a
-                  recorded chain configuration is inert. */}
               <CardDescription>
-                Recorded chain configuration from the latest version row. This build never runs a bot, so no chain is
-                executed and no next bot is offered anywhere in the application.
+                Recorded chain configuration, stored per version
+                (<span className="font-mono">ai_bot_versions.chain_config</span>). This build never runs a bot, so no
+                chain is executed and no next bot is offered anywhere in the application.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
                 <Label>Next Bot in Chain</Label>
                 <Select value={chainNextBotId} onValueChange={setChainNextBotId}>
-                  <SelectTrigger><SelectValue placeholder="No chain — runs independently" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="No chain recorded" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">No chain — runs independently</SelectItem>
-                    {allBots
-                      .filter(b => b.id !== editId) // can't chain to self
-                      .map(b => (
-                        <SelectItem key={b.id} value={b.id}>
-                          {b.display_name || b.name} ({b.type}) {b.status !== 'active' ? `— ${b.status}` : ''}
-                        </SelectItem>
-                      ))}
+                    <SelectItem value={NO_CHAIN_VALUE}>No chain recorded</SelectItem>
+                    {/* The recorded target is kept verbatim even when the bot
+                        list read failed or no longer contains it. */}
+                    {chainTargetUnmatched && (
+                      <SelectItem value={chainNextBotId}>
+                        {chainNextBotId} (recorded value — not in the bot list that was read)
+                      </SelectItem>
+                    )}
+                    {chainBots.map(b => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name} ({b.type}) {b.status !== 'active' ? `— ${b.status}` : ''}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
+                {allBotsRead !== null && (allBotsRead.status === 'error' || allBotsRead.status === 'unavailable') && (
+                  <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" /> The bot list could not be read ({allBotsRead.error}), so only
+                    the recorded value is offered.
+                  </p>
+                )}
                 <p className="text-[10px] text-slate-500 mt-1">Recorded value only — no chained run is offered or performed by this build.</p>
               </div>
-              {chainNextBotId && chainNextBotId !== 'none' && (
+              {chainNextBotId !== NO_CHAIN_VALUE && (
                 <>
                   <div className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-2">
                     <div>
-                      <p className="text-sm font-medium">Prompt user before chaining</p>
-                      <p className="text-[10px] text-slate-500">Show a dialog asking the user to confirm before running the next bot</p>
+                      <p className="text-sm font-medium">Prompt user before chaining (recorded flag)</p>
+                      <p className="text-[10px] text-slate-500">Stored as <span className="font-mono">prompt_user</span> in the chain configuration.</p>
                     </div>
                     <Switch checked={chainPromptUser} onCheckedChange={setChainPromptUser} />
                   </div>
                   <div>
-                    <Label>Chain Button Label</Label>
+                    <Label>Chain Button Label (recorded text)</Label>
                     <Input value={chainLabel} onChange={e => setChainLabel(e.target.value)} placeholder="e.g., Auto-draft all blocks" />
-                    <p className="text-[10px] text-slate-500 mt-1">The text shown on the “run next bot” button in the chain dialog.</p>
+                    <p className="text-[10px] text-slate-500 mt-1">Stored as <span className="font-mono">chain_label</span>. No button uses it in this build.</p>
                   </div>
                 </>
               )}
             </CardContent>
           </Card>
 
-          {/* Version change note. This was an empty, editable "describe what
-              changed" box with no save path — an invitation to write text that
-              could never be stored. It now shows the note recorded against the
-              latest version row, or says that none is recorded. */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base"><History className="w-4 h-4" /> Recorded Change Note (latest version)</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-slate-600">
-                {latestVersion?.changeNote || (versionHistory.length === 0
-                  ? "No version rows are recorded for this bot."
-                  : "The latest version row records no change note.")}
-              </p>
-            </CardContent>
-          </Card>
+          {/* Change note — mandatory for publishing a new version (B-15). */}
+          {editId && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base"><History className="w-4 h-4" /> Version Change Note</CardTitle>
+                <CardDescription>Required — every published version records why it exists.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Textarea value={changeNote} onChange={e => setChangeNote(e.target.value)}
+                  placeholder="Describe what changed in this version..." rows={2} />
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Right Sidebar — Version History & Summary */}
@@ -769,32 +1392,36 @@ export default function BotBuilder() {
               <CardTitle className="text-sm">Bot Summary</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
-              <div className="flex justify-between"><span className="text-slate-500">Type</span><Badge variant="outline">{recorded(existingBot?.type)}</Badge></div>
-              <div className="flex justify-between"><span className="text-slate-500">Status</span><Badge variant="outline">{recorded(existingBot?.status)}</Badge></div>
+              <div className="flex justify-between"><span className="text-slate-500">Type</span><Badge variant="outline">{type}</Badge></div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Status</span>
+                <Badge variant="outline">{editId ? recorded(existingBot?.status) : 'draft (on create)'}</Badge>
+              </div>
               {/* These counts describe exactly the badge lists rendered in
-                  section 1, which are themselves the recorded values. */}
-              <div className="flex justify-between gap-2"><span className="text-slate-500 shrink-0">Domains</span><span className="text-right">{domains.length > 0 ? domains.join(', ') : 'none recorded'}</span></div>
-              <div className="flex justify-between gap-2"><span className="text-slate-500 shrink-0">Regions</span><span className="text-right">{regions.length > 0 ? regions.join(', ') : 'none recorded'}</span></div>
-              <div className="flex justify-between gap-2"><span className="text-slate-500 shrink-0">Roles</span><span className="text-right">{roles.length > 0 ? roles.join(', ') : 'none recorded'}</span></div>
+                  section 1, which are the values that will be stored. */}
+              <div className="flex justify-between gap-2"><span className="text-slate-500 shrink-0">Domains</span><span className="text-right">{domains.length > 0 ? domains.join(', ') : 'none selected'}</span></div>
+              <div className="flex justify-between gap-2"><span className="text-slate-500 shrink-0">Regions</span><span className="text-right">{regions.length > 0 ? regions.join(', ') : 'none selected'}</span></div>
+              <div className="flex justify-between gap-2"><span className="text-slate-500 shrink-0">Roles</span><span className="text-right">{roles.length > 0 ? roles.join(', ') : 'none selected'}</span></div>
               <div className="flex justify-between gap-2"><span className="text-slate-500 shrink-0">Provider</span><span className={`text-right ${providerLabel.state === 'matched' ? '' : 'text-amber-600'}`}>{providerLabel.label}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Model</span><span>{model || 'not recorded'}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Knowledge</span><span>{selectedKB.length} recorded</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Connectors enabled in snapshot</span><span>{Object.values(connectorState).filter(Boolean).length}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Model</span><span>{model ?? 'not recorded'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Allowed actions</span><span>{allowedActions.length} selected</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Knowledge</span><span>{selectedKB.length} linked</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Connector snapshot keys</span><span>{Object.keys(connectorSnapshot).length}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Temperature</span><span>{recorded(temperature)}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Max Tokens</span><span>{recorded(maxTokens)}</span></div>
             </CardContent>
           </Card>
 
-          {/* Runtime Flow */}
+          {/* Scope disclosure */}
           <Card className="border border-dashed">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2"><Shield className="w-4 h-4" /> Runtime Invocation</CardTitle>
+              <CardTitle className="text-sm flex items-center gap-2"><Shield className="w-4 h-4" /> Definitions Only</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-xs text-muted-foreground">
-                No bot invocation or enforcement path exists in this build.
-                Runtime execution, permission checks and invocation logging are
-                deferred to Sprint X and are not active behavior here.
+                Definitions only — no execution path in this build. This page stores bot configuration records;
+                runtime invocation, permission checks and invocation logging are deferred to Sprint X and are not
+                active behaviour here.
               </p>
             </CardContent>
           </Card>
@@ -807,20 +1434,33 @@ export default function BotBuilder() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {/* The per-version "Rollback to vN" button is removed: it
-                      never rolled anything back — it raised a "coming soon"
-                      toast — and offering it implies a capability this build
-                      does not have. */}
-                  {versionHistory.map((v, i) => (
-                    <div key={v.id} className={`p-2 rounded border text-xs ${i === 0 ? 'bg-blue-50 border-blue-200' : 'bg-white'}`}>
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">v{recorded(v.version)}</span>
-                        <span className="text-slate-400">{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'no date recorded'}</span>
+                  {versionHistory.map(v => {
+                    const isCurrent = existingBot?.currentVersionId === v.id;
+                    return (
+                      <div key={v.id} className={`p-2 rounded border text-xs ${isCurrent ? 'bg-blue-50 border-blue-200' : 'bg-white'}`}>
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">
+                            v{recorded(v.version)}
+                            {isCurrent && (
+                              <Badge variant="outline" className="ml-2 text-[10px] bg-blue-50 text-blue-700 border-blue-200">
+                                current
+                              </Badge>
+                            )}
+                          </span>
+                          <span className="text-slate-400">{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : 'no date recorded'}</span>
+                        </div>
+                        <p className="text-slate-500 mt-1">{v.changeNote || 'No change note recorded'}</p>
+                        <p className="text-slate-400 mt-0.5">By: {v.createdBy || 'not recorded'}</p>
                       </div>
-                      <p className="text-slate-500 mt-1">{v.changeNote || 'No change note recorded'}</p>
-                      <p className="text-slate-400 mt-0.5">By: {v.createdBy || 'not recorded'}</p>
-                    </div>
-                  ))}
+                    );
+                  })}
+                  {existingBot && existingBot.currentVersionId &&
+                    !versionHistory.some(v => v.id === existingBot.currentVersionId) && (
+                    <p className="text-[10px] text-amber-600">
+                      The recorded current_version_id (<span className="font-mono">{existingBot.currentVersionId}</span>)
+                      matches none of the version rows read for this bot.
+                    </p>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -840,7 +1480,6 @@ export default function BotBuilder() {
           </Card>
         </div>
       </div>
-      </fieldset>
     </div>
   );
 }

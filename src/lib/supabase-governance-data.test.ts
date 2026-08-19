@@ -11,6 +11,16 @@
  *      on the recorded call list fails.
  *   2. The governance READ paths distinguish loaded / empty / error, so the
  *      console can no longer render a failed read as "0 gates configured".
+ *
+ * SC-01 Wave 06 additions (lane T14):
+ *   - manifest row A-35: `fetchTenderGovernanceConfigResult` is the Tender
+ *     Config tab's ONLY data source — its read contract and three-way
+ *     classification are pinned here;
+ *   - architect correction #3 (2026-08-18): the write refusals were reworded
+ *     to state the exclusion without promising the capability elsewhere; the
+ *     two wording assertions below track that authorized change;
+ *   - `insertGovernanceAuditEntry` (A-30 write helper): what reaches the
+ *     database is asserted, not merely what the function returns.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -77,6 +87,9 @@ import {
   fetchGovernanceAuditLogResult,
   fetchPolicyGates,
   fetchPolicyGatesResult,
+  fetchTenderGovernanceConfig,
+  fetchTenderGovernanceConfigResult,
+  insertGovernanceAuditEntry,
   updatePolicyGateConfig,
   upsertCommercialGovernanceConfig,
   upsertTenderGovernanceConfig,
@@ -97,7 +110,11 @@ describe("governance writes refuse, and reach the database zero times", () => {
   it("updatePolicyGateConfig performs no write at all", async () => {
     const result = await updatePolicyGateConfig("gate-1", { mode: "enforce", overridable: false }, "because");
     expect(result.success).toBe(false);
-    expect(result.error).toContain("not available in this build");
+    /* Wave 06 (architect correction #3): the refusal names the exclusion.
+     * The old text "not available in this build" is on the wave's negative
+     * scan list and must not come back. */
+    expect(result.error).toContain("excluded from this build");
+    expect(result.error).not.toContain("not available in this build");
     // The critical assertion: nothing reached the database. No update, no
     // version bump, no audit entry — so the console cannot claim persistence.
     expect(mutations()).toEqual([]);
@@ -116,14 +133,17 @@ describe("governance writes refuse, and reach the database zero times", () => {
     expect(mutations()).toEqual([]);
   });
 
-  it("every refusal names the deferral, so the UI can show a reason instead of a silent no-op", async () => {
+  it("every refusal names the exclusion, so the UI can show a reason instead of a silent no-op", async () => {
     for (const result of [
       await updatePolicyGateConfig("g", {}),
       await upsertTenderGovernanceConfig("k", 1),
       await upsertCommercialGovernanceConfig("k", 1),
     ]) {
       expect(result.success).toBe(false);
-      expect(result.error).toMatch(/Sprint X/);
+      /* Wave 06 rewording: SX-011 is still cited; "deferred to Sprint X" no
+       * longer is, because it promised a future the refusal cannot know. */
+      expect(result.error).toMatch(/SX-011/);
+      expect(result.error).toMatch(/excluded/i);
     }
   });
 });
@@ -229,5 +249,102 @@ describe("fetchCommercialGovernanceConfigResult", () => {
   it("the bare-array form still returns [] on failure", async () => {
     results.set("commercial_governance_config", { data: null, error: { message: "x" } });
     expect(await fetchCommercialGovernanceConfig()).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// SC-01 Wave 06 (T14, manifest row A-35) — Tender Config read
+// ─────────────────────────────────────────────────────────────
+
+describe("fetchTenderGovernanceConfigResult — A-35 read contract", () => {
+  it("queries tender_governance_config with select('*') ordered by config_key", async () => {
+    results.set("tender_governance_config", {
+      data: [{
+        id: "tgc-tender_templates",
+        config_key: "tender_templates",
+        config_value: { templates: ["3PL"] },
+        category: "Templates",
+        description: "stored description",
+        is_active: true,
+        updated_at: "2026-06-01T08:00:00.000Z",
+      }],
+      error: null,
+    });
+
+    const read = await fetchTenderGovernanceConfigResult();
+
+    const call = calls.find(c => c.table === "tender_governance_config")!;
+    expect(call.op).toBe("select");
+    expect(call.columns).toBe("*");
+    expect(call.order).toEqual([["config_key", undefined]]);
+    expect(read.status).toBe("loaded");
+    expect(read.rows).toHaveLength(1);
+    expect(read.rows[0]).toMatchObject({
+      config_key: "tender_templates",
+      config_value: { templates: ["3PL"] },
+    });
+  });
+
+  it("reports a successful zero-row read as empty — a real state, not a failure", async () => {
+    results.set("tender_governance_config", { data: [], error: null });
+    expect((await fetchTenderGovernanceConfigResult()).status).toBe("empty");
+  });
+
+  it("reports a failed read as error with the message — NEVER as empty", async () => {
+    results.set("tender_governance_config", {
+      data: null,
+      error: { message: "permission denied for table tender_governance_config" },
+    });
+    const read = await fetchTenderGovernanceConfigResult();
+    expect(read.status).toBe("error");
+    expect(read.status).not.toBe("empty");
+    expect(read).toMatchObject({ rows: [] });
+    if (read.status !== "error") throw new Error("unreachable");
+    expect(read.error).toContain("permission denied");
+  });
+
+  it("the legacy bare-array wrapper stays aligned with the classified read", async () => {
+    results.set("tender_governance_config", {
+      data: [
+        { id: "tgc-1", config_key: "tender_templates" },
+        { id: "tgc-2", config_key: "tender_gate_rules" },
+      ],
+      error: null,
+    });
+    const rows = await fetchTenderGovernanceConfig();
+    expect(rows.map(r => r.config_key)).toEqual(["tender_templates", "tender_gate_rules"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// SC-01 Wave 06 (T14) — the one real governance write helper
+// ─────────────────────────────────────────────────────────────
+
+describe("insertGovernanceAuditEntry — what reaches the database (A-30 helper)", () => {
+  it("inserts one governance_audit_log row with the recorded actor and mock_only:false", async () => {
+    results.set("governance_audit_log", { error: null });
+
+    await insertGovernanceAuditEntry({
+      category: "admin_change",
+      action: "test_action",
+      entity_type: "policy_gate",
+      entity_id: "g-1",
+      details: "stored detail",
+    });
+
+    expect(mutations()).toHaveLength(1);
+    const write = mutations()[0]!;
+    expect(write.table).toBe("governance_audit_log");
+    expect(write.op).toBe("insert");
+    expect(write.payload).toMatchObject({
+      category: "admin_change",
+      action: "test_action",
+      entity_type: "policy_gate",
+      entity_id: "g-1",
+      details: "stored detail",
+      user_id: "u1",
+      user_name: "Test User",
+      mock_only: false,
+    });
   });
 });

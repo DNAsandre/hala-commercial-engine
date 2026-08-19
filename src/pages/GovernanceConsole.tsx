@@ -4,7 +4,7 @@
  * Implements all 9 compliance points with full configuration UI
  */
 import { useState, useEffect } from "react";
-import { Shield, Lock, Bot, GitBranch, Settings, Activity, AlertTriangle, CheckCircle, XCircle, Eye, EyeOff, ChevronDown, ChevronRight, History, Zap, Server, Users, RefreshCw, DollarSign, ExternalLink, ArrowLeft, FileText } from "lucide-react";
+import { Shield, Lock, Bot, GitBranch, Settings, Activity, AlertTriangle, CheckCircle, XCircle, Eye, EyeOff, ChevronDown, ChevronRight, History, Zap, Server, Users, RefreshCw, DollarSign, ExternalLink, ArrowLeft, FileText, Info, Loader2 } from "lucide-react";
 import CommercialGovernanceConfig from "@/components/commercial/CommercialGovernanceConfig";
 import { Link } from "wouter";
 import { cleanHref } from "@clean/lib/clean-routing";
@@ -20,13 +20,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-// SC-01 Wave 02 closure (SX-006/SX-011): lib/governance and
-// TenderGovernanceConfig are excluded. Panels below either show REAL records
-// (policy gates, governance audit log) or an honest deferred state. Nothing
-// here enforces workflow behavior - governance is advisory before Sprint X.
+// SC-01 Wave 02 closure (SX-006/SX-011): lib/governance is excluded. Panels
+// below either show REAL records (policy gates, governance audit log, tender
+// and commercial config) or an honest deferred state. Nothing here enforces
+// workflow behavior - governance is advisory before Sprint X.
+// SC-01 Wave 06 (T14, manifest row A-35): the Tender Config tab is no longer
+// deferred — the legacy component rendered hardcoded constants and was
+// rightly excluded, but tender_governance_config EXISTS live with real rows,
+// so the tab now renders those stored rows read-only, exactly like its
+// sibling CommercialGovernanceConfig. Config writes remain excluded (SX-011;
+// Wave 06 architect correction #3 keeps gate/config writes out of scope).
 import {
   fetchPolicyGatesResult,
   fetchGovernanceAuditLogResult,
+  fetchTenderGovernanceConfigResult,
+  type GovernanceConfigEntry,
   type GovernanceRead,
   type SupabasePolicyGate,
   type SupabaseGovernanceAuditEntry,
@@ -215,7 +223,7 @@ function PolicyGatesPanel() {
 function AIRestrictionsPanel() {
   // SX-001/SX-006/SX-011: AI kill switch, module toggles and restriction
   // config are AI-infrastructure controls - deferred, honest state only.
-  return <DeferredGovernancePanel title="AI restriction controls are not available in this build" />;
+  return <DeferredGovernancePanel title="AI restriction controls are excluded from the approved clean-app scope (manifest A-39; enforcement is out of scope)" />;
 }
 
 /* ── Override Log ── */
@@ -659,6 +667,171 @@ function RolesPanel() {
   );
 }
 
+/* ── Tender Governance Config ──────────────────────────────────────────────
+ * SC-01 Wave 06 (T14, manifest row A-35 — REBUILD-CLEAN).
+ *
+ * The OLD tab rendered hardcoded TENDER_TEMPLATES/GATE_RULES/... constants and
+ * used its Supabase read only to flip a "Supabase-Backed" badge — classified
+ * MOCK and excluded. This clean panel is the opposite: everything shown below
+ * comes from the stored `tender_governance_config` rows (4 real rows live,
+ * probed 2026-08-18) via fetchTenderGovernanceConfigResult, with loading /
+ * failed-read / empty / loaded as visibly different states. Advisory read-only
+ * VIEW by design: the old capability was a view, and config writes are
+ * excluded from this wave (SX-011; architect correction #3), so a read view is
+ * full parity here, not a shell substitution.
+ */
+
+/** Value renderer for stored config payloads. Never throws; "—" for absent. */
+export function formatGovernanceConfigValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 1);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * Group stored entries by their recorded category, in first-seen row order.
+ * An entry with no recorded category is grouped as "Uncategorized" — it is
+ * never dropped, because every stored row must reach the screen.
+ */
+export function groupGovernanceConfigEntries(
+  entries: readonly GovernanceConfigEntry[],
+): Array<{ category: string; entries: GovernanceConfigEntry[] }> {
+  const groups: Array<{ category: string; entries: GovernanceConfigEntry[] }> = [];
+  const byCategory = new Map<string, GovernanceConfigEntry[]>();
+  for (const entry of entries) {
+    const category = entry.category || "Uncategorized";
+    let bucket = byCategory.get(category);
+    if (!bucket) {
+      bucket = [];
+      byCategory.set(category, bucket);
+      groups.push({ category, entries: bucket });
+    }
+    bucket.push(entry);
+  }
+  return groups;
+}
+
+function TenderGovernanceConfigPanel() {
+  const [read, setRead] = useState<GovernanceRead<GovernanceConfigEntry> | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRead(null);
+    fetchTenderGovernanceConfigResult().then(r => { if (!cancelled) setRead(r); });
+    return () => { cancelled = true; };
+  }, [reloadKey]);
+
+  const entries = read?.rows ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-serif font-bold flex items-center gap-2">
+            <FileText className="w-5 h-5 text-[var(--color-hala-navy)]" /> Tender Governance Config
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Stored tender governance reference configuration, read from{" "}
+            <span className="font-mono">tender_governance_config</span>
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {entries.length > 0 && (
+            <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">Supabase-Backed</Badge>
+          )}
+          <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">Advisory Display Only</Badge>
+        </div>
+      </div>
+
+      {/* Advisory banner — same honesty contract as the Commercial Config tab. */}
+      <Card className="border-2 border-blue-200 shadow-none bg-blue-50/50">
+        <CardContent className="p-3">
+          <div className="flex items-start gap-3">
+            <Info className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="text-sm font-semibold text-blue-800 mb-0.5">Advisory display only</div>
+              <p className="text-xs text-blue-700 leading-relaxed">
+                This tab documents the stored tender governance reference configuration. It does not enforce rules,
+                gate any tender workflow, or block any action, and configuration cannot be edited here — governance
+                configuration writes are excluded from this build (SX-011).
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {read === null ? (
+        /* 1. LOADING — nothing is known yet. */
+        <div className="flex items-center justify-center py-16 gap-2">
+          <Loader2 className="w-5 h-5 animate-spin text-[var(--color-hala-navy)]" />
+          <span className="text-sm text-muted-foreground">Loading tender governance configuration…</span>
+        </div>
+      ) : read.status === "error" ? (
+        /* 2. FAILED READ — visibly different from a real zero; retry offered. */
+        <GovernanceReadError
+          subject="Tender governance configuration"
+          error={read.error}
+          onRetry={() => setReloadKey(k => k + 1)}
+        />
+      ) : entries.length === 0 ? (
+        /* 3. REAL EMPTY — the read succeeded and returned zero visible rows. */
+        <Card className="border shadow-none bg-muted/20">
+          <CardContent className="p-4">
+            <div className="flex items-start gap-3">
+              <Info className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <div className="text-sm font-semibold mb-0.5">No tender governance configuration is visible to this account</div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  The read of <span className="font-mono">tender_governance_config</span> succeeded and returned zero
+                  rows. Rows hidden by row-level security would not appear here, so this is not a statement that the
+                  store is empty.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        /* 4. LOADED — every rendered value comes from the stored rows. */
+        <div className="space-y-4">
+          {groupGovernanceConfigEntries(entries).map(group => (
+            <Card key={group.category} className="border shadow-none">
+              <CardHeader className="pb-2 border-b">
+                <CardTitle className="text-sm font-serif flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-[var(--color-hala-navy)]" /> {group.category}
+                  <Badge variant="outline" className="text-[9px]">{group.entries.length} entr{group.entries.length !== 1 ? "ies" : "y"}</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-3 space-y-2">
+                {group.entries.map(e => (
+                  <div key={e.id} className="rounded-lg border p-2.5 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold font-mono">{e.config_key}</span>
+                      <Badge variant="outline" className={`text-[8px] ${e.is_active ? "text-emerald-700 bg-emerald-50 border-emerald-200" : "text-slate-500 bg-slate-50 border-slate-200"}`}>
+                        {e.is_active ? "Active" : "Inactive"}
+                      </Badge>
+                    </div>
+                    {e.description && <p className="text-[11px] text-muted-foreground">{e.description}</p>}
+                    <pre className="text-[10px] bg-muted/30 rounded p-2 whitespace-pre-wrap break-words font-mono">{formatGovernanceConfigValue(e.config_value)}</pre>
+                    {e.updated_at && (
+                      /* formatRecordedDateTime never renders "Invalid Date". */
+                      <p className="text-[9px] text-muted-foreground">Updated {formatRecordedDateTime(e.updated_at)}</p>
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Main Page ── */
 export default function AdminGovernance() {
   return (
@@ -733,7 +906,7 @@ export default function AdminGovernance() {
         <TabsContent value="roles"><RolesPanel /></TabsContent>
         <TabsContent value="environment"><EnvironmentPanel /></TabsContent>
         <TabsContent value="audit"><GovernanceAuditPanel /></TabsContent>
-        <TabsContent value="tender_config"><DeferredGovernancePanel title="Tender governance configuration is not available in this build" /></TabsContent>
+        <TabsContent value="tender_config"><TenderGovernanceConfigPanel /></TabsContent>
         <TabsContent value="commercial_config"><CommercialGovernanceConfig /></TabsContent>
       </Tabs>
     </div>
