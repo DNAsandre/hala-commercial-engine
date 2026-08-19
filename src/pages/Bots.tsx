@@ -10,7 +10,11 @@ import { ArrowLeft } from "lucide-react";
  * the real definition-management writes through the T13 service layer
  * (src/lib/bot-admin.ts):
  *
- *   B-03 enable/disable — setBotStatus, read-back confirmed
+ *   B-03 enable/disable — EXCLUDED (architect ruling 2026-08-19): the write
+ *                         fed final-pack-bots.ts / ai-runs.ts, which select
+ *                         status='active', so the toggle changed which bots
+ *                         execution surfaces discover. Status is display-only
+ *                         here; no control stores "active".
  *   B-04 archive        — archiveBot, read-back confirmed
  *   B-05 duplicate      — duplicateBot (full copy incl. FPS-008 columns
  *                         + current version row), every step confirmed
@@ -42,7 +46,6 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -61,11 +64,9 @@ import {
   duplicateBot,
   readAiBots,
   readAiProviders,
-  setBotStatus,
   summariseProviderUsage,
   type AiBotRecord,
   type AiProviderRecord,
-  type BotToggleStatus,
   type RecordRead,
 } from '@/lib/bot-admin';
 
@@ -89,39 +90,9 @@ export interface RegistryActionOutcome {
   message: string;
 }
 
-/** The status the registry toggle writes next (old-app rule: anything
- *  non-active toggles to "active"; "active" toggles to "disabled"). */
-export function toggleTargetStatus(currentStatus: string): BotToggleStatus {
-  return currentStatus === 'active' ? 'disabled' : 'active';
-}
-
 /** Delete is offered only for draft/disabled definitions (manifest B-06). */
 export function canDeleteBot(status: string): boolean {
   return BOT_DELETABLE_STATUSES.has(status);
-}
-
-/**
- * B-03: write the definition's status and report ONLY the confirmed stored
- * value. A resolved-but-zero-row write ("not_stored") is a failure — the
- * definition keeps its previous displayed status and the reason is shown.
- */
-export async function performBotStatusToggle(
-  bot: Pick<AiBotRecord, 'id' | 'name' | 'status'>,
-): Promise<RegistryActionOutcome> {
-  const target = toggleTargetStatus(bot.status);
-  const result = await setBotStatus(bot.id, target);
-  if (result.status === 'stored') {
-    return {
-      ok: true,
-      message:
-        `Stored: definition "${bot.name}" now records status "${target}". ` +
-        'This is stored configuration only — no bot runs in this build.',
-    };
-  }
-  return {
-    ok: false,
-    message: `The status of "${bot.name}" was not changed. ${result.error}`,
-  };
 }
 
 /** B-04: archive = status "archived" on the definition record, confirmed. */
@@ -471,19 +442,13 @@ export default function BotRegistry() {
                       </div>
                       <div className="flex items-center gap-2">
                         {pending && <span className="text-xs text-slate-400">Writing…</span>}
-                        {/* B-03: definition status toggle. The switch reflects
-                            the STORED status and only changes after the write
-                            is confirmed and the list is re-read — there is no
-                            optimistic flip. Archived definitions have no
-                            toggle (old registry rule). */}
-                        {bot.status !== 'archived' && (
-                          <Switch
-                            checked={bot.status === 'active'}
-                            disabled={pending}
-                            aria-label={`Definition status for ${bot.name}: currently "${bot.status}". Toggling stores "${toggleTargetStatus(bot.status)}" — configuration only, nothing runs.`}
-                            onCheckedChange={() => runAction(bot.id, () => performBotStatusToggle(bot))}
-                          />
-                        )}
+                        {/* B-03 (enable/disable) is EXCLUDED, not disabled:
+                            final-pack-bots.ts and ai-runs.ts select bots by
+                            status='active', so a status control here would
+                            change which bots execution surfaces discover
+                            (architect ruling 2026-08-19). The stored status is
+                            shown honestly by the badge above; no control on
+                            this page stores "active". */}
                         <Button variant="outline" size="sm" disabled={pending}
                           onClick={() => navigate(cleanHref(`/system/bot-builder?id=${bot.id}`))}>
                           <Pencil className="w-3 h-3 mr-1" /> Edit

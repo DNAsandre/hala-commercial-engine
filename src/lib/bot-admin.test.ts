@@ -123,7 +123,6 @@ import {
   duplicateBot,
   publishBotVersion,
   readKnowledgeCollections,
-  setBotStatus,
   summariseProviderUsage,
   validateBotDefinition,
   type AiBotRecord,
@@ -228,63 +227,25 @@ describe("summariseProviderUsage — the live id-scheme mix must surface, not va
 });
 
 // ─────────────────────────────────────────────────────────────
-// B-03 — setBotStatus
+// B-03 — EXCLUDED (architect ruling 2026-08-19)
 // ─────────────────────────────────────────────────────────────
 
-describe("setBotStatus — enable/disable with confirmed persistence (B-03)", () => {
-  it("updates ai_bots by exact id and reports stored only after the read-back matches", async () => {
-    queue(AI_BOTS_TABLE, "update", echoUpdate());
-    const result = await setBotStatus(BOT_ID, "disabled");
-
-    expect(result.status).toBe("stored");
-    const write = callsFor(AI_BOTS_TABLE, "update")[0];
-    expect(write.payload).toMatchObject({ status: "disabled" });
-    expect(write.payload).toHaveProperty("updated_at");
-    expect(write.filters).toEqual([["id", BOT_ID]]);
-    // The read-back is what makes success truthful.
-    expect(write.projection).toContain("id");
-    expect(write.projection).toContain("status");
+describe("activation exclusion — no ordinary write path stores status 'active' (B-03 excluded)", () => {
+  // final-pack-bots.ts and ai-runs.ts select bots by status='active'; a status
+  // write here would change which bots execution surfaces discover. The former
+  // setBotStatus toggle is removed, not disabled — this pin fails if it, or
+  // any export writing status 'active', comes back.
+  it("the module no longer exports setBotStatus or any status-toggle surface", async () => {
+    const mod = await import("./bot-admin");
+    expect("setBotStatus" in mod).toBe(false);
+    const activationWriters = Object.keys(mod).filter(
+      (k) => typeof (mod as Record<string, unknown>)[k] === "function" && /setBotStatus|activate|enable/i.test(k),
+    );
+    expect(activationWriters).toEqual([]);
   });
-
-  it("reports NOT stored — never success — when the update matched zero rows", async () => {
-    queue(AI_BOTS_TABLE, "update", { data: [], error: null });
-    const result = await setBotStatus(BOT_ID, "active");
-    expect(result.status).toBe("not_stored");
-    if (result.status === "not_stored") expect(result.error).toMatch(/not stored/i);
-  });
-
-  it("reports NOT stored when the database kept a different status", async () => {
-    // e.g. a trigger or constraint silently kept 'draft'.
-    queue(AI_BOTS_TABLE, "update", (call) => {
-      const idFilter = call.filters.find(([c]) => c === "id");
-      return { data: [{ id: idFilter?.[1], status: "draft", updated_at: "x" }], error: null };
-    });
-    const result = await setBotStatus(BOT_ID, "disabled");
-    expect(result.status).toBe("not_stored");
-    if (result.status === "not_stored") expect(result.error).toContain('status still reads "draft"');
-  });
-
-  it("surfaces a rejected value (unverified CHECK constraint) as an honest error", async () => {
-    queue(AI_BOTS_TABLE, "update", {
-      data: null,
-      error: { code: "23514", message: 'new row violates check constraint "ai_bots_status_check"' },
-    });
-    const result = await setBotStatus(BOT_ID, "disabled");
-    expect(result.status).toBe("error");
-    if (result.status === "error") expect(result.error).toContain("ai_bots_status_check");
-  });
-
-  it("refuses a status outside active/disabled without touching the database", async () => {
-    const result = await setBotStatus(BOT_ID, "archived" as never);
-    expect(result.status).toBe("error");
-    expect(writeCalls()).toHaveLength(0);
-  });
-
-  it("refuses an empty bot id without touching the database", async () => {
-    const result = await setBotStatus("  ", "active");
-    expect(result.status).toBe("error");
-    expect(calls).toHaveLength(0);
-  });
+  // The remaining status writes are pinned where they live: createBot and
+  // duplicateBot suites assert INSERT status "draft"; archiveBot asserts
+  // UPDATE status "archived". None stores "active".
 });
 
 // ─────────────────────────────────────────────────────────────

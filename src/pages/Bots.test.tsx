@@ -1,5 +1,7 @@
 /**
- * Bots.test.tsx — SC-01 Wave 06, lane T15 (manifest rows B-02..B-06).
+ * Bots.test.tsx — SC-01 Wave 06, lane T15 (manifest rows B-02, B-04..B-06;
+ * B-03 enable/disable is EXCLUDED by architect ruling 2026-08-19 — see the
+ * activation-exclusion suite below).
  *
  * The registry's write actions are thin, testable functions over the T13
  * bot-admin service. The rules pinned here are the page's law:
@@ -12,7 +14,7 @@
  *     reason and leave the rendered list untouched (no optimistic mutation
  *     exists to roll back).
  *  2. The exact service calls are asserted — the page must hit the service
- *     with the exact bot id and the exact target status, nothing else.
+ *     with the exact bot id, nothing else.
  *  3. Success language describes the DEFINITION record (stored
  *     configuration); it never claims a bot is running or was started
  *     (architect correction #5 — there is no invocation path in this build).
@@ -28,7 +30,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiBotRecord } from "@/lib/ops-runtime";
 
 const mocks = vi.hoisted(() => ({
-  setBotStatus: vi.fn(),
   archiveBot: vi.fn(),
   duplicateBot: vi.fn(),
   deleteBot: vi.fn(),
@@ -43,10 +44,8 @@ import {
   canDeleteBot,
   filterBots,
   performArchiveBot,
-  performBotStatusToggle,
   performDeleteBot,
   performDuplicateBot,
-  toggleTargetStatus,
 } from "./Bots";
 
 function bot(over: Partial<AiBotRecord>): AiBotRecord {
@@ -72,65 +71,20 @@ function bot(over: Partial<AiBotRecord>): AiBotRecord {
 }
 
 beforeEach(() => {
-  mocks.setBotStatus.mockReset();
   mocks.archiveBot.mockReset();
   mocks.duplicateBot.mockReset();
   mocks.deleteBot.mockReset();
 });
 
-describe("toggleTargetStatus (B-03)", () => {
-  it("active toggles to disabled; anything else toggles to active", () => {
-    expect(toggleTargetStatus("active")).toBe("disabled");
-    expect(toggleTargetStatus("disabled")).toBe("active");
-    expect(toggleTargetStatus("draft")).toBe("active");
-  });
-});
-
-describe("performBotStatusToggle (B-03)", () => {
-  it("writes the exact bot id and the exact target status through the service", async () => {
-    mocks.setBotStatus.mockResolvedValue({ status: "stored", stored: { id: "bot-1", status: "disabled" } });
-    const outcome = await performBotStatusToggle(bot({ status: "active" }));
-    expect(mocks.setBotStatus).toHaveBeenCalledTimes(1);
-    expect(mocks.setBotStatus).toHaveBeenCalledWith("bot-1", "disabled");
-    expect(outcome.ok).toBe(true);
-  });
-
-  it("toggles a draft definition to active (old registry rule)", async () => {
-    mocks.setBotStatus.mockResolvedValue({ status: "stored", stored: { id: "bot-1", status: "active" } });
-    await performBotStatusToggle(bot({ status: "draft" }));
-    expect(mocks.setBotStatus).toHaveBeenCalledWith("bot-1", "active");
-  });
-
-  it("GUARD B-03: a zero-row status change is a failure with the reason, never success", async () => {
-    // PostgREST resolves without error when an update matches zero rows; the
-    // service classifies that as not_stored, and the page must NOT render
-    // success for it. The displayed status only ever changes after a
-    // confirmed write followed by a re-read.
-    mocks.setBotStatus.mockResolvedValue({
-      status: "not_stored",
-      error: 'The change was not stored: no "ai_bots" record with id "bot-1" was updated.',
-    });
-    const outcome = await performBotStatusToggle(bot({ status: "active" }));
-    expect(outcome.ok).toBe(false);
-    expect(outcome.message).toContain("The change was not stored");
-    expect(outcome.message).toContain("Proposal Drafter");
-  });
-
-  it("a rejected write surfaces the database's reason", async () => {
-    mocks.setBotStatus.mockResolvedValue({ status: "error", error: "constraint violated" });
-    const outcome = await performBotStatusToggle(bot({ status: "active" }));
-    expect(outcome.ok).toBe(false);
-    expect(outcome.message).toContain("constraint violated");
-  });
-
-  it("success language describes the stored definition, never a running bot (correction #5)", async () => {
-    mocks.setBotStatus.mockResolvedValue({ status: "stored", stored: { id: "bot-1", status: "active" } });
-    const outcome = await performBotStatusToggle(bot({ status: "disabled" }));
-    expect(outcome.ok).toBe(true);
-    expect(outcome.message).toContain('status "active"');
-    expect(outcome.message).toContain("configuration");
-    expect(outcome.message).toMatch(/no bot runs in this build/i);
-    expect(outcome.message).not.toMatch(/\b(running|started|executing|live)\b/i);
+describe("activation exclusion (B-03 excluded, architect ruling 2026-08-19)", () => {
+  // final-pack-bots.ts and ai-runs.ts select bots by status='active', so a
+  // status control on this page changed which bots execution surfaces
+  // discover. The toggle and its write path are removed — not hidden, not
+  // disabled. This pin fails if the page grows them back.
+  it("the page module exports no status-toggle surface", async () => {
+    const mod = await import("./Bots");
+    expect("performBotStatusToggle" in mod).toBe(false);
+    expect("toggleTargetStatus" in mod).toBe(false);
   });
 });
 

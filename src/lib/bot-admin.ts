@@ -98,7 +98,7 @@ export interface StepReport {
   detail: string;
 }
 
-/** Single-write operations (status toggle, provider toggle). */
+/** Single-write operations (e.g. archive). */
 export type BotAdminWriteResult =
   /** The row was read back and holds exactly the requested values. */
   | { status: "stored"; stored: Record<string, unknown> }
@@ -148,8 +148,6 @@ export const MAX_TOKENS_LIMIT = 8000;
 export const RATE_LIMIT_MAX = 100;
 export const COST_CAP_MAX = 100;
 
-/** Statuses the registry toggle may write (manifest B-03). */
-export type BotToggleStatus = "active" | "disabled";
 /** Statuses from which a bot may be deleted (manifest B-06, old registry rule). */
 export const BOT_DELETABLE_STATUSES: ReadonlySet<string> = new Set(["draft", "disabled"]);
 
@@ -548,35 +546,14 @@ export function summariseProviderUsage(
 }
 
 // ─────────────────────────────────────────────────────────────
-// B-03 / B-04 — bot status writes
+// B-04 — archive
 // ─────────────────────────────────────────────────────────────
-
-/**
- * Enable/disable a bot (manifest B-03): UPDATE ai_bots SET status, updated_at
- * WHERE id = :exact_bot_id, confirmed by read-back.
- *
- * The live CHECK constraint on `status` is UNVERIFIED (live rows show only
- * 'draft' and 'active'). A constraint rejection surfaces as `error` with the
- * database's real message; a silently-ignored write surfaces as `not_stored`.
- * Neither is ever reported as success.
- */
-export async function setBotStatus(
-  botId: string,
-  status: BotToggleStatus,
-): Promise<BotAdminWriteResult> {
-  if (!botId || !botId.trim()) {
-    return { status: "error", error: "A bot id is required." };
-  }
-  if (status !== "active" && status !== "disabled") {
-    return {
-      status: "error",
-      error: `Unsupported status "${String(status)}" — the registry toggle writes only "active" or "disabled".`,
-    };
-  }
-  return toWriteResult(
-    await updateConfirmed(AI_BOTS_TABLE, botId, { status, updated_at: nowIso() }),
-  );
-}
+// This module deliberately exposes NO operation that stores status "active":
+// `final-pack-bots.ts` and `ai-runs.ts` select bots by status = 'active', so
+// such a write would change which bots execution surfaces discover — an
+// activation-affecting control excluded by architect ruling (2026-08-19;
+// manifest B-03 is excluded, not migrated). Status leaves "active" only via
+// archive below; it is never entered from this app.
 
 /**
  * Archive a bot (manifest B-04): status -> 'archived', confirmed by read-back.
