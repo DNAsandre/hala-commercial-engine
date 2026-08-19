@@ -54,7 +54,7 @@ import { useLocation } from 'wouter';
 import {
   Bot, ShieldAlert, PowerOff, Cpu, Eye, Pencil,
   AlertTriangle, XCircle, Clock, DollarSign, Search,
-  Radio, WifiOff, Copy, Archive, AlertOctagon, Bot as BotIcon
+  Radio, WifiOff, Copy, Archive, RotateCcw, AlertOctagon, Bot as BotIcon
 } from 'lucide-react';
 import {
   BOT_DELETABLE_STATUSES,
@@ -64,6 +64,7 @@ import {
   duplicateBot,
   readAiBots,
   readAiProviders,
+  restoreArchivedBot,
   summariseProviderUsage,
   type AiBotRecord,
   type AiProviderRecord,
@@ -110,6 +111,20 @@ export async function performArchiveBot(
     };
   }
   return { ok: false, message: `"${bot.name}" was not archived. ${result.error}` };
+}
+
+/** Restore is the confirmed inverse of archive; it does not invoke the bot. */
+export async function performRestoreBot(
+  bot: Pick<AiBotRecord, 'id' | 'name'>,
+): Promise<RegistryActionOutcome> {
+  const result = await restoreArchivedBot(bot.id);
+  if (result.status === 'stored') {
+    return {
+      ok: true,
+      message: `Stored: definition "${bot.name}" is restored to active configuration. No bot was invoked.`,
+    };
+  }
+  return { ok: false, message: `"${bot.name}" was not restored. ${result.error}` };
 }
 
 /** B-05: duplicate as a confirmed draft copy (definition + current version). */
@@ -259,7 +274,7 @@ export default function BotRegistry() {
           </Button>
         </Link>
       </div>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           {/* CLEAN APP: H1 renamed to "Bots" per approved product decision.
               The three System bot surfaces are Bots / Bot Builder / Bot Audit.
@@ -277,7 +292,7 @@ export default function BotRegistry() {
       <Card className="border-2 border-slate-200">
         <CardContent className="py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
               <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center">
                 <PowerOff className="w-6 h-6 text-slate-400" />
               </div>
@@ -298,7 +313,7 @@ export default function BotRegistry() {
 
       {/* Stats Row — only counts that are computed from records actually read.
           While the read is pending or failed, no number is asserted. */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardContent className="py-4">
             <div className="flex items-center justify-between">
@@ -468,6 +483,13 @@ export default function BotRegistry() {
                             <Archive className="w-3 h-3" />
                           </Button>
                         )}
+                        {bot.status === 'archived' && (
+                          <Button variant="ghost" size="sm" disabled={pending}
+                            title="Restore this archived definition to active configuration"
+                            onClick={() => void runAction(bot.id, () => performRestoreBot(bot))}>
+                            <RotateCcw className="w-3 h-3" />
+                          </Button>
+                        )}
                         {/* B-06: delete — draft/disabled definitions only. */}
                         {canDeleteBot(bot.status) && (
                           <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700" disabled={pending}
@@ -499,7 +521,7 @@ export default function BotRegistry() {
             <ReadStatePanel read={providersRead} subject="AI provider records" onRetry={() => setReloadKey(k => k + 1)} />
           ) : (
           <>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {providers.map(provider => {
               const matched = providerUsage?.matchedByProvider[provider.id];
               return (

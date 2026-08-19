@@ -13,7 +13,7 @@
  * MOCK CONTRACT (house standard, intake-save.test.ts): the stub records the
  * table, the exact `select` projection and the ordering that reach the
  * database, and returns ONLY the rows a test installs for that table. The
- * projection here is the established `*` + embedded counts; the assertions pin
+ * projection here is the established `*` + embedded document rows; the assertions pin
  * that exact string so nobody silently narrows or widens the read.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -75,7 +75,7 @@ describe("fetchCollectionsResult — classified KB-collection read (B-19)", () =
     const call = lastCallFor(KB_COLLECTIONS_TABLE);
     expect(call.table).toBe("kb_collections");
     expect(call.columns).toBe(KB_COLLECTIONS_SELECT);
-    expect(call.columns).toBe("*, kb_documents(count), kb_chunks(count)");
+    expect(call.columns).toBe("*, kb_documents(id, chunk_count, is_deleted)");
     expect(call.order).toEqual([["created_at", false]]);
   });
 
@@ -87,12 +87,16 @@ describe("fetchCollectionsResult — classified KB-collection read (B-19)", () =
     expect(result.collections).toEqual([]);
   });
 
-  it("maps recorded rows, taking doc/chunk counts from the embedded aggregates", async () => {
+  it("maps recorded rows, counting active documents and their recorded chunks", async () => {
     results.set(KB_COLLECTIONS_TABLE, {
       data: [{
         id: "kbc-1", name: "SLA Library", description: "Recorded SLAs",
         visibility: "internal", created_by: "u-1", created_at: "2026-06-01T00:00:00Z",
-        kb_documents: [{ count: 4 }], kb_chunks: [{ count: 40 }],
+        kb_documents: [
+          { id: "d1", chunk_count: 12, is_deleted: false },
+          { id: "d2", chunk_count: 28, is_deleted: false },
+          { id: "d3", chunk_count: 99, is_deleted: true },
+        ],
       }],
       error: null,
     });
@@ -101,7 +105,7 @@ describe("fetchCollectionsResult — classified KB-collection read (B-19)", () =
     expect(result.collections[0]).toEqual({
       id: "kbc-1", name: "SLA Library", description: "Recorded SLAs",
       visibility: "internal", created_by: "u-1", created_at: "2026-06-01T00:00:00Z",
-      doc_count: 4, chunk_count: 40,
+      doc_count: 2, chunk_count: 40,
     });
   });
 

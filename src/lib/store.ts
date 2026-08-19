@@ -42,6 +42,10 @@ export interface User {
   role: UserRole;
   region: Region;
   avatar?: string;
+  auth_id?: string;
+  department?: string;
+  office?: string;
+  status?: "active" | "inactive";
 }
 
 export interface Customer {

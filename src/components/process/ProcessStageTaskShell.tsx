@@ -82,7 +82,7 @@ export function ProcessStageTaskShell<T extends string>({
         };
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 max-w-full space-y-4 overflow-hidden">
       <Card className="gap-0 overflow-hidden border-border bg-card py-0 shadow-none">
         <CardContent className="p-0">
           <div className="-mx-px -mt-px flex flex-wrap items-center justify-between gap-3 rounded-t-lg border-b border-[#1f3f6f] bg-[#0b1726] px-4 py-1.5">
@@ -171,7 +171,7 @@ export function ProcessStageTaskShell<T extends string>({
       </Card>
 
       {children && (
-        <div className="p-4 space-y-4">
+        <div className="min-w-0 space-y-4 p-4">
           {children}
         </div>
       )}
@@ -219,4 +219,3 @@ export function ProcessStageEmptyState({ text }: { text: string }) {
     </div>
   );
 }
-

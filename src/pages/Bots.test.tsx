@@ -31,6 +31,7 @@ import type { AiBotRecord } from "@/lib/ops-runtime";
 
 const mocks = vi.hoisted(() => ({
   archiveBot: vi.fn(),
+  restoreArchivedBot: vi.fn(),
   duplicateBot: vi.fn(),
   deleteBot: vi.fn(),
 }));
@@ -44,6 +45,7 @@ import {
   canDeleteBot,
   filterBots,
   performArchiveBot,
+  performRestoreBot,
   performDeleteBot,
   performDuplicateBot,
 } from "./Bots";
@@ -72,6 +74,7 @@ function bot(over: Partial<AiBotRecord>): AiBotRecord {
 
 beforeEach(() => {
   mocks.archiveBot.mockReset();
+  mocks.restoreArchivedBot.mockReset();
   mocks.duplicateBot.mockReset();
   mocks.deleteBot.mockReset();
 });
@@ -105,6 +108,17 @@ describe("performArchiveBot (B-04)", () => {
     expect(outcome.ok).toBe(false);
     expect(outcome.message).toContain("was not archived");
     expect(outcome.message).toContain("nothing matched");
+  });
+});
+
+describe("performRestoreBot (B-04 inverse)", () => {
+  it("restores the exact archived definition after confirmed storage", async () => {
+    mocks.restoreArchivedBot.mockResolvedValue({ status: "stored", stored: { id: "bot-1", status: "active" } });
+    const outcome = await performRestoreBot(bot({ status: "archived" }));
+    expect(mocks.restoreArchivedBot).toHaveBeenCalledWith("bot-1");
+    expect(outcome.ok).toBe(true);
+    expect(outcome.message).toContain("restored to active configuration");
+    expect(outcome.message).toContain("No bot was invoked");
   });
 });
 

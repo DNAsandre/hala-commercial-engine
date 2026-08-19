@@ -853,8 +853,8 @@ export default function BotBuilder() {
     <div className="space-y-6">
       {/* Header */}
       {backLink}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
           <div>
             <h1 className="text-2xl font-bold font-serif text-slate-900">
               {editId ? `Edit: ${existingBot?.name}` : 'Create New Bot'}
@@ -871,7 +871,7 @@ export default function BotBuilder() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <Button variant="outline" disabled={saving} onClick={() => navigate(cleanHref("/system/bots"))}>Cancel</Button>
           <Button className="bg-[#1B2A4A] hover:bg-[#2a3d66]" disabled={saving} onClick={handleSave}>
             <Save className="w-4 h-4 mr-2" />
@@ -893,9 +893,9 @@ export default function BotBuilder() {
         </Card>
       )}
 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         {/* Main Form — 2 columns */}
-        <div className="col-span-2 space-y-6">
+        <div className="space-y-6 xl:col-span-2">
 
           {/* Section 1: Identity */}
           <Card>
@@ -903,7 +903,7 @@ export default function BotBuilder() {
               <CardTitle className="flex items-center gap-2 text-base"><Bot className="w-4 h-4" /> 1. Identity</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
                   <Label>Bot Name</Label>
                   <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g., proposal-drafter" />
@@ -943,7 +943,7 @@ export default function BotBuilder() {
                 <Label>Allowed Domains</Label>
                 <ScopeToggleBadges options={domainOptions} selected={domains} onToggle={toggleIn(setDomains)} subject="domains" />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
                   <Label>Regions Allowed</Label>
                   <ScopeToggleBadges options={regionOptions} selected={regions} onToggle={toggleIn(setRegions)} subject="regions" />
@@ -997,7 +997,7 @@ export default function BotBuilder() {
                   placeholder="Define what this bot must NEVER do (empty records none)" rows={4}
                   />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
                   {/* A null temperature is stated as not recorded rather than
                       shown as a value with the slider at that position. */}
@@ -1212,7 +1212,7 @@ export default function BotBuilder() {
             </CardHeader>
             <CardContent className="space-y-4">
               {providersReadable ? (
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
                     <Label>Provider</Label>
                     <Select
@@ -1266,7 +1266,7 @@ export default function BotBuilder() {
                       different facts (Wave 04 defect D). When the read failed
                       the recorded values are kept verbatim and no option list
                       is invented. */}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div>
                       <Label>Provider (recorded on the bot record)</Label>
                       <Input value={providerId ?? 'not recorded'} readOnly className="font-mono text-xs" />
@@ -1287,7 +1287,7 @@ export default function BotBuilder() {
                   )}
                 </div>
               )}
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div>
                   <Label>Rate Limit (per min)</Label>
                   <Input type="number" value={rateLimit ?? ''} min={1} max={100} placeholder="not recorded"

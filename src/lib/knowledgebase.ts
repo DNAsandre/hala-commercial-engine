@@ -85,7 +85,7 @@ interface BotRun {
 
 /** Established table + projection for the collection list read. */
 export const KB_COLLECTIONS_TABLE = "kb_collections";
-export const KB_COLLECTIONS_SELECT = "*, kb_documents(count), kb_chunks(count)";
+export const KB_COLLECTIONS_SELECT = "*, kb_documents(id, chunk_count, is_deleted)";
 
 /** Postgres/PostgREST codes meaning "this relation does not exist here". */
 const KB_MISSING_TABLE_CODES: ReadonlySet<string> = new Set(["PGRST205", "42P01"]);
@@ -129,16 +129,24 @@ export async function fetchCollectionsResult(): Promise<KBCollectionsResult> {
 
   return {
     status: "ok",
-    collections: (data ?? []).map((row: any) => ({
-      id: row.id,
-      name: row.name,
-      description: row.description,
-      visibility: row.visibility,
-      created_by: row.created_by,
-      created_at: row.created_at,
-      doc_count: row.kb_documents?.[0]?.count || 0,
-      chunk_count: row.kb_chunks?.[0]?.count || 0,
-    })),
+    collections: (data ?? []).map((row: any) => {
+      const documents = Array.isArray(row.kb_documents)
+        ? row.kb_documents.filter((document: any) => document.is_deleted !== true)
+        : [];
+      return {
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        visibility: row.visibility,
+        created_by: row.created_by,
+        created_at: row.created_at,
+        doc_count: documents.length,
+        chunk_count: documents.reduce(
+          (total: number, document: any) => total + Number(document.chunk_count || 0),
+          0,
+        ),
+      };
+    }),
   };
 }
 

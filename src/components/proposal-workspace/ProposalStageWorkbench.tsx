@@ -2801,8 +2801,8 @@ export default function ProposalStageWorkbench({
   }
 
   return (
-    <div className="grid gap-0 border border-border bg-card shadow-none lg:grid-cols-[220px_minmax(0,1fr)]">
-      <div className="border-b border-border bg-card p-4 lg:border-b-0 lg:border-r">
+    <div className="grid min-w-0 max-w-full gap-0 overflow-hidden border border-border bg-card shadow-none lg:grid-cols-[220px_minmax(0,1fr)]">
+      <div className="min-w-0 border-b border-border bg-card p-4 lg:border-b-0 lg:border-r">
         <div className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           Stage Tasks
         </div>
@@ -2843,7 +2843,7 @@ export default function ProposalStageWorkbench({
         </div>
       </div>
 
-      <div className="min-w-0">
+      <div className="min-w-0 max-w-full overflow-hidden">
         <ProcessStageTaskShell
           stageTitle={`${stageInfo?.label ?? activeStage} Stage Menu`}
           stageBadge={`Stage ${stageIndex >= 0 ? stageIndex + 1 : "?"}`}

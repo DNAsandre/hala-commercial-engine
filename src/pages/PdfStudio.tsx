@@ -56,8 +56,28 @@ import { useBlockAIBots } from "@/hooks/useBlockAIBots";
 import VersionHistoryPanel from "@/components/final-pack/VersionHistoryPanel";
 import { History, Users, AlertTriangle } from "lucide-react";
 import type { OutputBlock, BlockContent } from "@/lib/final-pack-loader";
+import { filterAllowedTenderTickets } from "@/lib/process-isolation";
 
 type StudioMode = "select" | "compose";
+
+type FinalPackTenderSource = {
+  id: string;
+  ticket_title?: string | null;
+  customer_name?: string | null;
+  internal_stage?: string | null;
+  ticket_type?: string | null;
+  active?: boolean | null;
+  created_from_intake?: boolean | null;
+};
+
+export function classifyFinalPackTenderSources(rows: FinalPackTenderSource[]) {
+  return filterAllowedTenderTickets(rows.filter((ticket) => ticket.active !== false)).map((ticket) => ({
+    id: ticket.id,
+    title: ticket.ticket_title || "Untitled",
+    customer: ticket.customer_name || "Unknown",
+    stage: ticket.internal_stage || "—",
+  }));
+}
 
 export default function FinalPackStudio() {
   const { tenderId } = useParams<{ tenderId: string }>();
@@ -907,7 +927,9 @@ function TenderPicker({ onBack }: { onBack?: () => void }) {
     (async () => {
       const { data, error } = await supabase
         .from("commercial_tickets")
-        .select("id, ticket_title, customer_name, internal_stage")
+        .select("id, ticket_title, customer_name, internal_stage, ticket_type, active, created_from_intake")
+        .eq("ticket_type", "tender")
+        .eq("active", true)
         .order("updated_at", { ascending: false })
         .limit(20);
 
@@ -919,14 +941,7 @@ function TenderPicker({ onBack }: { onBack?: () => void }) {
         return;
       }
       setReadError(null);
-      setTenders(
-        (data || []).map((t: any) => ({
-          id: t.id,
-          title: t.ticket_title || "Untitled",
-          customer: t.customer_name || "Unknown",
-          stage: t.internal_stage || "—",
-        })),
-      );
+      setTenders(classifyFinalPackTenderSources(data || []));
       setLoading(false);
     })();
     return () => { cancelled = true; };

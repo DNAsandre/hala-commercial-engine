@@ -1,9 +1,8 @@
 /**
  * crm-sync-engine.test.ts — SC-01 Wave 04, Fable-owned shared foundation.
  *
- * Wave 03 observation 1: `crm_connections` does not exist in the configured
- * project, so `fetchConnections` returned `[]` and every surface downstream
- * rendered a failed read as a truthful "0 connections".
+ * Connection configuration lives in the global system_settings contract. The
+ * absent crm_connections table must never be queried by the clean app.
  *
  * These tests pin the distinction Wave 04 requires: a missing table, a failed
  * read, and a genuinely empty table must be three different answers.
@@ -52,7 +51,7 @@ describe("fetchConnectionsResult — failed read is not an empty result", () => 
   it("reports PGRST205 (table absent) as unavailable, not as zero connections", async () => {
     terminal.list = {
       data: null,
-      error: { code: "PGRST205", message: "Could not find the table 'public.crm_connections'" },
+      error: { code: "PGRST205", message: "Could not find the table 'public.system_settings'" },
     };
     const r = await fetchConnectionsResult();
     expect(r.status).toBe("unavailable");
@@ -79,29 +78,31 @@ describe("fetchConnectionsResult — failed read is not an empty result", () => 
     expect(r.connections).toEqual([]);
   });
 
-  it("maps real rows and reads the crm_connections table", async () => {
+  it("maps real rows from the global system settings contract", async () => {
     terminal.list = {
       data: [
         {
-          id: "c1",
-          provider: "zoho",
-          name: "Zoho CRM",
-          base_url: "https://example.invalid",
-          enabled: true,
-          auth_method: "oauth2",
-          last_sync_at: null,
-          health_status: "connected",
-          sync_interval_minutes: null,
-          created_at: "2026-01-01T00:00:00Z",
-          updated_at: "2026-01-01T00:00:00Z",
-          config: null,
+          settings: { crm_connections: [{
+            id: "c1",
+            provider: "zoho",
+            name: "Zoho CRM",
+            base_url: "https://example.invalid",
+            enabled: true,
+            auth_method: "oauth2",
+            last_sync_at: null,
+            health_status: "connected",
+            sync_interval_minutes: null,
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+            config: null,
+          }] },
         },
       ],
       error: null,
     };
     const r = await fetchConnectionsResult();
     expect(r.status).toBe("ok");
-    expect(seen.table).toBe("crm_connections");
+    expect(seen.table).toBe("system_settings");
     expect(r.connections).toHaveLength(1);
     expect(r.connections[0]).toMatchObject({ id: "c1", provider: "zoho", health_status: "connected" });
     // documented defaults, not invented values
@@ -113,7 +114,7 @@ describe("fetchConnectionsResult — failed read is not an empty result", () => 
 describe("fetchConnections — bare array form still behaves for list-only callers", () => {
   it("returns the rows on success", async () => {
     terminal.list = {
-      data: [{ id: "c1", provider: "ghl", name: "GHL", base_url: "", enabled: false, auth_method: "api_key", last_sync_at: null, health_status: "disconnected", sync_interval_minutes: 5, created_at: "", updated_at: "", config: {} }],
+      data: [{ settings: { crm_connections: [{ id: "c1", provider: "ghl", name: "GHL", base_url: "", enabled: false, auth_method: "api_key", last_sync_at: null, health_status: "disconnected", sync_interval_minutes: 5, created_at: "", updated_at: "", config: {} }] } }],
       error: null,
     };
     expect(await fetchConnections()).toHaveLength(1);

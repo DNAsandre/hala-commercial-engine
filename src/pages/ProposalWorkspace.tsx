@@ -228,6 +228,7 @@ export default function WorkspaceDetail() {
   const [showUndoBanner, setShowUndoBanner] = useState(false);
   const undoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const lastAdvanceAtRef = useRef<number | null>(null);
 
   // Document viewer state
   const [viewerDoc, setViewerDoc] = useState<UnifiedDocument | null>(null);
@@ -620,7 +621,6 @@ export default function WorkspaceDetail() {
 
   // ── Undo countdown timer (local window; starts only after confirmed,
   //     rehydrated stage advance) ──
-  const lastAdvanceAtRef = useRef<number | null>(null);
   const startUndoTimer = () => {
     if (undoTimerRef.current) clearInterval(undoTimerRef.current);
     setShowUndoBanner(true);
@@ -767,11 +767,11 @@ export default function WorkspaceDetail() {
 
   return (
     <TooltipProvider>
-      <div className="p-6 max-w-[1400px] mx-auto">
+    <div className="p-3 md:p-6 max-w-[1400px] mx-auto min-w-0">
         {/* ═══ HEADER ═══ */}
-        <div className="flex items-center gap-3 mb-4">
+        <div className="mb-4 flex flex-wrap items-start gap-3">
           <Link href={cleanHref("/workspaces/proposals")}><Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4" /></Button></Link>
-          <div className="flex-1">
+          <div className="min-w-0 flex-1">
             {/* Opportunity Type Heading */}
             {isCommercial && (
               <p className="text-[11px] font-bold uppercase tracking-widest text-[#075eea] mb-1">Proposal Opportunity</p>
@@ -779,7 +779,7 @@ export default function WorkspaceDetail() {
             {isTender && (
               <p className="text-[11px] font-bold uppercase tracking-widest text-red-600 mb-1">Tender Opportunity</p>
             )}
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <div className={`rag-dot ${ws.ragStatus === "red" ? "rag-dot-red" : ws.ragStatus === "amber" ? "rag-dot-amber" : "rag-dot-green"}`} />
               <h1 className="text-xl font-serif font-bold">{ws.customerName}</h1>
               <Badge variant="outline" className={`text-[10px] px-1.5 py-0 border ${getWorkspaceTypeBadgeColor(wsType)}`}>
@@ -1283,7 +1283,7 @@ export default function WorkspaceDetail() {
                     <Card className="border border-border shadow-none">
                       <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2"><DollarSign className="w-4 h-4 text-muted-foreground" /> Pricing Summary</CardTitle></CardHeader>
                       <CardContent className="pt-0">
-                        <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
                           <div className="bg-muted/30 rounded-lg p-3">
                             <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Estimated Value</p>
                             <p className="text-lg font-bold mt-0.5">{formatSAR(ws.estimatedValue)}</p>
@@ -1334,7 +1334,7 @@ export default function WorkspaceDetail() {
                     {/* Document Sub-Lifecycle Cards */}
                     <div>
                       <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Clock className="w-4 h-4 text-muted-foreground" /> Document Sub-Lifecycles</h3>
-                      <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         {/* Quote */}
                         <Card className="border border-border shadow-none">
                           <CardContent className="p-4">
@@ -1427,7 +1427,7 @@ export default function WorkspaceDetail() {
                 <Card className="border border-border shadow-none">
                   <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2"><User className="w-4 h-4 text-muted-foreground" /> Workspace Team</CardTitle></CardHeader>
                   <CardContent className="pt-0">
-                    <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                       <div className="bg-muted/30 rounded-lg p-3">
                         <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Owner</p>
                         <p className="text-sm font-semibold mt-0.5">{ws.owner}</p>
@@ -1446,7 +1446,7 @@ export default function WorkspaceDetail() {
                 <Card className="border border-border shadow-none">
                   <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2"><Truck className="w-4 h-4 text-muted-foreground" /> Operational Context</CardTitle></CardHeader>
                   <CardContent className="pt-0">
-                    <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div className="space-y-2">
                         <div className="flex justify-between text-sm"><span className="text-muted-foreground">Pallet Volume</span><span className="font-medium">{ws.palletVolume.toLocaleString()}</span></div>
                         <div className="flex justify-between text-sm"><span className="text-muted-foreground">Estimated Value</span><span className="font-medium">{formatSAR(ws.estimatedValue)}</span></div>
@@ -2086,7 +2086,7 @@ export default function WorkspaceDetail() {
                   <Card className="border border-blue-200 bg-blue-50/30 shadow-none mb-4">
                     <CardContent className="p-4 space-y-3">
                       <p className="text-xs font-semibold text-blue-800">Upload Supporting Document</p>
-                      <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div>
                           <label className="text-[10px] text-muted-foreground uppercase block mb-1">Document Name</label>
                           <Input value={supportUploadName} onChange={e => setSupportUploadName(e.target.value)} placeholder="e.g. Trade License 2025" className="h-8 text-xs" />

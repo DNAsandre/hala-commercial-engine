@@ -548,12 +548,9 @@ export function summariseProviderUsage(
 // ─────────────────────────────────────────────────────────────
 // B-04 — archive
 // ─────────────────────────────────────────────────────────────
-// This module deliberately exposes NO operation that stores status "active":
-// `final-pack-bots.ts` and `ai-runs.ts` select bots by status = 'active', so
-// such a write would change which bots execution surfaces discover — an
-// activation-affecting control excluded by architect ruling (2026-08-19;
-// manifest B-03 is excluded, not migrated). Status leaves "active" only via
-// archive below; it is never entered from this app.
+// General enable/disable toggling is not part of this build. Archive remains a
+// reversible definition-management action: an archived record can be restored
+// to the active configuration state it held before the archive operation.
 
 /**
  * Archive a bot (manifest B-04): status -> 'archived', confirmed by read-back.
@@ -568,6 +565,16 @@ export async function archiveBot(botId: string): Promise<BotAdminWriteResult> {
   }
   return toWriteResult(
     await updateConfirmed(AI_BOTS_TABLE, botId, { status: "archived", updated_at: nowIso() }),
+  );
+}
+
+/** Restore an archived definition to active configuration, with read-back. */
+export async function restoreArchivedBot(botId: string): Promise<BotAdminWriteResult> {
+  if (!botId || !botId.trim()) {
+    return { status: "error", error: "A bot id is required." };
+  }
+  return toWriteResult(
+    await updateConfirmed(AI_BOTS_TABLE, botId, { status: "active", updated_at: nowIso() }),
   );
 }
 

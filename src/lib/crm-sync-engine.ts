@@ -2,9 +2,9 @@
  * crm-sync-engine.ts — clean-owned replacement (SC-01 Wave 02, plan v3 §7.7).
  *
  * CRM sync surface:
- *  - READS come from the established Supabase tables (crm_connections,
- *    crm_sync_events_v2). No seed connections, no fallback records — empty
- *    tables render empty, and read failures are recorded via supabase-error.
+ *  - READS come from established storage: connection configuration in the
+ *    global system_settings row and historical events in crm_sync_events.
+ *    No seed connections or fallback records are created.
  *  - OUTBOUND synchronization is honestly unavailable in this build:
  *    triggerOutboundSync throws instead of fabricating queued events,
  *    latency, or success.
@@ -100,6 +100,37 @@ function mapConnection(row: any): CRMConnection {
   };
 }
 
+function asEntityType(value: unknown): SyncEntityType {
+  const normalized = String(value || "deal").trim().toLowerCase().replace(/\s+/g, "_");
+  const allowed: SyncEntityType[] = ["workspace", "customer", "deal", "deal_stage", "quote", "proposal", "contact", "attachment"];
+  return allowed.includes(normalized as SyncEntityType) ? normalized as SyncEntityType : "deal";
+}
+
+function mapLegacySyncEvent(row: any): HardenedSyncEvent {
+  const direction: SyncDirection = row.direction === "inbound" ? "inbound" : "outbound";
+  const status = String(row.status || "pending") as SyncStatus;
+  const timestamp = row.timestamp || "";
+  return {
+    id: row.id,
+    connection_id: "legacy-zoho",
+    entity_type: asEntityType(row.entity),
+    entity_id: row.zoho_id || row.id,
+    direction,
+    trigger: direction === "inbound" ? "webhook" : "manual_push",
+    status,
+    payload: { zoho_id: row.zoho_id || null, details: row.details || "" },
+    response: status === "success" ? { details: row.details || "" } : null,
+    error: status === "failed" ? row.details || "CRM event failed" : null,
+    retry_count: 0,
+    max_retries: MAX_RETRIES,
+    next_retry_at: null,
+    idempotency_key: row.id,
+    created_at: timestamp,
+    processed_at: status === "success" ? timestamp : null,
+    conflict_detail: null,
+  };
+}
+
 function mapSyncEvent(row: any): HardenedSyncEvent {
   return {
     id: row.id,
@@ -137,16 +168,15 @@ let syncEventsSnapshot: HardenedSyncEvent[] = [];
 
 /**
  * Outcome of a connection read. Wave 04 requires a failed read to be visibly
- * different from real emptiness: `crm_connections` does not exist in the
- * configured project (PGRST205), so the bare array form below cannot tell a
- * caller whether zero connections means "none configured" or "could not ask".
+ * different from real emptiness. The project has no crm_connections table;
+ * connection records are stored as an optional array in system_settings.
  *
  * - `ok`          — the read succeeded; `connections` is the real set (possibly empty).
- * - `unavailable` — the table is not present in this project (PGRST205 / 42P01).
+ * - `unavailable` — the global settings contract is not present in this project.
  * - `error`       — the read failed for any other reason.
  *
- * Provisioning `crm_connections` and designing synchronization are out of scope
- * for this wave; reporting the truth is not.
+ * Outbound synchronization remains outside this contract; reporting configured
+ * connections and recorded historical events is ordinary read functionality.
  */
 export type CrmConnectionsResult =
   | { status: "ok"; connections: CRMConnection[] }
@@ -157,9 +187,10 @@ const MISSING_TABLE_CODES = new Set(["PGRST205", "42P01"]);
 
 export async function fetchConnectionsResult(): Promise<CrmConnectionsResult> {
   const { data, error } = await supabase
-    .from("crm_connections")
-    .select("*")
-    .order("created_at", { ascending: true });
+    .from("system_settings")
+    .select("settings")
+    .eq("id", "global")
+    .limit(1);
   if (error) {
     handleSupabaseError("fetchConnections", error, { silent: true });
     setFetchError("fetchConnections", error);
@@ -168,13 +199,15 @@ export async function fetchConnectionsResult(): Promise<CrmConnectionsResult> {
       return {
         status: "unavailable",
         connections: [],
-        message: "CRM connection storage is not provisioned in this environment.",
+        message: "The global system settings contract is not provisioned in this environment.",
       };
     }
     return { status: "error", connections: [], message: error.message };
   }
   clearFetchError("fetchConnections");
-  return { status: "ok", connections: (data ?? []).map(mapConnection) };
+  const settings = (data?.[0] as { settings?: Record<string, unknown> } | undefined)?.settings;
+  const rows = Array.isArray(settings?.crm_connections) ? settings.crm_connections : [];
+  return { status: "ok", connections: rows.map(mapConnection) };
 }
 
 /**
@@ -202,11 +235,10 @@ export async function fetchSyncEvents(options?: {
     return [];
   }
 
-  let query = supabase.from("crm_sync_events_v2").select("*").order("created_at", { ascending: false });
-  if (options?.connectionId) query = query.eq("connection_id", options.connectionId);
+  let query = supabase.from("crm_sync_events").select("id, direction, entity, zoho_id, status, timestamp, details").order("timestamp", { ascending: false });
   if (options?.direction) query = query.eq("direction", options.direction);
   if (options?.status) query = query.eq("status", options.status);
-  if (options?.entityType) query = query.eq("entity_type", options.entityType);
+  if (options?.entityType) query = query.eq("entity", options.entityType.replace(/_/g, " "));
   if (options?.limit) query = query.limit(options.limit);
   const { data, error } = await query;
 
@@ -217,7 +249,10 @@ export async function fetchSyncEvents(options?: {
   }
   clearFetchError("fetchSyncEvents");
 
-  const events = (data ?? []).map(mapSyncEvent);
+  let events = (data ?? []).map(mapLegacySyncEvent);
+  if (options?.connectionId) {
+    events = events.filter((event) => event.connection_id === options.connectionId);
+  }
   // Unfiltered (or superset) reads refresh the health snapshot.
   if (!options?.connectionId && !options?.direction && !options?.status && !options?.entityType) {
     syncEventsSnapshot = events;

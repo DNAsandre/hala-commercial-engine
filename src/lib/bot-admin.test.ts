@@ -123,6 +123,7 @@ import {
   duplicateBot,
   publishBotVersion,
   readKnowledgeCollections,
+  restoreArchivedBot,
   summariseProviderUsage,
   validateBotDefinition,
   type AiBotRecord,
@@ -266,6 +267,17 @@ describe("archiveBot — status -> archived with confirmed persistence (B-04)", 
     queue(AI_BOTS_TABLE, "update", { data: [], error: null });
     const result = await archiveBot(BOT_ID);
     expect(result.status).toBe("not_stored");
+  });
+});
+
+describe("restoreArchivedBot — archived definition is reversible", () => {
+  it("writes status 'active' to the exact archived definition with read-back", async () => {
+    queue(AI_BOTS_TABLE, "update", echoUpdate());
+    const result = await restoreArchivedBot(BOT_ID);
+    expect(result.status).toBe("stored");
+    const write = callsFor(AI_BOTS_TABLE, "update")[0];
+    expect(write.payload).toMatchObject({ status: "active" });
+    expect(write.filters).toEqual([["id", BOT_ID]]);
   });
 });
 

@@ -1662,7 +1662,7 @@ export default function TenderWorkspaceDetail() {
 
   return (
     <TooltipProvider>
-      <div className="p-6 max-w-[1400px] mx-auto">
+    <div className="p-3 md:p-6 max-w-[1400px] mx-auto min-w-0">
         {/* Back */}
         <div className="mb-3"><Link href={cleanHref("/tenders")}><Button variant="ghost" size="sm" className="text-xs gap-1.5"><ArrowLeft className="w-3.5 h-3.5" /> Back to Tenders</Button></Link></div>
 

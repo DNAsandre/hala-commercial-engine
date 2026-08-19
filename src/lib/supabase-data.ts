@@ -1087,7 +1087,7 @@ export async function fetchContractBaselines(): Promise<ContractBaseline[]> {
 type EcrSourceMode = "manual" | "spreadsheet" | "connector";
 type EcrGrade = "A" | "B" | "C" | "D";
 
-interface EcrMetric {
+export interface EcrMetric {
   id: string;
   metricKey: string;
   displayName: string;
@@ -1102,7 +1102,7 @@ interface EcrMetric {
   updatedAt: string;
 }
 
-interface EcrRuleSet {
+export interface EcrRuleSet {
   id: string;
   versionNumber: number;
   name: string;
@@ -1112,7 +1112,7 @@ interface EcrRuleSet {
   createdAt: string;
 }
 
-interface EcrRuleWeight {
+export interface EcrRuleWeight {
   id: string;
   ruleSetId: string;
   metricId: string;
@@ -1120,7 +1120,7 @@ interface EcrRuleWeight {
   createdAt: string;
 }
 
-interface EcrInputSnapshot {
+export interface EcrInputSnapshot {
   id: string;
   customerId: string;
   periodStart: string;
@@ -1129,7 +1129,7 @@ interface EcrInputSnapshot {
   createdAt: string;
 }
 
-interface EcrInputValue {
+export interface EcrInputValue {
   id: string;
   snapshotId: string;
   metricId: string;
@@ -1140,7 +1140,7 @@ interface EcrInputValue {
   capturedAt: string;
 }
 
-interface EcrScore {
+export interface EcrScore {
   id: string;
   customerId: string;
   snapshotId: string;
@@ -1153,7 +1153,7 @@ interface EcrScore {
   computedBySystem: boolean;
 }
 
-interface EcrAuditTrailEntry {
+export interface EcrAuditTrailEntry {
   id: string;
   customerId: string;
   previousGrade: EcrGrade | null;

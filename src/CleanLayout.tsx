@@ -30,7 +30,7 @@ import {
   LayoutDashboard, GitBranch, Users, FileSearch, FileText, RefreshCw,
   Briefcase, FolderOpen, Repeat, FileOutput, ShieldCheck, Settings,
   ScrollText, Bot, Wrench, ClipboardCheck,
-  ChevronDown, ChevronLeft, ChevronRight, LogOut,
+  ChevronDown, ChevronLeft, ChevronRight, LogOut, Menu, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -74,6 +74,7 @@ function useActiveHref(candidates: string[]): string | null {
 
 export default function CleanLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const { appUser, signOut } = useAuth();
 
@@ -87,13 +88,14 @@ export default function CleanLayout({ children }: { children: React.ReactNode })
   const toggleGroup = (label: string) =>
     setOpenGroups((prev) => ({ ...prev, [label]: !(prev[label] ?? true) }));
 
-  const renderItem = (item: CleanNavItem, small = false) => {
+  const renderItem = (item: CleanNavItem, small = false, mobile = false) => {
     const Icon = ICONS[item.icon] ?? FileText;
     const active = activeHref === item.href;
     return (
       <Link
         key={item.href}
         href={cleanHref(item.href)}
+        onClick={() => { if (mobile) setMobileOpen(false); }}
         className={cn(
           "flex items-center gap-2.5 rounded-md transition-colors mb-0.5 cursor-pointer",
           small ? "px-2.5 py-1.5 text-xs" : "px-2.5 py-2 text-sm",
@@ -105,7 +107,7 @@ export default function CleanLayout({ children }: { children: React.ReactNode })
         )}
       >
         <Icon className={cn("shrink-0", small ? "w-3.5 h-3.5" : "w-4 h-4")} />
-        {!collapsed && <span>{item.label}</span>}
+        {(mobile || !collapsed) && <span>{item.label}</span>}
       </Link>
     );
   };
@@ -114,7 +116,7 @@ export default function CleanLayout({ children }: { children: React.ReactNode })
     <div className="flex h-screen overflow-hidden">
       <aside
         className={cn(
-          "flex flex-col bg-sidebar text-sidebar-foreground transition-all duration-200 ease-out border-r border-sidebar-border",
+          "hidden md:flex flex-col bg-sidebar text-sidebar-foreground transition-all duration-200 ease-out border-r border-sidebar-border",
           collapsed ? "w-16" : "w-60"
         )}
       >
@@ -211,12 +213,40 @@ export default function CleanLayout({ children }: { children: React.ReactNode })
         </div>
       </aside>
 
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <button className="absolute inset-0 bg-black/35" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />
+          <aside className="relative flex h-full w-72 max-w-[85vw] flex-col bg-sidebar text-sidebar-foreground shadow-xl">
+            <div className="flex h-14 items-center justify-between border-b border-sidebar-border px-4">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded bg-white/10"><span className="text-sm font-bold text-white font-serif">H</span></div>
+                <div><div className="text-sm font-semibold text-white">Hala Commercial</div><div className="text-[10px] text-sidebar-foreground/60">Clean App</div></div>
+              </div>
+              <button className="p-2 text-sidebar-foreground/70 hover:text-white" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X className="h-4 w-4" /></button>
+            </div>
+            <nav className="flex-1 overflow-y-auto p-3">
+              {CLEAN_NAV.map((group, index) => {
+                const items = group.items.filter(visible);
+                if (items.length === 0) return null;
+                return (
+                  <div key={group.label || index} className="mb-4">
+                    {group.label && <div className="px-2 py-1 text-[10px] font-semibold uppercase text-sidebar-foreground/45">{group.label}</div>}
+                    {items.map((item) => renderItem(item, Boolean(group.label), true))}
+                  </div>
+                );
+              })}
+            </nav>
+          </aside>
+        </div>
+      )}
+
       {/* Main */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-14 border-b border-border bg-card flex items-center justify-between px-6 shrink-0">
-          <div className="text-sm font-medium text-muted-foreground">Hala Commercial Engine — Clean App</div>
+      <div className="min-w-0 flex-1 flex flex-col overflow-hidden">
+        <header className="h-14 border-b border-border bg-card flex items-center gap-3 px-3 md:px-6 shrink-0">
+          <button className="md:hidden p-2 -ml-1 rounded hover:bg-muted" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><Menu className="h-5 w-5" /></button>
+          <div className="truncate text-sm font-medium text-muted-foreground">Hala Commercial Engine — Clean App</div>
         </header>
-        <main className="flex-1 overflow-y-auto bg-background p-6">{children}</main>
+        <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-background p-3 md:p-6">{children}</main>
       </div>
     </div>
   );

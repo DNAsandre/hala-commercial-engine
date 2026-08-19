@@ -413,7 +413,7 @@ export function isCrmSyncHeaderReadEnabled(): boolean {
 }
 
 export function isCrmSyncEventReadEnabled(): boolean {
-  return false;
+  return true;
 }
 
 export function getCrmSyncHeaderIsolationReason(): string {
