@@ -819,8 +819,9 @@ export default function ProposalArchitectureTOCTab({ ws, reload, onOpenDocuments
             {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
             {generating ? "Generating..." : "Generate TOC Suggestion"}
           </Button>
+          {/* TCW-T4 honesty: generation is refused in this build (Sprint X). */}
           <span className="text-[10px] text-muted-foreground italic">
-            {generating ? "AI is reading tender context and building TOC..." : "Uses AI to suggest TOC sections from prior-stage intelligence."}
+            {generating ? "Checking AI availability..." : "AI TOC generation is not available in this build (Sprint X) — running it reports the refusal. Build the TOC manually below."}
           </span>
         </div>
 

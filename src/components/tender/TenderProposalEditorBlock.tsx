@@ -195,10 +195,12 @@ function EditorToolbar({ editor, disabled, onAIGenerate, aiGenerating }: { edito
       <ToolbarButton icon={AlignRight} label="Align right" disabled={!editor || disabled} active={editor?.isActive({ textAlign: "right" })} onClick={() => editor?.chain().focus().setTextAlign("right").run()} />
       <ToolbarButton icon={Link2} label="Link" disabled={!editor || disabled} active={editor?.isActive("link")} onClick={setLink} />
       <div className="ml-auto flex items-center gap-1">
+        {/* TCW-T4 honesty: AI generation is refused in this build (Sprint X);
+            the tooltip says so instead of promising a working generator. */}
         <button
           type="button"
           disabled={disabled || aiGenerating || !onAIGenerate}
-          title={onAIGenerate ? "Generate with AI" : "AI not available for this block"}
+          title={onAIGenerate ? "AI drafting is not available in this build (Sprint X) — clicking reports the refusal" : "AI not available for this block"}
           onClick={onAIGenerate}
           className={cn(
             "inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[10px] font-medium transition-colors",
