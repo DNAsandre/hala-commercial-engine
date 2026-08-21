@@ -18,8 +18,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Info, FileText, ArrowRight } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderNegotiationData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 interface TermEntry {
   id: string;
@@ -52,7 +58,7 @@ const TERM_STATUSES = [
   { value: "disputed", label: "Disputed" },
 ] as const;
 
-export default function NegotiationRevisedTermsTab({ ws, reload }: Props) {
+export default function NegotiationRevisedTermsTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.negotiation_data?.revised_terms ?? {};
@@ -64,7 +70,7 @@ export default function NegotiationRevisedTermsTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const addTerm = () => {
     setTerms(prev => [...prev, {
@@ -83,12 +89,13 @@ export default function NegotiationRevisedTermsTab({ ws, reload }: Props) {
     setSaving(true);
     try {
       const payload = { terms, overall_notes: overallNotes, contract_readiness: contractReadiness };
-      const res = await updateTenderNegotiationData(tenderId, "revised_terms", payload, `${terms.length} terms, readiness: ${contractReadiness}`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Revised terms saved."); setDirty(false); reload();
+      const res = await updateTenderNegotiationData(tenderId, "revised_terms", payload, `${terms.length} terms, readiness: ${contractReadiness}`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Revised terms saved.")) return;
+      setDirty(false); onDirtyChange?.(false); reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [terms, overallNotes, contractReadiness, tenderId, reload]);
+  }, [terms, overallNotes, contractReadiness, tenderId, reload, ws, onDirtyChange]);
 
   const statusColor = (s: string) => {
     if (s === "agreed") return "border-emerald-300 text-emerald-700 bg-emerald-50";

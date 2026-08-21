@@ -20,8 +20,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Info, CheckCircle2, Clock, XCircle, HelpCircle } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderClarificationData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 const CLARIFICATION_STATUSES = [
   { value: "open", label: "Open", icon: Clock, color: "border-amber-300 text-amber-700 bg-amber-50" },
@@ -35,7 +41,7 @@ function normalizeRoundStatus(status: string) {
   return status === "escalated" ? "needs_attention" : status;
 }
 
-export default function ClarificationStatusTab({ ws, reload }: Props) {
+export default function ClarificationStatusTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.clarification?.status ?? {};
@@ -48,7 +54,7 @@ export default function ClarificationStatusTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const statusMeta = CLARIFICATION_STATUSES.find(s => s.value === roundStatus) || CLARIFICATION_STATUSES[4];
   const StatusIcon = statusMeta.icon;
@@ -63,14 +69,15 @@ export default function ClarificationStatusTab({ ws, reload }: Props) {
         round_number: roundNumber,
         status_notes: statusNotes,
       };
-      const res = await updateTenderClarificationData(tenderId, "status", payload, `Clarification status: ${roundStatus}`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Clarification status saved.");
+      const res = await updateTenderClarificationData(tenderId, "status", payload, `Clarification status: ${roundStatus}`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Clarification status saved.")) return;
       setDirty(false);
+      onDirtyChange?.(false);
       reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [roundStatus, expectedResolution, clientContact, roundNumber, statusNotes, tenderId, reload]);
+  }, [roundStatus, expectedResolution, clientContact, roundNumber, statusNotes, tenderId, reload, ws, onDirtyChange]);
 
   return (
     <div className="space-y-4">

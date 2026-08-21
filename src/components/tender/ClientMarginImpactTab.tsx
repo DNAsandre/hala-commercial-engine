@@ -17,10 +17,16 @@ import { toast } from "sonner";
 import { Save, Loader2, Info, TrendingDown, TrendingUp, DollarSign, ArrowRight, Minus } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderClientEvaluationData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
-export default function ClientMarginImpactTab({ ws, reload }: Props) {
+export default function ClientMarginImpactTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.client_evaluation?.margin_impact ?? {};
@@ -35,7 +41,7 @@ export default function ClientMarginImpactTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const valueDelta = currentValue - originalValue;
   const gpDelta = currentGp - originalGp;
@@ -50,14 +56,15 @@ export default function ClientMarginImpactTab({ ws, reload }: Props) {
         original_pricing_label: originalPricingLabel,
         impact_notes: impactNotes,
       };
-      const res = await updateTenderClientEvaluationData(tenderId, "margin_impact", payload, `Margin: ${originalGp.toFixed(1)}% → ${currentGp.toFixed(1)}%`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Margin impact saved.");
+      const res = await updateTenderClientEvaluationData(tenderId, "margin_impact", payload, `Margin: ${originalGp.toFixed(1)}% → ${currentGp.toFixed(1)}%`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Margin impact saved.")) return;
       setDirty(false);
+      onDirtyChange?.(false);
       reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [currentValue, currentGp, originalPricingLabel, impactNotes, originalGp, tenderId, reload]);
+  }, [currentValue, currentGp, originalPricingLabel, impactNotes, originalGp, tenderId, reload, ws, onDirtyChange]);
 
   const formatSar = (n: number) => n >= 1_000_000 ? `SAR ${(n / 1_000_000).toFixed(2)}M` : n >= 1_000 ? `SAR ${(n / 1_000).toFixed(0)}K` : `SAR ${n.toLocaleString()}`;
 

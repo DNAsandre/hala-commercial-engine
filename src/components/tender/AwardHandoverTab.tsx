@@ -18,8 +18,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Info, Users, CheckCircle2, ArrowRight } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderAwardedData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 const HANDOVER_STATUS = [
   { value: "not_started", label: "Not Started" },
@@ -43,7 +49,7 @@ const HANDOVER_CHECKLIST = [
   { key: "commercial_close", label: "Commercial engine record marked as closed/won" },
 ] as const;
 
-export default function AwardHandoverTab({ ws, reload }: Props) {
+export default function AwardHandoverTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.awarded_data?.handover ?? {};
@@ -59,7 +65,7 @@ export default function AwardHandoverTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
   const toggleCheck = (key: string) => { setChecklist(prev => ({ ...prev, [key]: !prev[key] })); mark(); };
 
   const completedCount = HANDOVER_CHECKLIST.filter(i => checklist[i.key]).length;
@@ -74,12 +80,13 @@ export default function AwardHandoverTab({ ws, reload }: Props) {
         handover_date: handoverDate, mobilization_date: mobilizationDate,
         checklist, lessons_learned: lessonsLearned, notes,
       };
-      const res = await updateTenderAwardedData(tenderId, "handover", payload, `Status: ${handoverStatus}`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Handover saved."); setDirty(false); reload();
+      const res = await updateTenderAwardedData(tenderId, "handover", payload, `Status: ${handoverStatus}`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Handover saved.")) return;
+      setDirty(false); onDirtyChange?.(false); reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [handoverStatus, opsManager, opsTeam, handoverDate, mobilizationDate, checklist, lessonsLearned, notes, tenderId, reload]);
+  }, [handoverStatus, opsManager, opsTeam, handoverDate, mobilizationDate, checklist, lessonsLearned, notes, tenderId, reload, ws, onDirtyChange]);
 
   const statusColor = (s: string) => {
     if (s === "completed") return "border-emerald-300 text-emerald-700 bg-emerald-50";

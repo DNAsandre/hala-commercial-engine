@@ -18,8 +18,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Info, TrendingUp, RefreshCw } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderLostWithdrawnData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 const REBID_LIKELIHOOD = [
   { value: "high", label: "High — Likely to rebid" },
@@ -28,7 +34,7 @@ const REBID_LIKELIHOOD = [
   { value: "none", label: "None — Will not rebid" },
 ] as const;
 
-export default function RebidPotentialTab({ ws, reload }: Props) {
+export default function RebidPotentialTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.lost_withdrawn_data?.rebid_potential ?? {};
@@ -43,7 +49,7 @@ export default function RebidPotentialTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -53,12 +59,13 @@ export default function RebidPotentialTab({ ws, reload }: Props) {
         conditions_for_rebid: conditionsForRebid, strategy_notes: strategyNotes,
         client_relationship: clientRelationship, next_steps: nextSteps,
       };
-      const res = await updateTenderLostWithdrawnData(tenderId, "rebid_potential", payload, `Rebid: ${likelihood}`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Rebid potential saved."); setDirty(false); reload();
+      const res = await updateTenderLostWithdrawnData(tenderId, "rebid_potential", payload, `Rebid: ${likelihood}`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Rebid potential saved.")) return;
+      setDirty(false); onDirtyChange?.(false); reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [likelihood, expectedTimeline, contractDuration, conditionsForRebid, strategyNotes, clientRelationship, nextSteps, tenderId, reload]);
+  }, [likelihood, expectedTimeline, contractDuration, conditionsForRebid, strategyNotes, clientRelationship, nextSteps, tenderId, reload, ws, onDirtyChange]);
 
   const likelihoodColor = (l: string) => {
     if (l === "high") return "border-emerald-300 text-emerald-700 bg-emerald-50";

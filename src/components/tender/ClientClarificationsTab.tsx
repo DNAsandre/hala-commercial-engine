@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderClientEvaluationData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
 export type ClientClarificationSection =
   | "clarification_register"
@@ -28,6 +29,8 @@ interface Props {
   ws: TenderWorkspace;
   reload: () => void;
   activeSection: ClientClarificationSection;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 interface ClientClarificationRow {
@@ -195,7 +198,7 @@ function RowTitle({ row, index }: { row: ClientClarificationRow; index: number }
   );
 }
 
-export default function ClientClarificationsTab({ ws, reload, activeSection }: Props) {
+export default function ClientClarificationsTab({ ws, reload, activeSection, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.client_evaluation?.client_clarifications;
@@ -222,7 +225,7 @@ export default function ClientClarificationsTab({ ws, reload, activeSection }: P
   const documentRows = useMemo(() => rows.filter(row => row.documents_required), [rows]);
   const openRows = useMemo(() => rows.filter(row => row.response_status === "Open" || row.response_status === "In Progress"), [rows]);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   function addRow() {
     setRows(prev => [emptyRow(), ...prev]);
@@ -248,27 +251,26 @@ export default function ClientClarificationsTab({ ws, reload, activeSection }: P
         notes: notes.trim(),
         updated_at: new Date().toISOString(),
       };
+      // P2a threading + honest outcome; stale keeps the entry on screen.
       const result = await updateTenderClientEvaluationData(
         tenderId,
         "client_clarifications",
         payload,
         `${cleanedRows.length} client clarifications logged`,
+        wsRevisionToken(ws),
       );
-      if (!result.success) {
-        toast.error(result.error || "Save failed.");
-        return;
-      }
-      toast.success("Client clarifications saved.");
+      if (!reportSaveOutcome(result, "Client clarifications saved.")) return;
       setRows(cleanedRows);
       setNotes(notes.trim());
       setDirty(false);
+      onDirtyChange?.(false);
       reload();
     } catch (error: any) {
       toast.error(error.message || "Save failed.");
     } finally {
       setSaving(false);
     }
-  }, [notes, reload, rows, tenderId]);
+  }, [notes, reload, rows, tenderId, ws, onDirtyChange]);
 
   return (
     <div className="space-y-4">

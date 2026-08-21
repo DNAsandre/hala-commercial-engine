@@ -28,7 +28,8 @@ interface StageViewProps {
   intelMetrics: TenderStageMetric[];
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
-  saved?: boolean;
+  /** Data-presence flag from the stage dispatcher (used only when the tab is clean). */
+  hasStoredData?: boolean;
 }
 
 function ClarificationStageShell<T extends string>({
@@ -41,6 +42,7 @@ function ClarificationStageShell<T extends string>({
   onOpenDocuments,
   onOpenGlobalIntel,
   saved,
+  unsaved,
   children,
 }: {
   activeSection: T;
@@ -52,6 +54,7 @@ function ClarificationStageShell<T extends string>({
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
   saved?: boolean;
+  unsaved?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -67,6 +70,7 @@ function ClarificationStageShell<T extends string>({
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
       saved={saved}
+      unsaved={unsaved}
     >
       {children}
     </TenderStageTaskShell>
@@ -79,9 +83,13 @@ const QA_SECTIONS: TenderStageSectionTab<QASection>[] = [
   { key: "response_tracking", label: "Response Tracking", icon: <Activity className="w-3.5 h-3.5" /> },
 ];
 
-function QALogView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: StageViewProps) {
+function QALogView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: StageViewProps) {
   const [activeSection, setActiveSection] = useState<QASection>("qa_register");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
 
   return (
     <ClarificationStageShell
@@ -93,10 +101,11 @@ function QALogView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalInte
       intelMetrics={intelMetrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
-      saved={saved}
+      saved={!!hasStoredData && !tabDirty}
+      unsaved={tabDirty}
     >
       <div className={activeSection !== "qa_register" ? "hidden" : ""}>
-        <ClarificationQALogTab ws={ws} reload={reload} />
+        <ClarificationQALogTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
       <div className={activeSection !== "response_tracking" ? "hidden" : ""}>
         <TenderActivityTab ws={ws} tenderId={ws.tender.id} reload={reload} />
@@ -111,9 +120,13 @@ const DRAFT_SECTIONS: TenderStageSectionTab<DraftSection>[] = [
   { key: "draft_audit", label: "Response Audit Trail", icon: <Clock className="w-3.5 h-3.5" /> },
 ];
 
-function ResponseDraftsView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: StageViewProps) {
+function ResponseDraftsView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: StageViewProps) {
   const [activeSection, setActiveSection] = useState<DraftSection>("formal_response");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
 
   return (
     <ClarificationStageShell
@@ -125,10 +138,11 @@ function ResponseDraftsView({ ws, reload, intelMetrics, onOpenDocuments, onOpenG
       intelMetrics={intelMetrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
-      saved={saved}
+      saved={!!hasStoredData && !tabDirty}
+      unsaved={tabDirty}
     >
       <div className={activeSection !== "formal_response" ? "hidden" : ""}>
-        <ClarificationResponseTab ws={ws} reload={reload} />
+        <ClarificationResponseTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
       <div className={activeSection !== "draft_audit" ? "hidden" : ""}>
         <TenderAuditTrailTab ws={ws} />
@@ -143,9 +157,13 @@ const IMPACT_SECTIONS: TenderStageSectionTab<ImpactSection>[] = [
   { key: "scope_change", label: "Scope Change", icon: <Activity className="w-3.5 h-3.5" /> },
 ];
 
-function ImpactAnalysisView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: StageViewProps) {
+function ImpactAnalysisView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: StageViewProps) {
   const [activeSection, setActiveSection] = useState<ImpactSection>("margin_impact");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
 
   return (
     <ClarificationStageShell
@@ -157,10 +175,11 @@ function ImpactAnalysisView({ ws, reload, intelMetrics, onOpenDocuments, onOpenG
       intelMetrics={intelMetrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
-      saved={saved}
+      saved={!!hasStoredData && !tabDirty}
+      unsaved={tabDirty}
     >
       <div className={activeSection !== "margin_impact" ? "hidden" : ""}>
-        <ClarificationMarginImpactTab ws={ws} reload={reload} />
+        <ClarificationMarginImpactTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
       <div className={activeSection !== "scope_change" ? "hidden" : ""}>
         <TenderActivityTab ws={ws} tenderId={ws.tender.id} reload={reload} />
@@ -174,9 +193,13 @@ const STATUS_SECTIONS: TenderStageSectionTab<StatusSection>[] = [
   { key: "overall_status", label: "Overall Status", icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
 ];
 
-function ClarificationStatusView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: StageViewProps) {
+function ClarificationStatusView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: StageViewProps) {
   const [activeSection, setActiveSection] = useState<StatusSection>("overall_status");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
 
   return (
     <ClarificationStageShell
@@ -188,10 +211,11 @@ function ClarificationStatusView({ ws, reload, intelMetrics, onOpenDocuments, on
       intelMetrics={intelMetrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
-      saved={saved}
+      saved={!!hasStoredData && !tabDirty}
+      unsaved={tabDirty}
     >
       <div className={activeSection !== "overall_status" ? "hidden" : ""}>
-        <ClarificationStatusTab ws={ws} reload={reload} />
+        <ClarificationStatusTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
     </ClarificationStageShell>
   );
@@ -234,13 +258,13 @@ export default function ClarificationStage({ ws, activeTab, reload, onOpenDocume
   const hasStatus = !!(statusValue && statusValue !== "unknown" && statusValue !== "pending");
 
   if (activeTab === "q&a_log")
-    return <QALogView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasQaLog} />;
+    return <QALogView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasQaLog} />;
   if (activeTab === "response_drafts")
-    return <ResponseDraftsView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasResponse} />;
+    return <ResponseDraftsView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasResponse} />;
   if (activeTab === "impact_analysis")
-    return <ImpactAnalysisView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasMargin} />;
+    return <ImpactAnalysisView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasMargin} />;
   if (activeTab === "clarification_status")
-    return <ClarificationStatusView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasStatus} />;
+    return <ClarificationStatusView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasStatus} />;
 
-  return <QALogView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasQaLog} />;
+  return <QALogView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasQaLog} />;
 }

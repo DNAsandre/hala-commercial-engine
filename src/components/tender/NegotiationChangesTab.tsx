@@ -18,8 +18,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Plus, Info, ChevronDown, ChevronRight, ClipboardList, X } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderNegotiationData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 interface ChangeItem {
   id: string;
@@ -67,7 +73,7 @@ const emptyItem = (): ChangeItem => ({
   status: "open", notes: "",
 });
 
-export default function NegotiationChangesTab({ ws, reload }: Props) {
+export default function NegotiationChangesTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const savedItems = td?.negotiation_data?.requested_changes ?? [];
@@ -77,7 +83,7 @@ export default function NegotiationChangesTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const stats = useMemo(() => ({
     total: items.length,
@@ -96,13 +102,13 @@ export default function NegotiationChangesTab({ ws, reload }: Props) {
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const res = await updateTenderNegotiationData(tenderId, "requested_changes", items, `${items.length} items`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Requested changes saved.");
-      setDirty(false); reload();
+      const res = await updateTenderNegotiationData(tenderId, "requested_changes", items, `${items.length} items`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Requested changes saved.")) return;
+      setDirty(false); onDirtyChange?.(false); reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [items, tenderId, reload]);
+  }, [items, tenderId, reload, ws, onDirtyChange]);
 
   const posColor = (p: string) => {
     if (p === "accept") return "border-emerald-300 text-emerald-700 bg-emerald-50";
