@@ -34,3 +34,16 @@ All database access during mapping/build was **read-only** (anon PostgREST GET/H
 2. Wall clock spans a day boundary (mapping 2026-08-20 → build 2026-08-21) due to the storm + overnight gap.
 3. Pre-existing test-suite flake (recorded by T5, out of wave scope): `final-pack-fidelity.test.ts` intermittently reports an unhandled `processTimers` teardown error from `openPrintablePdf`'s 800ms `setTimeout` — no test fails; cause noted for a future fix.
 4. Background-task `.output` files for completed lane agents were empty; lane reports were recovered verbatim from the agent transcripts (`subagents/agent-*.jsonl`) — recorded so the evidence provenance is clear.
+
+## UAT-phase additions (2026-08-21, authenticated session)
+**Harness incidents (not application defects):**
+1. The in-app Browser pane opener was unavailable (upstream classifier outage); per the architect's ruling the UAT ran in the architect's own Chrome via the Claude-in-Chrome extension after they signed in personally. The architect first signed in at :5300 (their own pre-wave stack) and was redirected to :5310 (wave stack) — the pre-wave stack was never driven.
+2. Renderer screenshot timeouts (CDP 30s) while `window.print()` was pending in the export flow; page JS stayed responsive throughout — worked around with JS-based DOM checks.
+3. One stray text entry landed in a background page input during an unscoped `querySelectorAll` targeting attempt (Owner field step). Page-state only; cleared on reload; DB probe confirmed no persisted effect. Later targeting was dialog-scoped.
+4. Synthetic typing lost focus races twice (empty intake field, S4 empty-note save); both were caught by the read-back verification loop (probe showed the miss) and redone with native value-setter + input-event dispatch. The loop catching its own misses is evidence the verification is real.
+
+**Application observations (non-blocking, candidates for a future wave):**
+5. Upload dialog: Owner is required by `canSave` but the disabled Upload button gives no inline hint which field is missing.
+6. SowQualification "Tender Intake Snapshot" panel renders a residual "READINESS 0%" fragment when no packs are configured, while the workspace header correctly says "not measured (no packs configured)" — cosmetic inconsistency in one sub-panel.
+7. PDF export: the print pipeline requires a trusted user gesture and ends at Chrome's native Save-as-PDF dialog; both automation-visible failure modes surfaced honest messages (pop-up-blocked → "Export failed…", success → "cannot confirm the file was saved"). No false success anywhere.
+8. No deletion UI exists for tenders or uploaded documents (out of wave scope — no gates ruling covers absence of destructive UI too). UAT cleanup therefore used: the app's own authenticated client for `doc_instances`, and the service-role key (read from the old app's `.env`, never printed) for `generated_documents`/audit/ticket/storage — every delete by exact captured id with returned-row-count confirmation and read-back-0 verification. RLS as-deployed permits authenticated DELETE on `doc_instances` but not on `generated_documents`/`commercial_ticket_audit`/`commercial_tickets` (consistent with the standing P8 RLS findings; unchanged this wave).
