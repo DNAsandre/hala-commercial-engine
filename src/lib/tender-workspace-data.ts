@@ -545,13 +545,58 @@ const SATISFIED_REQUIRED_DOC_STATUSES: ReadonlySet<RequiredDocStatus> = new Set<
   "uploaded", "approved", "signed", "stamped", "ready",
 ]);
 
+/**
+ * TCW-T2 (P1): row shape of `type_details.submission_readiness.
+ * required_documents[]` — the canonical register T1 is introducing. This type
+ * mirrors the contract pinned in DESIGN-PINS P1; only the fields this
+ * derivation reads are required here.
+ */
+export interface SubmissionReadinessRequiredDocument {
+  id: string;
+  document_name: string;
+  status: "missing" | "in_progress" | "uploaded" | "approved" | "na";
+  linked_document_id?: string;
+  owner?: string;
+  due_date?: string;
+  notes?: string;
+  updated_at?: string;
+  updated_by?: string;
+}
+
+/** Register rows the P1 contract marks satisfied by their own status. */
+const SATISFIED_REGISTER_STATUSES: ReadonlySet<SubmissionReadinessRequiredDocument["status"]> = new Set([
+  "uploaded", "approved",
+]);
+
+type RequiredDocumentInput = TenderRequiredDocument | SubmissionReadinessRequiredDocument;
+
+function isRegisterRow(doc: RequiredDocumentInput): doc is SubmissionReadinessRequiredDocument {
+  return typeof (doc as SubmissionReadinessRequiredDocument).document_name === "string";
+}
+
+function requiredDocumentName(doc: RequiredDocumentInput): string {
+  return (isRegisterRow(doc) ? doc.document_name : doc.documentName) ?? "";
+}
+
 export function buildRequiredDocumentsProgress(input: {
-  requiredDocuments: TenderRequiredDocument[];
+  /**
+   * The recorded requirement set: either the legacy pack-derived rows or the
+   * P1 `submission_readiness.required_documents` register rows (TCW-T2).
+   */
+  requiredDocuments: RequiredDocumentInput[];
   /** Whether a required-document set was actually read for this tender. */
   requiredDocumentsAssessed: boolean;
   uploadedDocumentNames: string[];
+  /**
+   * TCW-T2 (P1): ids of the tender's uploaded documents, for
+   * `linked_document_id` matching. Optional — name matching still applies.
+   */
+  uploadedDocumentIds?: string[];
 }): RequiredDocumentsProgress {
-  const required = Array.isArray(input.requiredDocuments) ? input.requiredDocuments : [];
+  const recorded = Array.isArray(input.requiredDocuments) ? input.requiredDocuments : [];
+  // P1: register rows marked "na" are declared not applicable — they belong in
+  // neither the numerator nor the denominator.
+  const required = recorded.filter(doc => !(isRegisterRow(doc) && doc.status === "na"));
 
   if (!input.requiredDocumentsAssessed || required.length === 0) {
     return {
@@ -567,10 +612,20 @@ export function buildRequiredDocumentsProgress(input: {
   const uploaded = input.uploadedDocumentNames
     .map(n => (n ?? "").toLowerCase().trim())
     .filter(Boolean);
+  const uploadedIds = new Set((input.uploadedDocumentIds ?? []).filter(Boolean));
 
   const satisfied = required.filter(doc => {
-    if (SATISFIED_REQUIRED_DOC_STATUSES.has(doc.status)) return true;
-    const name = (doc.documentName ?? "").toLowerCase().trim();
+    if (isRegisterRow(doc)) {
+      if (SATISFIED_REGISTER_STATUSES.has(doc.status)) return true;
+      // P1: linked_document_id matching — an explicit link to an uploaded
+      // document satisfies the requirement.
+      if (doc.linked_document_id && uploadedIds.has(doc.linked_document_id)) return true;
+    } else if (SATISFIED_REQUIRED_DOC_STATUSES.has(doc.status)) {
+      return true;
+    }
+    // Full-name matching only (the entire recorded name must appear in the
+    // uploaded document's name) — never first-word / prefix fuzzy matching.
+    const name = requiredDocumentName(doc).toLowerCase().trim();
     return name.length > 0 && uploaded.some(n => n.includes(name));
   }).length;
 
@@ -579,6 +634,31 @@ export function buildRequiredDocumentsProgress(input: {
     note: `${satisfied} of ${required.length} recorded required documents are accounted for.`,
     satisfied,
     total: required.length,
+  };
+}
+
+/**
+ * TCW-T2 (P1 loaded-flag truth): pure derivation for the two workspace
+ * assessment flags, so the read layer and tests share one rule.
+ *
+ * - `requiredDocumentsAssessed` is true ONLY when the required-document
+ *   collection was actually loaded for this tender — a loader that never ran
+ *   (the pre-T1 `loaded:false` stub) must not present its empty array as an
+ *   assessed-empty set.
+ * - `riskInputsAssessed` requires BOTH risk inputs (compliance matrix and
+ *   required-document set) to have been loaded; the risk verdict derives from
+ *   both, so either one missing means "not assessed", never "green".
+ *
+ * Integration TODO (T1): route the real loaders' loaded flags through this
+ * helper when assembling the workspace bundle.
+ */
+export function deriveTenderAssessmentFlags(input: {
+  complianceItemsLoaded: boolean;
+  requiredDocumentsLoaded: boolean;
+}): { riskInputsAssessed: boolean; requiredDocumentsAssessed: boolean } {
+  return {
+    riskInputsAssessed: input.complianceItemsLoaded && input.requiredDocumentsLoaded,
+    requiredDocumentsAssessed: input.requiredDocumentsLoaded,
   };
 }
 

@@ -140,11 +140,20 @@ function getDeadlineLabel(tender: TenderRow): { label: string; tone: string } {
   return { label: `${days}d`, tone: "text-foreground" };
 }
 
-function getTenderAttention(tender: TenderRow): { level: "green" | "amber" | "red"; label: string } {
+/**
+ * TCW-T2 (B23): this used to fall through to a green "On Track" verdict even
+ * when every input behind the verdict (deadline, days-in-status, target GP)
+ * was absent — "no data" was presented as "healthy". "On Track" is now only
+ * stated when at least one attention input is actually captured; with none,
+ * the card says "Not enough data" in grey instead of asserting health.
+ */
+export function getTenderAttention(tender: TenderRow): { level: "green" | "amber" | "red" | "unknown"; label: string } {
   const days = daysUntilDeadline(tender.submission_deadline);
   if (days != null && days <= 7) return { level: "red", label: days < 0 ? "Overdue" : "Urgent" };
   if ((tender.days_in_status ?? 0) > 14) return { level: "amber", label: "Stalled" };
   if (tender.target_gp_percent != null && tender.target_gp_percent < 22) return { level: "amber", label: "Tight GP" };
+  const anyInputCaptured = days != null || tender.days_in_status != null || tender.target_gp_percent != null;
+  if (!anyInputCaptured) return { level: "unknown", label: "Not enough data" };
   return { level: "green", label: "On Track" };
 }
 
@@ -232,11 +241,15 @@ function TenderSwimLaneCard({ tender, onClick }: { tender: TenderRow; onClick: (
         </div>
 
         <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/40">
+          {/* TCW-T2 (B23): "unknown" renders as a grey "Not enough data"
+              badge — absent inputs are stated, not painted green. */}
           {attention.level !== "green" && (
             <span className={`text-[8px] px-1 py-0.5 rounded border ${
               attention.level === "red"
                 ? "border-red-300 text-red-700 bg-red-50"
-                : "border-amber-300 text-amber-700 bg-amber-50"
+                : attention.level === "amber"
+                  ? "border-amber-300 text-amber-700 bg-amber-50"
+                  : "border-slate-300 text-slate-600 bg-slate-50"
             }`}>
               {attention.label}
             </span>
