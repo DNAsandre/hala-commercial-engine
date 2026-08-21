@@ -14,6 +14,7 @@ import { nanoid } from "nanoid";
 import { Save, Loader2, Plus, Trash2, Shield, BarChart3 } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderDraftingData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 import { TenderStageSectionCard, TenderStageTaskShell } from "./TenderStageTaskShell";
 
 const COMPLIANCE_STATUSES = ["Not Started", "Drafted", "Covered", "Gap", "Clarification Required", "Not Applicable"];
@@ -88,12 +89,9 @@ export default function ComplianceCoverageTab({ ws, reload, onOpenDocuments, onO
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const res = await updateTenderDraftingData(tenderId, "compliance_coverage", { requirements }, "Compliance coverage updated");
-      if (!res.success) {
-        toast.error(res.error || "Save failed.");
-        return;
-      }
-      toast.success("Compliance Coverage saved.");
+      // P2a threading + honest outcome; stale keeps the edited rows on screen.
+      const res = await updateTenderDraftingData(tenderId, "compliance_coverage", { requirements }, "Compliance coverage updated", wsRevisionToken(ws));
+      if (!reportSaveOutcome(res, "Compliance Coverage saved.")) return;
       setDirty(false);
       onSaved?.();
       reload();
@@ -102,7 +100,7 @@ export default function ComplianceCoverageTab({ ws, reload, onOpenDocuments, onO
     } finally {
       setSaving(false);
     }
-  }, [requirements, tenderId, reload, onSaved]);
+  }, [requirements, tenderId, reload, onSaved, ws]);
 
   const summary = useMemo(() => ({
     total: requirements.length,

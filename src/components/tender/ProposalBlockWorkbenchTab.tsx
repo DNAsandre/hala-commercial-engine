@@ -23,6 +23,7 @@ import {
 import { cn } from "@/lib/utils";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderDraftingData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 import TenderProposalEditorBlock, {
   buildInitialEditorContent,
   normalizeEditorStage,
@@ -327,21 +328,19 @@ export default function ProposalBlockWorkbenchTab({ ws, reload, onOpenDocuments,
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      // Debug: log what we're about to save
-      console.log("[ProposalBlockWorkbench] Saving blocks:", blocks.length);
-      for (const b of blocks) {
-        console.log(`  [${b.section_number}] ${b.title}: draft_content=${(b.draft_content||"").length}ch, editor_content=${(b.editor_content||"").length}ch, draft_status=${b.draft_status}`);
+      // P2a threading + honest outcome; a stale refusal keeps the edited
+      // blocks on screen (no reload) for a non-destructive retry.
+      const res = await updateTenderDraftingData(tenderId, "proposal_blocks", blocks, "Proposal blocks updated", wsRevisionToken(ws));
+      if (!reportSaveOutcome(res, "Proposal blocks saved.")) {
+        console.error("[ProposalBlockWorkbench] Save not confirmed:", res.status, res.error);
+        return;
       }
-      const res = await updateTenderDraftingData(tenderId, "proposal_blocks", blocks, "Proposal blocks updated");
-      if (!res.success) { toast.error(res.error || "Save failed."); console.error("[ProposalBlockWorkbench] Save error:", res.error); return; }
-      toast.success("Proposal blocks saved.");
-      console.log("[ProposalBlockWorkbench] Save succeeded");
       setDirty(false);
       onSaved?.();
       reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); console.error("[ProposalBlockWorkbench] Save exception:", e); }
     finally { setSaving(false); }
-  }, [blocks, tenderId, reload, onSaved]);
+  }, [blocks, tenderId, reload, onSaved, ws]);
 
   // Sort blocks by section_number
   const sortedBlocks = useMemo(() =>
@@ -690,24 +689,29 @@ export default function ProposalBlockWorkbenchTab({ ws, reload, onOpenDocuments,
     // Clear preview
     setAiDrafts(prev => { const next = { ...prev }; delete next[blockId]; return next; });
 
-    // Auto-save to Supabase immediately
+    // Auto-save to Supabase immediately (P2a threading; this path is
+    // unreachable while AI generation refuses — Sprint X).
     try {
       const updatedBlocks = blocks.map(b =>
         b.id === blockId
           ? { ...b, editor_content: newContent, draft_content: newContent, editor_stage: "sprint" as TenderProposalEditorStage, draft_status: "Manual Draft", last_updated: new Date().toISOString() }
           : b
       );
-      const res = await updateTenderDraftingData(ws.tender.id, "proposal_blocks", updatedBlocks, `AI draft ${mode} applied to block ${block.title || blockId}`);
+      const res = await updateTenderDraftingData(ws.tender.id, "proposal_blocks", updatedBlocks, `AI draft ${mode} applied to block ${block.title || blockId}`, wsRevisionToken(ws));
       if (res.success) {
-        toast.success(`AI draft ${mode === "replace" ? "applied" : mode === "append" ? "appended" : "inserted"} and saved`);
+        if (res.status === "saved_with_audit_warning") {
+          toast.warning(`AI draft ${mode === "replace" ? "applied" : mode === "append" ? "appended" : "inserted"} and saved — audit entry not recorded`, { description: res.auditWarning });
+        } else {
+          toast.success(`AI draft ${mode === "replace" ? "applied" : mode === "append" ? "appended" : "inserted"} and saved`);
+        }
         setDirty(false);
       } else {
-        toast.warning(`AI draft applied but save failed: ${res.error}. Click Save Draft to retry.`);
+        toast.warning(`AI draft applied but NOT saved: ${res.error}. Click Save Draft to retry.`);
       }
     } catch (e: any) {
-      toast.warning(`AI draft applied but save failed: ${e.message}. Click Save Draft to retry.`);
+      toast.warning(`AI draft applied but NOT saved: ${e.message}. Click Save Draft to retry.`);
     }
-  }, [aiDrafts, blocks, updateBlock, ws.tender.id]);
+  }, [aiDrafts, blocks, updateBlock, ws]);
 
   return (
     <TenderStageTaskShell
@@ -814,10 +818,13 @@ export default function ProposalBlockWorkbenchTab({ ws, reload, onOpenDocuments,
                             </div>
                           </div>
 
-                          {/* AI Bot Status */}
+                          {/* TCW-T4 (B8): no bot is connected in this build — the
+                              old "✓ Tender bot connected" claim was an
+                              unconditional literal over an always-refusing
+                              generator. State the honest status instead. */}
                           <div className="flex items-center gap-2 pt-1 border-t border-border">
                             <span className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wider">AI Drafting</span>
-                            <span className="text-[9px] text-emerald-600">✓ Tender bot connected — use ✨ AI Draft in the editor toolbar</span>
+                            <span className="text-[9px] text-muted-foreground">AI drafting is not available in this build (Sprint X) — drafting here is manual.</span>
                           </div>
                         </div>
                       </div>

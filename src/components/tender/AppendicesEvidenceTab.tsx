@@ -14,6 +14,7 @@ import { nanoid } from "nanoid";
 import { Save, Loader2, Plus, Trash2, FileText, AlertTriangle } from "lucide-react";
 import { documentsForTenderStage, summarizeTenderDocuments, type TenderWorkspace, type TenderDocument } from "@/lib/tender-workspace-data";
 import { updateTenderDraftingData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 import { TenderStageSectionCard, TenderStageTaskShell } from "./TenderStageTaskShell";
 
 const GAP_STATUSES = ["Missing", "Requested", "Uploaded", "Needs Update", "Not Required"];
@@ -82,12 +83,9 @@ export default function AppendicesEvidenceTab({ ws, reload, onOpenDocuments, onO
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const res = await updateTenderDraftingData(tenderId, "appendices_evidence", { evidence_gaps: gaps }, "Appendices & evidence updated");
-      if (!res.success) {
-        toast.error(res.error || "Save failed.");
-        return;
-      }
-      toast.success("Appendices & Evidence saved.");
+      // P2a threading + honest outcome; stale keeps the edited rows on screen.
+      const res = await updateTenderDraftingData(tenderId, "appendices_evidence", { evidence_gaps: gaps }, "Appendices & evidence updated", wsRevisionToken(ws));
+      if (!reportSaveOutcome(res, "Appendices & Evidence saved.")) return;
       setDirty(false);
       onSaved?.();
       reload();
@@ -96,7 +94,7 @@ export default function AppendicesEvidenceTab({ ws, reload, onOpenDocuments, onO
     } finally {
       setSaving(false);
     }
-  }, [gaps, tenderId, reload, onSaved]);
+  }, [gaps, tenderId, reload, onSaved, ws]);
 
   const statusColor = (s: string) => {
     if (s === "Uploaded") return "border-emerald-200 text-emerald-600";
@@ -137,7 +135,10 @@ export default function AppendicesEvidenceTab({ ws, reload, onOpenDocuments, onO
       metrics={metrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
-      saved={(gaps.length > 0 || docs.length > 0) && !dirty}
+      /* TCW-T4 (C3 tightening): green only when THIS tab's own register (the
+         evidence-gap rows) is stored and clean — the presence of stage
+         documents is not this tab's save state. */
+      saved={gaps.length > 0 && !dirty}
       unsaved={dirty}
     >
       <TenderStageSectionCard
