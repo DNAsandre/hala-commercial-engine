@@ -7,20 +7,18 @@
  *   1. Perform the canonical commercial_tickets update through
  *      saveTenderSourceRecord — read-back confirmed, guarded by an `updated_at`
  *      optimistic token — and report success only once a stored row came back.
- *   2. Attempt a commercial_ticket_audit row.
+ *   2. Append a commercial_ticket_audit row.
  *
- *      W04-C4 — this used to claim "Every write function … appends a
- *      commercial_ticket_audit row". It does not. For the stage/field writes the
- *      append is BEST EFFORT: `runBestEffortAuditWrite` does not await the
- *      insert and only console.warn's on failure, so a missing audit row is
- *      invisible to both the caller and the user. It is therefore never part of
- *      the success claim for those functions — their success means the
- *      commercial_tickets row moved, nothing more.
+ *      TCW-T1 (design pin P3) — the append is AWAITED and confirmed after the
+ *      primary write. A failed or unconfirmed audit append never blocks or
+ *      reverts the primary save, but it is never silent either: the result
+ *      carries status 'saved_with_audit_warning' plus the real reason, so the
+ *      caller can render "Saved — audit entry not recorded: <reason>" instead
+ *      of plain success.
  *
- *      `createActivityNote` is the exception, because there the audit row IS the
- *      whole payload: it awaits the insert, selects the stored id back, and
- *      reports success only if that row exists.
- *   3. Return { success, error? }.
+ *      `createActivityNote` is stricter, because there the audit row IS the
+ *      whole payload: an unconfirmed insert is a plain failure.
+ *   3. Return { success, error?, status?, auditWarning? }.
  *
  * No production enforcement. No real email. No CRM sync.
  * Legacy tender child tables are read-only/disabled to prevent mock data drift.
@@ -35,25 +33,68 @@ import {
   type TenderPricingSectionKey,
 } from './tender-pricing-types';
 import { createSupabaseTenderSourceRecordStore } from './supabase-tender-source-record';
-import { readTenderSourceAggregate, saveTenderSourceRecord } from './tender-source-record';
+import {
+  readTenderSourceAggregate,
+  saveTenderSourceRecord,
+  isSubmissionReadinessSectionKey,
+  isValidSubmissionReadinessStatus,
+  validateSubmissionReadinessRows,
+  SUBMISSION_READINESS_FACET_KEY,
+  SUBMISSION_READINESS_SECTION_CONTRACTS,
+  type SubmissionReadinessSectionKey,
+  type TenderSaveStatus,
+  type TenderSourceAggregate,
+} from './tender-source-record';
 import { isTenderInternalStageKey } from './tender-stage-source-truth';
+import { isRestorableCrmPipelineStage, RESTORABLE_CRM_PIPELINE_STAGES } from './supabase-tender-data';
 
 // â”€â”€â”€ Result type â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface ActionResult {
   success: boolean;
   error?: string;
+  /**
+   * TCW-T1: the save-layer outcome, included when it adds information beyond
+   * success/error — 'stale' (concurrent edit; retry non-destructively) and
+   * 'saved_with_audit_warning' (primary saved; audit append not recorded).
+   */
+  status?: TenderSaveStatus;
+  /**
+   * P3: present iff the primary write is confirmed but the audit append is not.
+   * `success` stays true — audit history is advisory, never a gate.
+   */
+  auditWarning?: string;
+}
+
+/**
+ * TCW-T1 (P2a/P2b): options for the facet writers. For backward compatibility
+ * the writers also accept a plain string in this position (the legacy `reason`
+ * argument) until T3 moves the call sites to the object form.
+ */
+export interface TenderFacetWriteOpts {
+  /** The `updated_at` revision the caller read; stale → non-destructive refusal. */
+  expectedRevision?: string;
+  /** Override the audited actor name (defaults to the session user). */
+  actorName?: string;
+  /** Free-text reason recorded in the audit note. */
+  reason?: string;
+}
+
+function resolveWriteOpts(reasonOrOpts: string | TenderFacetWriteOpts | undefined): Required<Pick<TenderFacetWriteOpts, 'reason'>> & Omit<TenderFacetWriteOpts, 'reason'> {
+  if (typeof reasonOrOpts === 'string') return { reason: reasonOrOpts };
+  return { reason: reasonOrOpts?.reason ?? '', expectedRevision: reasonOrOpts?.expectedRevision, actorName: reasonOrOpts?.actorName };
 }
 
 // â”€â”€â”€ Internal helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-function uid(): string {
-  return crypto.randomUUID().slice(0, 12);
-}
-
+/**
+ * P4 — actor truth. `getCurrentUser()` is total: signed-out callers receive the
+ * auth-state module's own honest literal ("Unauthenticated"), never a
+ * fabricated "System"/"admin".
+ */
 function actor() {
   const u = getCurrentUser();
-  return { userId: u?.id ?? '', userName: u?.name ?? 'System' };
+  return { userId: u?.id ?? 'anonymous', userName: u?.name ?? 'Unauthenticated' };
 }
 
 const tenderSourceRecordStore = createSupabaseTenderSourceRecordStore(supabase);
@@ -69,35 +110,17 @@ function auditActionFor(fieldChanged: string): 'updated' | 'stage_changed' {
   return fieldChanged.includes('stage') || fieldChanged.includes('phase') ? 'stage_changed' : 'updated';
 }
 
-function runBestEffortAuditWrite(label: string, write: PromiseLike<{ error: { message?: string } | null }>): void {
-  const timeoutMs = 4000;
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
-  });
-
-  Promise.race([Promise.resolve(write), timeout])
-    .then(({ error }) => {
-      if (error) console.warn('[SUPA-008] Canonical tender audit insert failed:', error.message);
-    })
-    .catch(error => {
-      console.warn('[SUPA-008] Canonical tender audit insert skipped:', error?.message || String(error));
-    })
-    .finally(() => {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-    });
-}
-
 interface CanonicalTenderAuditParams {
   tenderId: string;
   fieldChanged: string;
   oldValue?: string | null;
   newValue?: string | null;
   notes?: string | null;
+  /** P4: defaults to the session user; an explicit name is used verbatim. */
+  actorName?: string;
 }
 
-/** The exact row shape both the best-effort and the confirmed path insert. */
+/** The exact row shape both the awaited and the confirmed-note path insert. */
 function buildCanonicalTenderAuditRow(params: CanonicalTenderAuditParams): Record<string, any> {
   const { userName } = actor();
   return {
@@ -106,20 +129,67 @@ function buildCanonicalTenderAuditRow(params: CanonicalTenderAuditParams): Recor
     field_changed: params.fieldChanged,
     old_value: params.oldValue ?? null,
     new_value: params.newValue ?? null,
-    user_name: userName,
+    user_name: params.actorName?.trim() ? params.actorName : userName,
     notes: params.notes ?? null,
   };
 }
 
+type AuditAppendOutcome = { recorded: true } | { recorded: false; reason: string };
+
 /**
- * Best-effort audit append — NOT awaited, failures only console.warn'd.
- * Callers must not treat this as evidence that anything was stored.
+ * P3 — awaited, confirmed audit append. Runs ONLY after the primary write is
+ * confirmed. The stored id is selected back; an error, a zero-row insert, or a
+ * timeout is reported as an honest reason for the caller's
+ * 'saved_with_audit_warning' — never as silence, and never as a blocker for
+ * the already-saved primary write.
  */
-async function writeCanonicalTenderAudit(params: CanonicalTenderAuditParams): Promise<void> {
-  runBestEffortAuditWrite(
-    `audit:${params.fieldChanged}`,
-    supabase.from('commercial_ticket_audit').insert(buildCanonicalTenderAuditRow(params)),
-  );
+async function appendConfirmedTenderAudit(params: CanonicalTenderAuditParams): Promise<AuditAppendOutcome> {
+  const timeoutMs = 8000;
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<AuditAppendOutcome>(resolve => {
+    timeoutHandle = setTimeout(
+      () => resolve({
+        recorded: false,
+        reason: `the audit append did not respond within ${timeoutMs / 1000}s; the audit row may or may not exist`,
+      }),
+      timeoutMs,
+    );
+  });
+
+  const insert = (async (): Promise<AuditAppendOutcome> => {
+    try {
+      const { data, error } = await supabase
+        .from('commercial_ticket_audit')
+        .insert(buildCanonicalTenderAuditRow(params))
+        .select('id')
+        .maybeSingle();
+      if (error) return { recorded: false, reason: error.message };
+      if (!data || !(data as any).id) {
+        return { recorded: false, reason: 'commercial_ticket_audit returned no stored row (possible RLS block)' };
+      }
+      return { recorded: true };
+    } catch (error) {
+      return { recorded: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+  })();
+
+  const outcome = await Promise.race([insert, timeout]);
+  if (timeoutHandle) clearTimeout(timeoutHandle);
+  return outcome;
+}
+
+/**
+ * P3 — translate a confirmed primary save + audit outcome into the ActionResult
+ * the caller renders. Audit failure never blocks the primary save.
+ */
+function savedWithAuditOutcome(audit: AuditAppendOutcome): ActionResult {
+  return audit.recorded
+    ? { success: true }
+    : {
+        success: true,
+        status: 'saved_with_audit_warning',
+        auditWarning: `Saved, but the audit entry was not recorded: ${audit.reason}`,
+      };
 }
 
 /**
@@ -152,15 +222,28 @@ async function writeCanonicalTenderAuditConfirmed(
   return { success: true };
 }
 
+interface CanonicalWriteOutcome {
+  handled: boolean;
+  error?: string;
+  /** The save-layer status (e.g. 'stale') so callers can offer a non-destructive retry. */
+  status?: TenderSaveStatus;
+  /** The confirmed post-write aggregate — the read-back the caller compares against. */
+  aggregate?: TenderSourceAggregate;
+}
+
+function saveActor(actorName?: string): { id: string; name: string } {
+  const currentActor = actor();
+  return { id: currentActor.userId, name: actorName?.trim() ? actorName : currentActor.userName };
+}
+
 async function updateCanonicalTenderTicket(
   tenderId: string,
   patch: Record<string, any>,
-): Promise<{ handled: boolean; error?: string }> {
-  const currentActor = actor();
+): Promise<CanonicalWriteOutcome> {
   const result = await saveTenderSourceRecord(tenderSourceRecordStore, {
     tenderId,
     columnPatch: patch,
-    actor: { id: currentActor.userId, name: currentActor.userName },
+    actor: saveActor(),
     origin: 'manual',
     recordAudit: false,
   });
@@ -168,25 +251,25 @@ async function updateCanonicalTenderTicket(
   if (result.status === 'not_found' || result.status === 'invalid_identity') {
     return {
       handled: true,
+      status: result.status,
       error: 'Canonical tender ticket not found in commercial_tickets. Legacy tenders writes are disabled.',
     };
   }
   return result.success
-    ? { handled: true }
-    : { handled: true, error: result.warning ?? result.error ?? 'Tender save failed.' };
+    ? { handled: true, status: result.status, aggregate: result.aggregate }
+    : { handled: true, status: result.status, error: result.warning ?? result.error ?? 'Tender save failed.' };
 }
 
 async function mergeCanonicalTenderDetails(
   tenderId: string,
   detailsPatch: Record<string, any>,
   ticketPatch: Record<string, any> = {},
-): Promise<{ handled: boolean; error?: string }> {
-  const currentActor = actor();
+): Promise<CanonicalWriteOutcome> {
   const result = await saveTenderSourceRecord(tenderSourceRecordStore, {
     tenderId,
     columnPatch: ticketPatch,
     typeDetailsPatch: detailsPatch,
-    actor: { id: currentActor.userId, name: currentActor.userName },
+    actor: saveActor(),
     origin: 'manual',
     recordAudit: false,
   });
@@ -194,12 +277,13 @@ async function mergeCanonicalTenderDetails(
   if (result.status === 'not_found' || result.status === 'invalid_identity') {
     return {
       handled: true,
+      status: result.status,
       error: 'Canonical tender ticket not found in commercial_tickets. Legacy tenders writes are disabled.',
     };
   }
   return result.success
-    ? { handled: true }
-    : { handled: true, error: result.warning ?? result.error ?? 'Tender save failed.' };
+    ? { handled: true, status: result.status, aggregate: result.aggregate }
+    : { handled: true, status: result.status, error: result.warning ?? result.error ?? 'Tender save failed.' };
 }
 
 async function mergeCanonicalTenderFacet(
@@ -210,23 +294,24 @@ async function mergeCanonicalTenderFacet(
   normalizeFacet: (value: unknown) => Record<string, any> = value =>
     value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {},
   expectedRevision?: string,
-): Promise<{ handled: boolean; error?: string }> {
+  actorName?: string,
+): Promise<CanonicalWriteOutcome> {
   let aggregate;
   try {
     aggregate = await readTenderSourceAggregate(tenderSourceRecordStore, tenderId);
   } catch (error) {
-    return { handled: true, error: error instanceof Error ? error.message : String(error) };
+    return { handled: true, status: 'failed', error: error instanceof Error ? error.message : String(error) };
   }
 
   if (!aggregate) {
     return {
       handled: true,
+      status: 'not_found',
       error: 'Canonical tender ticket not found in commercial_tickets. Legacy tenders writes are disabled.',
     };
   }
 
   const currentFacet = normalizeFacet(aggregate.typeDetails[facet]);
-  const currentActor = actor();
   const result = await saveTenderSourceRecord(tenderSourceRecordStore, {
     tenderId,
     expectedRevision: expectedRevision ?? aggregate.revision.token,
@@ -237,26 +322,80 @@ async function mergeCanonicalTenderFacet(
       },
     },
     changedFieldPaths: [`type_details.${facet}.${section}`],
-    actor: { id: currentActor.userId, name: currentActor.userName },
+    actor: saveActor(actorName),
     origin: 'manual',
     recordAudit: false,
   });
 
   return result.success
-    ? { handled: true }
-    : { handled: true, error: result.warning ?? result.error ?? 'Tender save failed.' };
+    ? { handled: true, status: result.status, aggregate: result.aggregate }
+    : { handled: true, status: result.status, error: result.warning ?? result.error ?? 'Tender save failed.' };
+}
+
+/**
+ * TCW-T1 (P2a/P2b) — whole-facet PATCH-MERGE. The stored facet is read first
+ * and the caller's patch is spread over it: `{ ...currentFacet, ...patch }`.
+ * A tab therefore sends ONLY its own keys and can never clobber a sibling
+ * tab's keys inside the same facet, nor any other type_details key.
+ */
+async function patchCanonicalTenderFacet(
+  tenderId: string,
+  facet: string,
+  patch: Record<string, any>,
+  opts: { expectedRevision?: string; actorName?: string } = {},
+): Promise<CanonicalWriteOutcome> {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).length === 0) {
+    return { handled: true, status: 'invalid_change', error: `A non-empty ${facet} patch object is required.` };
+  }
+
+  let aggregate;
+  try {
+    aggregate = await readTenderSourceAggregate(tenderSourceRecordStore, tenderId);
+  } catch (error) {
+    return { handled: true, status: 'failed', error: error instanceof Error ? error.message : String(error) };
+  }
+
+  if (!aggregate) {
+    return {
+      handled: true,
+      status: 'not_found',
+      error: 'Canonical tender ticket not found in commercial_tickets. Legacy tenders writes are disabled.',
+    };
+  }
+
+  const rawFacet = aggregate.typeDetails[facet];
+  const currentFacet = rawFacet && typeof rawFacet === 'object' && !Array.isArray(rawFacet)
+    ? rawFacet as Record<string, any>
+    : {};
+
+  const result = await saveTenderSourceRecord(tenderSourceRecordStore, {
+    tenderId,
+    expectedRevision: opts.expectedRevision ?? aggregate.revision.token,
+    typeDetailsPatch: {
+      [facet]: { ...currentFacet, ...patch },
+    },
+    changedFieldPaths: Object.keys(patch).map(key => `type_details.${facet}.${key}`),
+    actor: saveActor(opts.actorName),
+    origin: 'manual',
+    recordAudit: false,
+  });
+
+  return result.success
+    ? { handled: true, status: result.status, aggregate: result.aggregate }
+    : { handled: true, status: result.status, error: result.warning ?? result.error ?? 'Tender save failed.' };
 }
 
 async function updateTenderDocumentList(
   tenderId: string,
   updater: (documents: TenderDocument[]) => TenderDocument[],
-): Promise<{ handled: boolean; error?: string; before: TenderDocument[]; after: TenderDocument[] }> {
+): Promise<{ handled: boolean; error?: string; status?: TenderSaveStatus; before: TenderDocument[]; after: TenderDocument[] }> {
   let aggregate;
   try {
     aggregate = await readTenderSourceAggregate(tenderSourceRecordStore, tenderId);
   } catch (error) {
     return {
       handled: true,
+      status: 'failed',
       error: error instanceof Error ? error.message : String(error),
       before: [],
       after: [],
@@ -266,6 +405,7 @@ async function updateTenderDocumentList(
   if (!aggregate) {
     return {
       handled: true,
+      status: 'not_found',
       error: 'Canonical tender ticket not found in commercial_tickets. Legacy tenders writes are disabled.',
       before: [],
       after: [],
@@ -276,66 +416,49 @@ async function updateTenderDocumentList(
     ? aggregate.typeDetails.documents as TenderDocument[]
     : [];
   const after = updater(before);
-  const currentActor = actor();
   const result = await saveTenderSourceRecord(tenderSourceRecordStore, {
     tenderId,
     expectedRevision: aggregate.revision.token,
     typeDetailsPatch: { documents: after },
     changedFieldPaths: ['type_details.documents'],
-    actor: { id: currentActor.userId, name: currentActor.userName },
+    actor: saveActor(),
     origin: 'manual',
     recordAudit: false,
   });
 
   return result.success
-    ? { handled: true, before, after }
-    : { handled: true, error: result.warning ?? result.error ?? 'Tender save failed.', before, after };
+    ? { handled: true, status: result.status, before, after }
+    : { handled: true, status: result.status, error: result.warning ?? result.error ?? 'Tender save failed.', before, after };
 }
 
-async function _insertActivityEvent(params: {
+/**
+ * P3 — the human-readable activity entry every writer appends AFTER its primary
+ * write is confirmed. Same pipe-format notes shape the Activity tab has always
+ * rendered ("Title | description | Reason: …"). The append is awaited and its
+ * outcome is returned so the caller reports 'saved_with_audit_warning' when the
+ * history row is missing. (Replaces the fire-and-forget `_insertActivityEvent`
+ * and the deleted no-op `_insertAuditEvent`.)
+ */
+async function appendActivityAudit(params: {
   tenderId: string;
   actionType: string;
-  actionLabel: string;
   title: string;
   description: string;
-  category?: string;
-  severity?: string;
   previousValue?: string;
   newValue?: string;
-  gateCode?: string;
   reason?: string;
-  relatedPack?: string;
-  relatedModule?: string;
-  metadata?: Record<string, any>;
-}): Promise<void> {
-  await writeCanonicalTenderAudit({
+  actorName?: string;
+}): Promise<AuditAppendOutcome> {
+  return appendConfirmedTenderAudit({
     tenderId: params.tenderId,
     fieldChanged: params.actionType,
     oldValue: params.previousValue ?? null,
     newValue: params.newValue ?? null,
+    actorName: params.actorName,
     notes: [params.title, params.description, params.reason ? `Reason: ${params.reason}` : null]
       .filter(Boolean)
       .join(' | '),
   });
-}
-
-async function _insertAuditEvent(params: {
-  tenderId: string;
-  action: string;
-  eventCode: string;
-  eventName: string;
-  entityType: string;
-  entityId: string;
-  entityName?: string;
-  category?: string;
-  severity?: string;
-  previousValue?: string;
-  newValue?: string;
-  gateCode?: string;
-  reason?: string;
-  metadata?: Record<string, any>;
-}): Promise<void> {
-  void params;
 }
 
 // â”€â”€â”€ Public write functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -353,36 +476,17 @@ export async function updateTenderPhase(
     return { success: false, error: `Unknown Tender stage: ${newPhase}` };
   }
   const canonical = await updateCanonicalTenderTicket(tenderId, { internal_stage: newPhase });
-  if (canonical.error) return { success: false, error: canonical.error };
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  await Promise.all([
-    _insertActivityEvent({
-      tenderId,
-      actionType: 'stage_change',
-      actionLabel: `Stage moved to ${newPhase}`,
-      title: 'Tender Stage Change',
-      description: `Phase changed from "${previousPhase}" to "${newPhase}". ${reason}`.trim(),
-      category: 'lifecycle',
-      severity: 'info',
-      previousValue: previousPhase,
-      newValue: newPhase,
-      reason,
-    }),
-    _insertAuditEvent({
-      tenderId,
-      action: 'stage_change',
-      eventCode: 'SUPA008-STAGE',
-      eventName: 'Tender Stage Change',
-      entityType: 'tender',
-      entityId: tenderId,
-      previousValue: previousPhase,
-      newValue: newPhase,
-      reason,
-      category: 'lifecycle',
-    }),
-  ]);
-
-  return { success: true };
+  return savedWithAuditOutcome(await appendActivityAudit({
+    tenderId,
+    actionType: 'stage_change',
+    title: 'Tender Stage Change',
+    description: `Phase changed from "${previousPhase}" to "${newPhase}". ${reason}`.trim(),
+    previousValue: previousPhase,
+    newValue: newPhase,
+    reason,
+  }));
 }
 
 /**
@@ -391,6 +495,12 @@ export async function updateTenderPhase(
  * Writes ONLY to commercial_tickets.crm_pipeline_stage.
  * Does NOT touch internal_stage.
  * These are completely independent fields â€” do not auto-sync.
+ *
+ * TCW-T1 (P2d): the value is validated against the read layer's round-trip
+ * (`isRestorableCrmPipelineStage`) BEFORE any write. Persisting a key the read
+ * layer coerces to a different stage would produce a "successful" save the
+ * workspace then displays as another stage — that is refused with the honest
+ * reason instead.
  */
 export async function updateTenderCrmStage(
   tenderId: string,
@@ -398,37 +508,27 @@ export async function updateTenderCrmStage(
   newStage: string,
   reason: string = '',
 ): Promise<ActionResult> {
+  if (!isRestorableCrmPipelineStage(newStage)) {
+    return {
+      success: false,
+      error:
+        `CRM pipeline stage "${newStage}" was not saved: the read layer cannot restore that value, so the workspace ` +
+        `would reload it as a different stage than the one stored. Storable stages: ${RESTORABLE_CRM_PIPELINE_STAGES.join(', ')}.`,
+    };
+  }
+
   const canonical = await updateCanonicalTenderTicket(tenderId, { crm_pipeline_stage: newStage });
-  if (canonical.error) return { success: false, error: canonical.error };
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  await Promise.all([
-    _insertActivityEvent({
-      tenderId,
-      actionType: 'crm_stage_change',
-      actionLabel: `CRM Pipeline moved to ${newStage}`,
-      title: 'CRM Pipeline Stage Change',
-      description: `CRM Pipeline stage changed from "${previousStage}" to "${newStage}". ${reason}`.trim(),
-      category: 'lifecycle',
-      severity: 'info',
-      previousValue: previousStage,
-      newValue: newStage,
-      reason,
-    }),
-    _insertAuditEvent({
-      tenderId,
-      action: 'crm_stage_change',
-      eventCode: 'TND003-CRM',
-      eventName: 'CRM Pipeline Stage Change',
-      entityType: 'tender',
-      entityId: tenderId,
-      previousValue: previousStage,
-      newValue: newStage,
-      reason,
-      category: 'lifecycle',
-    }),
-  ]);
-
-  return { success: true };
+  return savedWithAuditOutcome(await appendActivityAudit({
+    tenderId,
+    actionType: 'crm_stage_change',
+    title: 'CRM Pipeline Stage Change',
+    description: `CRM Pipeline stage changed from "${previousStage}" to "${newStage}". ${reason}`.trim(),
+    previousValue: previousStage,
+    newValue: newStage,
+    reason,
+  }));
 }
 
 /**
@@ -441,36 +541,17 @@ export async function updateTenderProbability(
   reason: string = '',
 ): Promise<ActionResult> {
   const canonical = await updateCanonicalTenderTicket(tenderId, { probability_percent: newProbability });
-  if (canonical.error) return { success: false, error: canonical.error };
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  await Promise.all([
-    _insertActivityEvent({
-      tenderId,
-      actionType: 'probability_change',
-      actionLabel: `Win probability updated to ${newProbability}%`,
-      title: 'Win Probability Updated',
-      description: `Initial win probability changed from ${previousProbability}% to ${newProbability}%. ${reason}`.trim(),
-      category: 'signal',
-      severity: 'info',
-      previousValue: String(previousProbability),
-      newValue: String(newProbability),
-      reason,
-    }),
-    _insertAuditEvent({
-      tenderId,
-      action: 'probability_change',
-      eventCode: 'TND015-PROB',
-      eventName: 'Win Probability Update',
-      entityType: 'tender',
-      entityId: tenderId,
-      previousValue: String(previousProbability),
-      newValue: String(newProbability),
-      reason,
-      category: 'signal',
-    }),
-  ]);
-
-  return { success: true };
+  return savedWithAuditOutcome(await appendActivityAudit({
+    tenderId,
+    actionType: 'probability_change',
+    title: 'Win Probability Updated',
+    description: `Initial win probability changed from ${previousProbability}% to ${newProbability}%. ${reason}`.trim(),
+    previousValue: String(previousProbability),
+    newValue: String(newProbability),
+    reason,
+  }));
 }
 
 /**
@@ -483,33 +564,15 @@ export async function updateTenderTeamMembers(
   reason: string = '',
 ): Promise<ActionResult> {
   const canonical = await updateCanonicalTenderTicket(tenderId, { owner, team_members: teamMembers });
-  if (canonical.error) return { success: false, error: canonical.error };
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  await Promise.all([
-    _insertActivityEvent({
-      tenderId,
-      actionType: 'team_assignment_change',
-      actionLabel: `Team updated â€” ${owner} + ${teamMembers.length} members`,
-      title: 'Tender Team Updated',
-      description: `Ownership assigned to "${owner}". Team members: ${teamMembers.join(', ') || 'none'}. ${reason}`.trim(),
-      category: 'action',
-      severity: 'info',
-      reason,
-    }),
-    _insertAuditEvent({
-      tenderId,
-      action: 'team_assignment_change',
-      eventCode: 'TND015-TEAM',
-      eventName: 'Tender Team Assignment',
-      entityType: 'tender',
-      entityId: tenderId,
-      entityName: owner,
-      reason,
-      category: 'action',
-    }),
-  ]);
-
-  return { success: true };
+  return savedWithAuditOutcome(await appendActivityAudit({
+    tenderId,
+    actionType: 'team_assignment_change',
+    title: 'Tender Team Updated',
+    description: `Ownership assigned to "${owner}". Team members: ${teamMembers.join(', ') || 'none'}. ${reason}`.trim(),
+    reason,
+  }));
 }
 
 
@@ -547,7 +610,7 @@ export async function updateTenderExecutionScope(
     },
     { notes: fields.executionNotes },
   );
-  if (canonical.error) return { success: false, error: canonical.error };
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
   const summary = [
     fields.executionRegions.length ? `Regions: ${fields.executionRegions.join(', ')}` : null,
@@ -557,276 +620,194 @@ export async function updateTenderExecutionScope(
     fields.siteCount ? `Site count: ${fields.siteCount}` : null,
   ].filter(Boolean).join(' Â· ') || 'Execution scope cleared';
 
-  await Promise.all([
-    _insertActivityEvent({
-      tenderId,
-      actionType: 'execution_scope_update',
-      actionLabel: `Execution scope updated`,
-      title: 'Tender Execution Scope Updated',
-      description: `${summary}. ${reason}`.trim(),
-      category: 'action',
-      severity: 'info',
-      reason,
-    }),
-    _insertAuditEvent({
-      tenderId,
-      action: 'execution_scope_update',
-      eventCode: 'TND016-EXEC',
-      eventName: 'Execution Scope Update',
-      entityType: 'tender',
-      entityId: tenderId,
-      reason,
-      category: 'action',
-    }),
-  ]);
-
-  return { success: true };
+  return savedWithAuditOutcome(await appendActivityAudit({
+    tenderId,
+    actionType: 'execution_scope_update',
+    title: 'Tender Execution Scope Updated',
+    description: `${summary}. ${reason}`.trim(),
+    reason,
+  }));
 }
 
 
 /**
  * 1f. Update tender Scope of Work data (structured SOW capture)
  *
- * Persists the full sow_data JSONB into type_details.sow_data.
+ * TCW-T1 (P2b): PATCH-MERGE into type_details.sow_data — the stored facet is
+ * read first and `{ ...currentFacet, ...patch }` is written, so the caller
+ * sends only the keys it owns and never whole-replaces the facet. The third
+ * argument accepts the legacy reason string OR TenderFacetWriteOpts
+ * ({ expectedRevision, actorName?, reason? }).
+ *
  * Does NOT auto-create scope/SLA snapshots.
  * Does NOT mutate discontinued document tooling or composer blocks.
  * Snapshot creation requires an explicit future user action.
  */
 export async function updateTenderSowData(
   tenderId: string,
-  sowData: Record<string, any>,
-  reason: string = '',
+  patch: Record<string, any>,
+  reasonOrOpts: string | TenderFacetWriteOpts = '',
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderDetails(
-    tenderId,
-    { sow_data: sowData },
-  );
-  if (canonical.error) return { success: false, error: canonical.error };
+  const opts = resolveWriteOpts(reasonOrOpts);
+  const canonical = await patchCanonicalTenderFacet(tenderId, 'sow_data', patch, opts);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  const serviceLines = Array.isArray(sowData.service_lines) ? sowData.service_lines : [];
+  const serviceLines = Array.isArray(patch.service_lines) ? patch.service_lines : [];
   const summary = [
     serviceLines.length ? `${serviceLines.length} service lines` : null,
-    sowData.scope_summary ? 'Summary captured' : null,
-    Array.isArray(sowData.sla_kpis) && sowData.sla_kpis.length ? `${sowData.sla_kpis.length} KPIs` : null,
-    Array.isArray(sowData.sites) && sowData.sites.length ? `${sowData.sites.length} sites` : null,
+    patch.scope_summary ? 'Summary captured' : null,
+    Array.isArray(patch.sla_kpis) && patch.sla_kpis.length ? `${patch.sla_kpis.length} KPIs` : null,
+    Array.isArray(patch.sites) && patch.sites.length ? `${patch.sites.length} sites` : null,
   ].filter(Boolean).join(' Â· ') || 'Scope of Work updated';
 
-  await Promise.all([
-    _insertActivityEvent({
-      tenderId,
-      actionType: 'sow_update',
-      actionLabel: 'Scope of Work updated',
-      title: 'Scope of Work Updated',
-      description: `${summary}. ${reason}`.trim(),
-      category: 'action',
-      severity: 'info',
-      reason,
-    }),
-    _insertAuditEvent({
-      tenderId,
-      action: 'sow_update',
-      eventCode: 'TND017-SOW',
-      eventName: 'Scope of Work Update',
-      entityType: 'tender',
-      entityId: tenderId,
-      reason,
-      category: 'action',
-    }),
-  ]);
-
-  return { success: true };
+  return savedWithAuditOutcome(await appendActivityAudit({
+    tenderId,
+    actionType: 'sow_update',
+    title: 'Scope of Work Updated',
+    description: `${summary}. ${opts.reason}`.trim(),
+    reason: opts.reason,
+    actorName: opts.actorName,
+  }));
 }
 
 
 /**
  * 1g. Update tender Customer Fit Qualification data
  *
- * Persists structured customer fit qualification into type_details.customer_fit_data.
+ * TCW-T1 (P2b): PATCH-MERGE into type_details.customer_fit_data (see
+ * updateTenderSowData for the shared contract).
  * Does NOT move tender stage. Does NOT change CRM stage.
  * Does NOT touch sow_data, document-output tooling, or any other type_details key.
  */
 export async function updateTenderCustomerFitData(
   tenderId: string,
-  customerFitData: Record<string, any>,
-  reason: string = '',
+  patch: Record<string, any>,
+  reasonOrOpts: string | TenderFacetWriteOpts = '',
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderDetails(
-    tenderId,
-    { customer_fit_data: customerFitData },
-  );
-  if (canonical.error) return { success: false, error: canonical.error };
+  const opts = resolveWriteOpts(reasonOrOpts);
+  const canonical = await patchCanonicalTenderFacet(tenderId, 'customer_fit_data', patch, opts);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  const dims = Array.isArray(customerFitData.dimensions) ? customerFitData.dimensions : [];
+  const dims = Array.isArray(patch.dimensions) ? patch.dimensions : [];
   const assessed = dims.filter((d: any) => d.assessment && d.assessment !== 'Not Assessed').length;
   const summary = [
     assessed > 0 ? `${assessed}/${dims.length} dimensions assessed` : null,
-    customerFitData.recommendation?.outcome && customerFitData.recommendation.outcome !== 'Not decided'
-      ? `Recommendation: ${customerFitData.recommendation.outcome}` : null,
-    Array.isArray(customerFitData.evidence) && customerFitData.evidence.length
-      ? `${customerFitData.evidence.length} evidence items` : null,
-    Array.isArray(customerFitData.gaps) && customerFitData.gaps.length
-      ? `${customerFitData.gaps.length} gaps` : null,
+    patch.recommendation?.outcome && patch.recommendation.outcome !== 'Not decided'
+      ? `Recommendation: ${patch.recommendation.outcome}` : null,
+    Array.isArray(patch.evidence) && patch.evidence.length
+      ? `${patch.evidence.length} evidence items` : null,
+    Array.isArray(patch.gaps) && patch.gaps.length
+      ? `${patch.gaps.length} gaps` : null,
   ].filter(Boolean).join(' · ') || 'Customer Fit Qualification updated';
 
-  await Promise.all([
-    _insertActivityEvent({
-      tenderId,
-      actionType: 'customer_fit_update',
-      actionLabel: 'Customer Fit Qualification updated',
-      title: 'Customer Fit Qualification Updated',
-      description: `${summary}. ${reason}`.trim(),
-      category: 'action',
-      severity: 'info',
-      reason,
-    }),
-    _insertAuditEvent({
-      tenderId,
-      action: 'customer_fit_update',
-      eventCode: 'TND018-CFQ',
-      eventName: 'Customer Fit Qualification Update',
-      entityType: 'tender',
-      entityId: tenderId,
-      reason,
-      category: 'action',
-    }),
-  ]);
-
-  return { success: true };
+  return savedWithAuditOutcome(await appendActivityAudit({
+    tenderId,
+    actionType: 'customer_fit_update',
+    title: 'Customer Fit Qualification Updated',
+    description: `${summary}. ${opts.reason}`.trim(),
+    reason: opts.reason,
+    actorName: opts.actorName,
+  }));
 }
 
 
 /**
  * 1h. Update tender SOW Qualification data
  *
- * Persists structured SOW qualification into type_details.sow_qualification_data.
+ * TCW-T1 (P2b): PATCH-MERGE into type_details.sow_qualification_data (see
+ * updateTenderSowData for the shared contract).
  * Does NOT move tender stage. Does NOT change CRM stage.
  * Does NOT touch sow_data, customer_fit_data, document-output tooling, or any other type_details key.
  */
 export async function updateTenderSowQualificationData(
   tenderId: string,
-  sowQualificationData: Record<string, any>,
-  reason: string = '',
+  patch: Record<string, any>,
+  reasonOrOpts: string | TenderFacetWriteOpts = '',
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderDetails(
-    tenderId,
-    { sow_qualification_data: sowQualificationData },
-  );
-  if (canonical.error) return { success: false, error: canonical.error };
+  const opts = resolveWriteOpts(reasonOrOpts);
+  const canonical = await patchCanonicalTenderFacet(tenderId, 'sow_qualification_data', patch, opts);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  const matrix = Array.isArray(sowQualificationData.coverage_matrix) ? sowQualificationData.coverage_matrix : [];
+  const matrix = Array.isArray(patch.coverage_matrix) ? patch.coverage_matrix : [];
   const assessed = matrix.filter((r: any) => r.status && r.status !== 'Not Assessed').length;
-  const clarifications = Array.isArray(sowQualificationData.clarifications) ? sowQualificationData.clarifications.length : 0;
+  const clarifications = Array.isArray(patch.clarifications) ? patch.clarifications.length : 0;
   const summary = [
     assessed > 0 ? `${assessed}/${matrix.length} areas assessed` : null,
     clarifications > 0 ? `${clarifications} clarification questions` : null,
-    sowQualificationData.outcome?.recommendation && sowQualificationData.outcome.recommendation !== 'Not decided'
-      ? `Recommendation: ${sowQualificationData.outcome.recommendation}` : null,
+    patch.outcome?.recommendation && patch.outcome.recommendation !== 'Not decided'
+      ? `Recommendation: ${patch.outcome.recommendation}` : null,
   ].filter(Boolean).join(' · ') || 'SOW Qualification updated';
 
-  await Promise.all([
-    _insertActivityEvent({
-      tenderId,
-      actionType: 'sow_qualification_update',
-      actionLabel: 'SOW Qualification updated',
-      title: 'SOW Qualification Updated',
-      description: `${summary}. ${reason}`.trim(),
-      category: 'action',
-      severity: 'info',
-      reason,
-    }),
-    _insertAuditEvent({
-      tenderId,
-      action: 'sow_qualification_update',
-      eventCode: 'TND019-SOW',
-      eventName: 'SOW Qualification Update',
-      entityType: 'tender',
-      entityId: tenderId,
-      reason,
-      category: 'action',
-    }),
-  ]);
-
-  return { success: true };
+  return savedWithAuditOutcome(await appendActivityAudit({
+    tenderId,
+    actionType: 'sow_qualification_update',
+    title: 'SOW Qualification Updated',
+    description: `${summary}. ${opts.reason}`.trim(),
+    reason: opts.reason,
+    actorName: opts.actorName,
+  }));
 }
 
 
 /**
  * 1i. Update tender Technical Qualification data
  *
- * Persists structured technical qualification into type_details.technical_qualification_data.
+ * TCW-T1 (P2b): PATCH-MERGE into type_details.technical_qualification_data
+ * (see updateTenderSowData for the shared contract).
  * Does NOT move tender stage. Does NOT change CRM stage.
  * Does NOT touch sow_data, customer_fit_data, sow_qualification_data, document-output tooling, or any other type_details key.
  */
 export async function updateTenderTechnicalQualificationData(
   tenderId: string,
-  technicalQualificationData: Record<string, any>,
-  reason: string = '',
+  patch: Record<string, any>,
+  reasonOrOpts: string | TenderFacetWriteOpts = '',
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderDetails(
-    tenderId,
-    { technical_qualification_data: technicalQualificationData },
-  );
-  if (canonical.error) return { success: false, error: canonical.error };
+  const opts = resolveWriteOpts(reasonOrOpts);
+  const canonical = await patchCanonicalTenderFacet(tenderId, 'technical_qualification_data', patch, opts);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  const caps = Array.isArray(technicalQualificationData.capability_assessment) ? technicalQualificationData.capability_assessment : [];
+  const caps = Array.isArray(patch.capability_assessment) ? patch.capability_assessment : [];
   const assessed = caps.filter((r: any) => r.fit && r.fit !== 'Not Assessed').length;
-  const gaps = Array.isArray(technicalQualificationData.gaps) ? technicalQualificationData.gaps.length : 0;
-  const clarifications = Array.isArray(technicalQualificationData.clarifications) ? technicalQualificationData.clarifications.length : 0;
+  const gaps = Array.isArray(patch.gaps) ? patch.gaps.length : 0;
+  const clarifications = Array.isArray(patch.clarifications) ? patch.clarifications.length : 0;
   const summary = [
     assessed > 0 ? `${assessed}/${caps.length} capabilities assessed` : null,
     gaps > 0 ? `${gaps} technical gaps` : null,
     clarifications > 0 ? `${clarifications} clarifications` : null,
-    technicalQualificationData.recommendation?.outcome && technicalQualificationData.recommendation.outcome !== 'Not decided'
-      ? `Recommendation: ${technicalQualificationData.recommendation.outcome}` : null,
+    patch.recommendation?.outcome && patch.recommendation.outcome !== 'Not decided'
+      ? `Recommendation: ${patch.recommendation.outcome}` : null,
   ].filter(Boolean).join(' · ') || 'Technical Qualification updated';
 
-  await Promise.all([
-    _insertActivityEvent({
-      tenderId,
-      actionType: 'technical_qualification_update',
-      actionLabel: 'Technical Qualification updated',
-      title: 'Technical Qualification Updated',
-      description: `${summary}. ${reason}`.trim(),
-      category: 'action',
-      severity: 'info',
-      reason,
-    }),
-    _insertAuditEvent({
-      tenderId,
-      action: 'technical_qualification_update',
-      eventCode: 'TND020-TECH',
-      eventName: 'Technical Qualification Update',
-      entityType: 'tender',
-      entityId: tenderId,
-      reason,
-      category: 'action',
-    }),
-  ]);
-
-  return { success: true };
+  return savedWithAuditOutcome(await appendActivityAudit({
+    tenderId,
+    actionType: 'technical_qualification_update',
+    title: 'Technical Qualification Updated',
+    description: `${summary}. ${opts.reason}`.trim(),
+    reason: opts.reason,
+    actorName: opts.actorName,
+  }));
 }
 
 
 /**
  * 1j. Update tender Risk Snapshot data
  *
- * Persists structured risk snapshot into type_details.risk_snapshot_data.
+ * TCW-T1 (P2b): PATCH-MERGE into type_details.risk_snapshot_data (see
+ * updateTenderSowData for the shared contract).
  * Does NOT move tender stage. Does NOT change CRM stage.
  * Does NOT touch sow_data, customer_fit_data, sow_qualification_data,
  * technical_qualification_data, document-output tooling, or any other type_details key.
  */
 export async function updateTenderRiskSnapshotData(
   tenderId: string,
-  riskSnapshotData: Record<string, any>,
-  reason: string = '',
+  patch: Record<string, any>,
+  reasonOrOpts: string | TenderFacetWriteOpts = '',
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderDetails(
-    tenderId,
-    { risk_snapshot_data: riskSnapshotData },
-  );
-  if (canonical.error) return { success: false, error: canonical.error };
+  const opts = resolveWriteOpts(reasonOrOpts);
+  const canonical = await patchCanonicalTenderFacet(tenderId, 'risk_snapshot_data', patch, opts);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  const register = Array.isArray(riskSnapshotData.register) ? riskSnapshotData.register : [];
+  const register = Array.isArray(patch.register) ? patch.register : [];
   const critical = register.filter((r: any) => r.severity === 'Critical').length;
   const high = register.filter((r: any) => r.severity === 'High').length;
   const bidBlockers = register.filter((r: any) => r.bid_blocker).length;
@@ -835,98 +816,68 @@ export async function updateTenderRiskSnapshotData(
     critical > 0 ? `${critical} critical` : null,
     high > 0 ? `${high} high` : null,
     bidBlockers > 0 ? `${bidBlockers} bid blockers` : null,
-    riskSnapshotData.recommendation?.outcome && riskSnapshotData.recommendation.outcome !== 'Not decided'
-      ? `Recommendation: ${riskSnapshotData.recommendation.outcome}` : null,
+    patch.recommendation?.outcome && patch.recommendation.outcome !== 'Not decided'
+      ? `Recommendation: ${patch.recommendation.outcome}` : null,
   ].filter(Boolean).join(' · ') || 'Risk Snapshot updated';
 
-  await Promise.all([
-    _insertActivityEvent({
-      tenderId,
-      actionType: 'risk_snapshot_update',
-      actionLabel: 'Risk Snapshot updated',
-      title: 'Risk Snapshot Updated',
-      description: `${summary}. ${reason}`.trim(),
-      category: 'action',
-      severity: 'info',
-      reason,
-    }),
-    _insertAuditEvent({
-      tenderId,
-      action: 'risk_snapshot_update',
-      eventCode: 'TND021-RISK',
-      eventName: 'Risk Snapshot Update',
-      entityType: 'tender',
-      entityId: tenderId,
-      reason,
-      category: 'action',
-    }),
-  ]);
-
-  return { success: true };
+  return savedWithAuditOutcome(await appendActivityAudit({
+    tenderId,
+    actionType: 'risk_snapshot_update',
+    title: 'Risk Snapshot Updated',
+    description: `${summary}. ${opts.reason}`.trim(),
+    reason: opts.reason,
+    actorName: opts.actorName,
+  }));
 }
 
 
 /**
  * 1k. Update tender Bid / No-Bid data
  *
- * Persists structured bid/no-bid decision data into type_details.bid_no_bid_data.
- * Uses MERGE behavior — only patches bid_no_bid_data without overwriting other keys.
+ * TCW-T1 (P2b): PATCH-MERGE into type_details.bid_no_bid_data (see
+ * updateTenderSowData for the shared contract). Tab key map: decision +
+ * decision_checklist + recommendation | win_strategy | resource_commitment |
+ * decision_record — each tab sends ONLY its own keys.
  *
  * Does NOT move tender stage. Does NOT change CRM stage.
  * Does NOT touch sow_data, qualification data, risk data, document-output tooling, or any other type_details key.
  */
 export async function updateTenderBidNoBidData(
   tenderId: string,
-  bidNoBidData: Record<string, any>,
-  reason: string = '',
+  patch: Record<string, any>,
+  reasonOrOpts: string | TenderFacetWriteOpts = '',
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderDetails(
-    tenderId,
-    { bid_no_bid_data: bidNoBidData },
-  );
-  if (canonical.error) return { success: false, error: canonical.error };
+  const opts = resolveWriteOpts(reasonOrOpts);
+  const canonical = await patchCanonicalTenderFacet(tenderId, 'bid_no_bid_data', patch, opts);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  const decision = bidNoBidData.decision?.decision || bidNoBidData.decision_record?.decision || '';
+  const decision = patch.decision?.decision || patch.decision_record?.decision || '';
   const summary = [
     decision && decision !== 'Not Decided' ? `Decision: ${decision}` : null,
-    bidNoBidData.recommendation?.next_step && bidNoBidData.recommendation.next_step !== 'Not Decided'
-      ? `Next: ${bidNoBidData.recommendation.next_step}` : null,
-    Array.isArray(bidNoBidData.win_strategy?.win_themes) && bidNoBidData.win_strategy.win_themes.length > 0
-      ? `${bidNoBidData.win_strategy.win_themes.length} win themes` : null,
+    patch.recommendation?.next_step && patch.recommendation.next_step !== 'Not Decided'
+      ? `Next: ${patch.recommendation.next_step}` : null,
+    Array.isArray(patch.win_strategy?.win_themes) && patch.win_strategy.win_themes.length > 0
+      ? `${patch.win_strategy.win_themes.length} win themes` : null,
   ].filter(Boolean).join(' · ') || 'Bid / No-Bid data updated';
 
-  await Promise.all([
-    _insertActivityEvent({
-      tenderId,
-      actionType: 'bid_no_bid_update',
-      actionLabel: 'Bid / No-Bid updated',
-      title: 'Bid / No-Bid Updated',
-      description: `${summary}. ${reason}`.trim(),
-      category: 'action',
-      severity: 'info',
-      reason,
-    }),
-    _insertAuditEvent({
-      tenderId,
-      action: 'bid_no_bid_update',
-      eventCode: 'TND022-BNB',
-      eventName: 'Bid / No-Bid Update',
-      entityType: 'tender',
-      entityId: tenderId,
-      reason,
-      category: 'action',
-    }),
-  ]);
-
-  return { success: true };
+  return savedWithAuditOutcome(await appendActivityAudit({
+    tenderId,
+    actionType: 'bid_no_bid_update',
+    title: 'Bid / No-Bid Updated',
+    description: `${summary}. ${opts.reason}`.trim(),
+    reason: opts.reason,
+    actorName: opts.actorName,
+  }));
 }
 
 
 /**
  * 1l. Update tender Solution Design data
  *
- * Persists structured solution design data into type_details.solution_design_data.
- * Uses MERGE behavior — only patches solution_design_data without overwriting other keys.
+ * TCW-T1 (P2b): PATCH-MERGE into type_details.solution_design_data (see
+ * updateTenderSowData for the shared contract). Tab key map: configuration |
+ * hop | ham | hip | scope_matrix | sla_kpi | assumptions_dependencies — each
+ * tab sends ONLY its own keys.
  *
  * Does NOT move tender stage. Does NOT change CRM stage.
  * Does NOT touch sow_data, qualification data, risk data, bid_no_bid_data, document-output tooling,
@@ -934,43 +885,24 @@ export async function updateTenderBidNoBidData(
  */
 export async function updateTenderSolutionDesignData(
   tenderId: string,
-  solutionDesignData: Record<string, any>,
-  reason: string = '',
+  patch: Record<string, any>,
+  reasonOrOpts: string | TenderFacetWriteOpts = '',
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderDetails(
+  const opts = resolveWriteOpts(reasonOrOpts);
+  const canonical = await patchCanonicalTenderFacet(tenderId, 'solution_design_data', patch, opts);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
+
+  const patchedKeys = Object.keys(patch);
+  const summary = `Solution Design updated (${patchedKeys.join(', ') || 'no sections'}). ${opts.reason}`.trim();
+
+  return savedWithAuditOutcome(await appendActivityAudit({
     tenderId,
-    { solution_design_data: solutionDesignData },
-  );
-  if (canonical.error) return { success: false, error: canonical.error };
-
-  const tabKeys = ['hop', 'ham', 'hip', 'scope_matrix', 'sla_kpi', 'assumptions_dependencies'];
-  const savedTabs = tabKeys.filter(k => solutionDesignData[k] && typeof solutionDesignData[k] === 'object').length;
-  const summary = `Solution Design updated (${savedTabs}/${tabKeys.length} sections). ${reason}`.trim();
-
-  await Promise.all([
-    _insertActivityEvent({
-      tenderId,
-      actionType: 'solution_design_update',
-      actionLabel: 'Solution Design updated',
-      title: 'Solution Design Updated',
-      description: summary,
-      category: 'action',
-      severity: 'info',
-      reason,
-    }),
-    _insertAuditEvent({
-      tenderId,
-      action: 'solution_design_update',
-      eventCode: 'TND023-SOL',
-      eventName: 'Solution Design Update',
-      entityType: 'tender',
-      entityId: tenderId,
-      reason,
-      category: 'action',
-    }),
-  ]);
-
-  return { success: true };
+    actionType: 'solution_design_update',
+    title: 'Solution Design Updated',
+    description: summary,
+    reason: opts.reason,
+    actorName: opts.actorName,
+  }));
 }
 
 /**
@@ -989,6 +921,7 @@ export async function updateTenderPricingData(
   section: TenderPricingSectionKey,
   sectionData: Record<string, any>,
   reason: string = '',
+  expectedRevision?: string,
 ): Promise<ActionResult> {
   const canonical = await mergeCanonicalTenderFacet(
     tenderId,
@@ -996,18 +929,17 @@ export async function updateTenderPricingData(
     section,
     sectionData,
     value => normalizeTenderPricingData(value) as unknown as Record<string, any>,
+    expectedRevision,
   );
-  if (canonical.error) return { success: false, error: canonical.error };
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
   const summary = summarizePricingSection(section, sectionData);
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: `pricing.${section}`,
     newValue: summary,
     notes: `P&L / Pricing updated | ${section}${reason ? ` | ${reason}` : ''}`,
-  });
-
-  return { success: true };
+  }));
 }
 
 /**
@@ -1036,18 +968,16 @@ export async function updateTenderDraftingData(
     undefined,
     expectedRevision,
   );
-  if (canonical.error) return { success: false, error: canonical.error };
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
   console.log(`[updateTenderDraftingData] Successfully updated tender_drafting.${section} for tender ${tenderId}`);
 
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: `tender_drafting.${section}`,
     newValue: `${section} updated`,
     notes: `Tender Drafting updated | ${section}${reason ? ` | ${reason}` : ''}`,
-  });
-
-  return { success: true };
+  }));
 }
 
 export async function updateTenderApprovalMatrixData(
@@ -1055,17 +985,17 @@ export async function updateTenderApprovalMatrixData(
   section: string,
   sectionData: any,
   reason: string = '',
+  expectedRevision?: string,
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderFacet(tenderId, 'approval_matrix', section, sectionData);
-  if (canonical.error) return { success: false, error: canonical.error };
+  const canonical = await mergeCanonicalTenderFacet(tenderId, 'approval_matrix', section, sectionData, undefined, expectedRevision);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: `approval_matrix.${section}`,
     newValue: `${section} updated`,
     notes: `Approval Matrix updated | ${section}${reason ? ` | ${reason}` : ''}`,
-  });
-  return { success: true };
+  }));
 }
 
 export async function updateTenderFinalApprovedData(
@@ -1073,17 +1003,17 @@ export async function updateTenderFinalApprovedData(
   section: string,
   sectionData: any,
   reason: string = '',
+  expectedRevision?: string,
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderFacet(tenderId, 'final_approved', section, sectionData);
-  if (canonical.error) return { success: false, error: canonical.error };
+  const canonical = await mergeCanonicalTenderFacet(tenderId, 'final_approved', section, sectionData, undefined, expectedRevision);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: `final_approved.${section}`,
     newValue: `${section} updated`,
     notes: `Final approval facts updated | ${section}${reason ? ` | ${reason}` : ''}`,
-  });
-  return { success: true };
+  }));
 }
 
 /**
@@ -1095,20 +1025,19 @@ export async function updateTenderSubmissionData(
   section: string,
   sectionData: any,
   reason: string = '',
+  expectedRevision?: string,
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderFacet(tenderId, 'submission', section, sectionData);
-  if (canonical.error) return { success: false, error: canonical.error };
+  const canonical = await mergeCanonicalTenderFacet(tenderId, 'submission', section, sectionData, undefined, expectedRevision);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
   console.log(`[updateTenderSubmissionData] Successfully updated submission.${section} for tender ${tenderId}`);
 
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: `submission.${section}`,
     newValue: `${section} updated`,
     notes: `Submission data updated | ${section}${reason ? ` | ${reason}` : ''}`,
-  });
-
-  return { success: true };
+  }));
 }
 
 /**
@@ -1123,18 +1052,17 @@ export async function updateTenderIdentifiedData(
   section: string,
   sectionData: any,
   reason: string = '',
+  expectedRevision?: string,
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderFacet(tenderId, 'identified', section, sectionData);
-  if (canonical.error) return { success: false, error: canonical.error };
+  const canonical = await mergeCanonicalTenderFacet(tenderId, 'identified', section, sectionData, undefined, expectedRevision);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: `identified.${section}`,
     newValue: `${section} updated`,
     notes: `Identified stage updated | ${section}${reason ? ` | ${reason}` : ''}`,
-  });
-
-  return { success: true };
+  }));
 }
 
 /**
@@ -1146,20 +1074,19 @@ export async function updateTenderClientEvaluationData(
   section: string,
   sectionData: any,
   reason: string = '',
+  expectedRevision?: string,
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderFacet(tenderId, 'client_evaluation', section, sectionData);
-  if (canonical.error) return { success: false, error: canonical.error };
+  const canonical = await mergeCanonicalTenderFacet(tenderId, 'client_evaluation', section, sectionData, undefined, expectedRevision);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
   console.log(`[updateTenderClientEvaluationData] Successfully updated client_evaluation.${section} for tender ${tenderId}`);
 
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: `client_evaluation.${section}`,
     newValue: `${section} updated`,
     notes: `Client evaluation updated | ${section}${reason ? ` | ${reason}` : ''}`,
-  });
-
-  return { success: true };
+  }));
 }
 
 /**
@@ -1174,20 +1101,19 @@ export async function updateTenderClarificationData(
   section: string,
   sectionData: any,
   reason: string = '',
+  expectedRevision?: string,
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderFacet(tenderId, 'clarification', section, sectionData);
-  if (canonical.error) return { success: false, error: canonical.error };
+  const canonical = await mergeCanonicalTenderFacet(tenderId, 'clarification', section, sectionData, undefined, expectedRevision);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
   console.log(`[updateTenderClarificationData] Successfully updated clarification.${section} for tender ${tenderId}`);
 
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: `clarification.${section}`,
     newValue: `${section} updated`,
     notes: `Clarification updated | ${section}${reason ? ` | ${reason}` : ''}`,
-  });
-
-  return { success: true };
+  }));
 }
 
 /**
@@ -1199,20 +1125,19 @@ export async function updateTenderNegotiationData(
   section: string,
   sectionData: any,
   reason: string = '',
+  expectedRevision?: string,
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderFacet(tenderId, 'negotiation_data', section, sectionData);
-  if (canonical.error) return { success: false, error: canonical.error };
+  const canonical = await mergeCanonicalTenderFacet(tenderId, 'negotiation_data', section, sectionData, undefined, expectedRevision);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
   console.log(`[updateTenderNegotiationData] Successfully updated negotiation_data.${section} for tender ${tenderId}`);
 
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: `negotiation_data.${section}`,
     newValue: `${section} updated`,
     notes: `Negotiation updated | ${section}${reason ? ` | ${reason}` : ''}`,
-  });
-
-  return { success: true };
+  }));
 }
 
 /**
@@ -1224,20 +1149,19 @@ export async function updateTenderAwardedData(
   section: string,
   sectionData: any,
   reason: string = '',
+  expectedRevision?: string,
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderFacet(tenderId, 'awarded_data', section, sectionData);
-  if (canonical.error) return { success: false, error: canonical.error };
+  const canonical = await mergeCanonicalTenderFacet(tenderId, 'awarded_data', section, sectionData, undefined, expectedRevision);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
   console.log(`[updateTenderAwardedData] Updated awarded_data.${section} for tender ${tenderId}`);
 
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: `awarded_data.${section}`,
     newValue: `${section} updated`,
     notes: `Award stage updated | ${section}${reason ? ` | ${reason}` : ''}`,
-  });
-
-  return { success: true };
+  }));
 }
 
 export async function updateTenderLostWithdrawnData(
@@ -1245,20 +1169,19 @@ export async function updateTenderLostWithdrawnData(
   section: string,
   sectionData: any,
   reason: string = '',
+  expectedRevision?: string,
 ): Promise<ActionResult> {
-  const canonical = await mergeCanonicalTenderFacet(tenderId, 'lost_withdrawn_data', section, sectionData);
-  if (canonical.error) return { success: false, error: canonical.error };
+  const canonical = await mergeCanonicalTenderFacet(tenderId, 'lost_withdrawn_data', section, sectionData, undefined, expectedRevision);
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
   console.log(`[updateTenderLostWithdrawnData] Updated lost_withdrawn_data.${section} for tender ${tenderId}`);
 
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: `lost_withdrawn_data.${section}`,
     newValue: `${section} updated`,
     notes: `Lost/Withdrawn stage updated | ${section}${reason ? ` | ${reason}` : ''}`,
-  });
-
-  return { success: true };
+  }));
 }
 
 export async function addTenderDocument(
@@ -1269,17 +1192,15 @@ export async function addTenderDocument(
     const withoutDuplicate = documents.filter(doc => doc.id !== document.id);
     return [...withoutDuplicate, document];
   });
-  if (canonical.error) return { success: false, error: canonical.error };
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: 'documents',
     oldValue: String(canonical.before.length),
     newValue: String(canonical.after.length),
     notes: `Document uploaded | ${document.document_name} | ${document.document_category}`,
-  });
-
-  return { success: true };
+  }));
 }
 
 export async function updateTenderDocumentMetadata(
@@ -1293,17 +1214,15 @@ export async function updateTenderDocumentMetadata(
     documentName = patch.document_name ?? doc.document_name;
     return { ...doc, ...patch, id: doc.id, tender_id: doc.tender_id || tenderId };
   }));
-  if (canonical.error) return { success: false, error: canonical.error };
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: 'documents',
     oldValue: documentId,
     newValue: documentName || documentId,
     notes: `Document metadata updated | ${documentName || documentId}`,
-  });
-
-  return { success: true };
+  }));
 }
 
 export async function changeTenderDocumentStatus(
@@ -1319,17 +1238,15 @@ export async function changeTenderDocumentStatus(
     documentName = doc.document_name;
     return { ...doc, status };
   }));
-  if (canonical.error) return { success: false, error: canonical.error };
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
 
-  await writeCanonicalTenderAudit({
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
     tenderId,
     fieldChanged: 'documents.status',
     oldValue: previousStatus,
     newValue: status,
     notes: `Document status changed | ${documentName || documentId}`,
-  });
-
-  return { success: true };
+  }));
 }
 
 export async function markTenderDocumentSuperseded(
@@ -1354,8 +1271,227 @@ export async function updatePackStatus(
   return disabledLegacyTenderChildWrite('Tender pack status updates');
 }
 
+// ─── Submission Readiness register (TCW-T1, design pin P1) ────
+//
+// The three registers live in ONE canonical facet on the tender row:
+// `type_details.submission_readiness` with sections `placeholders[]`,
+// `required_documents[]`, `compliance_items[]`. Full-row CRUD goes through the
+// section writer below; the three per-item status operations mutate exactly ONE
+// row by its exact id. Everything goes through the guarded store
+// (saveTenderSourceRecord) with `updated_at` revision protection, is read-back
+// confirmed, and reports a zero-row update as an honest failure.
+// The register is INFORMATIONAL: nothing here gates stage movement.
+
+interface SubmissionReadinessReadForWrite {
+  ok: boolean;
+  status?: TenderSaveStatus;
+  error?: string;
+  aggregate?: TenderSourceAggregate;
+  /** The stored facet VERBATIM — sibling sections and unknown keys byte-preserved on write. */
+  rawFacet: Record<string, any>;
+  rawRows: (section: SubmissionReadinessSectionKey) => any[];
+}
+
+async function readSubmissionReadinessForWrite(tenderId: string): Promise<SubmissionReadinessReadForWrite> {
+  const empty = { rawFacet: {}, rawRows: () => [] as any[] };
+  let aggregate;
+  try {
+    aggregate = await readTenderSourceAggregate(tenderSourceRecordStore, tenderId);
+  } catch (error) {
+    return { ok: false, status: 'failed', error: error instanceof Error ? error.message : String(error), ...empty };
+  }
+  if (!aggregate) {
+    return {
+      ok: false,
+      status: 'not_found',
+      error: 'Canonical tender ticket not found in commercial_tickets. Legacy tenders writes are disabled.',
+      ...empty,
+    };
+  }
+  const raw = aggregate.typeDetails[SUBMISSION_READINESS_FACET_KEY];
+  const rawFacet = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, any> : {};
+  return {
+    ok: true,
+    aggregate,
+    rawFacet,
+    rawRows: section => (Array.isArray(rawFacet[section]) ? rawFacet[section] as any[] : []),
+  };
+}
+
 /**
- * 3. Update placeholder status
+ * Write one section of the facet and CONFIRM the stored rows before reporting
+ * success: every written row must come back (by exact id) with the same status
+ * and name field, and no extra rows may appear.
+ */
+async function persistSubmissionReadinessSection(args: {
+  tenderId: string;
+  section: SubmissionReadinessSectionKey;
+  nextRows: Record<string, any>[];
+  rawFacet: Record<string, any>;
+  expectedRevision: string;
+  actorName?: string;
+}): Promise<{ ok: true } | { ok: false; status?: TenderSaveStatus; error: string }> {
+  const result = await saveTenderSourceRecord(tenderSourceRecordStore, {
+    tenderId: args.tenderId,
+    expectedRevision: args.expectedRevision,
+    typeDetailsPatch: {
+      [SUBMISSION_READINESS_FACET_KEY]: { ...args.rawFacet, [args.section]: args.nextRows },
+    },
+    changedFieldPaths: [`type_details.${SUBMISSION_READINESS_FACET_KEY}.${args.section}`],
+    actor: saveActor(args.actorName),
+    origin: 'manual',
+    recordAudit: false,
+  });
+
+  if (!result.success) {
+    return { ok: false, status: result.status, error: result.warning ?? result.error ?? 'Tender save failed.' };
+  }
+
+  // Read-back comparison against the CONFIRMED stored row the update returned.
+  const storedFacetRaw = result.aggregate?.typeDetails?.[SUBMISSION_READINESS_FACET_KEY];
+  const storedFacet = storedFacetRaw && typeof storedFacetRaw === 'object' && !Array.isArray(storedFacetRaw)
+    ? storedFacetRaw as Record<string, any>
+    : {};
+  const storedRows: any[] = Array.isArray(storedFacet[args.section]) ? storedFacet[args.section] : [];
+  const nameField = SUBMISSION_READINESS_SECTION_CONTRACTS[args.section].nameField;
+
+  const mismatch = storedRows.length !== args.nextRows.length
+    || args.nextRows.some(written => {
+      const stored = storedRows.find(row => row && typeof row === 'object' && row.id === written.id);
+      return !stored || stored.status !== written.status || stored[nameField] !== written[nameField];
+    });
+  if (mismatch) {
+    return {
+      ok: false,
+      status: 'failed',
+      error: `The save completed but the stored ${args.section} read back differently than what was written. Reload before retrying.`,
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * 3a. Submission Readiness — full-section writer (P1).
+ *
+ * Replaces the rows of ONE section (`placeholders` | `required_documents` |
+ * `compliance_items`) inside type_details.submission_readiness. Sibling
+ * sections and every other type_details key are preserved verbatim. Rows are
+ * validated (unique non-empty ids, name field, status inside the section's
+ * union) and stamped with updated_at / updated_by where the caller did not
+ * provide them. Read-back confirmed; zero-row update = honest failure;
+ * `expectedRevision` refusal is non-destructive ('stale').
+ */
+export async function updateTenderSubmissionReadinessData(
+  tenderId: string,
+  section: SubmissionReadinessSectionKey,
+  sectionRows: Array<Record<string, any>>,
+  reasonOrOpts: string | TenderFacetWriteOpts = '',
+): Promise<ActionResult> {
+  const opts = resolveWriteOpts(reasonOrOpts);
+  if (!isSubmissionReadinessSectionKey(section)) {
+    return { success: false, error: `Unknown submission readiness section: ${String(section)}.` };
+  }
+  const invalid = validateSubmissionReadinessRows(section, sectionRows);
+  if (invalid) return { success: false, error: invalid };
+
+  const read = await readSubmissionReadinessForWrite(tenderId);
+  if (!read.ok || !read.aggregate) return { success: false, status: read.status, error: read.error };
+
+  const { userName } = actor();
+  const stampedBy = opts.actorName?.trim() ? opts.actorName : userName;
+  const nowIso = new Date().toISOString();
+  const nextRows = sectionRows.map(row => ({
+    ...row,
+    updated_at: typeof row.updated_at === 'string' && row.updated_at.trim() ? row.updated_at : nowIso,
+    updated_by: typeof row.updated_by === 'string' && row.updated_by.trim() ? row.updated_by : stampedBy,
+  }));
+
+  const write = await persistSubmissionReadinessSection({
+    tenderId,
+    section,
+    nextRows,
+    rawFacet: read.rawFacet,
+    expectedRevision: opts.expectedRevision ?? read.aggregate.revision.token,
+    actorName: opts.actorName,
+  });
+  if (!write.ok) return { success: false, status: write.status, error: write.error };
+
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
+    tenderId,
+    fieldChanged: `${SUBMISSION_READINESS_FACET_KEY}.${section}`,
+    newValue: `${nextRows.length} rows`,
+    actorName: opts.actorName,
+    notes: `Submission readiness updated | ${section} | ${nextRows.length} rows${opts.reason ? ` | ${opts.reason}` : ''}`,
+  }));
+}
+
+/**
+ * Shared per-item mutation: exactly ONE row, targeted by exact id. A missing id
+ * is an honest failure and nothing is written; sibling rows are byte-preserved.
+ */
+async function updateSubmissionReadinessItem(args: {
+  tenderId: string;
+  section: SubmissionReadinessSectionKey;
+  itemId: string;
+  newStatus: string;
+  previousStatus: string;
+  itemName: string;
+  extraFields?: Record<string, any>;
+  opts?: TenderFacetWriteOpts;
+  auditNoun: string;
+}): Promise<ActionResult> {
+  const { tenderId, section, itemId, newStatus } = args;
+  const opts = args.opts ?? {};
+  if (typeof itemId !== 'string' || !itemId.trim()) {
+    return { success: false, error: `A ${args.auditNoun} id is required — updates target exactly one register row.` };
+  }
+  if (!isValidSubmissionReadinessStatus(section, newStatus)) {
+    const allowed = SUBMISSION_READINESS_SECTION_CONTRACTS[section].statuses.join(', ');
+    return { success: false, error: `Status "${newStatus}" is not a valid ${args.auditNoun} status. Allowed: ${allowed}.` };
+  }
+
+  const read = await readSubmissionReadinessForWrite(tenderId);
+  if (!read.ok || !read.aggregate) return { success: false, status: read.status, error: read.error };
+
+  const rawRows = read.rawRows(section);
+  const target = rawRows.find(row => row && typeof row === 'object' && row.id === itemId);
+  if (!target) {
+    return {
+      success: false,
+      error: `No ${args.auditNoun} with id "${itemId}" exists in this tender's ${section} register (${rawRows.length} recorded). Nothing was changed.`,
+    };
+  }
+
+  const { userName } = actor();
+  const stampedBy = opts.actorName?.trim() ? opts.actorName : userName;
+  const nextRows = rawRows.map(row =>
+    row && typeof row === 'object' && row.id === itemId
+      ? { ...row, status: newStatus, ...(args.extraFields ?? {}), updated_at: new Date().toISOString(), updated_by: stampedBy }
+      : row,
+  );
+
+  const write = await persistSubmissionReadinessSection({
+    tenderId,
+    section,
+    nextRows,
+    rawFacet: read.rawFacet,
+    expectedRevision: opts.expectedRevision ?? read.aggregate.revision.token,
+    actorName: opts.actorName,
+  });
+  if (!write.ok) return { success: false, status: write.status, error: write.error };
+
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
+    tenderId,
+    fieldChanged: `${SUBMISSION_READINESS_FACET_KEY}.${section}`,
+    oldValue: args.previousStatus || null,
+    newValue: newStatus,
+    actorName: opts.actorName,
+    notes: `${args.auditNoun} status changed | ${args.itemName || itemId} | ${args.previousStatus || 'unknown'} → ${newStatus}`,
+  }));
+}
+
+/**
+ * 3. Update placeholder status (P1 — canonical submission_readiness register).
  */
 export async function updatePlaceholderStatus(
   tenderId: string,
@@ -1364,13 +1500,23 @@ export async function updatePlaceholderStatus(
   previousStatus: string,
   newStatus: string,
   newValue?: string,
+  opts?: TenderFacetWriteOpts,
 ): Promise<ActionResult> {
-  void tenderId; void placeholderId; void label; void previousStatus; void newStatus; void newValue;
-  return disabledLegacyTenderChildWrite('Tender placeholder updates');
+  return updateSubmissionReadinessItem({
+    tenderId,
+    section: 'placeholders',
+    itemId: placeholderId,
+    newStatus,
+    previousStatus,
+    itemName: label,
+    extraFields: newValue !== undefined ? { value: newValue } : undefined,
+    opts,
+    auditNoun: 'Placeholder',
+  });
 }
 
 /**
- * 4. Update required document status
+ * 4. Update required document status (P1 — canonical submission_readiness register).
  */
 export async function updateRequiredDocStatus(
   tenderId: string,
@@ -1378,13 +1524,22 @@ export async function updateRequiredDocStatus(
   docName: string,
   previousStatus: string,
   newStatus: string,
+  opts?: TenderFacetWriteOpts,
 ): Promise<ActionResult> {
-  void tenderId; void docId; void docName; void previousStatus; void newStatus;
-  return disabledLegacyTenderChildWrite('Tender required document updates');
+  return updateSubmissionReadinessItem({
+    tenderId,
+    section: 'required_documents',
+    itemId: docId,
+    newStatus,
+    previousStatus,
+    itemName: docName,
+    opts,
+    auditNoun: 'Required document',
+  });
 }
 
 /**
- * 5. Update compliance item status
+ * 5. Update compliance item status (P1 — canonical submission_readiness register).
  */
 export async function updateComplianceStatus(
   tenderId: string,
@@ -1393,9 +1548,19 @@ export async function updateComplianceStatus(
   previousStatus: string,
   newStatus: string,
   evidence?: string,
+  opts?: TenderFacetWriteOpts,
 ): Promise<ActionResult> {
-  void tenderId; void itemId; void requirement; void previousStatus; void newStatus; void evidence;
-  return disabledLegacyTenderChildWrite('Tender compliance item updates');
+  return updateSubmissionReadinessItem({
+    tenderId,
+    section: 'compliance_items',
+    itemId,
+    newStatus,
+    previousStatus,
+    itemName: requirement,
+    extraFields: evidence !== undefined ? { evidence } : undefined,
+    opts,
+    auditNoun: 'Compliance item',
+  });
 }
 
 /**
@@ -1477,8 +1642,13 @@ export async function updateBlockReviewStatus(
   department: "ops" | "finance" | "legal",
   status: "Pending" | "Approved" | "Rejected",
   comment: string,
-  reviewerName: string = "System",
+  reviewerName?: string,
 ): Promise<ActionResult> {
+  // P4 — actor truth: the recorded reviewer defaults to the SESSION user, never
+  // a fabricated "System". A signed-out session records the auth-state module's
+  // own honest literal.
+  const reviewer = reviewerName?.trim() ? reviewerName : actor().userName;
+
   let aggregate;
   try {
     aggregate = await readTenderSourceAggregate(tenderSourceRecordStore, tenderId);
@@ -1496,7 +1666,7 @@ export async function updateBlockReviewStatus(
       ...b,
       [`${department}_status`]: status,
       [`${department}_comment`]: comment,
-      [`${department}_reviewer`]: reviewerName,
+      [`${department}_reviewer`]: reviewer,
       [`${department}_reviewed_at`]: new Date().toISOString(),
     };
   });
