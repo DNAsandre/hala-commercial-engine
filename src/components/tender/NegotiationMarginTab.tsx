@@ -16,10 +16,16 @@ import { toast } from "sonner";
 import { Save, Loader2, Info, DollarSign, TrendingDown, TrendingUp, Minus, ArrowRight } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderNegotiationData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
-export default function NegotiationMarginTab({ ws, reload }: Props) {
+export default function NegotiationMarginTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.negotiation_data?.margin_impact ?? {};
@@ -41,7 +47,7 @@ export default function NegotiationMarginTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const valueDelta = currentValue - originalValue;
   const gpDelta = currentGp - originalGp;
@@ -55,12 +61,13 @@ export default function NegotiationMarginTab({ ws, reload }: Props) {
         round_number: roundNumber, concessions_summary: concessionsSummary,
         red_lines: redLines, impact_notes: impactNotes,
       };
-      const res = await updateTenderNegotiationData(tenderId, "margin_impact", payload, `Round ${roundNumber}: ${currentGp.toFixed(1)}% GP`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Margin impact saved."); setDirty(false); reload();
+      const res = await updateTenderNegotiationData(tenderId, "margin_impact", payload, `Round ${roundNumber}: ${currentGp.toFixed(1)}% GP`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Margin impact saved.")) return;
+      setDirty(false); onDirtyChange?.(false); reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [currentValue, currentGp, roundNumber, concessionsSummary, redLines, impactNotes, tenderId, reload]);
+  }, [currentValue, currentGp, roundNumber, concessionsSummary, redLines, impactNotes, tenderId, reload, ws, onDirtyChange]);
 
   const formatSar = (n: number) => n >= 1_000_000 ? `SAR ${(n / 1_000_000).toFixed(2)}M` : n >= 1_000 ? `SAR ${(n / 1_000).toFixed(0)}K` : `SAR ${n.toLocaleString()}`;
   const gpBarColor = (gp: number) => gp >= 22 ? "bg-emerald-500" : gp >= 15 ? "bg-amber-500" : "bg-red-500";

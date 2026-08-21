@@ -18,10 +18,16 @@ import { toast } from "sonner";
 import { Save, Loader2, Info, Trophy, CheckCircle2, Calendar, FileText, DollarSign } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderAwardedData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
-export default function AwardNoticeTab({ ws, reload }: Props) {
+export default function AwardNoticeTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.awarded_data?.award_notice ?? {};
@@ -39,7 +45,7 @@ export default function AwardNoticeTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const formatSar = (n: number) => n >= 1_000_000 ? `SAR ${(n / 1_000_000).toFixed(2)}M` : n >= 1_000 ? `SAR ${(n / 1_000).toFixed(0)}K` : `SAR ${n.toLocaleString()}`;
 
@@ -52,12 +58,13 @@ export default function AwardNoticeTab({ ws, reload }: Props) {
         awarded_value: awardedValue, awarded_gp: awardedGp,
         contract_duration: contractDuration, start_date: startDate, notes,
       };
-      const res = await updateTenderAwardedData(tenderId, "award_notice", payload, `Awarded ${formatSar(awardedValue)}`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Award notice saved."); setDirty(false); reload();
+      const res = await updateTenderAwardedData(tenderId, "award_notice", payload, `Awarded ${formatSar(awardedValue)}`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Award notice saved.")) return;
+      setDirty(false); onDirtyChange?.(false); reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [awardDate, awardReference, awardType, clientContact, awardConditions, awardedValue, awardedGp, contractDuration, startDate, notes, tenderId, reload]);
+  }, [awardDate, awardReference, awardType, clientContact, awardConditions, awardedValue, awardedGp, contractDuration, startDate, notes, tenderId, reload, ws, onDirtyChange]);
 
   return (
     <div className="space-y-4">

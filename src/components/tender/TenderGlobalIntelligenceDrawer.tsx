@@ -1,22 +1,45 @@
 /**
  * TenderGlobalIntelligenceDrawer
- * 
+ *
  * Right-side sliding drawer for tender-wide intelligence that spans all stages.
  * Uses the same dark header + inner-tab architecture as stage task components.
- * 
+ *
  * Tabs:
- * 1. Activity Log — full tender audit timeline
- * 2. Audit Trail — formal audit entries (stage moves, saves, before/after)
- * 3. Executive Cognition — readiness, deadline, GP, signals
- * 4. Previous Stage Intelligence — cross-stage save status
+ * 1. Activity & Audit — the tender's audit history (ONE deduplicated feed) + note capture
+ * 2. Executive Cognition — deadline, GP, and honestly-labelled readiness tiles
+ * 3. Stage Intelligence — per-stage checks derived from the keys the stages actually store
+ * 4. Customer Link — customer identity context
+ *
+ * TCW-T4 honesty contract for this file:
+ *  - F5: `ws.activityEvents` and `ws.auditEntries` are two projections of the
+ *    SAME `commercial_ticket_audit` rows. The timeline consumes ONE of them
+ *    (the audit projection, which carries before/after) — every stored row
+ *    appears once and every counter counts the real row set.
+ *  - B13/B14: readiness tiles derive from real inputs or say "Not measured";
+ *    the compliance signal states "nothing recorded" instead of a green
+ *    "Ready" over an empty register.
+ *  - B15/B16: stage checks derive from the keys the writers actually store
+ *    (solution_design_data.configuration/hop/ham/hip/scope_matrix/sla_kpi,
+ *    pricing sections, per-block review statuses, canonical-with-legacy
+ *    approval matrix via projectTenderStageTruth) — no hardcoded `false`.
  */
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
-import { Activity, Clock, BarChart3, Layers, X, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { TenderWorkspace } from "@/lib/tender-workspace-data";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Activity, ArrowRightLeft, BarChart3, Building2, CheckCircle2 as CheckStage,
+  Clock, Layers, MessageSquare, MinusCircle, Pencil, Plus, TrendingUp, X, ZapOff,
+} from "lucide-react";
+import { toast } from "sonner";
+import type { TenderAuditEntry, TenderWorkspace } from "@/lib/tender-workspace-data";
 import { getTenderLocalCustomerLink, type TenderLocalCustomerLink } from "@/lib/tender-local-intelligence";
+import { createActivityNote } from "@/lib/supabase-tender-actions";
+import { normalizeTenderPricingData } from "@/lib/tender-pricing-types";
+import { isMeaningfulTenderValue } from "@/lib/proposal-block-foundation";
+import { projectTenderStageTruth } from "@/lib/tender-stage-source-truth";
+import { deriveDepartmentalReviewProgress } from "./FinalApprovedStage";
 
 // ═══════════════════════════════════════════════════════════
 // INNER TAB DEFINITIONS
@@ -117,28 +140,34 @@ export default function TenderGlobalIntelligenceDrawer({
 }
 
 // ═══════════════════════════════════════════════════════════
-// TAB 1: ACTIVITY LOG
+// TAB 1: ACTIVITY & AUDIT (single deduplicated feed — F5)
 // ═══════════════════════════════════════════════════════════
 
-import { createActivityNote } from "@/lib/supabase-tender-actions";
-import {
-  ACTIVITY_CATEGORIES,
-  SEVERITY_OPTIONS,
-  getSeverityColor,
-  getActivityCategoryLabel,
-  type ActivityCategory,
-  type EventSeverity,
-} from "@/lib/tender-workspace-data";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AlertTriangle, ShieldAlert, CheckCircle2, Info, Plus, Database } from "lucide-react";
-import { toast } from "sonner";
-import { useMemo } from "react";
+export type AuditEntryKind = "note" | "stage_move" | "update";
 
-function severityIcon(s?: EventSeverity) {
-  if (s === "critical") return <AlertTriangle className="w-3.5 h-3.5 text-red-500" />;
-  if (s === "high") return <AlertTriangle className="w-3.5 h-3.5 text-orange-500" />;
-  if (s === "warning") return <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />;
-  return <CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />;
+/**
+ * Pure classifier over the REAL stored fields (`action` = commercial_ticket_audit
+ * .action, `eventCode`/`eventName` = field_changed). Exported for tests.
+ */
+export function classifyAuditEntryKind(entry: Pick<TenderAuditEntry, "action" | "eventCode" | "eventName">): AuditEntryKind {
+  const code = (entry.eventCode ?? entry.eventName ?? "").toLowerCase();
+  const action = (entry.action ?? "").toLowerCase();
+  if (code === "note") return "note";
+  if (action === "stage_changed" || code.includes("stage") || code.includes("phase")) return "stage_move";
+  return "update";
+}
+
+/**
+ * F5 — the drawer timeline. `ws.activityEvents` and `ws.auditEntries` are two
+ * projections of the SAME audit rows (one deduplicated read in the data
+ * layer), so the timeline consumes ONLY the audit projection: each stored row
+ * appears exactly once and `Total` is the real row count. Exported for tests.
+ */
+export function buildDrawerTimeline(auditEntries: TenderAuditEntry[]): Array<TenderAuditEntry & { kind: AuditEntryKind }> {
+  const rows = Array.isArray(auditEntries) ? auditEntries : [];
+  return rows
+    .map(entry => ({ ...entry, kind: classifyAuditEntryKind(entry) }))
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 }
 
 function formatAuditState(value: unknown): string {
@@ -146,39 +175,27 @@ function formatAuditState(value: unknown): string {
   return JSON.stringify(value) ?? String(value);
 }
 
+const KIND_META: Record<AuditEntryKind, { label: string; icon: ReactNode; badge: string }> = {
+  note: { label: "Note", icon: <MessageSquare className="w-3.5 h-3.5 text-blue-500" />, badge: "border-blue-200 text-blue-700" },
+  stage_move: { label: "Stage Move", icon: <ArrowRightLeft className="w-3.5 h-3.5 text-[#075eea]" />, badge: "border-[#075eea]/30 text-[#075eea]" },
+  update: { label: "Update", icon: <Pencil className="w-3.5 h-3.5 text-slate-400" />, badge: "border-slate-200 text-slate-600" },
+};
+
 function ActivityLogPanel({ ws, tenderId, reload }: { ws: TenderWorkspace; tenderId: string; reload: () => void }) {
-  const [catFilter, setCatFilter] = useState<string>("all");
-  const [sevFilter, setSevFilter] = useState<string>("all");
+  const [kindFilter, setKindFilter] = useState<string>("all");
   const [noteTitle, setNoteTitle] = useState("");
   const [noteDesc, setNoteDesc] = useState("");
   const [noteSubmitting, setNoteSubmitting] = useState(false);
 
-  // Merge activity events + audit entries into one unified timeline
-  type UnifiedEntry = { type: "activity" | "audit"; id: string; timestamp: string; title: string; description?: string; userName?: string; category?: string; severity?: string; beforeState?: unknown; afterState?: unknown };
+  const timeline = useMemo(() => buildDrawerTimeline(ws.auditEntries), [ws.auditEntries]);
+  const filtered = useMemo(
+    () => timeline.filter(e => kindFilter === "all" || e.kind === kindFilter),
+    [timeline, kindFilter],
+  );
 
-  const unified = useMemo(() => {
-    const activityItems: UnifiedEntry[] = ws.activityEvents.map(e => ({
-      type: "activity" as const, id: e.id, timestamp: e.timestamp,
-      title: e.title || e.eventType, description: e.description,
-      userName: e.userName, category: e.category, severity: e.severity,
-    }));
-    const auditItems: UnifiedEntry[] = ws.auditEntries.map(e => ({
-      type: "audit" as const, id: `audit-${e.id}`, timestamp: e.timestamp,
-      title: e.eventName || e.action, description: e.details,
-      userName: e.userName, category: e.category,
-      beforeState: e.beforeState, afterState: e.afterState,
-    }));
-    return [...activityItems, ...auditItems].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  }, [ws.activityEvents, ws.auditEntries]);
-
-  const filtered = useMemo(() => unified.filter(e => {
-    if (catFilter !== "all" && e.category !== catFilter) return false;
-    if (sevFilter !== "all" && e.severity !== sevFilter) return false;
-    return true;
-  }), [unified, catFilter, sevFilter]);
-
-  const warningCount = ws.activityEvents.filter(e => e.severity === "warning").length;
-  const highCritCount = ws.activityEvents.filter(e => e.severity === "high" || e.severity === "critical").length;
+  const noteCount = timeline.filter(e => e.kind === "note").length;
+  const stageMoveCount = timeline.filter(e => e.kind === "stage_move").length;
+  const updateCount = timeline.filter(e => e.kind === "update").length;
 
   async function handleAddNote() {
     if (!noteTitle.trim()) { toast.error("Title is required."); return; }
@@ -193,36 +210,40 @@ function ActivityLogPanel({ ws, tenderId, reload }: { ws: TenderWorkspace; tende
 
   return (
     <div className="space-y-3">
-      {/* Summary */}
+      {/* Summary — every counter counts the SAME single feed. */}
       <div className="grid grid-cols-4 gap-2">
         <div className="rounded-lg border p-2.5 text-center">
-          <p className="text-base font-bold font-mono">{unified.length}</p>
-          <p className="text-[9px] text-muted-foreground">Total</p>
+          <p className="text-base font-bold font-mono">{timeline.length}</p>
+          <p className="text-[9px] text-muted-foreground">Total Rows</p>
         </div>
         <div className="rounded-lg border p-2.5 text-center">
-          <p className="text-base font-bold font-mono">{ws.auditEntries.length}</p>
-          <p className="text-[9px] text-muted-foreground">Audit</p>
+          <p className="text-base font-bold font-mono text-blue-600">{noteCount}</p>
+          <p className="text-[9px] text-muted-foreground">Notes</p>
         </div>
         <div className="rounded-lg border p-2.5 text-center">
-          <p className="text-base font-bold font-mono text-amber-600">{warningCount}</p>
-          <p className="text-[9px] text-muted-foreground">Warnings</p>
+          <p className="text-base font-bold font-mono text-[#075eea]">{stageMoveCount}</p>
+          <p className="text-[9px] text-muted-foreground">Stage Moves</p>
         </div>
         <div className="rounded-lg border p-2.5 text-center">
-          <p className="text-base font-bold font-mono text-red-600">{highCritCount}</p>
-          <p className="text-[9px] text-muted-foreground">High / Crit</p>
+          <p className="text-base font-bold font-mono">{updateCount}</p>
+          <p className="text-[9px] text-muted-foreground">Updates</p>
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Filter — over the REAL stored kind, not fabricated category/severity
+          constants (the old category/severity dropdowns filtered on mapper
+          constants no stored row actually carries). */}
       <div className="flex items-center gap-2">
-        <Select value={catFilter} onValueChange={setCatFilter}>
-          <SelectTrigger className="w-[140px] text-xs h-8"><SelectValue /></SelectTrigger>
-          <SelectContent>{ACTIVITY_CATEGORIES.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}</SelectContent>
+        <Select value={kindFilter} onValueChange={setKindFilter}>
+          <SelectTrigger className="w-[160px] text-xs h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all" className="text-xs">All entries</SelectItem>
+            <SelectItem value="note" className="text-xs">Notes</SelectItem>
+            <SelectItem value="stage_move" className="text-xs">Stage moves</SelectItem>
+            <SelectItem value="update" className="text-xs">Updates</SelectItem>
+          </SelectContent>
         </Select>
-        <Select value={sevFilter} onValueChange={setSevFilter}>
-          <SelectTrigger className="w-[120px] text-xs h-8"><SelectValue /></SelectTrigger>
-          <SelectContent>{SEVERITY_OPTIONS.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}</SelectContent>
-        </Select>
+        <span className="text-[10px] text-muted-foreground">{filtered.length} of {timeline.length} shown</span>
       </div>
 
       {/* Add note */}
@@ -234,20 +255,20 @@ function ActivityLogPanel({ ws, tenderId, reload }: { ws: TenderWorkspace; tende
         </Button>
       </div>
 
-      {/* Unified timeline */}
+      {/* Timeline — one entry per stored audit row. */}
       {filtered.length === 0 ? (
-        <p className="text-xs text-muted-foreground text-center py-6">No events found.</p>
+        <p className="text-xs text-muted-foreground text-center py-6">
+          {timeline.length === 0 ? "No audit rows stored for this tender yet." : "No entries match the current filter."}
+        </p>
       ) : (
         <div className="space-y-2">
           {filtered.map(e => (
-            <div key={e.id} className={`rounded-lg border p-2.5 ${e.type === "audit" ? "border-[#075eea]/20 bg-[#075eea]/[0.03]" : ""}`}>
+            <div key={e.id} className={`rounded-lg border p-2.5 ${e.kind === "stage_move" ? "border-[#075eea]/20 bg-[#075eea]/[0.03]" : ""}`}>
               <div className="flex items-start gap-2">
-                {e.type === "audit"
-                  ? <Clock className="w-3.5 h-3.5 text-[#075eea] mt-0.5 shrink-0" />
-                  : severityIcon(e.severity as any)}
+                <span className="mt-0.5 shrink-0">{KIND_META[e.kind].icon}</span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium">{e.title}</p>
-                  {e.description && <p className="text-[10px] text-muted-foreground mt-0.5">{e.description}</p>}
+                  <p className="text-xs font-medium">{e.eventName || e.action}</p>
+                  {e.details && <p className="text-[10px] text-muted-foreground mt-0.5">{e.details}</p>}
                   {e.beforeState !== undefined && e.beforeState !== null && (
                     <div className="mt-1 p-1.5 rounded bg-red-50 border border-red-100">
                       <p className="text-[9px] text-red-700"><strong>Before:</strong> {formatAuditState(e.beforeState)}</p>
@@ -259,13 +280,12 @@ function ActivityLogPanel({ ws, tenderId, reload }: { ws: TenderWorkspace; tende
                     </div>
                   )}
                   <div className="flex items-center gap-2 mt-1 text-[9px] text-muted-foreground">
-                    <span>{e.userName || "System"}</span>
+                    <span>{e.userName || "(no actor recorded)"}</span>
                     <span>·</span>
                     <span>{new Date(e.timestamp).toLocaleString()}</span>
-                    <Badge variant="outline" className={`text-[8px] ml-1 ${e.type === "audit" ? "border-[#075eea]/30 text-[#075eea]" : ""}`}>
-                      {e.type === "audit" ? "Audit" : (e.category ? getActivityCategoryLabel(e.category as any) : "Activity")}
+                    <Badge variant="outline" className={`text-[8px] ml-1 ${KIND_META[e.kind].badge}`}>
+                      {KIND_META[e.kind].label}
                     </Badge>
-                    {e.severity && <Badge variant="outline" className={`text-[8px] ${getSeverityColor(e.severity as any)}`}>{e.severity}</Badge>}
                   </div>
                 </div>
               </div>
@@ -277,13 +297,9 @@ function ActivityLogPanel({ ws, tenderId, reload }: { ws: TenderWorkspace; tende
   );
 }
 
-
-
 // ═══════════════════════════════════════════════════════════
-// TAB 3: EXECUTIVE COGNITION
+// TAB 2: EXECUTIVE COGNITION
 // ═══════════════════════════════════════════════════════════
-
-import { TrendingUp, ZapOff } from "lucide-react";
 
 function gaugeColor(pct: number, thresholds: [number, number]) {
   if (pct >= thresholds[0]) return "text-emerald-600";
@@ -298,9 +314,14 @@ function deadlineColor(days: number) {
 }
 
 function CognitionPanel({ ws, daysLeft, targetGp, signalCount }: { ws: TenderWorkspace; daysLeft: number; targetGp: number; signalCount: number }) {
+  const deadlineRisk = deadlineColor(daysLeft);
+  // B14: readinessScore is a mean over pack readiness — with no packs
+  // configured there is NOTHING to measure, which must never render as a red
+  // "0% / Action Required" verdict.
+  const packsConfigured = ws.packs.length > 0;
   const readinessPct = ws.readinessScore;
   const readinessColor = gaugeColor(readinessPct, [80, 50]);
-  const deadlineRisk = deadlineColor(daysLeft);
+
   const docsReady = ws.packs.reduce((s, p) => s + p.documentsReady, 0);
   const docsTotal = ws.packs.reduce((s, p) => s + p.documentsTotal, 0);
   const placeholderTotal = ws.packs.reduce((s, p) => s + p.placeholdersTotal, 0);
@@ -309,6 +330,9 @@ function CognitionPanel({ ws, daysLeft, targetGp, signalCount }: { ws: TenderWor
   const ready = docsReady + placeholderPopulated;
   const submissionPct = total > 0 ? Math.round((ready / total) * 100) : 0;
   const submissionColor = gaugeColor(submissionPct, [80, 50]);
+  // B13: an EMPTY compliance register carries no verdict — "Ready" is only
+  // honest when compliance items are recorded and none signals a gap.
+  const complianceRecorded = ws.complianceItems.length > 0;
 
   return (
     <div className="grid grid-cols-2 gap-3">
@@ -318,15 +342,24 @@ function CognitionPanel({ ws, daysLeft, targetGp, signalCount }: { ws: TenderWor
           <BarChart3 className="w-3 h-3 text-muted-foreground" />
           <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Tender Readiness</span>
         </div>
-        <div className="flex items-end justify-between">
-          <div className="flex-1 mr-2">
-            <div className="w-full bg-muted rounded-full h-2">
-              <div className={`h-2 rounded-full ${readinessPct >= 80 ? "bg-emerald-500" : readinessPct >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${readinessPct}%` }} />
+        {packsConfigured ? (
+          <>
+            <div className="flex items-end justify-between">
+              <div className="flex-1 mr-2">
+                <div className="w-full bg-muted rounded-full h-2">
+                  <div className={`h-2 rounded-full ${readinessPct >= 80 ? "bg-emerald-500" : readinessPct >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${readinessPct}%` }} />
+                </div>
+              </div>
+              <span className={`text-sm font-bold font-mono ${readinessColor}`}>{readinessPct}%</span>
             </div>
-          </div>
-          <span className={`text-sm font-bold font-mono ${readinessColor}`}>{readinessPct}%</span>
-        </div>
-        <span className={`text-[9px] ${readinessColor}`}>{readinessPct >= 80 ? "On Track" : readinessPct >= 50 ? "In Progress" : "Action Required"}</span>
+            <span className={`text-[9px] ${readinessColor}`}>{readinessPct >= 80 ? "On Track" : readinessPct >= 50 ? "In Progress" : "Action Required"}</span>
+          </>
+        ) : (
+          <>
+            <span className="text-sm font-bold font-mono text-slate-400">—</span>
+            <span className="text-[9px] text-muted-foreground">Not measured (no packs configured)</span>
+          </>
+        )}
       </div>
 
       {/* Deadline */}
@@ -361,111 +394,182 @@ function CognitionPanel({ ws, daysLeft, targetGp, signalCount }: { ws: TenderWor
         <span className={`text-[9px] ${gaugeColor(targetGp, [25, 18])}`}>{targetGp >= 25 ? "Healthy" : targetGp >= 18 ? "Tight" : "Review"}</span>
       </div>
 
-      {/* Submission Readiness */}
+      {/* Submission signals */}
       <div className="rounded-lg border p-3 flex flex-col gap-1.5">
         <div className="flex items-center gap-1">
           <ZapOff className="w-3 h-3 text-muted-foreground" />
           <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Submission</span>
         </div>
-        <div className="flex items-end justify-between">
-          <div className="flex-1 mr-2">
-            <div className="w-full bg-muted rounded-full h-2">
-              <div className={`h-2 rounded-full ${submissionPct >= 80 ? "bg-emerald-500" : submissionPct >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${submissionPct}%` }} />
+        {total > 0 ? (
+          <div className="flex items-end justify-between">
+            <div className="flex-1 mr-2">
+              <div className="w-full bg-muted rounded-full h-2">
+                <div className={`h-2 rounded-full ${submissionPct >= 80 ? "bg-emerald-500" : submissionPct >= 50 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${submissionPct}%` }} />
+              </div>
             </div>
+            <span className={`text-sm font-bold font-mono ${submissionColor}`}>{submissionPct}%</span>
           </div>
-          <span className={`text-sm font-bold font-mono ${submissionColor}`}>{submissionPct}%</span>
-        </div>
-        <span className={`text-[9px] ${signalCount > 3 ? "text-red-600" : signalCount > 0 ? "text-amber-600" : "text-emerald-600"}`}>
-          {signalCount > 0 ? `${signalCount} signals` : "Ready"}
-        </span>
+        ) : (
+          <span className="text-sm font-bold font-mono text-slate-400">—</span>
+        )}
+        {!complianceRecorded ? (
+          <span className="text-[9px] text-muted-foreground">No compliance items recorded — no signal verdict</span>
+        ) : (
+          <span className={`text-[9px] ${signalCount > 3 ? "text-red-600" : signalCount > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+            {signalCount > 0 ? `${signalCount} compliance signal${signalCount === 1 ? "" : "s"}` : "No gap recorded in compliance register"}
+          </span>
+        )}
       </div>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════
-// TAB 4: PREVIOUS STAGE INTELLIGENCE
+// TAB 3: STAGE INTELLIGENCE (derived from real stored keys — B15/B16)
 // ═══════════════════════════════════════════════════════════
 
-import { CheckCircle2 as CheckStage, XCircle, MinusCircle } from "lucide-react";
+export interface StageIntelligenceCheck {
+  label: string;
+  done: boolean;
+}
 
-const STAGE_INTELLIGENCE_ITEMS = [
-  { stage: "Identified", checks: ["Tender captured", "Customer linked", "Owner assigned", "Deadline set", "Value estimated"] },
-  { stage: "Qualification", checks: ["SOW qualified", "Technical fit assessed", "Customer fit scored", "Risk snapshot completed"] },
-  { stage: "Bid / No-Bid", checks: ["Bid decision recorded", "Win strategy documented", "Resources committed", "Decision formally logged"] },
-  { stage: "Solution Design", checks: ["Solution configured", "Operations model set", "Manpower model set", "Systems model set", "Scope matrix completed", "SLA/KPI defined"] },
-  { stage: "P&L Pricing", checks: ["P&L calculated", "Pricing scenarios defined", "Commercial terms set", "Pricing approved"] },
-  { stage: "Tender Drafting", checks: ["TOC defined", "Proposal blocks created", "Technical volume drafted", "Commercial volume drafted"] },
-  { stage: "Internal Review", checks: ["Ops review done", "Finance review done", "Legal review done", "Exceptions cleared"] },
-  { stage: "Approval Matrix", checks: ["Approvals collected", "Signoffs tracked", "Exceptions noted", "Governance logged"] },
-];
+export interface StageIntelligenceGroup {
+  stage: string;
+  checks: StageIntelligenceCheck[];
+}
+
+/**
+ * Pure derivation over the tender's stored type_details — exported for tests.
+ * Every check names the recorded fact it derives from; nothing is hardcoded.
+ */
+export function deriveStageIntelligenceChecks(t: any): StageIntelligenceGroup[] {
+  const details = (t?.typeDetails ?? t?.type_details ?? {}) as Record<string, any>;
+  const has = (v: unknown) => isMeaningfulTenderValue(v);
+
+  const sowQualData = t?.sowQualificationData ?? {};
+  const techQualData = t?.technicalQualificationData ?? {};
+  const custFitData = t?.customerFitData ?? {};
+  const riskData = t?.riskSnapshotData ?? {};
+  const bidData = t?.bidNoBidData ?? {};
+  const solData = t?.solutionDesignData ?? {};
+  const pricing = normalizeTenderPricingData(t?.pricingData);
+  const drafting = (t?.tenderDraftingData ?? {}) as Record<string, any>;
+  const blocks: any[] = Array.isArray(drafting.proposal_blocks) ? drafting.proposal_blocks : [];
+
+  // Content-bearing drafting per volume (mirrors the volume tabs' filters and
+  // the review tabs' >50-chars "drafted" rule).
+  const drafted = (volumes: string[]) => blocks.some(b =>
+    volumes.includes(b?.volume) && ((b?.content || b?.editor_content || b?.draft_content || "").trim().length > 50));
+
+  // P6: departmental review truth from the per-block statuses that ARE written.
+  const review = deriveDepartmentalReviewProgress(blocks);
+
+  // Approval matrix: canonical type_details.approval_matrix with legacy
+  // tender_drafting.approval_matrix fallback (projectTenderStageTruth rule).
+  const stageTruth = projectTenderStageTruth(details);
+  const approvals: any[] = Array.isArray((stageTruth.approval_matrix as any)?.approvals)
+    ? (stageTruth.approval_matrix as any).approvals
+    : [];
+  const decided = approvals.filter(a => a?.decision === "approved" || a?.decision === "rejected").length;
+  const pendingApprovals = approvals.filter(a => a?.decision !== "approved" && a?.decision !== "rejected").length;
+  const allApproved = approvals.length > 0 && approvals.every(a => a?.decision === "approved");
+
+  const approvedPricingStatus = String(pricing.approval.summary.approval_status ?? "");
+
+  return [
+    {
+      stage: "Identified",
+      checks: [
+        { label: "Tender captured", done: has(t?.title) },
+        { label: "Customer linked", done: has(t?.customerName) },
+        { label: "Owner assigned", done: has(t?.assignedOwner) },
+        { label: "Deadline set", done: has(t?.submissionDeadline) },
+        { label: "Value estimated", done: Number(t?.estimatedValue) > 0 },
+      ],
+    },
+    {
+      stage: "Qualification",
+      checks: [
+        { label: "SOW qualified", done: has(sowQualData) },
+        { label: "Technical fit assessed", done: has(techQualData) },
+        { label: "Customer fit assessed", done: has(custFitData) },
+        { label: "Risk snapshot recorded", done: has(riskData) },
+      ],
+    },
+    {
+      stage: "Bid / No-Bid",
+      checks: [
+        { label: "Bid decision recorded", done: has(bidData?.decision) },
+        { label: "Win strategy documented", done: has(bidData?.win_strategy) },
+        { label: "Resources committed", done: has(bidData?.resource_commitment) },
+        { label: "Decision formally logged", done: has(bidData?.decision_record) },
+      ],
+    },
+    {
+      // B16: the writers store configuration/hop/ham/hip/scope_matrix/sla_kpi —
+      // the old solution_configuration/hop_operations_model/... keys never
+      // existed in the store.
+      stage: "Solution Design",
+      checks: [
+        { label: "Solution configured", done: has(solData?.configuration) },
+        { label: "Operations model set", done: has(solData?.hop) },
+        { label: "Manpower model set", done: has(solData?.ham) },
+        { label: "Systems model set", done: has(solData?.hip) },
+        { label: "Scope matrix completed", done: has(solData?.scope_matrix) },
+        { label: "SLA/KPI defined", done: has(solData?.sla_kpi) },
+      ],
+    },
+    {
+      // B15: derived from the pricing sections the tabs actually store.
+      stage: "P&L Pricing",
+      checks: [
+        { label: "P&L snapshot recorded", done: has(pricing.pnl_snapshot.linked_pnl_record_id) || pricing.pnl_snapshot.snapshot_status !== "No Snapshot" },
+        { label: "Pricing scenarios defined", done: pricing.scenarios.rows.length > 0 },
+        { label: "Commercial terms set", done: has(pricing.commercial_terms) },
+        { label: "Pricing approval recorded as approved", done: approvedPricingStatus.includes("Approved") },
+      ],
+    },
+    {
+      stage: "Tender Drafting",
+      checks: [
+        { label: "TOC defined", done: has(drafting.proposal_architecture) },
+        { label: "Proposal blocks created", done: blocks.length > 0 },
+        { label: "Technical volume content drafted", done: drafted(["Technical", "Shared"]) },
+        { label: "Commercial volume content drafted", done: drafted(["Commercial", "Shared"]) },
+      ],
+    },
+    {
+      // B15/P6: real per-block review decisions, not hardcoded false / phantom
+      // departmental_reviews facet.
+      stage: "Internal Review",
+      checks: [
+        { label: "Ops review fully decided", done: review.fullyReviewed.includes("ops") },
+        { label: "Finance review fully decided", done: review.fullyReviewed.includes("finance") },
+        { label: "Legal review fully decided", done: review.fullyReviewed.includes("legal") },
+        { label: "No rejected blocks outstanding", done: review.anyDecision && review.rejectedCount === 0 },
+      ],
+    },
+    {
+      // B15: canonical+legacy approval matrix; check labels state exactly what
+      // is derivable from the stored decisions.
+      stage: "Approval Matrix",
+      checks: [
+        { label: "Approval participants recorded", done: approvals.length > 0 },
+        { label: "Decisions recorded", done: decided > 0 },
+        { label: "No pending decisions", done: approvals.length > 0 && pendingApprovals === 0 },
+        { label: "All participants approved", done: allApproved },
+      ],
+    },
+  ];
+}
 
 function PreviousStagePanel({ ws }: { ws: TenderWorkspace }) {
-  const t = ws.tender;
-  const sowData = ((t as any).sowData || {}) as any;
-  const bidData = ((t as any).bidNoBidData || {}) as any;
-  const solData = ((t as any).solutionDesignData || {}) as any;
-  const sowQualData = ((t as any).sowQualificationData || {}) as any;
-  const techQualData = ((t as any).technicalQualificationData || {}) as any;
-  const riskData = ((t as any).riskSnapshotData || {}) as any;
-  const custFitData = ((t as any).customerFitData || {}) as any;
-
-  // Simple heuristic checks per stage
-  function hasValue(v: unknown): boolean {
-    if (v === null || v === undefined) return false;
-    if (typeof v === "string") return v.trim().length > 0;
-    if (typeof v === "number") return Number.isFinite(v);
-    if (Array.isArray(v)) return v.length > 0;
-    if (typeof v === "object") return Object.keys(v as object).length > 0;
-    return true;
-  }
-
-  const stageChecks: Record<string, boolean[]> = {
-    "Identified": [
-      hasValue(t.title),
-      hasValue(t.customerName),
-      hasValue(t.assignedOwner),
-      hasValue(t.submissionDeadline),
-      hasValue(t.estimatedValue) && t.estimatedValue > 0,
-    ],
-    "Qualification": [
-      hasValue(sowQualData) && Object.keys(sowQualData).length > 0,
-      hasValue(techQualData) && Object.keys(techQualData).length > 0,
-      hasValue(custFitData) && Object.keys(custFitData).length > 0,
-      hasValue(riskData) && Object.keys(riskData).length > 0,
-    ],
-    "Bid / No-Bid": [
-      hasValue(bidData?.decision),
-      hasValue(bidData?.win_strategy),
-      hasValue(bidData?.resource_commitment),
-      hasValue(bidData?.decision_record),
-    ],
-    "Solution Design": [
-      hasValue(solData?.solution_configuration),
-      hasValue(solData?.hop_operations_model),
-      hasValue(solData?.ham_manpower_model),
-      hasValue(solData?.hip_systems_ip_model),
-      hasValue(solData?.scope_matrix),
-      hasValue(solData?.sla_kpi_model),
-    ],
-    "P&L Pricing": [
-      hasValue((t as any).pricingData),
-      false, false, false,
-    ],
-    "Tender Drafting": [
-      hasValue(((t as any).tenderDraftingData as any)?.proposal_architecture),
-      hasValue(((t as any).tenderDraftingData as any)?.proposal_blocks) && Array.isArray(((t as any).tenderDraftingData as any)?.proposal_blocks),
-      false, false,
-    ],
-    "Internal Review": [false, false, false, false],
-    "Approval Matrix": [false, false, false, false],
-  };
+  const groups = useMemo(() => deriveStageIntelligenceChecks(ws.tender), [ws.tender]);
 
   return (
     <div className="space-y-3">
-      {STAGE_INTELLIGENCE_ITEMS.map(stage => {
-        const checks = stageChecks[stage.stage] || stage.checks.map(() => false);
-        const completedCount = checks.filter(Boolean).length;
+      {groups.map(stage => {
+        const completedCount = stage.checks.filter(c => c.done).length;
         const totalCount = stage.checks.length;
         const pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
         const color = pct >= 100 ? "border-emerald-200 bg-emerald-50/50" : pct > 0 ? "border-amber-200 bg-amber-50/30" : "border-border";
@@ -482,14 +586,14 @@ function PreviousStagePanel({ ws }: { ws: TenderWorkspace }) {
               <div className={`h-1.5 rounded-full transition-all ${pct >= 100 ? "bg-emerald-500" : pct > 0 ? "bg-amber-500" : "bg-slate-300"}`} style={{ width: `${pct}%` }} />
             </div>
             <div className="space-y-1">
-              {stage.checks.map((check, i) => (
-                <div key={check} className="flex items-center gap-1.5 text-[10px]">
-                  {checks[i] ? (
+              {stage.checks.map(check => (
+                <div key={check.label} className="flex items-center gap-1.5 text-[10px]">
+                  {check.done ? (
                     <CheckStage className="w-3 h-3 text-emerald-500 shrink-0" />
                   ) : (
                     <MinusCircle className="w-3 h-3 text-slate-300 shrink-0" />
                   )}
-                  <span className={checks[i] ? "text-foreground" : "text-muted-foreground"}>{check}</span>
+                  <span className={check.done ? "text-foreground" : "text-muted-foreground"}>{check.label}</span>
                 </div>
               ))}
             </div>
@@ -501,7 +605,7 @@ function PreviousStagePanel({ ws }: { ws: TenderWorkspace }) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// TAB 5: CUSTOMER LINK
+// TAB 4: CUSTOMER LINK
 // ═══════════════════════════════════════════════════════════
 
 function CustomerLinkPanel({ ws }: { ws: TenderWorkspace }) {

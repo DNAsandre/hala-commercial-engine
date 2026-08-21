@@ -36,7 +36,8 @@ interface StageViewProps {
   intelMetrics: TenderStageMetric[];
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
-  saved?: boolean;
+  /** Data-presence flag from the stage dispatcher (used only when the tab is clean). */
+  hasStoredData?: boolean;
 }
 
 function ClientEvaluationShell<T extends string>({
@@ -49,6 +50,7 @@ function ClientEvaluationShell<T extends string>({
   onOpenDocuments,
   onOpenGlobalIntel,
   saved,
+  unsaved,
   children,
 }: {
   activeSection: T;
@@ -60,6 +62,7 @@ function ClientEvaluationShell<T extends string>({
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
   saved?: boolean;
+  unsaved?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -75,6 +78,7 @@ function ClientEvaluationShell<T extends string>({
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
       saved={saved}
+      unsaved={unsaved}
     >
       {children}
     </TenderStageTaskShell>
@@ -87,9 +91,13 @@ const REQUEST_SECTIONS: TenderStageSectionTab<RequestSection>[] = [
   { key: "activity_log", label: "Activity Log", icon: <Activity className="w-3.5 h-3.5" /> },
 ];
 
-function RequestLogView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: StageViewProps) {
+function RequestLogView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: StageViewProps) {
   const [activeSection, setActiveSection] = useState<RequestSection>("request_register");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
   return (
     <ClientEvaluationShell
       sections={REQUEST_SECTIONS}
@@ -100,10 +108,11 @@ function RequestLogView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGloba
       intelMetrics={intelMetrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
-      saved={saved}
+      saved={!!hasStoredData && !tabDirty}
+      unsaved={tabDirty}
     >
       <div className={activeSection !== "request_register" ? "hidden" : ""}>
-        <ClientRequestLogTab ws={ws} reload={reload} />
+        <ClientRequestLogTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
       <div className={activeSection !== "activity_log" ? "hidden" : ""}>
         <TenderActivityTab ws={ws} tenderId={ws.tender.id} reload={reload} />
@@ -120,9 +129,13 @@ const CLIENT_CLARIFICATION_SECTIONS: TenderStageSectionTab<ClientClarificationsS
   { key: "notes_documents", label: "Notes / Documents", icon: <FileText className="w-3.5 h-3.5" /> },
 ];
 
-function ClientClarificationsView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: StageViewProps) {
+function ClientClarificationsView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: StageViewProps) {
   const [activeSection, setActiveSection] = useState<ClientClarificationsSection>("clarification_register");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
   return (
     <ClientEvaluationShell
       sections={CLIENT_CLARIFICATION_SECTIONS}
@@ -133,9 +146,10 @@ function ClientClarificationsView({ ws, reload, intelMetrics, onOpenDocuments, o
       intelMetrics={intelMetrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
-      saved={saved}
+      saved={!!hasStoredData && !tabDirty}
+      unsaved={tabDirty}
     >
-      <ClientClarificationsTab ws={ws} reload={reload} activeSection={activeSection} />
+      <ClientClarificationsTab ws={ws} reload={reload} activeSection={activeSection} onDirtyChange={setTabDirty} />
     </ClientEvaluationShell>
   );
 }
@@ -146,9 +160,13 @@ const BAFO_SECTIONS: TenderStageSectionTab<BafoSection>[] = [
   { key: "bafo_audit", label: "BAFO Audit Trail", icon: <Clock className="w-3.5 h-3.5" /> },
 ];
 
-function BafoManagerView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: StageViewProps) {
+function BafoManagerView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: StageViewProps) {
   const [activeSection, setActiveSection] = useState<BafoSection>("bafo_details");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
   return (
     <ClientEvaluationShell
       sections={BAFO_SECTIONS}
@@ -159,10 +177,11 @@ function BafoManagerView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlob
       intelMetrics={intelMetrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
-      saved={saved}
+      saved={!!hasStoredData && !tabDirty}
+      unsaved={tabDirty}
     >
       <div className={activeSection !== "bafo_details" ? "hidden" : ""}>
-        <ClientBafoManagerTab ws={ws} reload={reload} />
+        <ClientBafoManagerTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
       <div className={activeSection !== "bafo_audit" ? "hidden" : ""}>
         <TenderAuditTrailTab ws={ws} />
@@ -177,9 +196,13 @@ const MARGIN_SECTIONS: TenderStageSectionTab<MarginSection>[] = [
   { key: "margin_activity", label: "Activity Log", icon: <Activity className="w-3.5 h-3.5" /> },
 ];
 
-function MarginImpactView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: StageViewProps) {
+function MarginImpactView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: StageViewProps) {
   const [activeSection, setActiveSection] = useState<MarginSection>("pricing_impact");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
   return (
     <ClientEvaluationShell
       sections={MARGIN_SECTIONS}
@@ -190,10 +213,11 @@ function MarginImpactView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlo
       intelMetrics={intelMetrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
-      saved={saved}
+      saved={!!hasStoredData && !tabDirty}
+      unsaved={tabDirty}
     >
       <div className={activeSection !== "pricing_impact" ? "hidden" : ""}>
-        <ClientMarginImpactTab ws={ws} reload={reload} />
+        <ClientMarginImpactTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
       <div className={activeSection !== "margin_activity" ? "hidden" : ""}>
         <TenderActivityTab ws={ws} tenderId={ws.tender.id} reload={reload} />
@@ -207,9 +231,13 @@ const STATUS_SECTIONS: TenderStageSectionTab<StatusSection>[] = [
   { key: "status_tracker", label: "Status Tracker", icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
 ];
 
-function EvaluationStatusView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: StageViewProps) {
+function EvaluationStatusView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: StageViewProps) {
   const [activeSection, setActiveSection] = useState<StatusSection>("status_tracker");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
   return (
     <ClientEvaluationShell
       sections={STATUS_SECTIONS}
@@ -220,10 +248,11 @@ function EvaluationStatusView({ ws, reload, intelMetrics, onOpenDocuments, onOpe
       intelMetrics={intelMetrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
-      saved={saved}
+      saved={!!hasStoredData && !tabDirty}
+      unsaved={tabDirty}
     >
       <div className={activeSection !== "status_tracker" ? "hidden" : ""}>
-        <ClientEvaluationStatusTab ws={ws} reload={reload} />
+        <ClientEvaluationStatusTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
     </ClientEvaluationShell>
   );
@@ -268,15 +297,15 @@ export default function ClientEvaluationStage({ ws, activeTab, reload, onOpenDoc
                         !!(evalStatus.commercial_status && evalStatus.commercial_status !== "unknown");
 
   if (activeTab === "request_log")
-    return <RequestLogView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasRequestLog} />;
+    return <RequestLogView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasRequestLog} />;
   if (activeTab === "client_clarifications")
-    return <ClientClarificationsView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasClientClarifications} />;
+    return <ClientClarificationsView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasClientClarifications} />;
   if (activeTab === "bafo_manager")
-    return <BafoManagerView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasBafo} />;
+    return <BafoManagerView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasBafo} />;
   if (activeTab === "margin_impact")
-    return <MarginImpactView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasMarginImpact} />;
+    return <MarginImpactView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasMarginImpact} />;
   if (activeTab === "evaluation_status")
-    return <EvaluationStatusView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasEvalStatus} />;
+    return <EvaluationStatusView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasEvalStatus} />;
 
-  return <RequestLogView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasRequestLog} />;
+  return <RequestLogView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasRequestLog} />;
 }

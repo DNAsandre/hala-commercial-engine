@@ -18,8 +18,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Info, FileText, CheckCircle2 } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderAwardedData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 const CONTRACT_STATUSES = [
   { value: "not_started", label: "Not Started" },
@@ -42,7 +48,7 @@ const CHECKLIST_ITEMS = [
   { key: "contract_signed", label: "Contract signed by both parties" },
 ] as const;
 
-export default function AwardContractPrepTab({ ws, reload }: Props) {
+export default function AwardContractPrepTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.awarded_data?.contract_prep ?? {};
@@ -60,7 +66,7 @@ export default function AwardContractPrepTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const toggleCheck = (key: string) => {
     setChecklist(prev => ({ ...prev, [key]: !prev[key] }));
@@ -79,12 +85,13 @@ export default function AwardContractPrepTab({ ws, reload }: Props) {
         hala_legal_owner: halaLegalOwner, client_legal_contact: clientLegalContact,
         redline_notes: redlineNotes, checklist, notes,
       };
-      const res = await updateTenderAwardedData(tenderId, "contract_prep", payload, `Status: ${contractStatus}`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Contract prep saved."); setDirty(false); reload();
+      const res = await updateTenderAwardedData(tenderId, "contract_prep", payload, `Status: ${contractStatus}`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Contract prep saved.")) return;
+      setDirty(false); onDirtyChange?.(false); reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [contractStatus, contractRef, draftDate, targetSignDate, actualSignDate, halaLegalOwner, clientLegalContact, redlineNotes, checklist, notes, tenderId, reload]);
+  }, [contractStatus, contractRef, draftDate, targetSignDate, actualSignDate, halaLegalOwner, clientLegalContact, redlineNotes, checklist, notes, tenderId, reload, ws, onDirtyChange]);
 
   const statusColor = (s: string) => {
     if (s === "signed") return "border-emerald-300 text-emerald-700 bg-emerald-50";

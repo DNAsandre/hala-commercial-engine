@@ -20,8 +20,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Info, ArrowRight, TrendingDown, TrendingUp, DollarSign } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderClientEvaluationData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 const BAFO_STATUSES = [
   { value: "not_requested", label: "Not Requested" },
@@ -31,7 +37,7 @@ const BAFO_STATUSES = [
   { value: "not_applicable", label: "Not Applicable" },
 ] as const;
 
-export default function ClientBafoManagerTab({ ws, reload }: Props) {
+export default function ClientBafoManagerTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.client_evaluation?.bafo ?? {};
@@ -51,7 +57,7 @@ export default function ClientBafoManagerTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
   const isActive = bafoStatus !== "not_requested" && bafoStatus !== "not_applicable";
 
   const priceDelta = revisedPrice - originalValue;
@@ -71,14 +77,15 @@ export default function ClientBafoManagerTab({ ws, reload }: Props) {
         submitted_date: submittedDate,
         response_notes: responseNotes,
       };
-      const res = await updateTenderClientEvaluationData(tenderId, "bafo", payload, `BAFO status: ${bafoStatus}`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("BAFO record saved.");
+      const res = await updateTenderClientEvaluationData(tenderId, "bafo", payload, `BAFO status: ${bafoStatus}`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "BAFO record saved.")) return;
       setDirty(false);
+      onDirtyChange?.(false);
       reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [bafoStatus, receivedDate, dueDate, scopeChanges, revisedPrice, revisedGp, pricingNotes, submittedDate, responseNotes, tenderId, reload]);
+  }, [bafoStatus, receivedDate, dueDate, scopeChanges, revisedPrice, revisedGp, pricingNotes, submittedDate, responseNotes, tenderId, reload, ws, onDirtyChange]);
 
   const statusColor = (s: string) => {
     if (s === "submitted") return "border-emerald-300 text-emerald-700 bg-emerald-50";

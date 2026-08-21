@@ -17,8 +17,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Info, Eye, Plus } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderLostWithdrawnData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 interface CompetitorEntry {
   id: string;
@@ -29,7 +35,7 @@ interface CompetitorEntry {
   notes: string;
 }
 
-export default function CompetitorIntelTab({ ws, reload }: Props) {
+export default function CompetitorIntelTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.lost_withdrawn_data?.competitor_intel ?? {};
@@ -39,7 +45,7 @@ export default function CompetitorIntelTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const addCompetitor = () => {
     setCompetitors(prev => [...prev, {
@@ -58,12 +64,13 @@ export default function CompetitorIntelTab({ ws, reload }: Props) {
     setSaving(true);
     try {
       const payload = { competitors, market_notes: marketNotes };
-      const res = await updateTenderLostWithdrawnData(tenderId, "competitor_intel", payload, `${competitors.length} competitors logged`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Competitor intelligence saved."); setDirty(false); reload();
+      const res = await updateTenderLostWithdrawnData(tenderId, "competitor_intel", payload, `${competitors.length} competitors logged`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Competitor intelligence saved.")) return;
+      setDirty(false); onDirtyChange?.(false); reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [competitors, marketNotes, tenderId, reload]);
+  }, [competitors, marketNotes, tenderId, reload, ws, onDirtyChange]);
 
   return (
     <div className="space-y-4">

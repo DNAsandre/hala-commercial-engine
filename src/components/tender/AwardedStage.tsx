@@ -42,7 +42,7 @@ interface StageProps {
 // ─── Stage Menu Header (reusable — exact copy from SubmittedStage) ────────────────────────
 
 function StageMenuHeader<T extends string>({
-  sections, activeSection, setActiveSection, stageIntelOpen, setStageIntelOpen, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved,
+  sections, activeSection, setActiveSection, stageIntelOpen, setStageIntelOpen, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved, unsaved,
 }: {
   sections: TenderStageSectionTab<T>[];
   activeSection: T;
@@ -53,6 +53,7 @@ function StageMenuHeader<T extends string>({
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
   saved?: boolean;
+  unsaved?: boolean;
 }) {
   return (
     <TenderStageTaskShell
@@ -67,6 +68,7 @@ function StageMenuHeader<T extends string>({
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
       saved={saved}
+      unsaved={unsaved}
     />
   );
 }
@@ -83,16 +85,21 @@ const NOTICE_SECTIONS: { key: NoticeSection; label: string; icon: ReactNode }[] 
   { key: "award_activity", label: "Activity Log",   icon: <Activity className="w-3.5 h-3.5" /> },
 ];
 
-function AwardNoticeView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; saved?: boolean }) {
+function AwardNoticeView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; hasStoredData?: boolean }) {
   const [activeSection, setActiveSection] = useState<NoticeSection>("award_details");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
   return (
     <div className="space-y-4">
       <StageMenuHeader sections={NOTICE_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
-        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={saved} />
+        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel}
+        saved={!!hasStoredData && !tabDirty} unsaved={tabDirty} />
       <div className={activeSection !== "award_details" ? "hidden" : ""}>
-        <AwardNoticeTab ws={ws} reload={reload} />
+        <AwardNoticeTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
       <div className={activeSection !== "award_activity" ? "hidden" : ""}>
         <TenderActivityTab ws={ws} tenderId={ws.tender.id} reload={reload} />
@@ -113,16 +120,21 @@ const CONTRACT_SECTIONS: { key: ContractSection; label: string; icon: ReactNode 
   { key: "contract_audit",  label: "Audit Trail",      icon: <Clock className="w-3.5 h-3.5" /> },
 ];
 
-function ContractPrepView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; saved?: boolean }) {
+function ContractPrepView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; hasStoredData?: boolean }) {
   const [activeSection, setActiveSection] = useState<ContractSection>("contract_status");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
   return (
     <div className="space-y-4">
       <StageMenuHeader sections={CONTRACT_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
-        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={saved} />
+        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel}
+        saved={!!hasStoredData && !tabDirty} unsaved={tabDirty} />
       <div className={activeSection !== "contract_status" ? "hidden" : ""}>
-        <AwardContractPrepTab ws={ws} reload={reload} />
+        <AwardContractPrepTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
       <div className={activeSection !== "contract_audit" ? "hidden" : ""}>
         <TenderAuditTrailTab ws={ws} />
@@ -143,16 +155,21 @@ const SLA_SECTIONS: { key: SlaSection; label: string; icon: ReactNode }[] = [
   { key: "sla_activity", label: "Activity Log",   icon: <Activity className="w-3.5 h-3.5" /> },
 ];
 
-function SlaPrepView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; saved?: boolean }) {
+function SlaPrepView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; hasStoredData?: boolean }) {
   const [activeSection, setActiveSection] = useState<SlaSection>("sla_summary");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
   return (
     <div className="space-y-4">
       <StageMenuHeader sections={SLA_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
-        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={saved} />
+        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel}
+        saved={!!hasStoredData && !tabDirty} unsaved={tabDirty} />
       <div className={activeSection !== "sla_summary" ? "hidden" : ""}>
-        <AwardSlaPrepTab ws={ws} reload={reload} />
+        <AwardSlaPrepTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
       <div className={activeSection !== "sla_activity" ? "hidden" : ""}>
         <TenderActivityTab ws={ws} tenderId={ws.tender.id} reload={reload} />
@@ -171,16 +188,21 @@ const HANDOVER_SECTIONS: { key: HandoverSection; label: string; icon: ReactNode 
   { key: "handover_checklist", label: "Handover Checklist", icon: <Users className="w-3.5 h-3.5" /> },
 ];
 
-function HandoverPrepView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; saved?: boolean }) {
+function HandoverPrepView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; hasStoredData?: boolean }) {
   const [activeSection, setActiveSection] = useState<HandoverSection>("handover_checklist");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
   return (
     <div className="space-y-4">
       <StageMenuHeader sections={HANDOVER_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
-        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={saved} />
+        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel}
+        saved={!!hasStoredData && !tabDirty} unsaved={tabDirty} />
       <div className={activeSection !== "handover_checklist" ? "hidden" : ""}>
-        <AwardHandoverTab ws={ws} reload={reload} />
+        <AwardHandoverTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
     </div>
   );
@@ -212,14 +234,14 @@ export default function AwardedStage({ ws, activeTab, reload, onOpenDocuments, o
   const hasHandover = !!(handover.handover_status && handover.handover_status !== "not_started") || (Array.isArray(handover.checklist) && handover.checklist.length > 0);
 
   if (activeTab === "award_notice")
-    return <AwardNoticeView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasNotice} />;
+    return <AwardNoticeView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasNotice} />;
   if (activeTab === "contract_prep")
-    return <ContractPrepView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasContract} />;
+    return <ContractPrepView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasContract} />;
   if (activeTab === "sla_prep")
-    return <SlaPrepView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasSla} />;
+    return <SlaPrepView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasSla} />;
   if (activeTab === "handover_prep")
-    return <HandoverPrepView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasHandover} />;
+    return <HandoverPrepView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasHandover} />;
 
   // Default fallback
-  return <AwardNoticeView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasNotice} />;
+  return <AwardNoticeView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasNotice} />;
 }

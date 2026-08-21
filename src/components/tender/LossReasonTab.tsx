@@ -18,8 +18,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Info, XCircle, AlertTriangle } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderLostWithdrawnData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 const OUTCOME_TYPES = [
   { value: "lost_on_price", label: "Lost — Price" },
@@ -34,7 +40,7 @@ const OUTCOME_TYPES = [
   { value: "other", label: "Other" },
 ] as const;
 
-export default function LossReasonTab({ ws, reload }: Props) {
+export default function LossReasonTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.lost_withdrawn_data?.loss_reason ?? {};
@@ -52,7 +58,7 @@ export default function LossReasonTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const formatSar = (n: number) => n >= 1_000_000 ? `SAR ${(n / 1_000_000).toFixed(2)}M` : n >= 1_000 ? `SAR ${(n / 1_000).toFixed(0)}K` : `SAR ${n.toLocaleString()}`;
 
@@ -64,12 +70,13 @@ export default function LossReasonTab({ ws, reload }: Props) {
         winning_bidder: winningBidder, winning_price: winningPrice, our_price: ourPrice,
         loss_date: lossDate, notified_by: notifiedBy, contributing_factors: contributingFactors, notes,
       };
-      const res = await updateTenderLostWithdrawnData(tenderId, "loss_reason", payload, outcomeType || "Loss reason captured");
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Loss reason saved."); setDirty(false); reload();
+      const res = await updateTenderLostWithdrawnData(tenderId, "loss_reason", payload, outcomeType || "Loss reason captured", wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Loss reason saved.")) return;
+      setDirty(false); onDirtyChange?.(false); reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [outcomeType, primaryReason, clientFeedback, winningBidder, winningPrice, ourPrice, lossDate, notifiedBy, contributingFactors, notes, tenderId, reload]);
+  }, [outcomeType, primaryReason, clientFeedback, winningBidder, winningPrice, ourPrice, lossDate, notifiedBy, contributingFactors, notes, tenderId, reload, ws, onDirtyChange]);
 
   const isWithdrawn = outcomeType.startsWith("withdrawn");
 
