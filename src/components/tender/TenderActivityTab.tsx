@@ -11,7 +11,6 @@ import { toast } from "sonner";
 import { createActivityNote } from "@/lib/supabase-tender-actions";
 import {
   type EventSeverity,
-  type TenderActivityEvent,
   type TenderWorkspace,
   ACTIVITY_CATEGORIES,
   SEVERITY_OPTIONS,
@@ -19,37 +18,11 @@ import {
   getSeverityColor,
 } from "@/lib/tender-workspace-data";
 
-function hasUncleanProcessMarker(value?: string) {
-  const text = value?.toLowerCase() ?? "";
-  return (
-    text.includes("mock") ||
-    text.includes("sample") ||
-    text.includes("simulated") ||
-    text.includes("fake") ||
-    text.includes("development mode") ||
-    text.includes("coming soon")
-  );
-}
-
-function isCleanActivityEvent(event: TenderActivityEvent) {
-  if (event.mock) return false;
-
-  const categoryLabel = event.category ? getActivityCategoryLabel(event.category) : undefined;
-  return ![
-    event.eventType,
-    event.title,
-    event.description,
-    event.category,
-    categoryLabel,
-    event.relatedPack,
-    event.relatedModule,
-    event.notes,
-  ].some(hasUncleanProcessMarker);
-}
-
-const CLEAN_ACTIVITY_CATEGORIES = ACTIVITY_CATEGORIES.filter(
-  option => !hasUncleanProcessMarker(String(option.value)) && !hasUncleanProcessMarker(option.label),
-);
+/* TCW-T4 (F6): this tab previously HID any stored row whose text contained
+   mock/sample/simulated/fake/"development mode"/"coming soon" and computed all
+   counters over the filtered remainder — a human note containing the word
+   "mock" silently vanished from the operational timeline. Stored rows are
+   stored rows: every row renders and every counter counts the full set. */
 
 function SummaryCard({ label, value, color }: { label: string; value: string | number; color: string }) {
   return (
@@ -74,8 +47,9 @@ export default function TenderActivityTab({ ws, tenderId, reload }: { ws: Tender
   const [noteDesc, setNoteDesc] = useState("");
   const [noteSubmitting, setNoteSubmitting] = useState(false);
 
+  // F6: the FULL stored set — no content-based row hiding.
   const events = useMemo(
-    () => (Array.isArray(ws.activityEvents) ? ws.activityEvents : []).filter(isCleanActivityEvent),
+    () => (Array.isArray(ws.activityEvents) ? ws.activityEvents : []),
     [ws.activityEvents],
   );
   const sorted = useMemo(() => [...events].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()), [events]);
@@ -103,7 +77,7 @@ export default function TenderActivityTab({ ws, tenderId, reload }: { ws: Tender
       <div className="flex flex-wrap items-center gap-2">
         <Select value={catFilter} onValueChange={setCatFilter}>
           <SelectTrigger size="sm" className="w-[180px] text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>{CLEAN_ACTIVITY_CATEGORIES.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}</SelectContent>
+          <SelectContent>{ACTIVITY_CATEGORIES.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}</SelectContent>
         </Select>
         <Select value={sevFilter} onValueChange={setSevFilter}>
           <SelectTrigger size="sm" className="w-[160px] text-xs"><SelectValue /></SelectTrigger>

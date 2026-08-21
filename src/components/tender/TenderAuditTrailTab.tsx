@@ -16,34 +16,11 @@ import {
   getSeverityColor,
 } from "@/lib/tender-workspace-data";
 
-function hasUncleanProcessMarker(value?: string) {
-  const text = value?.toLowerCase() ?? "";
-  return (
-    text.includes("mock") ||
-    text.includes("sample") ||
-    text.includes("simulated") ||
-    text.includes("fake") ||
-    text.includes("development mode") ||
-    text.includes("coming soon")
-  );
-}
-
-function isCleanAuditEntry(entry: TenderAuditEntry) {
-  if (entry.mock) return false;
-
-  return ![
-    entry.action,
-    entry.eventCode,
-    entry.eventName,
-    entry.entityType,
-    entry.entityName,
-    entry.details,
-    entry.beforeState,
-    entry.afterState,
-    entry.traceId,
-    entry.notes,
-  ].some(hasUncleanProcessMarker);
-}
+/* TCW-T4 (F6): this tab previously HID any stored audit row whose text
+   contained mock/sample/simulated/fake/"development mode"/"coming soon" and
+   computed all counters over the filtered remainder — content-based hiding in
+   a GOVERNANCE audit view. Stored rows are stored rows: every row renders and
+   every counter counts the full set. */
 
 function SummaryCard({ label, value, color }: { label: string; value: string | number; color: string }) {
   return (
@@ -152,8 +129,9 @@ export default function TenderAuditTrailTab({ ws }: { ws: TenderWorkspace }) {
   const [sevFilter, setSevFilter] = useState<string>("all");
   const [selectedEntry, setSelectedEntry] = useState<TenderAuditEntry | null>(null);
 
+  // F6: the FULL stored set — no content-based row hiding.
   const entries = useMemo(
-    () => (Array.isArray(ws.auditEntries) ? ws.auditEntries : []).filter(isCleanAuditEntry),
+    () => (Array.isArray(ws.auditEntries) ? ws.auditEntries : []),
     [ws.auditEntries],
   );
   const sorted = useMemo(() => [...entries].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()), [entries]);

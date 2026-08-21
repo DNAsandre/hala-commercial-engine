@@ -14,6 +14,8 @@ import {
 } from "@/lib/tender-workspace-data";
 import { isMeaningfulTenderValue } from "@/lib/proposal-block-foundation";
 import { hasPricingData, normalizeTenderPricingData } from "@/lib/tender-pricing-types";
+import { projectTenderStageTruth } from "@/lib/tender-stage-source-truth";
+import { deriveDepartmentalReviewProgress } from "./FinalApprovedStage";
 import {
   AlertCircle,
   Brain,
@@ -519,13 +521,16 @@ function buildLaterStageRows(ws: TenderWorkspace): IntelligenceRow[] {
   const td = typeDetails(ws);
   const drafting = (((ws.tender as any).tenderDraftingData ?? {}) as any);
   const blocks = rowsFrom(drafting.proposal_blocks);
-  const reviewDepartments = ["ops", "finance", "legal"];
-  const departmentReviews = drafting.departmental_reviews ?? {};
-  const submittedReviews = reviewDepartments.filter(dept => departmentReviews[dept]?.submitted_at).length;
-  const rejectedReviews = blocks.reduce((count: number, block: any) => {
-    return count + reviewDepartments.filter(dept => block?.[`${dept}_status`] === "Rejected").length;
-  }, 0);
-  const approvalRows = rowsFrom(drafting.approval_matrix?.approvals);
+  // TCW-T4 (P6): derived from the per-block `<dept>_status` decisions that ARE
+  // written — the `departmental_reviews` facet this read previously checked has
+  // no writer, so "N/3 submitted" could never become true.
+  const reviewProgress = deriveDepartmentalReviewProgress(blocks);
+  const fullyReviewedDepts = reviewProgress.fullyReviewed.length;
+  const rejectedReviews = reviewProgress.rejectedCount;
+  // TCW-T4: the Stage-8 component writes CANONICAL type_details.approval_matrix
+  // (legacy tender_drafting.approval_matrix remains readable) — resolve via the
+  // canonical-with-legacy stage-truth projection instead of legacy-only.
+  const approvalRows = rowsFrom((projectTenderStageTruth(td).approval_matrix as any)?.approvals);
   const approvedRows = approvalRows.filter((row: any) => row.decision === "approved").length;
   const finalCheck = drafting.final_approval_check ?? {};
   const submission = td.submission ?? {};
@@ -545,9 +550,13 @@ function buildLaterStageRows(ws: TenderWorkspace): IntelligenceRow[] {
       stage: "internal_review",
       icon: CheckCircle2,
       label: "Department Reviews",
-      status: submittedReviews > 0 ? `${submittedReviews}/3 submitted` : "Not captured",
+      status: fullyReviewedDepts > 0
+        ? `${fullyReviewedDepts}/3 fully reviewed`
+        : reviewProgress.anyDecision
+          ? "Review in progress"
+          : "Not captured",
       detail: rejectedReviews > 0 ? `${rejectedReviews} rejected review item${rejectedReviews === 1 ? "" : "s"}` : undefined,
-      captured: submittedReviews > 0 || rejectedReviews > 0,
+      captured: reviewProgress.anyDecision,
     },
     {
       stage: "approval_matrix",
