@@ -15,12 +15,13 @@
  * This is a structured decision record.
  */
 
-import { useState, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderBidNoBidData } from "@/lib/supabase-tender-actions";
+import { runTenderTabSave, tenderRevisionTokenOf } from "./IdentifiedStageShared";
 import { toast } from "sonner";
 import {
   Loader2, Save, ChevronDown, Plus, X,
@@ -123,6 +124,21 @@ function statusBtnClass(selected: boolean, status: string): string {
 // COMPONENT
 // ═══════════════════════════════════════════════════════════
 
+/**
+ * TCW-T3 (P2b) — this tab's patch carries ONLY its own bid_no_bid_data key
+ * (decision_record). The write layer patch-merges, so sibling tabs' keys are
+ * preserved by the STORED facet — never re-sent from a page-load copy.
+ * Exported pure for direct testing.
+ */
+export function buildDecisionRecordPatch(
+  formal: FormalRecord,
+  ifBid: IfBidData,
+  ifNoBid: IfNoBidData,
+  evidence: EvidenceRow[],
+): Record<string, any> {
+  return { decision_record: { formal, if_bid: ifBid, if_no_bid: ifNoBid, evidence } };
+}
+
 interface Props {
   ws: TenderWorkspace;
   onOpenDocuments?: () => void;
@@ -189,26 +205,27 @@ export default function DecisionRecordTab({ ws, onOpenDocuments, onOpenGlobalInt
     };
   }, [formal, evidence]);
 
+  const staleRetryArmed = useRef(false);
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const patch: Record<string, any> = {
-        ...(existing || {}),
-        decision_record: { formal, if_bid: ifBid, if_no_bid: ifNoBid, evidence },
-      };
-      const result = await updateTenderBidNoBidData(tenderId, patch, "Decision Record tab saved");
-      if (result.success) {
-        toast.success("Decision Record saved.");
-        onSaved?.();
-      } else {
-        toast.error("Save failed", { description: result.error });
-      }
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderBidNoBidData(tenderId, buildDecisionRecordPatch(formal, ifBid, ifNoBid, evidence), {
+            expectedRevision,
+            reason: "Decision Record tab saved",
+          }),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "Decision Record saved.", failed: "Save failed" },
+        onConfirmed: () => onSaved?.(),
+      });
     } catch (e: any) {
       toast.error(e.message || "Save failed.");
     } finally {
       setSaving(false);
     }
-  }, [tenderId, formal, ifBid, ifNoBid, evidence, existing, onSaved]);
+  }, [tenderId, formal, ifBid, ifNoBid, evidence, onSaved, ws]);
 
   return (
     <div className="space-y-4">

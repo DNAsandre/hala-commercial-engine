@@ -23,12 +23,13 @@
  * - Empty state shows "No risks recorded yet."
  */
 
-import { useState, useCallback, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderRiskSnapshotData } from "@/lib/supabase-tender-actions";
+import { runTenderTabSave, tenderRevisionTokenOf } from "./IdentifiedStageShared";
 import { toast } from "sonner";
 import {
   Loader2, Save, ChevronDown, ChevronRight, Plus, X,
@@ -210,9 +211,11 @@ interface Props {
   ws: TenderWorkspace;
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
+  /** Fires ONLY after a confirmed save (the workspace shell passes reload). */
+  onSaved?: () => void;
 }
 
-export default function RiskSnapshot({ ws, onOpenDocuments, onOpenGlobalIntel }: Props) {
+export default function RiskSnapshot({ ws, onOpenDocuments, onOpenGlobalIntel, onSaved }: Props) {
   const t = ws.tender;
   const tenderId = t.id;
 
@@ -233,6 +236,7 @@ export default function RiskSnapshot({ ws, onOpenDocuments, onOpenGlobalIntel }:
 
   const [initial, setInitial] = useState(() => JSON.stringify(data));
   const [saving, setSaving] = useState(false);
+  const staleRetryArmed = useRef(false);
   const dirty = JSON.stringify(data) !== initial;
 
   useEffect(() => {
@@ -359,22 +363,30 @@ export default function RiskSnapshot({ ws, onOpenDocuments, onOpenGlobalIntel }:
   }, [hasTableFocus]);
 
   // ── Save ──────────────────────────────────────────────────
+  // risk_snapshot_data is a single-tab facet: this tab owns ALL its keys
+  // (register, assessment, mitigation_actions, clarifications, recommendation)
+  // — the patch-merge payload is the full facet (design pin P2b).
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const result = await updateTenderRiskSnapshotData(tenderId, data);
-      if (result.success) {
-        toast.success("Risk Snapshot saved.");
-        setInitial(JSON.stringify(data));
-      } else {
-        toast.error(result.error || "Save failed.");
-      }
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderRiskSnapshotData(tenderId, data, { expectedRevision }),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "Risk Snapshot saved.", failed: "Save failed." },
+        onConfirmed: () => {
+          setInitial(JSON.stringify(data));
+          onSaved?.();
+        },
+        // Stale: dirty stays true, so the resync effect keeps the user's entry.
+      });
     } catch (e: any) {
       toast.error(e.message || "Save failed.");
     } finally {
       setSaving(false);
     }
-  }, [tenderId, data]);
+  }, [tenderId, data, onSaved, ws]);
 
   // ═══════════════════════════════════════════════════════════
   // RENDER
