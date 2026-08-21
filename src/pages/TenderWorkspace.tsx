@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { formatSAR } from "@/lib/store";
 import { getTenderStatusColor, type TenderMilestone } from "@/lib/tender-engine";
-import { getPackStatusLabel, getPackTypeLabel, getSectionStatusLabel, getSectionStatusColor, getSectionApprovalLabel, stageLabelFromInternalStage, buildRequiredDocumentsProgress, type TenderStageRelevance, type TenderWorkspace, type TenderPack } from "@/lib/tender-workspace-data";
+import { stageLabelFromInternalStage, buildRequiredDocumentsProgress, type TenderStageRelevance, type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { useTenderWorkspaceData } from "@/hooks/useTenderWorkspaceData";
 import { toast } from "sonner";
 import { updateTenderPhase, updateTenderCrmStage } from "@/lib/supabase-tender-actions";
@@ -19,15 +19,13 @@ import { mapDbStageToInternalCognitionStage, isRestorableCrmPipelineStage } from
 import {
   TENDER_INTERNAL_STAGES,
   normalizeTenderInternalStage,
+  projectTenderStageTruth,
   type TenderInternalStageDefinition,
 } from "@/lib/tender-stage-source-truth";
 
 import TenderPlaceholdersTab from "@/components/tender/TenderPlaceholdersTab";
 import TenderRequiredDocumentsTab from "@/components/tender/TenderRequiredDocumentsTab";
 import TenderComplianceMatrixTab from "@/components/tender/TenderComplianceMatrixTab";
-import TenderSubmissionGatesTab from "@/components/tender/TenderSubmissionGatesTab";
-import TenderSplitPackGenerator from "@/components/tender/TenderSplitPackGenerator";
-import TenderSubmissionEmailReview from "@/components/tender/TenderSubmissionEmailReview";
 import TenderActivityTab from "@/components/tender/TenderActivityTab";
 import TenderAuditTrailTab from "@/components/tender/TenderAuditTrailTab";
 
@@ -68,7 +66,7 @@ import TenderPnLCalculatorPanel from "@/components/tender/TenderPnLCalculatorPan
 import TenderDraftingStage from "@/components/tender/TenderDraftingStage";
 import InternalReviewStage from "@/components/tender/InternalReviewStage";
 import ApprovalMatrixStage from "@/components/tender/ApprovalMatrixStage";
-import FinalApprovedStage from "@/components/tender/FinalApprovedStage";
+import FinalApprovedStage, { deriveDepartmentalReviewProgress } from "@/components/tender/FinalApprovedStage";
 import SubmittedStage from "@/components/tender/SubmittedStage";
 import ClarificationStage from "@/components/tender/ClarificationStage";
 import ClientEvaluationStage from "@/components/tender/ClientEvaluationStage";
@@ -111,6 +109,8 @@ function buildRequiredDocumentsSegment(ws: TenderWorkspace): StageTaskProgressSe
     requiredDocuments: ws.requiredDocuments ?? [],
     requiredDocumentsAssessed: ws.requiredDocumentsAssessed,
     uploadedDocumentNames: (ws.documents ?? []).map(d => d.document_name),
+    // TCW-T2 (P1): lets register rows satisfy via linked_document_id.
+    uploadedDocumentIds: (ws.documents ?? []).map(d => d.id),
   });
   return {
     key: "required_docs",
@@ -130,27 +130,6 @@ function hasValue(value: unknown): boolean {
 function progressPercent(done: number, total: number): number {
   if (total <= 0) return 0;
   return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
-}
-
-function cleanProcessCopy(value: string): string | null {
-  const cleaned = value
-    .replace(/\bmock\b/gi, "")
-    .replace(/\bsimulated\b/gi, "")
-    .replace(/\bsimulation\b/gi, "")
-    .replace(/\bfuture\b/gi, "")
-    .replace(/\bsample\b/gi, "")
-    .replace(/\s+/g, " ")
-    .replace(/\s+([.,;:])/g, "$1")
-    .trim();
-  return cleaned.length > 0 ? cleaned : null;
-}
-
-function getCleanPackActionLabel(action: string): string | null {
-  const normalizedAction = action.toLowerCase();
-  if (normalizedAction.includes("output")) return "Open Output Workspace";
-  if (normalizedAction.includes("split")) return "Review Split Pack";
-  if (normalizedAction.includes("readiness")) return "Review Readiness";
-  return cleanProcessCopy(action);
 }
 
 function getCleanCrmSyncStatusLabel(status?: string): string {
@@ -291,87 +270,141 @@ function objFieldCount(obj: any, keys: string[]): { filled: number; total: numbe
   return { filled, total: keys.length };
 }
 
-function buildSowQualificationTaskProgress(ws: TenderWorkspace): StageTaskProgressSegment[] {
-  const sq = ((ws.tender as any).sowQualificationData || {}) as any;
+/**
+ * TCW-T2 meter truth: every segment below reads ONLY keys its tab actually
+ * writes. The previous keys (clarification_questions / overall_score /
+ * qualification_status / output_wiring) were never written by
+ * SowQualification.tsx — which saves { coverage_matrix, clarity_assessment,
+ * clarifications, outcome: { recommendation, reason } } — so honest saved work
+ * rendered 0% forever. The Snapshot section renders tender intake fields
+ * read-only, so its segment derives from those fields. The Output Use section
+ * is a static map with no stored record, so its segment says that instead of
+ * pretending a percentage.
+ */
+export function buildSowQualificationTaskProgress(ws: TenderWorkspace): StageTaskProgressSegment[] {
+  const t = ws.tender as any;
+  const sq = (t.sowQualificationData || {}) as any;
   // 6 inner tabs: snapshot, coverage, clarity, clarifications, outcome, wiring
-  const snapshotFields = ["tender_title", "customer_name", "submission_deadline", "estimated_value"];
-  const snapshot = objFieldCount(sq, snapshotFields);
+  const snapshotFields = [t.customerName, t.title, t.source, t.region, t.submissionDeadline, t.estimatedValue, t.targetGpPercent, t.assignedOwner];
   const coverage = Array.isArray(sq?.coverage_matrix) ? { filled: sq.coverage_matrix.filter((r: any) => r.status && r.status !== "Not Assessed").length, total: Math.max(sq.coverage_matrix.length, 1) } : { filled: 0, total: 1 };
   const clarity = sq?.clarity_assessment && typeof sq.clarity_assessment === "object" ? { filled: Object.values(sq.clarity_assessment).filter((v: any) => v && v !== "Not Assessed").length, total: Math.max(Object.keys(sq.clarity_assessment).length, 1) } : { filled: 0, total: 1 };
-  const clarifications = Array.isArray(sq?.clarification_questions) ? { filled: sq.clarification_questions.length > 0 ? 1 : 0, total: 1 } : { filled: 0, total: 1 };
-  const outcome = objFieldCount(sq, ["overall_score", "recommendation", "qualification_status"]);
-  const wiring = Array.isArray(sq?.output_wiring) ? { filled: sq.output_wiring.length > 0 ? 1 : 0, total: 1 } : { filled: 0, total: 1 };
+  const clarificationRows = Array.isArray(sq?.clarifications) ? sq.clarifications : [];
+  const outcomeFilled = [
+    sq?.outcome?.recommendation && sq.outcome.recommendation !== "Not decided" ? sq.outcome.recommendation : null,
+    sq?.outcome?.reason,
+  ].filter(hasValue).length;
 
   return [
-    { key: "snapshot", label: "Tender Intake Snapshot", percent: progressPercent(snapshot.filled, snapshot.total) },
+    { key: "snapshot", label: "Tender Intake Snapshot", percent: progressPercent(snapshotFields.filter(hasValue).length, snapshotFields.length) },
     { key: "coverage", label: "SOW Coverage Matrix", percent: progressPercent(coverage.filled, coverage.total) },
     { key: "clarity", label: "SOW Clarity Assessment", percent: progressPercent(clarity.filled, clarity.total) },
-    { key: "clarifications", label: "SOW Clarification Questions", percent: progressPercent(clarifications.filled, clarifications.total) },
-    { key: "outcome", label: "SOW Qualification Outcome", percent: progressPercent(outcome.filled, outcome.total) },
-    { key: "wiring", label: "Output Use", percent: progressPercent(wiring.filled, wiring.total) },
+    { key: "clarifications", label: "SOW Clarification Questions", percent: progressPercent(clarificationRows.length > 0 ? 1 : 0, 1) },
+    { key: "outcome", label: "SOW Qualification Outcome", percent: progressPercent(outcomeFilled, 2) },
+    { key: "wiring", label: "Output Use", percent: null, note: "Informational — this tab is a static output map; nothing is recorded" },
   ];
 }
 
-function buildTechnicalQualificationTaskProgress(ws: TenderWorkspace): StageTaskProgressSegment[] {
+/**
+ * TCW-T2 meter truth: TechnicalQualification.tsx saves
+ * { capability_assessment[] (.fit / .status), gaps[], clarifications[],
+ * recommendation: { outcome, reason, reviewer } }. The previous keys
+ * (overall_score / technical_fit_level / summary_narrative / requirement_gaps
+ * / clarification_questions / output_wiring) were never written — and the
+ * capability segment counted rows by `.status !== "Not Assessed"`, which every
+ * pre-seeded row passes ("Open"), fabricating 100% before any assessment.
+ * "Assessed" now means `.fit` was set. The Summary section renders stats
+ * derived from the capability rows, so its segment derives from the same rows.
+ */
+export function buildTechnicalQualificationTaskProgress(ws: TenderWorkspace): StageTaskProgressSegment[] {
   const tq = ((ws.tender as any).technicalQualificationData || {}) as any;
   // 6 inner tabs: summary, capability, gaps, clarifications, recommendation, wiring
-  const summary = objFieldCount(tq, ["overall_score", "technical_fit_level", "summary_narrative"]);
-  const capability = Array.isArray(tq?.capability_assessment) ? { filled: tq.capability_assessment.filter((r: any) => r.status && r.status !== "Not Assessed").length, total: Math.max(tq.capability_assessment.length, 1) } : { filled: 0, total: 1 };
-  const gaps = Array.isArray(tq?.requirement_gaps) ? { filled: tq.requirement_gaps.length > 0 ? 1 : 0, total: 1 } : { filled: 0, total: 1 };
-  const clarifications = Array.isArray(tq?.clarification_questions) ? { filled: tq.clarification_questions.length > 0 ? 1 : 0, total: 1 } : { filled: 0, total: 1 };
-  const recommendation = objFieldCount(tq, ["recommendation", "recommendation_rationale"]);
-  const wiring = Array.isArray(tq?.output_wiring) ? { filled: tq.output_wiring.length > 0 ? 1 : 0, total: 1 } : { filled: 0, total: 1 };
+  const capabilityRows = Array.isArray(tq?.capability_assessment) ? tq.capability_assessment : [];
+  const capabilityAssessed = capabilityRows.filter((r: any) => r.fit && r.fit !== "Not Assessed").length;
+  const capabilityPct = progressPercent(capabilityAssessed, Math.max(capabilityRows.length, 1));
+  const gapRows = Array.isArray(tq?.gaps) ? tq.gaps : [];
+  const clarificationRows = Array.isArray(tq?.clarifications) ? tq.clarifications : [];
+  const recommendationFilled = [
+    tq?.recommendation?.outcome && tq.recommendation.outcome !== "Not decided" ? tq.recommendation.outcome : null,
+    tq?.recommendation?.reason,
+  ].filter(hasValue).length;
 
   return [
-    { key: "summary", label: "Technical Fit Summary", percent: progressPercent(summary.filled, summary.total) },
-    { key: "capability", label: "Technical Capability Assessment", percent: progressPercent(capability.filled, capability.total) },
-    { key: "gaps", label: "Technical Requirement Gaps", percent: progressPercent(gaps.filled, gaps.total) },
-    { key: "clarifications", label: "Technical Clarifications", percent: progressPercent(clarifications.filled, clarifications.total) },
-    { key: "recommendation", label: "Technical Recommendation", percent: progressPercent(recommendation.filled, recommendation.total) },
-    { key: "wiring", label: "Output Use", percent: progressPercent(wiring.filled, wiring.total) },
+    { key: "summary", label: "Technical Fit Summary", percent: capabilityPct },
+    { key: "capability", label: "Technical Capability Assessment", percent: capabilityPct },
+    { key: "gaps", label: "Technical Requirement Gaps", percent: progressPercent(gapRows.length > 0 ? 1 : 0, 1) },
+    { key: "clarifications", label: "Technical Clarifications", percent: progressPercent(clarificationRows.length > 0 ? 1 : 0, 1) },
+    { key: "recommendation", label: "Technical Recommendation", percent: progressPercent(recommendationFilled, 2) },
+    { key: "wiring", label: "Output Use", percent: null, note: "Informational — this tab is a static output map; nothing is recorded" },
   ];
 }
 
-function buildCustomerFitTaskProgress(ws: TenderWorkspace): StageTaskProgressSegment[] {
+/**
+ * TCW-T2 meter truth: CustomerFitQualification.tsx saves
+ * { customer_snapshot: {…10 fields}, dimensions[] (.assessment), evidence[],
+ * gaps[], recommendation: { outcome, reason, reviewer } }. The previous keys
+ * (top-level customer_name / fit_dimensions[].score / overall_score /
+ * qualification_status / evidence_register / fit_gaps /
+ * recommendation_rationale) were never written by the tab. The Scorecard
+ * section is a pure projection of the dimension assessments, so its segment
+ * derives from the same rows.
+ */
+export function buildCustomerFitTaskProgress(ws: TenderWorkspace): StageTaskProgressSegment[] {
   const cf = ((ws.tender as any).customerFitData || {}) as any;
   // 6 inner tabs: snapshot, dimensions, scorecard, evidence, gaps, recommendation
-  const snapshotFields = ["customer_name", "source", "region", "owner", "estimated_value"];
-  const snapshot = objFieldCount(cf, snapshotFields.length > 0 ? snapshotFields : ["customer_name"]);
-  const dimensions = Array.isArray(cf?.fit_dimensions) ? { filled: cf.fit_dimensions.filter((r: any) => r.score && r.score !== "Not Assessed").length, total: Math.max(cf.fit_dimensions.length, 1) } : { filled: 0, total: 1 };
-  const scorecard = objFieldCount(cf, ["overall_score", "qualification_status"]);
-  const evidence = Array.isArray(cf?.evidence_register) ? { filled: cf.evidence_register.length > 0 ? 1 : 0, total: 1 } : { filled: 0, total: 1 };
-  const gaps = Array.isArray(cf?.fit_gaps) ? { filled: cf.fit_gaps.length > 0 ? 1 : 0, total: 1 } : { filled: 0, total: 1 };
-  const recommendation = objFieldCount(cf, ["recommendation", "recommendation_rationale"]);
+  const snap = (cf?.customer_snapshot && typeof cf.customer_snapshot === "object" ? cf.customer_snapshot : {}) as any;
+  const snapshotKeys = ["customer_name", "source", "crm_reference", "existing_customer_status", "linked_opportunity", "owner", "estimated_value", "region", "win_probability", "notes"];
+  const snapshotFilled = snapshotKeys.filter(k => hasValue(snap[k])).length;
+  const dimensionRows = Array.isArray(cf?.dimensions) ? cf.dimensions : [];
+  const dimensionsAssessed = dimensionRows.filter((r: any) => r.assessment && r.assessment !== "Not Assessed").length;
+  const dimensionsPct = progressPercent(dimensionsAssessed, Math.max(dimensionRows.length, 1));
+  const evidenceRows = Array.isArray(cf?.evidence) ? cf.evidence : [];
+  const gapRows = Array.isArray(cf?.gaps) ? cf.gaps : [];
+  const recommendationFilled = [
+    cf?.recommendation?.outcome && cf.recommendation.outcome !== "Not decided" ? cf.recommendation.outcome : null,
+    cf?.recommendation?.reason,
+  ].filter(hasValue).length;
 
   return [
-    { key: "snapshot", label: "Customer Snapshot", percent: progressPercent(snapshot.filled, snapshot.total) },
-    { key: "dimensions", label: "Fit Dimensions", percent: progressPercent(dimensions.filled, dimensions.total) },
-    { key: "scorecard", label: "Qualification Scorecard", percent: progressPercent(scorecard.filled, scorecard.total) },
-    { key: "evidence", label: "Evidence Register", percent: progressPercent(evidence.filled, evidence.total) },
-    { key: "gaps", label: "Fit Gaps / Clarifications", percent: progressPercent(gaps.filled, gaps.total) },
-    { key: "recommendation", label: "Qualification Recommendation", percent: progressPercent(recommendation.filled, recommendation.total) },
+    { key: "snapshot", label: "Customer Snapshot", percent: progressPercent(snapshotFilled, snapshotKeys.length) },
+    { key: "dimensions", label: "Fit Dimensions", percent: dimensionsPct },
+    { key: "scorecard", label: "Qualification Scorecard", percent: dimensionsPct },
+    { key: "evidence", label: "Evidence Register", percent: progressPercent(evidenceRows.length > 0 ? 1 : 0, 1) },
+    { key: "gaps", label: "Fit Gaps / Clarifications", percent: progressPercent(gapRows.length > 0 ? 1 : 0, 1) },
+    { key: "recommendation", label: "Qualification Recommendation", percent: progressPercent(recommendationFilled, 2) },
   ];
 }
 
-function buildRiskSnapshotTaskProgress(ws: TenderWorkspace): StageTaskProgressSegment[] {
+/**
+ * TCW-T2 meter truth: RiskSnapshot.tsx saves
+ * { register[], assessment: {…8 levels}, mitigation_actions[],
+ * clarifications[], recommendation: { outcome, reason, reviewer } }. The
+ * previous keys (overall_risk_level / summary_narrative / risk_register /
+ * risk_assessment / clarification_questions / output_wiring /
+ * recommendation_rationale) were never written by the tab. The Summary
+ * section renders stats derived from the register rows, so its segment
+ * derives from the same rows.
+ */
+export function buildRiskSnapshotTaskProgress(ws: TenderWorkspace): StageTaskProgressSegment[] {
   const rs = ((ws.tender as any).riskSnapshotData || {}) as any;
   // 7 inner tabs: summary, register, assessment, mitigation, clarifications, recommendation, wiring
-  const summary = objFieldCount(rs, ["overall_risk_level", "summary_narrative"]);
-  const register = Array.isArray(rs?.risk_register) ? { filled: rs.risk_register.length > 0 ? 1 : 0, total: 1 } : { filled: 0, total: 1 };
-  const assessment = rs?.risk_assessment && typeof rs.risk_assessment === "object" ? { filled: Object.values(rs.risk_assessment).filter((v: any) => v && v !== "Not Assessed").length, total: Math.max(Object.keys(rs.risk_assessment).length, 1) } : { filled: 0, total: 1 };
+  const registerRows = Array.isArray(rs?.register) ? rs.register : [];
+  const registerPct = progressPercent(registerRows.length > 0 ? 1 : 0, 1);
+  const assessment = rs?.assessment && typeof rs.assessment === "object" ? { filled: Object.values(rs.assessment).filter((v: any) => v && v !== "Not Assessed").length, total: Math.max(Object.keys(rs.assessment).length, 1) } : { filled: 0, total: 1 };
   const mitigation = Array.isArray(rs?.mitigation_actions) ? { filled: rs.mitigation_actions.length > 0 ? 1 : 0, total: 1 } : { filled: 0, total: 1 };
-  const clarifications = Array.isArray(rs?.clarification_questions) ? { filled: rs.clarification_questions.length > 0 ? 1 : 0, total: 1 } : { filled: 0, total: 1 };
-  const recommendation = objFieldCount(rs, ["recommendation", "recommendation_rationale"]);
-  const wiring = Array.isArray(rs?.output_wiring) ? { filled: rs.output_wiring.length > 0 ? 1 : 0, total: 1 } : { filled: 0, total: 1 };
+  const clarificationRows = Array.isArray(rs?.clarifications) ? rs.clarifications : [];
+  const recommendationFilled = [
+    rs?.recommendation?.outcome && rs.recommendation.outcome !== "Not decided" ? rs.recommendation.outcome : null,
+    rs?.recommendation?.reason,
+  ].filter(hasValue).length;
 
   return [
-    { key: "summary", label: "Risk Summary", percent: progressPercent(summary.filled, summary.total) },
-    { key: "register", label: "Qualification Risk Register", percent: progressPercent(register.filled, register.total) },
+    { key: "summary", label: "Risk Summary", percent: registerPct },
+    { key: "register", label: "Qualification Risk Register", percent: registerPct },
     { key: "assessment", label: "Risk Assessment", percent: progressPercent(assessment.filled, assessment.total) },
     { key: "mitigation", label: "Mitigation Actions", percent: progressPercent(mitigation.filled, mitigation.total) },
-    { key: "clarifications", label: "Risk Clarifications", percent: progressPercent(clarifications.filled, clarifications.total) },
-    { key: "recommendation", label: "Risk Recommendation", percent: progressPercent(recommendation.filled, recommendation.total) },
-    { key: "wiring", label: "Output Use", percent: progressPercent(wiring.filled, wiring.total) },
+    { key: "clarifications", label: "Risk Clarifications", percent: progressPercent(clarificationRows.length > 0 ? 1 : 0, 1) },
+    { key: "recommendation", label: "Risk Recommendation", percent: progressPercent(recommendationFilled, 2) },
+    { key: "wiring", label: "Output Use", percent: null, note: "Informational — this tab is a static output map; nothing is recorded" },
   ];
 }
 
@@ -676,7 +709,7 @@ function buildSolutionDesignTaskProgress(tabId: string, ws: TenderWorkspace): St
 
 // ─── Tender Drafting Stage Progress Builders ─────────────────
 
-function buildTenderDraftingTaskProgress(tabId: string, ws: TenderWorkspace): StageTaskProgressSegment[] | null {
+export function buildTenderDraftingTaskProgress(tabId: string, ws: TenderWorkspace): StageTaskProgressSegment[] | null {
   const td = (ws.tender as any)?.tenderDraftingData;
   if (!td) return null;
 
@@ -732,20 +765,27 @@ function buildTenderDraftingTaskProgress(tabId: string, ws: TenderWorkspace): St
   }
 
   if (tabId === "compliance_coverage") {
+    // TCW-T2 meter truth: ComplianceCoverageTab saves
+    // compliance_coverage.requirements (rows with status "Not Started" |
+    // "Drafted" | "Covered" | "Gap" | "Clarification Required" |
+    // "Not Applicable"). The previous key `items` was never written.
     const cc = td.compliance_coverage ?? {};
-    const items = Array.isArray(cc.items) ? cc.items : [];
-    const assessed = items.filter((i: any) => i.status && i.status !== "Not Assessed").length;
+    const requirementRows = Array.isArray(cc.requirements) ? cc.requirements : [];
+    const assessed = requirementRows.filter((i: any) => i.status && i.status !== "Not Started").length;
     return [
-      { key: "compliance_items", label: "Coverage Items", percent: progressPercent(assessed, Math.max(items.length, 1)) },
+      { key: "compliance_items", label: "Coverage Items", percent: progressPercent(assessed, Math.max(requirementRows.length, 1)) },
     ];
   }
 
   if (tabId === "appendices_evidence") {
+    // TCW-T2 meter truth: AppendicesEvidenceTab saves
+    // appendices_evidence.evidence_gaps (rows keyed by missing_evidence).
+    // The previous keys `items` / `title` were never written.
     const ae = td.appendices_evidence ?? {};
-    const items = Array.isArray(ae.items) ? ae.items : [];
-    const filled = items.filter((i: any) => i.title && i.title.trim().length > 0).length;
+    const gapRows = Array.isArray(ae.evidence_gaps) ? ae.evidence_gaps : [];
+    const filled = gapRows.filter((i: any) => typeof i.missing_evidence === "string" && i.missing_evidence.trim().length > 0).length;
     return [
-      { key: "appendices", label: "Appendices Captured", percent: progressPercent(filled, Math.max(items.length, 1)) },
+      { key: "appendices", label: "Evidence Gaps Captured", percent: progressPercent(filled, Math.max(gapRows.length, 1)) },
     ];
   }
 
@@ -844,7 +884,7 @@ function buildPnlPricingTaskProgress(tabId: string, ws: TenderWorkspace): StageT
 }
 
 /** Dispatch stage-task progress by stage */
-function buildStageTaskProgress(stage: string, tabId: string, ws: TenderWorkspace): StageTaskProgressSegment[] | null {
+export function buildStageTaskProgress(stage: string, tabId: string, ws: TenderWorkspace): StageTaskProgressSegment[] | null {
   if (stage === "identified") return buildIdentifiedTaskProgress(tabId, ws);
   if (stage === "qualification") return buildQualificationTaskProgress(tabId, ws);
   if (stage === "bid_no_bid") return buildBidNoBidTaskProgress(tabId, ws);
@@ -1135,11 +1175,23 @@ function buildLostWithdrawnTaskProgress(tabId: string, ws: TenderWorkspace): Sta
 }
 
 
-function buildApprovalMatrixTaskProgress(tabId: string, ws: TenderWorkspace): StageTaskProgressSegment[] | null {
+/**
+ * TCW-T2: the approval matrix is read through `projectTenderStageTruth`, the
+ * canonical-first / legacy-drafting-fallback projection the stage itself uses.
+ * The stage writes canonical `type_details.approval_matrix`; the previous read
+ * looked ONLY at the legacy `tender_drafting.approval_matrix` location, so
+ * decisions recorded canonically were invisible here — while live legacy data
+ * (the Linde tender) still resolves through the fallback.
+ */
+function projectedApprovalMatrix(ws: TenderWorkspace): Record<string, unknown> {
   const t = ws.tender as any;
-  const drafting = t.tenderDraftingData ?? {};
-  const matrix = drafting.approval_matrix ?? {};
-  const approvals: any[] = Array.isArray(matrix.approvals) ? matrix.approvals : [];
+  return projectTenderStageTruth(t.typeDetails ?? t.type_details).approval_matrix;
+}
+
+export function buildApprovalMatrixTaskProgress(tabId: string, ws: TenderWorkspace): StageTaskProgressSegment[] | null {
+  const t = ws.tender as any;
+  const matrix = projectedApprovalMatrix(ws);
+  const approvals: any[] = Array.isArray((matrix as any).approvals) ? (matrix as any).approvals : [];
   const totalApprovers = approvals.length || 2; // minimum 2 (salesman + regional sales head)
   const approvedCount = approvals.filter((a: any) => a.decision === "approved").length;
   const rejectedCount = approvals.filter((a: any) => a.decision === "rejected").length;
@@ -1153,7 +1205,9 @@ function buildApprovalMatrixTaskProgress(tabId: string, ws: TenderWorkspace): St
     return [
       { key: "data_sources", label: "Data Sources", percent: dataPct },
       { key: "approvals", label: "Required Approvals", percent: approvalPct },
-      { key: "governance", label: "Governance Note", percent: 100 },
+      // TCW-T2: was a constant 100%. The Governance Note section is advisory
+      // text with no stored record — the honest meter says that instead.
+      { key: "governance", label: "Governance Note", percent: null, note: "Advisory text — nothing is recorded for this section" },
     ];
   }
 
@@ -1180,7 +1234,9 @@ function buildApprovalMatrixTaskProgress(tabId: string, ws: TenderWorkspace): St
     // 2 sections: Governance Rules, Audit Trail
     const auditPct = approvals.length > 0 ? 100 : 0;
     return [
-      { key: "governance_rules", label: "Governance Rules", percent: 100 },
+      // TCW-T2: was a constant 100%. The Governance Rules section is advisory
+      // text with no stored record — the honest meter says that instead.
+      { key: "governance_rules", label: "Governance Rules", percent: null, note: "Advisory text — nothing is recorded for this section" },
       { key: "audit_trail", label: "Audit Trail", percent: auditPct },
     ];
   }
@@ -1275,7 +1331,7 @@ function buildInternalReviewTaskProgress(tabId: string, ws: TenderWorkspace): St
   return null;
 }
 
-function buildFinalApprovedTaskProgress(tabId: string, ws: TenderWorkspace): StageTaskProgressSegment[] | null {
+export function buildFinalApprovedTaskProgress(tabId: string, ws: TenderWorkspace): StageTaskProgressSegment[] | null {
   const t = ws.tender as any;
   const td = t.tenderDraftingData ?? {};
   const checks = (() => {
@@ -1288,12 +1344,16 @@ function buildFinalApprovedTaskProgress(tabId: string, ws: TenderWorkspace): Sta
     const pricing = t.pricingData;
     const hasPricing = (Array.isArray(pricing?.scenarios) && pricing.scenarios.length > 0) || !!(pricing?.summary);
     const blocks = Array.isArray(td.proposal_blocks) ? td.proposal_blocks : [];
-    const reviews = td.departmental_reviews ?? {};
-    const submitted = ["operations", "finance", "legal"].filter(d => reviews[d]?.submitted_at);
-    const matrix = td.approval_matrix;
+    // TCW-AUD fix (defect 1): `tender_drafting.departmental_reviews` is a
+    // phantom facet no code path writes — deriving from it capped this meter
+    // at 6/7 forever. Derive from the per-block review statuses, the same
+    // source the Stage-9 tab checklist uses (deriveDepartmentalReviewProgress).
+    const reviewDone = deriveDepartmentalReviewProgress(blocks).fullyReviewed.length === 3;
+    // TCW-T2: canonical-first approval matrix (see projectedApprovalMatrix).
+    const matrix = projectedApprovalMatrix(ws) as any;
     const approvals: any[] = Array.isArray(matrix?.approvals) ? matrix.approvals : [];
     const allApproved = approvals.length > 0 && approvals.every((a: any) => a.decision === "approved");
-    return { hasQual, hasBid, hasSd, hasPricing, hasBlocks: blocks.length > 0, reviewDone: submitted.length === 3, allApproved };
+    return { hasQual, hasBid, hasSd, hasPricing, hasBlocks: blocks.length > 0, reviewDone, allApproved };
   })();
 
   if (tabId === "submission_readiness") {
@@ -1332,14 +1392,17 @@ function buildFinalApprovedTaskProgress(tabId: string, ws: TenderWorkspace): Sta
   }
 
   if (tabId === "approval_record") {
-    const matrix = td.approval_matrix ?? {};
+    // TCW-T2: canonical-first approval matrix (see projectedApprovalMatrix).
+    const matrix = projectedApprovalMatrix(ws) as any;
     const approvals: any[] = Array.isArray(matrix.approvals) ? matrix.approvals : [];
     const approved = approvals.filter((a: any) => a.decision === "approved").length;
     const hasTriggers = t.pricingData != null || t.solutionDesignData != null;
     return [
       { key: "triggers", label: "Routing Triggers", percent: hasTriggers ? 100 : 0 },
       { key: "signoffs", label: "Sign-off Log", percent: approvals.length > 0 ? Math.round((approved / approvals.length) * 100) : 0 },
-      { key: "governance", label: "Governance", percent: 100 },
+      // TCW-T2: was a constant 100%. The Governance section is advisory text
+      // with no stored record — the honest meter says that instead.
+      { key: "governance", label: "Governance", percent: null, note: "Advisory text — nothing is recorded for this section" },
     ];
   }
 
@@ -1454,41 +1517,9 @@ function riskBadge(level: string) {
     </Badge>
   );
 }
-function PackCard({ pack }: { pack: TenderPack }) {
-  return (
-    <Card className={`border ${pack.isMaster ? "border-amber-300 bg-amber-50/30 dark:bg-amber-950/10" : "border-border"}`}>
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between mb-3">
-          <div>
-            <h3 className="text-sm font-semibold">{pack.packName}</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">{getPackTypeLabel(pack.packType)}</p>
-          </div>
-          <Badge variant="outline" className={`text-[10px] ${pack.isExternalSubmittable ? "border-emerald-300 text-emerald-700" : "border-amber-300 text-amber-700"}`}>
-            {pack.isExternalSubmittable ? "External" : "Internal Only"}
-          </Badge>
-        </div>
-        {pack.isMaster && (
-          <div className="mb-3 p-2.5 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30">
-            <div className="flex items-center gap-1.5 text-xs text-amber-800"><ShieldAlert className="w-3.5 h-3.5" /> Internal only â€” advisory signal: production approval required before external submission.</div>
-          </div>
-        )}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between"><span className="text-xs text-muted-foreground">Readiness</span><span className="text-xs font-bold">{pack.readinessScore}%</span></div>
-          <div className="w-full bg-muted rounded-full h-1.5"><div className="h-1.5 rounded-full bg-[var(--color-hala-navy)]" style={{ width: `${pack.readinessScore}%` }} /></div>
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            <div className="text-[10px] text-muted-foreground">Status: <span className="font-medium text-foreground">{getPackStatusLabel(pack.status)}</span></div>
-            <div className="text-[10px] text-muted-foreground">Owner: <span className="font-medium text-foreground">{pack.ownerName}</span></div>
-            <div className="text-[10px] text-muted-foreground">Sections: <span className="font-medium text-foreground">{pack.sectionsDrafted}/{pack.sectionsTotal}</span></div>
-            <div className="text-[10px] text-muted-foreground">Placeholders: <span className="font-medium text-foreground">{pack.placeholdersPopulated}/{pack.placeholdersTotal}</span></div>
-            <div className="text-[10px] text-muted-foreground">Documents: <span className="font-medium text-foreground">{pack.documentsReady}/{pack.documentsTotal}</span></div>
-            <div className="text-[10px] text-muted-foreground">Compliance: <span className="font-medium text-foreground">{pack.complianceCompliant}/{pack.complianceTotal}</span></div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
+/* TCW-T2 (P6 dead-branch removal): PackCard was defined here but never
+   rendered anywhere in this file or elsewhere (no <PackCard usage in src/).
+   Removed with the dead packs branch. */
 
 /**
  * Build a flat data snapshot from a TenderWorkspace for the
@@ -1549,9 +1580,6 @@ function buildTenderDataSnapshot(ws: TenderWorkspace): Record<string, any> {
 export default function TenderWorkspaceDetail() {
   const { id } = useParams<{ id: string }>();
   const [tab, setTab] = useState("overview");
-  const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
-  const [splitGenOpen, setSplitGenOpen] = useState(false);
-  const [emailSimOpen, setEmailSimOpen] = useState(false);
   const [cognitionStage, setCognitionStage] = useState<string>("identified");
   const [crmCognitionStage, setCrmCognitionStage] = useState<(typeof CRM_PIPELINE_STAGES)[0] | null>(null);
   const [internalCognitionStage, setInternalCognitionStage] = useState<TenderInternalStageDefinition | null>(null);
@@ -1650,7 +1678,11 @@ export default function TenderWorkspaceDetail() {
 
   const t = ws.tender;
   const persistedInternalStage = normalizeTenderInternalStage(t.internalStageRaw);
-  const daysLeft = Math.ceil((new Date(t.submissionDeadline).getTime() - Date.now()) / 86400000);
+  // TCW-AUD fix (defect 2): an absent/unparseable deadline used to produce
+  // NaN, which the drawer rendered as a fabricated "Overdue" verdict. NaN is
+  // passed through as NaN and the consumers render "Not set" honestly.
+  const deadlineMs = new Date(t.submissionDeadline).getTime();
+  const daysLeft = Number.isFinite(deadlineMs) ? Math.ceil((deadlineMs - Date.now()) / 86400000) : NaN;
   // Signal count derived from real compliance data — no mock gates
   const signalCount = ws.complianceItems.filter(c =>
     c.status === 'non_compliant' || c.status === 'clarification_required'
@@ -1658,7 +1690,6 @@ export default function TenderWorkspaceDetail() {
   const currentInternalStage = TENDER_INTERNAL_STAGES.find(s => s.value === cognitionStage) ?? TENDER_INTERNAL_STAGES[0];
   const activeInternalStage = currentInternalStage;
   const activeInternalStageIdx = Math.max(0, TENDER_INTERNAL_STAGES.findIndex(s => s.value === cognitionStage));
-  const selectedPack = ws.packs.find(p => p.id === selectedPackId) ?? ws.packs[0] ?? null;
 
   return (
     <TooltipProvider>
@@ -1742,7 +1773,7 @@ export default function TenderWorkspaceDetail() {
             }
             const prev = ws.crmPipelineStageRaw ?? '(not set)';
             const result = await updateTenderCrmStage(id!, prev, stage, 'Manual CRM stage move');
-            if (result.success) { toast.success(`CRM Pipeline moved to ${stage}`, { description: 'Persisted to Supabase.' }); reload(); }
+            if (result.success) { if (result.auditWarning) { toast.warning(`CRM Pipeline moved to ${stage} — audit entry not recorded`, { description: result.auditWarning }); } else { toast.success(`CRM Pipeline moved to ${stage}`, { description: 'Persisted to Supabase.' }); } reload(); }
             else toast.warning('CRM stage update failed', { description: result.error });
           }}
           crmDealId={t.id.substring(0, 6)}
@@ -1906,7 +1937,7 @@ export default function TenderWorkspaceDetail() {
                     const icons: Record<string, React.ElementType> = {
                       tender_summary: BookOpen, packs: Package, tender_builder: Package, final_pack: Package, submitted_version: Send,
                       placeholders: FileText, commercial: DollarSign, pnl_calculator: Calculator, pnl_snapshot: Calculator, cost_inputs: DollarSign, pricing_scenarios: Scale, commercial_terms: ScrollText, pricing_approval: CheckCircle2,
-                      delivery: Truck, warehouse_model: Package, transport_model: Truck, compliance_matrix: Shield, compliance_alignment: Shield, compliance_coverage: Shield,
+                      delivery: Truck, warehouse_model: Package, transport_model: Truck, compliance_matrix: Shield, compliance_alignment: Shield, compliance_coverage: Shield, compliance: Shield,
                       required_documents: FileText, technical_evidence: FileText,
                       bid_decision: Scale, win_strategy: Trophy, resource_commitment: Users, decision_record: Stamp,
                       solution_configuration: Wrench, hop_operations_model: Truck, ham_manpower_model: Users, hip_systems_ip_model: Database, scope_matrix: ClipboardList, sla_kpi_model: Target, assumptions_dependencies: FileText,
@@ -2009,162 +2040,16 @@ export default function TenderWorkspaceDetail() {
                         return <LostWithdrawnStage ws={ws} activeTab={tabId} reload={reload} onOpenDocuments={() => openDocumentDrawerForTrackerStage("lost_withdrawn")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
                       }
 
-                      if (tabId === "tender_builder" || tabId === "packs" || tabId === "final_pack" || tabId === "submitted_version") {
-                        if (ws.packs.length === 0) return <p className="text-sm text-muted-foreground py-8 text-center">No packs configured yet.</p>;
-                        return (
-                          <div className="space-y-4">
-                            {/* Packs toolbar */}
-                            <div className="p-3 rounded-lg border border-muted bg-muted/20 flex items-center justify-between gap-2.5">
-                              <div className="flex items-center gap-2.5">
-                                <Package className="w-4 h-4 text-muted-foreground shrink-0" />
-                                <p className="text-xs text-muted-foreground">{ws.packs.length} pack{ws.packs.length > 1 ? 's' : ''} configured. All actions are advisory â€” no documents are locked or submitted.</p>
-                              </div>
-                              <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5 shrink-0" onClick={() => setEmailSimOpen(true)}>
-                                <Mail className="w-3.5 h-3.5" /> Review Submission Email
-                              </Button>
-                            </div>
-
-                            {/* Pack selector cards */}
-                            <div className="grid gap-3 md:grid-cols-3">
-                              {ws.packs.map(p => {
-                                const isSelected = (selectedPack?.id === p.id);
-                                return (
-                                  <button key={p.id} onClick={() => setSelectedPackId(p.id)} className={`text-left rounded-xl border-2 p-4 transition-all ${isSelected ? "border-[var(--color-hala-navy)] bg-[var(--color-hala-navy)]/5 shadow-md" : "border-border hover:border-muted-foreground/30 bg-background"} ${p.isMaster ? "ring-1 ring-amber-300/50" : ""}`}>
-                                    <div className="flex items-start justify-between mb-2">
-                                      <div><p className="text-sm font-semibold">{p.packName}</p><p className="text-[10px] text-muted-foreground">{getPackTypeLabel(p.packType)}</p></div>
-                                      <Badge variant="outline" className={`text-[9px] ${p.isExternalSubmittable ? "border-emerald-300 text-emerald-700" : "border-amber-300 text-amber-700"}`}>{p.isExternalSubmittable ? "External" : "Internal Only"}</Badge>
-                                    </div>
-                                    <div className="flex items-center gap-2 mb-1.5">
-                                      <div className="flex-1 bg-muted rounded-full h-1.5"><div className="h-1.5 rounded-full bg-[var(--color-hala-navy)]" style={{ width: `${p.readinessScore}%` }} /></div>
-                                      <span className="text-xs font-mono font-bold">{p.readinessScore}%</span>
-                                    </div>
-                                    <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                                      <span>Status: <span className="font-medium text-foreground">{getPackStatusLabel(p.status)}</span></span>
-                                      <span>Sections: <span className="font-medium text-foreground">{p.sections.filter(s => s.status === "approved").length}/{p.sections.length}</span></span>
-                                    </div>
-                                    {p.isMaster && <div className="mt-2 flex items-center gap-1 text-[10px] text-amber-700"><ShieldAlert className="w-3 h-3" /> Internal only â€” not submittable</div>}
-                                  </button>
-                                );
-                              })}
-                            </div>
-
-                            {/* Selected pack detail */}
-                            {selectedPack && (
-                              <Card className={`border ${selectedPack.isMaster ? "border-amber-300" : "border-border"}`}>
-                                <CardContent className="p-5 space-y-5">
-                                  {/* Pack header */}
-                                  <div className="flex items-start justify-between">
-                                    <div>
-                                      <h3 className="text-base font-serif font-bold">{selectedPack.packName}</h3>
-                                      <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                                        <span>{getPackTypeLabel(selectedPack.packType)}</span>
-                                        <span>Â·</span>
-                                        <span>Owner: <span className="font-medium text-foreground">{selectedPack.ownerName}</span></span>
-                                        <span>Â·</span>
-                                        <span>v{selectedPack.version}</span>
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <Badge variant="outline" className={`text-[10px] ${selectedPack.isExternalSubmittable ? "border-emerald-300 text-emerald-700" : "border-amber-300 text-amber-700"}`}>{selectedPack.isExternalSubmittable ? "External Submittable" : "Internal Only"}</Badge>
-                                      <Badge variant="outline" className="text-[10px]">{getPackStatusLabel(selectedPack.status)}</Badge>
-                                    </div>
-                                  </div>
-
-                                  {/* Master pack warnings */}
-                                  {(() => {
-                                    const cleanWarnings = selectedPack.readinessWarnings
-                                      .map(cleanProcessCopy)
-                                      .filter((w): w is string => Boolean(w));
-                                    if (cleanWarnings.length === 0) return null;
-                                    return (
-                                      <div className="space-y-2">
-                                        {cleanWarnings.map((warning, i) => (
-                                          <div key={`${warning}-${i}`} className="p-2.5 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30">
-                                            <p className="text-xs text-amber-800 flex items-center gap-1.5"><ShieldAlert className="w-3.5 h-3.5 shrink-0" />{warning}</p>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    );
-                                  })()}
-
-                                  {/* Readiness breakdown */}
-                                  <div>
-                                    <h4 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">Readiness Breakdown</h4>
-                                    <div className="grid gap-2">
-                                      {(["sections", "placeholders", "required_documents", "compliance", "readiness_signals", "outputs"] as const).map(key => {
-                                        const val = selectedPack.readinessBreakdown[key];
-                                        const label = key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-                                        const barColor = val >= 70 ? "bg-emerald-500" : val >= 50 ? "bg-amber-500" : "bg-red-500";
-                                        return (
-                                          <div key={key} className="flex items-center gap-3">
-                                            <span className="text-xs w-40 text-muted-foreground">{label}</span>
-                                            <div className="flex-1 bg-muted rounded-full h-2"><div className={`h-2 rounded-full ${barColor} transition-all`} style={{ width: `${val}%` }} /></div>
-                                            <span className={`text-xs font-mono w-10 text-right font-bold ${val >= 70 ? "text-emerald-700" : val >= 50 ? "text-amber-700" : "text-red-700"}`}>{val}%</span>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-
-                                  {/* Section list */}
-                                  <div>
-                                    <h4 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">Sections ({selectedPack.sections.length})</h4>
-                                    <div className="border rounded-lg overflow-hidden">
-                                      <table className="w-full text-xs">
-                                        <thead className="bg-muted/50"><tr>
-                                          <th className="px-3 py-2 text-left font-semibold w-8">#</th>
-                                          <th className="px-3 py-2 text-left font-semibold">Section</th>
-                                          <th className="px-3 py-2 text-left font-semibold">Owner</th>
-                                          <th className="px-3 py-2 text-left font-semibold">Status</th>
-                                          <th className="px-3 py-2 text-center font-semibold">Missing</th>
-                                          <th className="px-3 py-2 text-left font-semibold">Updated</th>
-                                          <th className="px-3 py-2 text-left font-semibold">Approval</th>
-                                        </tr></thead>
-                                        <tbody>
-                                          {selectedPack.sections.map((sec, i) => (
-                                            <tr key={sec.id} className="border-t border-border hover:bg-muted/30">
-                                              <td className="px-3 py-2 text-muted-foreground">{i + 1}</td>
-                                              <td className="px-3 py-2 font-medium">{sec.title}</td>
-                                              <td className="px-3 py-2 text-muted-foreground">{sec.owner}</td>
-                                              <td className="px-3 py-2"><Badge variant="outline" className={`text-[9px] ${getSectionStatusColor(sec.status)}`}>{getSectionStatusLabel(sec.status)}</Badge></td>
-                                              <td className="px-3 py-2 text-center">{sec.missingPlaceholders > 0 ? <span className="text-red-600 font-bold">{sec.missingPlaceholders}</span> : <span className="text-emerald-600">0</span>}</td>
-                                              <td className="px-3 py-2 text-muted-foreground font-mono">{sec.lastUpdated}</td>
-                                              <td className="px-3 py-2"><Badge variant="outline" className="text-[9px]">{getSectionApprovalLabel(sec.approvalState)}</Badge></td>
-                                            </tr>
-                                          ))}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  </div>
-
-                                  {/* Pack actions */}
-                                  <div>
-                                    <h4 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">Pack Actions</h4>
-                                    <div className="flex flex-wrap gap-2">
-                                      {selectedPack.advisoryActions.map(action => {
-                                        const normalizedAction = action.toLowerCase();
-                                        const Icon =
-                                          normalizedAction.includes("output") ? FileOutput :
-                                          normalizedAction.includes("split") ? FlaskConical :
-                                          normalizedAction.includes("readiness") ? Eye :
-                                          Wrench;
-                                        const isSplitAction = normalizedAction.includes("split") || normalizedAction.includes("output");
-                                        const label = getCleanPackActionLabel(action);
-                                        if (!label) return null;
-                                        return (
-                                          <Button key={action} variant="outline" size="sm" className="text-xs h-8 gap-1.5" onClick={() => isSplitAction ? setSplitGenOpen(true) : toast.info("Action not connected.", { description: "No workflow was created." })}>
-                                            <Icon className="w-3.5 h-3.5" /> {label}
-                                          </Button>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-                                </CardContent>
-                              </Card>
-                            )}
-                          </div>
-                        );
-                      }
+                      /* TCW-T2 (P6 dead-branch removal): the packs/tender-builder
+                         mega-branch that rendered pack cards, readiness breakdowns,
+                         split-pack and submission-email launchers lived here. Orphan
+                         proof: no stage tab list in buildStageConfig produces the ids
+                         "tender_builder" or "packs", and "final_pack" /
+                         "submitted_version" are intercepted by the stage-gated
+                         FinalApprovedStage / SubmittedStage branches above, so this
+                         branch could never render. Removed together with the
+                         split-pack / email-review dialogs whose only openers lived
+                         inside it. */
                       // Identified Workbench Tabs
                       if (cognitionStage === "identified" && tabId === "intake_file_audit") {
                         return <IntakeFileAuditTab ws={ws} reload={reload} onOpenDocuments={() => openDocumentDrawerForTrackerStage("identified")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
@@ -2179,10 +2064,24 @@ export default function TenderWorkspaceDetail() {
                         return <IdentifiedClarificationLogTab ws={ws} reload={reload} onOpenDocuments={() => openDocumentDrawerForTrackerStage("identified")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
                       }
 
+                      /* TCW-T2 (P6 reachability): the three register tabs are
+                         reachable from the Stage 9 (Final Approved) tab list —
+                         "Placeholders", "Required Documents", "Compliance".
+                         Props are the CURRENT component signatures
+                         (ws / tenderId / reload); T5 rebuilds these tabs on
+                         the P1 register contract in parallel — Fable aligns
+                         props at integration if T5 changes them. */
                       if (tabId === "placeholders") return <TenderPlaceholdersTab ws={ws} tenderId={id!} reload={reload} />;
-                      if (tabId === "compliance_matrix" || tabId === "compliance_alignment") return <TenderComplianceMatrixTab ws={ws} tenderId={id!} reload={reload} />;
+                      if (tabId === "compliance_matrix" || tabId === "compliance_alignment" || tabId === "compliance") return <TenderComplianceMatrixTab ws={ws} tenderId={id!} reload={reload} />;
                       if (tabId === "required_documents" || tabId === "technical_evidence") return <TenderRequiredDocumentsTab ws={ws} tenderId={id!} reload={reload} />;
-                      if (tabId === "submission_readiness") return <TenderSubmissionGatesTab ws={ws} tenderId={id!} reload={reload} />;
+                      /* TCW-T2 (P6 dead-branch removal): a
+                         `submission_readiness` route to TenderSubmissionGatesTab
+                         stood here. Orphan proof: "Submission Readiness" only
+                         exists in the final_approved tab list, and that stage's
+                         gated branch above intercepts the id first, so this
+                         route could never render. The gates tab itself is
+                         T5-owned and stays advisory; re-routing it is not part
+                         of P6's reachability additions. */
                       if (tabId === "activity" || tabId === "clarification_log" || tabId === "negotiation_log" || tabId === "submission_log" || tabId === "response_history") return <TenderActivityTab ws={ws} tenderId={id!} reload={reload} />;
                       if (tabId === "audit_trail" || tabId === "approval_record") return <TenderAuditTrailTab ws={ws} />;
                       if (tabId === "pnl_calculator") {
@@ -2212,10 +2111,18 @@ export default function TenderWorkspaceDetail() {
                       if (tabId === "customer_snapshot") return <TenderCustomerSnapshotTab ws={ws} reload={reload} onOpenDocuments={() => openDocumentDrawerForTrackerStage("identified")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
 
                       // Qualification Workbench Tabs
+                      // TCW-T2 reload wiring: every saving qualification tab is
+                      // handed onSaved={reload} so a save refreshes the bundle
+                      // (sidebar meters, header, stage truth). Technical /
+                      // CustomerFit / Risk do not declare the prop yet — T3 is
+                      // adding it in parallel — so it is passed by JSX spread,
+                      // which is compile-safe against the CURRENT Props and
+                      // becomes live the moment T3's `onSaved?: () => void`
+                      // lands (integration TODO recorded in the lane report).
                       if (tabId === "sow_qualification") return <SowQualification ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("qualification")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} onSaved={reload} />;
-                      if (tabId === "technical_qualification") return <TechnicalQualification ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("qualification")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
-                      if (tabId === "customer_fit") return <CustomerFitQualification ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("qualification")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
-                      if (tabId === "risk_snapshot") return <RiskSnapshot ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("qualification")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
+                      if (tabId === "technical_qualification") return <TechnicalQualification ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("qualification")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} {...{ onSaved: reload }} />;
+                      if (tabId === "customer_fit") return <CustomerFitQualification ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("qualification")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} {...{ onSaved: reload }} />;
+                      if (tabId === "risk_snapshot") return <RiskSnapshot ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("qualification")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} {...{ onSaved: reload }} />;
 
                       // Bid / No-Bid Workbench Tabs
                       if (tabId === "bid_decision") return <BidDecisionTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("bid_no_bid")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} onSaved={reload} />;
@@ -2224,13 +2131,17 @@ export default function TenderWorkspaceDetail() {
                       if (tabId === "decision_record") return <DecisionRecordTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("bid_no_bid")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} onSaved={reload} />;
 
                       // Solution Design Workbench Tabs
-                      if (tabId === "solution_configuration") return <SolutionConfigurationTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
-                      if (tabId === "hop_operations_model") return <HOPOperationsModelTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
-                      if (tabId === "ham_manpower_model") return <HAMManpowerModelTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
-                      if (tabId === "hip_systems_ip_model") return <HIPSystemsIPModelTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
-                      if (tabId === "scope_matrix") return <ScopeMatrixTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
-                      if (tabId === "sla_kpi_model") return <SLAKPIModelTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
-                      if (tabId === "assumptions_dependencies") return <AssumptionsDependenciesTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} />;
+                      // TCW-T2 reload wiring: same spread contract as the
+                      // qualification tabs above — all seven saving Solution
+                      // Design tabs receive onSaved={reload}; T3 adds the prop
+                      // to the components in parallel.
+                      if (tabId === "solution_configuration") return <SolutionConfigurationTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} {...{ onSaved: reload }} />;
+                      if (tabId === "hop_operations_model") return <HOPOperationsModelTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} {...{ onSaved: reload }} />;
+                      if (tabId === "ham_manpower_model") return <HAMManpowerModelTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} {...{ onSaved: reload }} />;
+                      if (tabId === "hip_systems_ip_model") return <HIPSystemsIPModelTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} {...{ onSaved: reload }} />;
+                      if (tabId === "scope_matrix") return <ScopeMatrixTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} {...{ onSaved: reload }} />;
+                      if (tabId === "sla_kpi_model") return <SLAKPIModelTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} {...{ onSaved: reload }} />;
+                      if (tabId === "assumptions_dependencies") return <AssumptionsDependenciesTab ws={ws} onOpenDocuments={() => openDocumentDrawerForTrackerStage("solution_design")} onOpenGlobalIntel={() => setGlobalIntelOpen(true)} {...{ onSaved: reload }} />;
 
                       // Configured clean-process tabs are routed above; unmapped tabs should not render synthetic process content.
                       return null;
@@ -2278,8 +2189,10 @@ export default function TenderWorkspaceDetail() {
         targetGp={t.targetGpPercent}
         signalCount={signalCount}
       />
-      {splitGenOpen && <TenderSplitPackGenerator ws={ws} onClose={() => setSplitGenOpen(false)} />}
-      {emailSimOpen && <TenderSubmissionEmailReview ws={ws} onClose={() => setEmailSimOpen(false)} tenderId={id!} reload={reload} />}
+      {/* TCW-T2 (P6 dead-branch removal): the TenderSplitPackGenerator and
+          TenderSubmissionEmailReview dialogs rendered here, but their ONLY
+          openers (setSplitGenOpen / setEmailSimOpen) lived inside the removed
+          dead packs branch — they could never open. */}
 
       {/* â”€â”€ CRM STAGE COGNITION DIALOG â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <Dialog open={!!crmCognitionStage} onOpenChange={() => setCrmCognitionStage(null)}>
@@ -2302,7 +2215,7 @@ export default function TenderWorkspaceDetail() {
                     return;
                   }
                   const result = await updateTenderCrmStage(id!, prev, crmCognitionStage.value, 'Manual CRM stage move');
-                  if (result.success) { toast.success(`CRM Pipeline moved to ${crmCognitionStage.label}`, { description: 'Persisted to Supabase.' }); reload(); }
+                  if (result.success) { if (result.auditWarning) { toast.warning(`CRM Pipeline moved to ${crmCognitionStage.label} — audit entry not recorded`, { description: result.auditWarning }); } else { toast.success(`CRM Pipeline moved to ${crmCognitionStage.label}`, { description: 'Persisted to Supabase.' }); } reload(); }
                   else toast.warning('CRM stage update failed', { description: result.error });
                   setCrmCognitionStage(null);
                 }}>Confirm: Move CRM to {crmCognitionStage.label}</Button>
@@ -2335,7 +2248,7 @@ export default function TenderWorkspaceDetail() {
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Move to this stage?</p>
                   <Button className="w-full text-sm" onClick={async () => {
                     const result = await updateTenderPhase(id!, persistedInternalStage, internalCognitionStage.value, 'Manual internal Tender stage change');
-                    if (result.success) { toast.success(`Stage moved to ${internalCognitionStage.label}`, { description: 'Persisted to Supabase.' }); reload(); }
+                    if (result.success) { if (result.auditWarning) { toast.warning(`Stage moved to ${internalCognitionStage.label} — audit entry not recorded`, { description: result.auditWarning }); } else { toast.success(`Stage moved to ${internalCognitionStage.label}`, { description: 'Persisted to Supabase.' }); } reload(); }
                     else toast.warning('Stage update failed', { description: result.error });
                     setInternalCognitionStage(null);
                   }}>Confirm: Move to {internalCognitionStage.label}</Button>

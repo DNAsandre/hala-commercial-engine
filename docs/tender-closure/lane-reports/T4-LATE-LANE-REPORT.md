@@ -1,0 +1,46 @@
+# TCW-T4-LATE lane report (verbatim)
+
+> Extracted verbatim from the lane agent's final report.
+
+All gates green on the committed tip. Final report:
+
+---
+
+## TCW-T4-LATE — Lane Report (branch `tcw/t4-late`, baseline 4c2e423, 8 commits `8bb1a8b..61a3350`)
+
+### Gates (seen on the final committed tip)
+- `pnpm check` (tsc): **0 errors** (entry: 0)
+- FULL `pnpm test`: **849 passed / 60 files, 0 failed** (entry: 805/55 → +44 tests in 5 new files, no prior test broken)
+- `pnpm build`: **✓ 2,494 modules transformed** (entry: 2,493; +1 = the new helper module)
+
+### Files touched (all inside `src/components/tender/` — grant-compliant; nothing shared/forbidden touched)
+48 granted components modified + 5 new files. New: `tender-save-outcome.ts` (shared helper — see Gaps #2), `tender-save-outcome.test.ts`, `FinalApprovedStage.checklist.test.ts`, `TenderGlobalIntelligenceDrawer.test.ts`, `ApprovalMatrixStage.actor.test.ts`, `tender-history-tabs.test.tsx`. Untouched grant files: `TenderDraftingStage.tsx`, `InternalReviewStage.tsx` (pure routers, nothing to fix; RBAC TODO A15 left as the documented flag). `ProcessStageTaskShell`/`ai-runs.ts`/all `src/lib` untouched.
+
+### Fixes (before → after)
+1. **Revision threading + outcomes (P2a/P3)** — every save handler in my files (drafting TOC/blocks/compliance-coverage/appendices, approval-matrix add/decide/reset/remove, final-approved record + check-save, submitted ×3, clarification ×4, client-eval ×5, negotiation ×4, awarded ×4, lost/withdrawn ×4, dept-review flag-save) now passes the trailing `expectedRevision` via `wsRevisionToken(ws)` and renders the honest outcome: `stale` → warning, entry kept on screen, **no reload** (non-destructive retry); `saved_with_audit_warning` → amber "…— audit entry not recorded: <reason>"; failure → real reason. Three highest-traffic paths (drafting blocks, approval record, submission record) run through the unit-tested `saveTenderSectionWithOutcome`.
+2. **Actor truth (P4/F1-F3)** — `decided_by: "Current User"` (ApprovalMatrixStage) → `getCurrentUser().name` via exported pure `applyApprovalDecision`; `recorded_by`/`ran_by: "Current User"` (FinalApprovedStage) → session user via exported `buildFinalApprovalRecordPayload`; DepartmentalReviewTab approve/reject/reset now pass `getCurrentUser().name` explicitly as `reviewerName`; ExceptionsTab resubmit actor = session user (the phrase "Resubmitted by drafter" was the stored ACTOR before; it is dropped — nowhere honest to keep it without touching T1's writer note format).
+3. **B8** — "✓ Tender bot connected" → muted "AI drafting is not available in this build (Sprint X) — drafting here is manual." Plus dishonest-label-only fixes around other refusing AI buttons (dept-review header/empty-states/score gauge, Final Check card, TOC generate caption, editor AI-Draft tooltip). All refusals untouched.
+4. **B9/B10/B11/C3** — `saved={true}` / `saved={hasStoredData}` replaced with real state: editable tabs report dirty up (`onDirtyChange`) → shells render `unsaved={dirty}`, `saved={stored && !dirty}`, grey when nothing recorded; action tabs treat typed-but-unconfirmed inputs (reject reason, participant name, decision comment) as Unsaved; pure read-only projections pass `saved={true}` with a justification comment (view ≡ store; nothing can be unsaved) — stated design decision.
+5. **B15/B16** — drawer stage checks now derived: solution-design from real keys `configuration/hop/ham/hip/scope_matrix/sla_kpi`; P&L from stored pricing sections; internal review from per-block `<dept>_status` (volume-scoped, vacuous-truth rejected); approval matrix via `projectTenderStageTruth` canonical+legacy, with check labels rewritten to exactly what is derivable. Exported `deriveStageIntelligenceChecks` for tests.
+6. **B17/B18/F4** — hardcoded 14-item `REQUIRED_DOCS` + first-word fuzzy match deleted. Checklist/metrics/check-payload derive only from the recorded `submission_readiness.required_documents` register (same canonical rows as `ws.submissionReadiness.facet`) via exported `buildSubmissionChecklist`: status/linked-id/FULL-name-containment matching, `na` outside both counters, empty register → honest "No requirement set recorded" state, `missing_count` clamped ≥0 (+ `requirement_set_recorded` flag in the check payload).
+7. **Departmental_reviews orphan (P6)** — no writer invented. Exported `deriveDepartmentalReviewProgress(blocks)` (per-block `<dept>_status` aggregates via `countByStatus`/`DEPARTMENT_VOLUMES`) now drives the Stage-9 checklist item, the (refusing) Final-Check payload, the drawer, and PreviousStageIntelligence ("N/3 fully reviewed" / "Review in progress" / "No department review decisions recorded yet"). PreviousStageIntelligence's approval-matrix read also moved from legacy-only to canonical+legacy.
+8. **B21/B22/C2** — "immutable log entry" and "locks the version" banners → honest manual-record wording; "Frozen" badge → "Recorded (manual)"; "Proposal Blocks Snapshot" → "Current Proposal Blocks (live)… editable in Tender Drafting"; receipt-confirmed dot/badge now render from the **stored** value only ("Receipt marked — not saved yet" while dirty).
+9. **C1** — TOC block-creation's second write result is checked: success toast only when both writes confirmed; a failed TOC-status write reports the honest partial outcome; local TOC status set only after confirmation.
+10. **F5** — drawer consumes ONE feed (`ws.auditEntries`; the two arrays are projections of the same rows on this baseline): counts once, lists once; the old category/severity dropdowns (which filtered on mapper-constant fields) replaced with one real kind filter (note/stage-move/update) via exported `classifyAuditEntryKind`/`buildDrawerTimeline`. B13/B14 (same file, in-range of P5): readiness/submission tiles say "Not measured (no packs configured)" and the compliance signal says "No compliance items recorded" instead of green "Ready" over an empty register.
+11. **F6** — mock/sample/simulated/fake/development-mode/coming-soon row-hiding removed from TenderActivityTab + TenderAuditTrailTab; counters over the full stored set.
+12. **F8** — resolved as **single real sections**: SubmittedStage's duplicate section pairs (same child rendered twice) collapsed to one honest section per view; genuinely distinct Activity/Audit sections in other shells kept.
+13. **Gap-8** — `bnb.bid_decision?.decision` → `bnb.decision?.decision` (verified against BidDecisionTab's patch) in the live Source Intelligence row + AI context; `risk.risk_rows`/`r.risk_level` → `risk.register`/`r.severity` ("High"/"Critical", verified against RiskSnapshot).
+
+### Tests added (44, all passing) + guard proof
+`tender-save-outcome.test.ts` (16: token verbatim/absent, four-outcome classification, toast mapping, spy-writer threading), `FinalApprovedStage.checklist.test.ts` (14: register reads, checklist derivation incl. empty-honest/na/negative-clamp, P6 derivation incl. vacuous-truth rejection, F2 payload actor), `TenderGlobalIntelligenceDrawer.test.ts` (9: kind classifier, F5 N-not-2N + sort + counters, B15/B16 real-keys incl. all-checks-on full tender + canonical/legacy matrix), `ApprovalMatrixStage.actor.test.ts` (3: F1 actor verbatim, sibling preservation), `tender-history-tabs.test.tsx` (2: F6 react-dom/server renders rows containing "mock"/"simulated", "2 of 2 shown").
+**GUARD run:** reintroduced `.split(" ")[0]` first-word matching in `buildSubmissionChecklist` → named test "GUARD (B18): a first-word/prefix match must NOT satisfy a requirement" failed (1 failed | 13 passed) → restored → suite green. (During restore a `git checkout` clobbered two not-yet-committed FinalApprovedStage edits; re-applied and re-verified — final gates above are from the committed tip.)
+
+### Gaps / conflicts / not verified
+1. **P2a plumbing conflict (needs Fable)**: `bundle.revisionToken` (T1) is not copied onto the `ws` object components receive — `bundleToTenderWorkspace` (T1's `supabase-tender-data.ts`) and the `TenderWorkspace` interface (T2's `tender-workspace-data.ts`) lack the field, and `TenderWorkspace.tsx` passes only `ws`. All my handlers thread `wsRevisionToken(ws)` and are token-live the moment a one-line mapping (`revisionToken: bundle.revisionToken` + optional interface field) lands in those T1/T2 files. Until then writers fall back to their own fresh-read lock — exactly pre-wave protection, no regression, no fabricated token (unit-tested).
+2. **New non-test module** `tender-save-outcome.ts`: the grant lists components "+ new tests"; a shared helper avoided ~30 copies of the outcome contract. Flagged for ownership ruling.
+3. Handler→`getCurrentUser()` wiring in DepartmentalReviewTab/ExceptionsTab is tsc-verified and code-reviewed but not unit-tested (handlers not extractable without a DOM); the pure actor paths (F1/F2) are tested.
+4. TOC block-creation's second write intentionally passes no token (the first write already advanced `updated_at`); documented in code.
+5. Not verified: live browser behavior (no dev-server/UAT run — house tests only); non-tender surfaces untouched by construction (no shared files edited).
+6. Left as-is (out of grant): "Saved" badges inside T3-owned tabs; dormant B1-B7 config indicators (T2); `InternalReviewStage` RBAC TODO (A15 flag).
+
+Fable verifies — I do not declare this lane complete.

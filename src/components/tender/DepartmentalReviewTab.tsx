@@ -1,13 +1,15 @@
 /**
- * DepartmentalReviewTab — Per-department block review with AI cross-referencing.
+ * DepartmentalReviewTab — Per-department block review.
  *
  * Each department gets:
  * - Department-specific briefing panel with context data availability
- * - AI review that cross-references proposal blocks against previous stage data
- * - Findings summary card after AI runs
- * - Approve / Reject workflow per block
+ * - Approve / Reject workflow per block (human decisions, persisted per block)
  *
- * ONE SOURCE OF TRUTH: bots come from Bot Builder (ai_bots table).
+ * AI review is NOT available in this build (deferred to Sprint X — SX-001/
+ * SX-011): the Run AI Review button always reports that refusal. The one
+ * persisted pre-AI path is the honest "BLOCK NOT DRAFTED" flag for blocks with
+ * no content. Stored AI findings/scores from earlier builds still render.
+ *
  * No hardcoded bots. No mock data.
  */
 import { useState, useMemo, useCallback } from "react";
@@ -33,6 +35,8 @@ function generateAIUnavailable(): { content: string; tokensInput: number; tokens
 }
 import { loadGovernedBotByName } from "@/lib/ai-runs";
 import { updateBlockReviewStatus, saveBlockAIFlags } from "@/lib/supabase-tender-actions";
+import { getCurrentUser } from "@/lib/auth-state";
+import { reportSaveOutcome } from "./tender-save-outcome";
 import {
   ensureReviewFields,
   DEPARTMENT_LABELS,
@@ -221,16 +225,14 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
     return { ring: "stroke-red-500", text: "text-red-600", bg: "bg-red-50", label: "Critical" };
   };
 
+  // P4 (F1-F3): every review decision explicitly records the SESSION user as
+  // the reviewer (auth-state mirror; signed-out records its honest
+  // "Unauthenticated" literal) — never an omitted arg or a "System" default.
   const handleApprove = useCallback(async (blockId: string) => {
     setSaving(blockId);
     try {
-      const res = await updateBlockReviewStatus(tenderId, blockId, department, "Approved", "");
-      if (res.success) {
-        toast.success("Block approved.");
-        reload();
-      } else {
-        toast.error(res.error || "Failed to approve.");
-      }
+      const res = await updateBlockReviewStatus(tenderId, blockId, department, "Approved", "", getCurrentUser().name);
+      if (reportSaveOutcome(res, "Block approved.")) reload();
     } catch (error: any) {
       toast.error(error?.message || "Failed to approve.");
     } finally {
@@ -241,15 +243,14 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
   const handleReject = useCallback(async (blockId: string) => {
     setSaving(blockId);
     try {
-      const res = await updateBlockReviewStatus(tenderId, blockId, department, "Rejected", rejectComment);
-    if (res.success) {
-      toast.success("Block rejected — sent to Exceptions.");
-      reload();
-    } else {
-      toast.error(res.error || "Failed to reject.");
-    }
-      setRejectingId(null);
-      setRejectComment("");
+      const res = await updateBlockReviewStatus(tenderId, blockId, department, "Rejected", rejectComment, getCurrentUser().name);
+      if (reportSaveOutcome(res, "Block rejected — sent to Exceptions.")) {
+        // Only a confirmed write clears the typed rejection reason; a stale or
+        // failed save keeps it on screen for a non-destructive retry.
+        setRejectingId(null);
+        setRejectComment("");
+        reload();
+      }
     } catch (error: any) {
       toast.error(error?.message || "Failed to reject.");
     } finally {
@@ -260,12 +261,8 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
   const handleReset = useCallback(async (blockId: string) => {
     setSaving(blockId);
     try {
-      const res = await updateBlockReviewStatus(tenderId, blockId, department, "Pending", "");
-      if (res.success) {
-        reload();
-      } else {
-        toast.error(res.error || "Failed to reset.");
-      }
+      const res = await updateBlockReviewStatus(tenderId, blockId, department, "Pending", "", getCurrentUser().name);
+      if (reportSaveOutcome(res, "Review decision reset to pending.")) reload();
     } catch (error: any) {
       toast.error(error?.message || "Failed to reset.");
     } finally {
@@ -309,10 +306,10 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
       }));
 
       if (draftedBlocks.length === 0 && emptyBlocks.length > 0) {
-        // ALL blocks are empty — save empty-flags and warn user
+        // ALL blocks are empty — save empty-flags and warn user. Failure and
+        // stale outcomes are surfaced honestly, never swallowed.
         const res = await saveBlockAIFlags(tenderId, department, emptyFlags, bot.id);
-        if (res.success) {
-          toast.warning(`${emptyBlocks.length} block(s) have NO content — flagged as NOT DRAFTED. Draft blocks first, then run the AI review.`);
+        if (reportSaveOutcome(res, `${emptyBlocks.length} block(s) have NO content — flagged as NOT DRAFTED. Draft blocks first.`)) {
           reload();
         }
         setAiRunning(false);
@@ -474,6 +471,13 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
     );
   }
 
+  // TCW-T4 (B11): real badge state — decisions persist on click, so "Unsaved"
+  // is exactly a typed-but-unconfirmed rejection reason; "Saved" requires at
+  // least one stored review record for this department and no pending input;
+  // an untouched review renders the grey "Not Saved".
+  const pendingRejectInput = rejectingId !== null && rejectComment.trim() !== "";
+  const hasStoredReviewData = approvedCount > 0 || rejectedCount > 0 || deptFlags.length > 0;
+
   return (
     <div className="space-y-4">
       <TenderStageTaskShell
@@ -487,7 +491,8 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
         metrics={intelMetrics}
         onOpenDocuments={onOpenDocuments}
         onOpenGlobalIntel={onOpenGlobalIntel}
-        saved
+        saved={hasStoredReviewData && !pendingRejectInput}
+        unsaved={pendingRejectInput}
       />
       {/* ─── 1. Department Briefing Panel ──────────────────────────── */}
       <Card className={`border ${colors.border} shadow-none overflow-hidden ${activeSection !== "briefing" ? "hidden" : ""}`}>
@@ -499,16 +504,20 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
             <h3 className="text-sm font-bold text-white">{DEPARTMENT_LABELS[department]} Review</h3>
             <p className="text-[10px] text-white/80">{DEPT_DESCRIPTIONS[department]}</p>
           </div>
-          <Button
-            size="sm"
-            className="h-8 text-[11px] gap-1.5 bg-white/20 hover:bg-white/30 text-white border-white/30"
-            variant="outline"
-            disabled={aiRunning}
-            onClick={handleRunAIReview}
-          >
-            {aiRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bot className="w-3.5 h-3.5" />}
-            {aiRunning ? "Analyzing..." : `Run AI ${DEPARTMENT_LABELS[department]} Review`}
-          </Button>
+          <div className="flex flex-col items-end gap-0.5">
+            <Button
+              size="sm"
+              className="h-8 text-[11px] gap-1.5 bg-white/20 hover:bg-white/30 text-white border-white/30"
+              variant="outline"
+              disabled={aiRunning}
+              onClick={handleRunAIReview}
+            >
+              {aiRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bot className="w-3.5 h-3.5" />}
+              {aiRunning ? "Checking..." : `Run AI ${DEPARTMENT_LABELS[department]} Review`}
+            </Button>
+            {/* TCW-T4 honesty: the generation itself is refused in this build. */}
+            <span className="text-[8px] text-white/70">AI review unavailable in this build (Sprint X)</span>
+          </div>
         </div>
 
         <CardContent className="p-4">
@@ -578,8 +587,8 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
                 })() : (
                   <div className="flex flex-col items-center justify-center p-2 rounded-lg border bg-slate-50 border-slate-200 min-w-[80px]">
                     <span className="text-lg font-bold text-slate-400">—</span>
-                    <span className="text-[8px] text-muted-foreground mt-1">Run AI Review</span>
-                    <span className="text-[8px] text-muted-foreground">to get score</span>
+                    <span className="text-[8px] text-muted-foreground mt-1">No AI score stored</span>
+                    <span className="text-[8px] text-muted-foreground">(AI review: Sprint X)</span>
                   </div>
                 )}
 
@@ -663,7 +672,7 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
         <div className="text-center py-12 text-muted-foreground">
           <TrendingUp className="w-8 h-8 mx-auto mb-3 opacity-40" />
           <p className="text-sm font-medium">No AI flags for this department yet.</p>
-          <p className="text-xs mt-1">Run the AI review from the Briefing Panel to analyze.</p>
+          <p className="text-xs mt-1">AI review is not available in this build (Sprint X); stored flags from earlier runs would appear here.</p>
         </div>
       )}
       </div>
@@ -787,7 +796,7 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
                 {blockFlags.length === 0 && (
                   <div className="flex items-center gap-2 text-[10px] text-muted-foreground bg-muted/30 rounded-md px-3 py-2 border border-border">
                     <Info className="w-3 h-3 shrink-0" />
-                    <span>No AI flags for this block. Run the AI review to analyze.</span>
+                    <span>No AI flags stored for this block (AI review is not available in this build — Sprint X).</span>
                   </div>
                 )}
 

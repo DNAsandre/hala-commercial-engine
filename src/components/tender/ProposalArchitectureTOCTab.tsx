@@ -24,6 +24,7 @@ import {
 import { documentsForTenderStage, summarizeTenderDocuments, type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { normalizeTenderPricingData } from "@/lib/tender-pricing-types";
 import { updateTenderDraftingData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 import {
   generateBlockContent,
   getBlockBots,
@@ -163,7 +164,10 @@ function SourceIntelligenceSummary({ ws }: { ws: TenderWorkspace }) {
             </div>
             <div className="space-y-0.5 rounded-md border border-border p-2">
               <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Bid / No-Bid</p>
-              {row("Decision", bnb.bid_decision?.decision || nc)}
+              {/* TCW-T4 (gap-8): BidDecisionTab stores decision.decision — the
+                  old `bid_decision` key never existed, so this row read
+                  "Not captured" forever. */}
+              {row("Decision", bnb.decision?.decision || nc)}
               {row("Win Strategy", bnb.win_strategy ? "Captured" : nc)}
             </div>
             <div className="space-y-0.5 rounded-md border border-border p-2">
@@ -316,7 +320,8 @@ export default function ProposalArchitectureTOCTab({ ws, reload, onOpenDocuments
       }
       if (sowQ.outcome?.recommendation) contextParts.push(`\nSOW QUALIFICATION OUTCOME: ${sowQ.outcome.recommendation}`);
       if (techQ.recommendation?.outcome) contextParts.push(`TECHNICAL QUALIFICATION: ${techQ.recommendation.outcome}`);
-      if (bnb.bid_decision?.decision) contextParts.push(`BID DECISION: ${bnb.bid_decision.decision}`);
+      // TCW-T4 (gap-8): the stored key is decision.decision.
+      if (bnb.decision?.decision) contextParts.push(`BID DECISION: ${bnb.decision.decision}`);
       if (bnb.win_strategy?.win_themes && Array.isArray(bnb.win_strategy.win_themes)) {
         contextParts.push(`\nWIN THEMES:\n${bnb.win_strategy.win_themes.map((w: string) => `- ${w}`).join("\n")}`);
       }
@@ -324,8 +329,11 @@ export default function ProposalArchitectureTOCTab({ ws, reload, onOpenDocuments
       if (sd.hop) contextParts.push(`HOP: Captured`);
       if (sd.ham) contextParts.push(`HAM: Captured`);
       if (sd.hip) contextParts.push(`HIP: Captured`);
-      if (Array.isArray(risk.risk_rows) && risk.risk_rows.length > 0) {
-        contextParts.push(`\nRISKS: ${risk.risk_rows.length} risks (${risk.risk_rows.filter((r: any) => r.risk_level === "High").length} high)`);
+      // TCW-T4 (gap-8): RiskSnapshot stores `register` rows with a `severity`
+      // field — `risk_rows`/`risk_level` never existed in the store.
+      if (Array.isArray(risk.register) && risk.register.length > 0) {
+        const highOrCritical = risk.register.filter((r: any) => r.severity === "High" || r.severity === "Critical").length;
+        contextParts.push(`\nRISKS: ${risk.register.length} risks (${highOrCritical} high/critical)`);
       }
 
       const prompt = [
@@ -530,9 +538,11 @@ export default function ProposalArchitectureTOCTab({ ws, reload, onOpenDocuments
     });
 
     try {
-      const saveRes = await updateTenderDraftingData(tenderId, "proposal_blocks", updatedBlocks, "Blocks created and AI auto-drafted via chain");
+      // P2a threading (this path is unreachable while generation refuses —
+      // Sprint X — but the write stays contract-correct for when it returns).
+      const saveRes = await updateTenderDraftingData(tenderId, "proposal_blocks", updatedBlocks, "Blocks created and AI auto-drafted via chain", wsRevisionToken(ws));
       if (!saveRes.success) {
-        toast.error(saveRes.error || "Failed to save drafted blocks.");
+        reportSaveOutcome(saveRes, "");
         setChainProgress(null);
         setIsChaining(false);
         return;
@@ -644,13 +654,19 @@ export default function ProposalArchitectureTOCTab({ ws, reload, onOpenDocuments
 
     setSaving(true);
     try {
-      // Save blocks
-      const blockRes = await updateTenderDraftingData(tenderId, "proposal_blocks", newBlocks, "Blocks created from TOC");
-      if (!blockRes.success) { toast.error(blockRes.error || "Failed to create blocks."); return; }
+      // Save blocks — threaded with the UI-load-time revision (P2a). A stale
+      // outcome refuses before anything is written and keeps the TOC on screen.
+      const blockRes = await updateTenderDraftingData(tenderId, "proposal_blocks", newBlocks, "Blocks created from TOC", wsRevisionToken(ws));
+      if (!blockRes.success) {
+        reportSaveOutcome(blockRes, "");
+        return;
+      }
 
-      // Update TOC status to "Blocks Created"
+      // Update TOC status to "Blocks Created".
+      // NOTE: no expectedRevision here BY DESIGN — the blocks write above just
+      // advanced the row's updated_at, so the page-load token would now be
+      // stale; the writer's own fresh-read lock still protects this write.
       const updatedStatus = "Blocks Created";
-      setTocStatus(updatedStatus);
       const tocPayload = {
         active_toc_id: activeVersion.id,
         status: updatedStatus,
@@ -660,15 +676,33 @@ export default function ProposalArchitectureTOCTab({ ws, reload, onOpenDocuments
           })), updated_at: new Date().toISOString() } : v
         ),
       };
-      await updateTenderDraftingData(tenderId, "proposal_architecture", tocPayload, "TOC status updated after block creation");
-
-      toast.success(`${mode === "replace_all" ? newBlocks.length : newBlocks.length - existingBlocks.length} blocks created from TOC.`);
+      // TCW-T4 (C1): the second write's result is CHECKED — the success toast
+      // fires only when BOTH writes are confirmed; a failed TOC-status write is
+      // reported as the honest partial outcome it is.
+      const createdCount = mode === "replace_all" ? newBlocks.length : newBlocks.length - existingBlocks.length;
+      const tocRes = await updateTenderDraftingData(tenderId, "proposal_architecture", tocPayload, "TOC status updated after block creation");
+      if (!tocRes.success) {
+        toast.warning(`${createdCount} blocks created, but the TOC status update was NOT saved`, {
+          description: tocRes.error || "The TOC still shows its previous status. Save the TOC again to retry.",
+          duration: 10000,
+        });
+        setShowBlockConfirm(false);
+        reload();
+        return;
+      }
+      if (tocRes.status === "saved_with_audit_warning") {
+        toast.warning(`${createdCount} blocks created from TOC — audit entry not recorded`, { description: tocRes.auditWarning, duration: 8000 });
+      } else {
+        toast.success(`${createdCount} blocks created from TOC.`);
+      }
+      // Local status reflects the CONFIRMED stored state only.
+      setTocStatus(updatedStatus);
       setShowBlockConfirm(false);
       setDirty(false);
       reload();
     } catch (e: any) { toast.error(e.message || "Failed."); }
     finally { setSaving(false); }
-  }, [sections, existingBlocks, tenderId, tocVersions, tocStatus, activeVersion.id, reload]);
+  }, [sections, existingBlocks, tenderId, tocVersions, tocStatus, activeVersion.id, reload, ws]);
 
   const handleDraftManually = useCallback(async () => {
     setShowChainDialog(false);
@@ -695,15 +729,16 @@ export default function ProposalArchitectureTOCTab({ ws, reload, onOpenDocuments
           i === tocVersions.length - 1 ? { ...v, status: tocStatus, updated_at: new Date().toISOString() } : v
         ),
       };
-      const res = await updateTenderDraftingData(tenderId, "proposal_architecture", payload, "TOC saved");
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Proposal Architecture / TOC saved.");
+      // P2a threading + honest outcome; a stale refusal keeps the edited TOC
+      // on screen (no reload) for a non-destructive retry.
+      const res = await updateTenderDraftingData(tenderId, "proposal_architecture", payload, "TOC saved", wsRevisionToken(ws));
+      if (!reportSaveOutcome(res, "Proposal Architecture / TOC saved.")) return;
       setDirty(false);
       onSaved?.();
       reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [tocVersions, tocStatus, tenderId, reload, activeVersion.id, onSaved]);
+  }, [tocVersions, tocStatus, tenderId, reload, activeVersion.id, onSaved, ws]);
 
 
   // ─── Summary ───────────────────────────────────────────────
@@ -784,8 +819,9 @@ export default function ProposalArchitectureTOCTab({ ws, reload, onOpenDocuments
             {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
             {generating ? "Generating..." : "Generate TOC Suggestion"}
           </Button>
+          {/* TCW-T4 honesty: generation is refused in this build (Sprint X). */}
           <span className="text-[10px] text-muted-foreground italic">
-            {generating ? "AI is reading tender context and building TOC..." : "Uses AI to suggest TOC sections from prior-stage intelligence."}
+            {generating ? "Checking AI availability..." : "AI TOC generation is not available in this build (Sprint X) — running it reports the refusal. Build the TOC manually below."}
           </span>
         </div>
 

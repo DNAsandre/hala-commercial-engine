@@ -56,6 +56,14 @@ import { normalizeTenderPricingData } from './tender-pricing-types';
 import { normalizeTenderTypeDetails } from './tender-type-details';
 import { normalizeTenderInternalStage } from './tender-stage-source-truth';
 import { isAllowedTenderTicket, mayTenderIdBeAllowed } from './process-isolation';
+import {
+  normalizeSubmissionReadinessFacet,
+  SUBMISSION_READINESS_FACET_KEY,
+  type SubmissionReadinessComplianceItem,
+  type SubmissionReadinessFacet,
+  type SubmissionReadinessPlaceholder,
+  type SubmissionReadinessRequiredDocument,
+} from './tender-source-record';
 
 // ─── Bundle type ────────────────────────────────────────────
 
@@ -73,6 +81,22 @@ export type TenderBundleLoadState =
   | { kind: 'isolated'; message: string }
   | { kind: 'error'; message: string };
 
+/**
+ * TCW-T1 (P1): the canonical Submission Readiness register, read from the SAME
+ * confirmed tender row the rest of the bundle derives from
+ * (`type_details.submission_readiness`). `loaded` is true ONLY when that row
+ * read succeeded — never on an error path. This raw register (exact row shapes
+ * and statuses, incl. 'na') is the contract T5's register tabs and T2's
+ * progress derivations should consume; the legacy UI-typed arrays on the bundle
+ * are a documented lossy projection kept so existing renderers compile.
+ */
+export interface TenderSubmissionReadinessRead {
+  loaded: boolean;
+  /** Present when loaded === false: why the register was not read. */
+  error?: string;
+  facet: SubmissionReadinessFacet;
+}
+
 export interface TenderWorkspaceBundle {
   /** The tender id this bundle was requested for. Identity anchor for the caller. */
   requestedTenderId: string;
@@ -80,6 +104,8 @@ export interface TenderWorkspaceBundle {
   loadState: TenderBundleLoadState;
   tender: Tender | null;
   packs: TenderPack[];
+  /** P1: the raw canonical register. Prefer this over the three legacy arrays below. */
+  submissionReadiness: TenderSubmissionReadinessRead;
   placeholders: TenderPlaceholder[];
   requiredDocuments: TenderRequiredDocument[];
   documents: TenderDocument[];
@@ -116,6 +142,13 @@ export interface TenderWorkspaceBundle {
    * value to highlight; that coercion must never be presented as stored truth.
    */
   crmPipelineStageRaw: string | null;
+  /**
+   * TCW-T1 (P2a): the row's `updated_at` VERBATIM at load time — the optimistic
+   * revision token a tab passes as `expectedRevision` to every writer. (The
+   * tender.updatedAt field is date-sliced for display and must never be used as
+   * a token.) Null only when the bundle did not load.
+   */
+  revisionToken: string | null;
 }
 
 function emptyTenderWorkspaceBundle(
@@ -127,6 +160,15 @@ function emptyTenderWorkspaceBundle(
     loadState,
     tender: null,
     packs: [],
+    // The register was NOT read on any non-loaded path — say so, never claim
+    // "loaded and empty" for a row that failed to load.
+    submissionReadiness: {
+      loaded: false,
+      error: loadState.kind === 'loaded'
+        ? 'Tender row not loaded.'
+        : loadState.message,
+      facet: normalizeSubmissionReadinessFacet(null),
+    },
     placeholders: [],
     requiredDocuments: [],
     documents: [],
@@ -146,6 +188,7 @@ function emptyTenderWorkspaceBundle(
     crmSyncStatus: 'not_synced',
     submissionModel: 'single_pack',
     crmPipelineStageRaw: null,
+    revisionToken: null,
   };
 }
 
@@ -702,55 +745,141 @@ async function fetchTenderPacks(tenderId: string): Promise<{ packs: TenderPack[]
   return { packs: [], sections: [] };
 }
 
-async function fetchTenderPlaceholders(tenderId: string, packIds: string[]): Promise<TenderPlaceholder[]> {
-  void tenderId; void packIds;
-  return [];
+/**
+ * TCW-T1 (P1) — the three registers are no longer stubs. They live in
+ * `type_details.submission_readiness` ON THE TENDER ROW ITSELF, so reading the
+ * confirmed header row IS reading the registers — no extra table, no
+ * independent failure mode, and the register is bound to the same identity the
+ * rest of the workspace renders. See supabase-tender-actions.ts for the write
+ * side (updateTenderSubmissionReadinessData + per-item status operations).
+ */
+function readSubmissionReadinessFromRow(row: any): TenderSubmissionReadinessRead {
+  const details = row?.type_details && typeof row.type_details === 'object' && !Array.isArray(row.type_details)
+    ? row.type_details as Record<string, unknown>
+    : {};
+  return { loaded: true, facet: normalizeSubmissionReadinessFacet(details[SUBMISSION_READINESS_FACET_KEY]) };
+}
+
+// ─── Register → legacy UI-type projections ───────────────────
+//
+// The canonical register statuses are richer than the legacy UI unions, so
+// these projections are LOSSY and deliberately conservative:
+//   - checklist-style statuses ('na' on placeholders / required documents) map
+//     to 'approved' — "no further action required" — because those types drive
+//     outstanding-work counters, not verdicts;
+//   - compliance is a VERDICT type: only concluded verdicts map to verdict
+//     values; 'pending', 'in_review' and 'na' all render as 'not_reviewed'
+//     rather than fabricating a compliance claim.
+// The exact stored statuses stay available on bundle.submissionReadiness.
+
+const PLACEHOLDER_STATUS_PROJECTION: Record<string, PlaceholderStatus> = {
+  pending: 'missing',
+  in_progress: 'drafted',
+  approved: 'approved',
+  na: 'approved',
+};
+
+const REQUIRED_DOC_STATUS_PROJECTION: Record<string, RequiredDocStatus> = {
+  missing: 'awaiting',
+  in_progress: 'draft',
+  uploaded: 'uploaded',
+  approved: 'approved',
+  na: 'approved',
+};
+
+const COMPLIANCE_STATUS_PROJECTION: Record<string, ComplianceStatus> = {
+  pending: 'not_reviewed',
+  in_review: 'not_reviewed',
+  compliant: 'compliant',
+  non_compliant: 'non_compliant',
+  na: 'not_reviewed',
+};
+
+function mapRegisterPlaceholderToUi(row: SubmissionReadinessPlaceholder): TenderPlaceholder {
+  return {
+    id: row.id,
+    placeholderKey: row.id,
+    label: row.label,
+    packId: '',
+    packName: '',
+    sectionId: '',
+    sectionTitle: '',
+    category: 'submission',
+    owner: typeof row.owner === 'string' ? row.owner : '',
+    currentValue: typeof row.value === 'string' ? row.value : '',
+    status: PLACEHOLDER_STATUS_PROJECTION[row.status] ?? 'missing',
+    source: '',
+    evidenceStatus: 'not_required',
+    lastUpdated: row.updated_at,
+    approvedBy: row.status === 'approved' && row.updated_by ? row.updated_by : null,
+    // Advisory register — nothing here blocks anything (no-gate doctrine).
+    wouldBlockInProduction: false,
+    notes: typeof row.notes === 'string' ? row.notes : '',
+  };
+}
+
+function mapRegisterRequiredDocumentToUi(row: SubmissionReadinessRequiredDocument): TenderRequiredDocument {
+  return {
+    id: row.id,
+    documentName: row.document_name,
+    packId: '',
+    packName: '',
+    category: 'final_output',
+    owner: typeof row.owner === 'string' ? row.owner : '',
+    status: REQUIRED_DOC_STATUS_PROJECTION[row.status] ?? 'awaiting',
+    nativeRequired: false,
+    signedPdfRequired: false,
+    stampRequired: false,
+    // The register does not record file-level requirements; claiming 'missing'
+    // here would fabricate a gap the register never stated.
+    nativeStatus: 'not_required',
+    signedPdfStatus: 'not_required',
+    evidenceStatus: 'not_required',
+    version: 0,
+    includedInOutput: false,
+    wouldBlockInProduction: false,
+    lastUpdated: row.updated_at,
+    notes: typeof row.notes === 'string' ? row.notes : '',
+  };
+}
+
+function mapRegisterComplianceItemToUi(row: SubmissionReadinessComplianceItem): TenderComplianceItem {
+  return {
+    id: row.id,
+    reference: typeof row.source_reference === 'string' ? row.source_reference : '',
+    requirement: row.requirement,
+    packId: '',
+    packName: '',
+    category: 'scope',
+    status: COMPLIANCE_STATUS_PROJECTION[row.status] ?? 'not_reviewed',
+    evidence: typeof row.evidence === 'string' ? row.evidence : '',
+    owner: typeof row.owner === 'string' ? row.owner : '',
+    riskLevel: 'low',
+    legalReviewRequired: false,
+    commercialImpact: '',
+    operationalImpact: '',
+    clarificationNeeded: false,
+    wouldBlockInProduction: false,
+    lastUpdated: row.updated_at,
+    notes: typeof row.notes === 'string' ? row.notes : '',
+  };
 }
 
 /**
- * W04-C4 — a stub is not an empty result.
- *
- * These two collections have no verified source in the clean app: the legacy
- * tender child tables are read-disabled and nothing replaced them. Returning a
- * bare `[]` made "never read" indistinguishable from "read, and genuinely
- * empty", and a downstream verdict (riskLevel) was computed over the difference.
- * `loaded: false` carries the distinction to the caller so it can decline to
- * state a verdict instead of inventing a reassuring one.
+ * TCW-T1 (F5) — ONE audit read feeds BOTH history projections. The Activity and
+ * Audit Trail collections previously issued two identical commercial_ticket_audit
+ * queries for the same rows; any consumer summing the two collections was
+ * double-counting a single feed. Both arrays are now projections of this single
+ * deduplicated read — consumers must count ONE of them, never the sum.
  */
-interface TenderCollectionRead<T> {
-  loaded: boolean;
-  items: T[];
-}
-
-async function fetchTenderRequiredDocuments(packIds: string[]): Promise<TenderCollectionRead<TenderRequiredDocument>> {
-  void packIds;
-  return { loaded: false, items: [] };
-}
-
-async function fetchTenderComplianceItems(packIds: string[]): Promise<TenderCollectionRead<TenderComplianceItem>> {
-  void packIds;
-  return { loaded: false, items: [] };
-}
-
-
-async function fetchTenderActivityEvents(tenderId: string): Promise<TenderActivityEvent[]> {
+async function fetchTenderTicketAuditRows(tenderId: string): Promise<any[]> {
   const { data, error } = await supabase
     .from('commercial_ticket_audit')
     .select('*')
     .eq('ticket_id', tenderId)
     .order('created_at', { ascending: false });
-  if (error) { console.warn('[SUPA-006] fetchTenderActivityEvents commercial_ticket_audit error:', error.message); return []; }
-  return (data ?? []).map(mapTicketAuditToActivity);
-}
-
-async function fetchTenderAuditEntries(tenderId: string): Promise<TenderAuditEntry[]> {
-  const { data, error } = await supabase
-    .from('commercial_ticket_audit')
-    .select('*')
-    .eq('ticket_id', tenderId)
-    .order('created_at', { ascending: false });
-  if (error) { console.warn('[SUPA-006] fetchTenderAuditEntries commercial_ticket_audit error:', error.message); return []; }
-  return (data ?? []).map(mapTicketAuditToAuditEntry);
+  if (error) { console.warn('[SUPA-006] fetchTenderTicketAuditRows commercial_ticket_audit error:', error.message); return []; }
+  return data ?? [];
 }
 
 async function fetchTenderSplitChecks(tenderId: string): Promise<TenderSplitCheck[]> {
@@ -808,12 +937,15 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
     });
   }
 
-  const [header, { packs, sections: _sections }, activityEvents, auditEntries] = await Promise.all([
+  const [header, { packs, sections: _sections }, ticketAuditRows] = await Promise.all([
     fetchTenderHeader(tenderId),
     fetchTenderPacks(tenderId),
-    fetchTenderActivityEvents(tenderId),
-    fetchTenderAuditEntries(tenderId),
+    fetchTenderTicketAuditRows(tenderId),
   ]);
+
+  // F5: two projections of ONE deduplicated audit feed — never sum them.
+  const activityEvents = ticketAuditRows.map(mapTicketAuditToActivity);
+  const auditEntries = ticketAuditRows.map(mapTicketAuditToAuditEntry);
 
   if (header.outcome === 'error') {
     return emptyTenderWorkspaceBundle(tenderId, { kind: 'error', message: header.message });
@@ -838,19 +970,19 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
   }
 
   const tender = header.tender;
-  const packIds = packs.map(p => p.id);
   const documents = documentsFromTenderRow(header.row, tenderId);
 
-  const [placeholders, requiredDocumentsRead, complianceItemsRead, splitChecks, packOutputs, submissionEmails] = await Promise.all([
-    fetchTenderPlaceholders(tenderId, packIds),
-    fetchTenderRequiredDocuments(packIds),
-    fetchTenderComplianceItems(packIds),
+  // P1: the registers come from the confirmed header row itself.
+  const submissionReadiness = readSubmissionReadinessFromRow(header.row);
+  const placeholders = submissionReadiness.facet.placeholders.map(mapRegisterPlaceholderToUi);
+  const requiredDocuments = submissionReadiness.facet.required_documents.map(mapRegisterRequiredDocumentToUi);
+  const complianceItems = submissionReadiness.facet.compliance_items.map(mapRegisterComplianceItemToUi);
+
+  const [splitChecks, packOutputs, submissionEmails] = await Promise.all([
     fetchTenderSplitChecks(tenderId),
     fetchTenderPackOutputs(tenderId),
     fetchTenderSubmissionEmails(tenderId),
   ]);
-  const requiredDocuments = requiredDocumentsRead.items;
-  const complianceItems = complianceItemsRead.items;
 
   // Derive workspace-level fields from pack metadata (first pack with the fields)
   const anyPack = packs[0] as any;
@@ -858,21 +990,22 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
   const readinessScore = packs.length > 0
     ? Math.round(packs.reduce((s, p) => s + p.readinessScore, 0) / packs.length)
     : 0;
-  // riskLevel derived from real compliance gaps and missing documents — no mock gates.
-  //
-  // W04-C4: both inputs are currently NOT READ (see fetchTenderComplianceItems /
-  // fetchTenderRequiredDocuments). Deriving over two never-loaded collections
-  // produced zero gaps for every tender, which the header rendered as a green
-  // "On Track" badge — a verdict about data nobody looked at. A verdict may only
-  // be stated when the inputs it derives from were actually loaded.
-  const riskInputsAssessed = requiredDocumentsRead.loaded && complianceItemsRead.loaded;
-  const complianceGaps = complianceItems.filter(c =>
-    c.status === 'non_compliant' || c.status === 'clarification_required'
-  ).length;
-  const missingDocsCount = requiredDocuments.filter(d =>
-    d.status === 'awaiting' || d.nativeStatus === 'missing'
-  ).length;
-  const riskLevel: TenderRiskLevel = !riskInputsAssessed
+  // riskLevel derived from the RAW canonical register statuses (never from the
+  // lossy UI projections) — no mock gates, and no verdict without recorded data:
+  //   - the inputs count as assessed only when the register was genuinely read
+  //     (same confirmed row read as the tender itself);
+  //   - a read-but-EMPTY register still carries no verdict: "nothing recorded"
+  //     must never render as a green "On Track";
+  //   - with rows recorded, a gap is an EXPLICITLY recorded problem
+  //     (compliance 'non_compliant', required document 'missing') and green
+  //     means exactly "rows are recorded and none records a gap".
+  const riskInputsAssessed = submissionReadiness.loaded;
+  const recordedComplianceItems = submissionReadiness.facet.compliance_items;
+  const recordedRequiredDocuments = submissionReadiness.facet.required_documents;
+  const complianceGaps = recordedComplianceItems.filter(c => c.status === 'non_compliant').length;
+  const missingDocsCount = recordedRequiredDocuments.filter(d => d.status === 'missing').length;
+  const nothingRecorded = recordedComplianceItems.length === 0 && recordedRequiredDocuments.length === 0;
+  const riskLevel: TenderRiskLevel = !riskInputsAssessed || nothingRecorded
     ? 'not_assessed'
     : complianceGaps > 5 || missingDocsCount > 5 ? 'red'
     : complianceGaps > 0 || missingDocsCount > 0 ? 'amber'
@@ -883,6 +1016,7 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
     loadState: { kind: 'loaded' },
     tender,
     packs,
+    submissionReadiness,
     placeholders,
     requiredDocuments,
     documents,
@@ -896,11 +1030,14 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
     readinessScore,
     riskLevel,
     riskInputsAssessed,
-    requiredDocumentsAssessed: requiredDocumentsRead.loaded,
+    requiredDocumentsAssessed: submissionReadiness.loaded,
     crmSyncStatus: 'not_synced',
     submissionModel: packs.length > 1 ? 'multi_pack' : 'single_pack',
     crmPipelineStageRaw: typeof header.row.crm_pipeline_stage === 'string' && header.row.crm_pipeline_stage.trim()
       ? header.row.crm_pipeline_stage
+      : null,
+    revisionToken: typeof header.row.updated_at === 'string' && header.row.updated_at
+      ? header.row.updated_at
       : null,
   };
 }
@@ -930,5 +1067,9 @@ export function bundleToTenderWorkspace(bundle: TenderWorkspaceBundle): TenderWo
     splitChecks: (bundle as any).splitChecks ?? [],
     packOutputs: (bundle as any).packOutputs ?? [],
     submissionEmails: (bundle as any).submissionEmails ?? [],
+    // TCW integration (P2a): the load-time optimistic token the tabs thread
+    // into every writer. Copied verbatim from the bundle (tender row
+    // `updated_at`); the lanes' accessors handle null honestly.
+    revisionToken: bundle.revisionToken,
   };
 }

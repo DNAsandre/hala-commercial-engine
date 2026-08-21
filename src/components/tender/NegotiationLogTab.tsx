@@ -18,8 +18,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Plus, Info, ChevronDown, ChevronRight, MessageSquare, X, Calendar, Users } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderNegotiationData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 interface LogEntry {
   id: string;
@@ -55,7 +61,7 @@ const emptyEntry = (): LogEntry => ({
   key_points: "", action_items: "", next_steps: "", outcome: "pending",
 });
 
-export default function NegotiationLogTab({ ws, reload }: Props) {
+export default function NegotiationLogTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const savedLog = td?.negotiation_data?.negotiation_log ?? [];
@@ -65,7 +71,7 @@ export default function NegotiationLogTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const addEntry = () => { setEntries(prev => [emptyEntry(), ...prev]); mark(); };
   const updateEntry = (id: string, field: keyof LogEntry, value: any) => {
@@ -76,13 +82,13 @@ export default function NegotiationLogTab({ ws, reload }: Props) {
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const res = await updateTenderNegotiationData(tenderId, "negotiation_log", entries, `${entries.length} entries`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Negotiation log saved.");
-      setDirty(false); reload();
+      const res = await updateTenderNegotiationData(tenderId, "negotiation_log", entries, `${entries.length} entries`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Negotiation log saved.")) return;
+      setDirty(false); onDirtyChange?.(false); reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [entries, tenderId, reload]);
+  }, [entries, tenderId, reload, ws, onDirtyChange]);
 
   const outcomeColor = (o: string) => {
     if (o === "positive") return "border-emerald-300 text-emerald-700 bg-emerald-50";

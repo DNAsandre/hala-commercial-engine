@@ -16,12 +16,13 @@
  * - Manual capture only. No stage movement. No CRM/document-output tooling.
  */
 
-import { useState, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderBidNoBidData } from "@/lib/supabase-tender-actions";
+import { runTenderTabSave, tenderRevisionTokenOf } from "./IdentifiedStageShared";
 import { toast } from "sonner";
 import {
   Loader2, Save, ChevronDown, Plus, X,
@@ -138,6 +139,16 @@ function statusBtnClass(selected: boolean, status: string): string {
 // COMPONENT
 // ═══════════════════════════════════════════════════════════
 
+/**
+ * TCW-T3 (P2b) — this tab's patch carries ONLY its own bid_no_bid_data key
+ * (win_strategy). The write layer patch-merges, so sibling tabs' keys are
+ * preserved by the STORED facet — never re-sent from a page-load copy.
+ * Exported pure for direct testing.
+ */
+export function buildWinStrategyPatch(data: WinStrategyData): Record<string, any> {
+  return { win_strategy: data };
+}
+
 interface Props {
   ws: TenderWorkspace;
   onOpenDocuments?: () => void;
@@ -190,23 +201,27 @@ export default function WinStrategyTab({ ws, onOpenDocuments, onOpenGlobalIntel,
     };
   }, [data]);
 
+  const staleRetryArmed = useRef(false);
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const patch: Record<string, any> = { ...(existing || {}), win_strategy: data };
-      const result = await updateTenderBidNoBidData(tenderId, patch, "Win Strategy tab saved");
-      if (result.success) {
-        toast.success("Win Strategy saved.");
-        onSaved?.();
-      } else {
-        toast.error("Save failed", { description: result.error });
-      }
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderBidNoBidData(tenderId, buildWinStrategyPatch(data), {
+            expectedRevision,
+            reason: "Win Strategy tab saved",
+          }),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "Win Strategy saved.", failed: "Save failed" },
+        onConfirmed: () => onSaved?.(),
+      });
     } catch (e: any) {
       toast.error(e.message || "Save failed.");
     } finally {
       setSaving(false);
     }
-  }, [tenderId, data, existing, onSaved]);
+  }, [tenderId, data, onSaved, ws]);
 
   return (
     <div className="space-y-4">

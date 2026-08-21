@@ -31,6 +31,8 @@ import {
   type TenderStageSectionTab,
 } from "./TenderStageTaskShell";
 import { updateTenderApprovalMatrixData } from "@/lib/supabase-tender-actions";
+import { getCurrentUser } from "@/lib/auth-state";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 import { nanoid } from "nanoid";
 
 // ─── Types ─────────────────────────────────────────────────
@@ -43,7 +45,7 @@ interface Props {
   onOpenGlobalIntel?: () => void;
 }
 
-interface ApprovalRecord {
+export interface ApprovalRecord {
   id: string;
   role: string;
   role_label: string;
@@ -52,6 +54,28 @@ interface ApprovalRecord {
   decided_by: string;
   comment: string;
   decided_at: string | null;
+}
+
+/**
+ * P4 (F1) — pure decision applier, exported for the actor-truth test: the
+ * persisted `decided_by` is exactly the SESSION user name passed in
+ * (auth-state mirror), never the fabricated literal "Current User".
+ */
+export function applyApprovalDecision(
+  records: ApprovalRecord[],
+  args: { role: string; roleLabel: string; type: "approval" | "feasibility"; decision: "approved" | "rejected"; comment: string },
+  decidedByName: string,
+  decidedAtIso: string = new Date().toISOString(),
+): ApprovalRecord[] {
+  return records.map(record => record.role === args.role ? {
+    ...record,
+    role_label: args.roleLabel,
+    type: args.type,
+    decision: args.decision,
+    decided_by: decidedByName,
+    comment: args.comment,
+    decided_at: decidedAtIso,
+  } : record);
 }
 
 // ─── Extract GP% ONLY from this tender's pricing stage ────
@@ -101,7 +125,7 @@ function extractPalletsFromTender(t: any): { pallets: number | null; source: str
 // ─── Stage Menu Header (reusable) ────────────────────────
 
 function StageMenuHeader<T extends string>({
-  sections, activeSection, setActiveSection, stageIntelOpen, setStageIntelOpen, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved,
+  sections, activeSection, setActiveSection, stageIntelOpen, setStageIntelOpen, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved, unsaved,
 }: {
   sections: TenderStageSectionTab<T>[];
   activeSection: T;
@@ -112,6 +136,7 @@ function StageMenuHeader<T extends string>({
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
   saved?: boolean;
+  unsaved?: boolean;
 }) {
   return (
     <TenderStageTaskShell
@@ -126,6 +151,7 @@ function StageMenuHeader<T extends string>({
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
       saved={saved}
+      unsaved={unsaved}
     />
   );
 }
@@ -181,9 +207,11 @@ export default function ApprovalMatrixStage({ ws, activeTab, reload, onOpenDocum
   const [newRoleLabel, setNewRoleLabel] = useState("");
   const [newApprovalType, setNewApprovalType] = useState<"approval" | "feasibility">("approval");
 
+  // TCW-T4 (P2a): every approval write threads the UI-load-time revision and
+  // surfaces the honest outcome (stale / audit-warning / failure).
   const saveApprovals = useCallback(async (approvals: ApprovalRecord[], reason: string) => {
-    return updateTenderApprovalMatrixData(tenderId, "approvals", approvals, reason);
-  }, [tenderId]);
+    return updateTenderApprovalMatrixData(tenderId, "approvals", approvals, reason, wsRevisionToken(ws));
+  }, [tenderId, ws]);
 
   const handleAddParticipant = useCallback(async () => {
     const roleLabel = newRoleLabel.trim();
@@ -208,11 +236,8 @@ export default function ApprovalMatrixStage({ ws, activeTab, reload, onOpenDocum
     setSaving("new-participant");
     try {
       const result = await saveApprovals([...existingApprovals, participant], `Participant added: ${roleLabel}`);
-      if (!result.success) {
-        toast.error(`Failed to add participant: ${result.error || "Unknown error"}`);
-        return;
-      }
-      toast.success(`${roleLabel} added to this Tender's approval record.`);
+      // Stale/failure keeps the typed participant name in the input.
+      if (!reportSaveOutcome(result, `${roleLabel} added to this Tender's approval record.`)) return;
       setNewRoleLabel("");
       setNewApprovalType("approval");
       reload();
@@ -227,21 +252,17 @@ export default function ApprovalMatrixStage({ ws, activeTab, reload, onOpenDocum
   const handleDecision = useCallback(async (role: string, roleLabel: string, type: "approval" | "feasibility", decision: "approved" | "rejected") => {
     setSaving(role);
     try {
-      const next = existingApprovals.map((record) => record.role === role ? {
-        ...record,
-        role_label: roleLabel,
-        type,
-        decision,
-        decided_by: "Current User",
-        comment: approvalComment,
-        decided_at: new Date().toISOString(),
-      } : record);
+      // P4 (F1): the persisted decider is the SESSION user (auth-state
+      // mirror; signed-out sessions record its honest "Unauthenticated"
+      // literal) — never the fabricated string "Current User".
+      const next = applyApprovalDecision(
+        existingApprovals,
+        { role, roleLabel, type, decision, comment: approvalComment },
+        getCurrentUser().name,
+      );
       const result = await saveApprovals(next, `${roleLabel}: ${decision}`);
-      if (!result.success) {
-        toast.error(`Failed to save: ${result.error || "Unknown error"}`);
-        return;
-      }
-      toast.success(`${roleLabel}: ${decision === "approved" ? "Approved" : "Rejected"}`);
+      // Stale/failure keeps the typed comment for a retry.
+      if (!reportSaveOutcome(result, `${roleLabel}: ${decision === "approved" ? "Approved" : "Rejected"}`)) return;
       setApprovalComment("");
       setExpandedRole(null);
       reload();
@@ -264,8 +285,7 @@ export default function ApprovalMatrixStage({ ws, activeTab, reload, onOpenDocum
         decided_at: null,
       } : record);
       const result = await saveApprovals(next, `Decision reset: ${role}`);
-      if (!result.success) toast.error(`Reset failed: ${result.error || "Unknown error"}`);
-      else { toast.success("Decision reset to pending."); reload(); }
+      if (reportSaveOutcome(result, "Decision reset to pending.")) reload();
     } catch (err: any) { toast.error(err.message); }
     finally { setSaving(null); }
   }, [existingApprovals, reload, saveApprovals]);
@@ -277,9 +297,7 @@ export default function ApprovalMatrixStage({ ws, activeTab, reload, onOpenDocum
         existingApprovals.filter((record) => record.role !== role),
         `Participant removed: ${roleLabel}`,
       );
-      if (!result.success) toast.error(`Remove failed: ${result.error || "Unknown error"}`);
-      else {
-        toast.success(`${roleLabel} removed from this Tender's approval record.`);
+      if (reportSaveOutcome(result, `${roleLabel} removed from this Tender's approval record.`)) {
         setExpandedRole(null);
         reload();
       }
@@ -298,6 +316,12 @@ export default function ApprovalMatrixStage({ ws, activeTab, reload, onOpenDocum
     { label: "Status", value: allApproved ? "All Approved" : rejectedCount > 0 ? `${rejectedCount} Rejected` : `${pendingCount} Pending` },
   ];
 
+  // TCW-T4 (B10): real badge state for the editable tab — approvals persist on
+  // click, so "Unsaved" is exactly a typed-but-unsubmitted input (participant
+  // name / decision comment); "Saved" requires stored approvals AND no pending
+  // input; an empty record with no input renders the grey "Not Saved".
+  const pendingInput = newRoleLabel.trim() !== "" || approvalComment.trim() !== "";
+
   // ─── Tab 1: Approval Matrix ─────────────────────────────
   if (activeTab === "approval_matrix") {
     return <ApprovalMatrixTab
@@ -311,6 +335,7 @@ export default function ApprovalMatrixStage({ ws, activeTab, reload, onOpenDocum
       newApprovalType={newApprovalType} setNewApprovalType={setNewApprovalType}
       handleAddParticipant={handleAddParticipant}
       allApproved={allApproved} intelMetrics={intelMetrics}
+      badgeSaved={approvalRows.length > 0 && !pendingInput} badgeUnsaved={pendingInput}
       onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel}
     />;
   }
@@ -361,16 +386,17 @@ function ApprovalMatrixTab({ gpPercent, gpSource, palletVolume, palletSource,
   approvalRows, expandedRole, setExpandedRole, approvalComment, setApprovalComment,
   saving, handleDecision, handleReset, handleRemoveParticipant, newRoleLabel, setNewRoleLabel,
   newApprovalType, setNewApprovalType, handleAddParticipant,
-  allApproved, intelMetrics, onOpenDocuments, onOpenGlobalIntel }: any) {
+  allApproved, intelMetrics, badgeSaved, badgeUnsaved, onOpenDocuments, onOpenGlobalIntel }: any) {
 
   const [activeSection, setActiveSection] = useState<MatrixSection>("data_sources");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
 
   return (
     <div className="space-y-4">
+      {/* TCW-T4 (B10): real state from the parent — never a literal. */}
       <StageMenuHeader sections={MATRIX_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
-        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={true} />
+        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={badgeSaved} unsaved={badgeUnsaved} />
 
       {/* ── 1. Data Sources ── */}
       <div className={activeSection !== "data_sources" ? "hidden" : "space-y-4"}>
@@ -604,6 +630,8 @@ function SignoffTrackerTab({ approvalRows, approvedCount, rejectedCount, pending
 
   return (
     <div className="space-y-4">
+      {/* TCW-T4 (B10): read-only projection of stored decisions — nothing here
+          can hold unsaved edits, so "Saved" states the in-sync fact. */}
       <StageMenuHeader sections={TRACKER_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
         onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={true} />
@@ -695,6 +723,8 @@ function ExceptionNotesTab({ approvalRows, existingApprovals, handleReset, savin
 
   return (
     <div className="space-y-4">
+      {/* TCW-T4 (B10): projection of stored decisions with an immediate reset
+          action — no draft interval exists, so "Saved" states the in-sync fact. */}
       <StageMenuHeader sections={EX_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
         onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={true} />
@@ -761,6 +791,7 @@ function GovernanceLogTab({ existingApprovals, gpPercent, palletVolume, intelMet
 
   return (
     <div className="space-y-4">
+      {/* TCW-T4 (B10): read-only projection — "Saved" states the in-sync fact. */}
       <StageMenuHeader sections={GOV_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
         onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={true} />

@@ -1,6 +1,10 @@
 /**
  * TND-007: Tender Split Pack Review
  *
+ * TCW-T5 LEFT-BEHIND (pending integration ruling): DEAD SURFACE — its only openers lived in the
+ * dead packs branch TCW-T2 removed; nothing renders it, and the clean bundle loads no packs, so
+ * `masterPack` is always undefined and this component would render null even if mounted.
+ *
  * Reviews Supabase-backed split checks and existing output records.
  * It does not generate local test outputs or write fake document records.
  */

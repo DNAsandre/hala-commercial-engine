@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, ClipboardList, Loader2, Save, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,9 @@ import {
   IdentifiedEmptyState,
   IdentifiedSectionCard,
   IdentifiedStageShell,
+  identifiedSavedBadgeState,
+  runTenderTabSave,
+  tenderRevisionTokenOf,
   type IdentifiedSectionTab,
 } from "./IdentifiedStageShared";
 
@@ -47,6 +50,9 @@ export default function IdentifiedComplianceMatrixTab({ ws, reload, onOpenDocume
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** B12: true only after a save confirmed in this session. */
+  const [savedConfirmed, setSavedConfirmed] = useState(false);
+  const staleRetryArmed = useRef(false);
 
   const [reviewStatus, setReviewStatus] = useState(saved.review_status ?? "not_started");
   const [owner, setOwner] = useState(saved.owner ?? "");
@@ -86,14 +92,19 @@ export default function IdentifiedComplianceMatrixTab({ ws, reload, onOpenDocume
         notes: notes.trim(),
         updated_at: new Date().toISOString(),
       };
-      const result = await updateTenderIdentifiedData(t.id, "compliance_matrix_notes", payload, "Identified compliance notes saved");
-      if (result.success) {
-        setDirty(false);
-        toast.success("Compliance notes saved.");
-        reload?.();
-      } else {
-        toast.error("Failed to save compliance notes.", { description: result.error });
-      }
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderIdentifiedData(t.id, "compliance_matrix_notes", payload, "Identified compliance notes saved", expectedRevision),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "Compliance notes saved.", failed: "Failed to save compliance notes." },
+        onConfirmed: () => {
+          setDirty(false);
+          setSavedConfirmed(true);
+          reload?.();
+        },
+        onStale: () => reload?.(),
+      });
     } catch (error: any) {
       toast.error("Failed to save compliance notes.", { description: error?.message || "Unexpected save error." });
     } finally {
@@ -111,6 +122,7 @@ export default function IdentifiedComplianceMatrixTab({ ws, reload, onOpenDocume
       metrics={metrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
+      saved={identifiedSavedBadgeState(savedConfirmed, dirty)}
       unsaved={dirty}
       actionSlot={
         <Button type="button" size="sm" className="h-7 gap-1.5 rounded-md px-2.5 text-[11px]" onClick={save} disabled={!dirty || saving}>

@@ -1,5 +1,9 @@
 ﻿/**
  * TND-008: Tender Submission Email Review
+ *
+ * TCW-T5 LEFT-BEHIND (pending integration ruling): DEAD SURFACE — its only opener lived in the
+ * dead packs branch TCW-T2 removed; nothing imports or renders this component today.
+ *
  * Read-only email record review for Bulk/PGP separate submission threads.
  */
 import { useState, useMemo } from "react";

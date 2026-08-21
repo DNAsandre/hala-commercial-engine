@@ -23,12 +23,13 @@
  * - Outcome stats calculated only from user-entered data.
  */
 
-import { useState, useCallback, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderSowQualificationData } from "@/lib/supabase-tender-actions";
+import { runTenderTabSave, tenderRevisionTokenOf } from "./IdentifiedStageShared";
 import { toast } from "sonner";
 import {
   Loader2, Save, Plus, X,
@@ -224,6 +225,7 @@ export default function SowQualification({ ws, onOpenDocuments, onOpenGlobalInte
 
   const [initial, setInitial] = useState(() => JSON.stringify(data));
   const [saving, setSaving] = useState(false);
+  const staleRetryArmed = useRef(false);
   const dirty = JSON.stringify(data) !== initial;
 
   // Reload if tender changes — but only if user hasn't made local edits
@@ -314,23 +316,32 @@ export default function SowQualification({ ws, onOpenDocuments, onOpenGlobalInte
   }, [hasTableFocus]);
 
   // ── Save ──────────────────────────────────────────────────
+  // sow_qualification_data is a single-tab facet: this tab owns ALL its keys
+  // (coverage_matrix, clarity_assessment, clarifications, outcome) — the
+  // patch-merge payload is the full facet (design pin P2b).
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const result = await updateTenderSowQualificationData(tenderId, data);
-      if (result.success) {
-        toast.success("SOW Qualification saved.");
-        setInitial(JSON.stringify(data));
-        onSaved?.();
-      } else {
-        toast.error(result.error || "Save failed.");
-      }
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderSowQualificationData(tenderId, data, { expectedRevision }),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "SOW Qualification saved.", failed: "Save failed." },
+        onConfirmed: () => {
+          setInitial(JSON.stringify(data));
+          onSaved?.();
+        },
+        // Stale: entry stays (dirty stays true → the resync effect keeps the
+        // user's copy); no bundle-refresh handle exists on this tab beyond
+        // onSaved, which fires on confirmed saves only.
+      });
     } catch (e: any) {
       toast.error(e.message || "Save failed.");
     } finally {
       setSaving(false);
     }
-  }, [tenderId, data, onSaved]);
+  }, [tenderId, data, onSaved, ws]);
 
   // ── Tender snapshot helpers ───────────────────────────────
   const daysLeft = t.submissionDeadline

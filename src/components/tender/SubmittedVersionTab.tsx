@@ -1,8 +1,10 @@
 /**
  * SubmittedVersionTab — Tab 2 of Submitted Stage
  *
- * Records the exact version of the tender that was submitted.
- * Shows a frozen read-only snapshot of proposal blocks at time of submission.
+ * Records manually captured version FACTS about the submitted tender (label,
+ * timestamp, hash, volumes). TCW-T4 (B21): nothing is frozen by this record —
+ * the block table below is the LIVE tender_drafting.proposal_blocks list,
+ * which remains editable in Tender Drafting; the copy on this tab says so.
  *
  * All data persisted to type_details.submission.submitted_version.
  * No AI. No mock data.
@@ -18,12 +20,18 @@ import { toast } from "sonner";
 import { Save, Loader2, Lock, Info, FileText, Layers, Hash } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderSubmissionData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 const VOLUMES = ["Technical", "Commercial", "Shared", "Appendix"] as const;
 
-export default function SubmittedVersionTab({ ws, reload }: Props) {
+export default function SubmittedVersionTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.submission?.submitted_version ?? {};
@@ -39,7 +47,7 @@ export default function SubmittedVersionTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
   const hasSavedData = !!(saved.version_label || saved.frozen_at);
 
   // Read-only proposal blocks snapshot from tender_drafting
@@ -70,14 +78,15 @@ export default function SubmittedVersionTab({ ws, reload }: Props) {
         volumes_included: volumesIncluded,
         version_notes: versionNotes,
       };
-      const res = await updateTenderSubmissionData(tenderId, "submitted_version", payload, "Submitted version recorded");
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Submitted version saved.");
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      const res = await updateTenderSubmissionData(tenderId, "submitted_version", payload, "Submitted version recorded", wsRevisionToken(ws));
+      if (!reportSaveOutcome(res, "Submitted version record saved.")) return;
       setDirty(false);
+      onDirtyChange?.(false);
       reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [versionLabel, frozenAt, frozenBy, docHash, totalPages, fileSizeMb, volumesIncluded, versionNotes, tenderId, reload]);
+  }, [versionLabel, frozenAt, frozenBy, docHash, totalPages, fileSizeMb, volumesIncluded, versionNotes, tenderId, reload, ws, onDirtyChange]);
 
   const draftStatusColor = (s: string) => {
     if (s === "Approved" || s === "Locked") return "border-emerald-300 text-emerald-700 bg-emerald-50";
@@ -87,10 +96,11 @@ export default function SubmittedVersionTab({ ws, reload }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* Info Banner */}
+      {/* Info Banner — TCW-T4 (B21): the old text claimed this "locks the
+          version"; nothing is locked or snapshotted by this record. */}
       <div className="flex items-start gap-2 text-[10px] text-muted-foreground bg-[#075eea]/10 border border-[#075eea]/15 rounded-md px-3 py-2">
         <Info className="w-3.5 h-3.5 mt-0.5 text-[#0b73ff] shrink-0" />
-        <span>Record the exact version of the tender document that was submitted. This locks the version for audit trail purposes.</span>
+        <span>Record the version facts of the submitted tender (manual entry). This does NOT lock or snapshot anything — proposal blocks remain editable in Tender Drafting, and this record itself can be edited here.</span>
       </div>
 
       {/* Save Strip */}
@@ -114,8 +124,9 @@ export default function SubmittedVersionTab({ ws, reload }: Props) {
         <CardHeader className="py-2 px-4 bg-muted/20 border-b border-border">
           <div className="flex items-center gap-2">
             <Lock className="w-3.5 h-3.5 text-[#075eea]" />
-            <span className="text-xs font-semibold">Version Snapshot</span>
-            {hasSavedData && <Badge variant="outline" className="text-[8px] border-emerald-200 text-emerald-700 bg-emerald-50">Frozen</Badge>}
+            <span className="text-xs font-semibold">Version Record</span>
+            {/* TCW-T4 (B21): "Frozen" claimed a lock that does not exist. */}
+            {hasSavedData && <Badge variant="outline" className="text-[8px] border-emerald-200 text-emerald-700 bg-emerald-50">Recorded (manual)</Badge>}
           </div>
         </CardHeader>
         <CardContent className="p-4">
@@ -170,9 +181,11 @@ export default function SubmittedVersionTab({ ws, reload }: Props) {
         <CardHeader className="py-2 px-4 bg-muted/20 border-b border-border">
           <div className="flex items-center gap-2">
             <Layers className="w-3.5 h-3.5 text-[#075eea]" />
-            <span className="text-xs font-semibold">Proposal Blocks Snapshot</span>
+            {/* TCW-T4 (B21): this is the LIVE drafting block list, not a
+                snapshot — the blocks remain editable in Tender Drafting. */}
+            <span className="text-xs font-semibold">Current Proposal Blocks (live)</span>
             <Badge variant="outline" className="text-[8px]">{sortedBlocks.length} block{sortedBlocks.length !== 1 ? "s" : ""}</Badge>
-            <Badge variant="outline" className="text-[8px] border-slate-200 text-slate-500">Read-only</Badge>
+            <Badge variant="outline" className="text-[8px] border-slate-200 text-slate-500">Live view — editable in Tender Drafting</Badge>
           </div>
         </CardHeader>
         <CardContent className="p-0">

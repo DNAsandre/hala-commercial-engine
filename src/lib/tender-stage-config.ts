@@ -25,9 +25,14 @@ export interface StageConfig {
 export function buildSignals(ws: TenderWorkspace, stageValue: string): Signal[] {
   const signals: Signal[] = [];
 
-  const daysLeft = ws.tender && ws.tender.submissionDeadline
-    ? Math.ceil((new Date(ws.tender.submissionDeadline).getTime() - Date.now()) / 86400000)
-    : 999;
+  // TCW-AUD fix (defect 4): NaN (no recorded deadline) never fires the
+  // pressure signal — an unrecorded deadline is not evidence of runway.
+  const signalDeadlineMs = ws.tender && ws.tender.submissionDeadline
+    ? new Date(ws.tender.submissionDeadline).getTime()
+    : Number.NaN;
+  const daysLeft = Number.isFinite(signalDeadlineMs)
+    ? Math.ceil((signalDeadlineMs - Date.now()) / 86400000)
+    : Number.NaN;
   if (daysLeft <= 7 && stageValue !== "submitted" && stageValue !== "awarded" && stageValue !== "lost_withdrawn") {
     signals.push({
       title: "Deadline Pressure",
@@ -43,7 +48,10 @@ export function buildSignals(ws: TenderWorkspace, stageValue: string): Signal[] 
   ).length;
   const missingDocs = ws.packs.reduce((s, p) => s + (p.documentsTotal - p.documentsReady), 0);
 
-  if (complianceGaps > 0) {
+  // TCW-T2 (B24): a compliance-gap signal is only a fact when the compliance
+  // inputs were actually read for this tender. When they were never assessed,
+  // no compliance verdict — positive or negative — can be derived from them.
+  if (ws.riskInputsAssessed && complianceGaps > 0) {
     signals.push({
       title: `${complianceGaps} Compliance Gap${complianceGaps > 1 ? "s" : ""}`,
       reason: "Non-compliant or clarification-required items in compliance matrix",
@@ -82,9 +90,15 @@ export function buildSignals(ws: TenderWorkspace, stageValue: string): Signal[] 
 }
 
 export function buildStageConfig(ws: TenderWorkspace, stageValue: string): StageConfig {
-  const daysLeft = ws.tender && ws.tender.submissionDeadline
-    ? Math.ceil((new Date(ws.tender.submissionDeadline).getTime() - Date.now()) / 86400000)
-    : 999;
+  // TCW-AUD fix (defect 4): the old 999-day sentinel presented an absent
+  // deadline as fifteen months of runway. NaN = "not recorded"; consumers
+  // must render it as such, never as a number of days.
+  const deadlineMs = ws.tender && ws.tender.submissionDeadline
+    ? new Date(ws.tender.submissionDeadline).getTime()
+    : Number.NaN;
+  const daysLeft = Number.isFinite(deadlineMs)
+    ? Math.ceil((deadlineMs - Date.now()) / 86400000)
+    : Number.NaN;
   const targetGp = ws.tender?.targetGpPercent ?? 0;
   const readiness = ws.readinessScore;
   const missingPlaceholders = ws.packs.reduce((s, p) => s + (p.placeholdersTotal - p.placeholdersPopulated), 0);
@@ -113,7 +127,7 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
       return {
         indicators: [
           { type: "progress", value: readiness, label: "Tender Capture", color: readinessColor },
-          { type: "gauge", value: daysLeft, label: "Deadline", unit: "d", color: deadlineColor },
+          (Number.isFinite(daysLeft) ? { type: "gauge", value: daysLeft, label: "Deadline", unit: "d", color: deadlineColor } : { type: "status", label: "Deadline", state: "Not recorded", color: "text-slate-500" }),
           { type: "gauge", value: ws.tender?.estimatedValue ? Math.min(Math.round(ws.tender.estimatedValue / 1000000), 100) : 0, label: "Est. Value", unit: "M SAR", color: "text-foreground" },
           { type: "status", label: "Source Quality", state: ws.tender?.source ?? "Unknown", color: "text-slate-600 bg-slate-50 border-slate-200" },
         ],
@@ -131,12 +145,35 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
     }
 
     case "qualification": {
+      // TCW-T2 (B5-B7): these gauges previously presented PACK compliance /
+      // document percentages under fit-verdict labels ("Technical Fit",
+      // "Customer Fit", "Requirement Cover"). Pack readiness is not the
+      // qualification record. Each value now derives from the facet its stage
+      // tab actually writes, or states "Not assessed" when that facet has no
+      // rows to assess.
+      const t = ws.tender as any;
+      const tq = t?.technicalQualificationData;
+      const capabilityRows: any[] = Array.isArray(tq?.capability_assessment) ? tq.capability_assessment : [];
+      const capabilityAssessed = capabilityRows.filter(r => r?.fit && r.fit !== "Not Assessed").length;
+      const cf = t?.customerFitData;
+      const dimensionRows: any[] = Array.isArray(cf?.dimensions) ? cf.dimensions : [];
+      const dimensionsAssessed = dimensionRows.filter(r => r?.assessment && r.assessment !== "Not Assessed").length;
+      const sq = t?.sowQualificationData;
+      const coverageRows: any[] = Array.isArray(sq?.coverage_matrix) ? sq.coverage_matrix : [];
+      const coverageAssessed = coverageRows.filter(r => r?.status && r.status !== "Not Assessed").length;
+      const facetRecorded = (facet: unknown) => !!facet && typeof facet === "object" && Object.keys(facet as object).length > 0;
+      const facetsRecorded = [sq, tq, cf, t?.riskSnapshotData].filter(facetRecorded).length;
+      const notAssessed = (label: string): Indicator => ({ type: "status", label, state: "Not assessed", color: "text-slate-600 bg-slate-50 border-slate-200" });
+      const assessedGauge = (label: string, done: number, total: number): Indicator => {
+        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+        return { type: "gauge", value: pct, label, color: pct >= 80 ? "text-emerald-700" : pct > 0 ? "text-amber-700" : "text-slate-600" };
+      };
       return {
         indicators: [
-          { type: "progress", value: readiness, label: "Qualification", color: readinessColor },
-          { type: "gauge", value: compliancePct, label: "Technical Fit", color: compPctColor },
-          { type: "gauge", value: docsPct, label: "Customer Fit", color: docsPctColor },
-          { type: "progress", value: docsPct, label: "Requirement Cover", color: docsPctColor },
+          { type: "progress", value: Math.round((facetsRecorded / 4) * 100), label: "Qualification Facets Recorded", color: facetsRecorded === 4 ? "text-emerald-700" : facetsRecorded > 0 ? "text-amber-700" : "text-slate-600" },
+          capabilityRows.length > 0 ? assessedGauge("Technical Fit Assessed", capabilityAssessed, capabilityRows.length) : notAssessed("Technical Fit"),
+          dimensionRows.length > 0 ? assessedGauge("Customer Fit Assessed", dimensionsAssessed, dimensionRows.length) : notAssessed("Customer Fit"),
+          coverageRows.length > 0 ? assessedGauge("SOW Coverage Assessed", coverageAssessed, coverageRows.length) : notAssessed("Requirement Cover"),
         ],
         signals: buildSignals(ws, stageValue),
         nextAction: "Confirm bid suitability.",
@@ -148,8 +185,10 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
       return {
         indicators: [
           { type: "progress", value: readiness, label: "Bid Decision", color: readinessColor },
-          { type: "gauge", value: compliancePct, label: "Strategic Fit", color: compPctColor },
-          { type: "numeric", label: "Resource Burden", value: criticalGates + warnGates, suffix: "", color: criticalGates > 0 ? "text-red-700" : warnGates > 0 ? "text-amber-700" : "text-emerald-700" },
+          // TCW-AUD fix (defect 4): pack-derived gauges over never-loaded
+          // collections rendered permanent fabricated verdicts. Honest state.
+          { type: "status", label: "Strategic Fit", state: "Not assessed", color: "text-slate-500" },
+          { type: "status", label: "Resource Burden", state: "Not assessed", color: "text-slate-500" },
           { type: "gauge", value: ws.tender?.probabilityPercent ?? 0, label: "Win Probability", unit: "%", color: (ws.tender?.probabilityPercent ?? 0) >= 50 ? "text-emerald-700" : "text-amber-700" },
         ],
         signals: buildSignals(ws, stageValue),
@@ -162,9 +201,10 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
       return {
         indicators: [
           { type: "progress", value: readiness, label: "Solution", color: readinessColor },
-          { type: "gauge", value: compliancePct, label: "Feasibility", color: compPctColor },
-          { type: "progress", value: docsPct, label: "Scope Clarity", color: docsPctColor },
-          { type: "numeric", label: "Complexity Risk", value: criticalGates, suffix: "", color: criticalGates > 0 ? "text-red-700" : "text-emerald-700" },
+          // TCW-AUD fix (defect 4): same fabricated pack-derived gauges.
+          { type: "status", label: "Feasibility", state: "Not assessed", color: "text-slate-500" },
+          { type: "status", label: "Scope Clarity", state: "Not assessed", color: "text-slate-500" },
+          { type: "status", label: "Complexity Risk", state: "Not assessed", color: "text-slate-500" },
         ],
         signals: buildSignals(ws, stageValue),
         nextAction: "Complete solution design.",
@@ -212,16 +252,45 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
     }
 
     case "internal_review": {
-      const sectionCount = ws.packs.reduce((s, p) => s + p.sectionsTotal, 0);
-      const draftedSections = ws.packs.reduce((s, p) => s + p.sectionsDrafted, 0);
-      const reviewPct = sectionCount > 0 ? Math.round((draftedSections / sectionCount) * 100) : 0;
+      // TCW-T2 (B4 + neighbours): the three departmental states previously
+      // derived from PACK section counts ("Finance Review: Complete" at 80% of
+      // pack sections drafted) and "Legal Review" was the hardcoded string
+      // "Not Started" regardless of any record. They now derive from the
+      // per-department block review statuses the Internal Review tabs actually
+      // write (proposal_blocks[].ops_status / finance_status / legal_status),
+      // or state "Not recorded" when there are no blocks to review.
+      const drafting = (ws.tender as any)?.tenderDraftingData ?? {};
+      const reviewBlocks: any[] = Array.isArray(drafting.proposal_blocks) ? drafting.proposal_blocks : [];
+      const deptIndicator = (label: string, statusKey: string, volumes: string[]): Indicator => {
+        const deptBlocks = reviewBlocks.filter(b => volumes.includes(b?.volume));
+        if (deptBlocks.length === 0) {
+          return { type: "status", label, state: "Not recorded", color: "text-slate-600 bg-slate-50 border-slate-200" };
+        }
+        const approved = deptBlocks.filter(b => b?.[statusKey] === "Approved").length;
+        const rejected = deptBlocks.filter(b => b?.[statusKey] === "Rejected").length;
+        if (approved === deptBlocks.length) {
+          return { type: "status", label, state: "Complete", color: "text-emerald-600 bg-emerald-50 border-emerald-200" };
+        }
+        if (approved > 0 || rejected > 0) {
+          return { type: "status", label, state: `${approved}/${deptBlocks.length} approved${rejected > 0 ? `, ${rejected} rejected` : ""}`, color: "text-amber-600 bg-amber-50 border-amber-200" };
+        }
+        return { type: "status", label, state: "Not Started", color: "text-slate-500 bg-slate-50 border-slate-200" };
+      };
+      const deptSpecs: [string, string[]][] = [["ops_status", ["Technical", "Shared"]], ["finance_status", ["Commercial", "Shared"]], ["legal_status", ["Technical", "Commercial", "Shared", "Appendix"]]];
+      const reviewTotals = deptSpecs.reduce((acc, [statusKey, volumes]) => {
+        const deptBlocks = reviewBlocks.filter(b => volumes.includes(b?.volume));
+        acc.total += deptBlocks.length;
+        acc.approved += deptBlocks.filter(b => b?.[statusKey] === "Approved").length;
+        return acc;
+      }, { total: 0, approved: 0 });
+      const reviewPct = reviewTotals.total > 0 ? Math.round((reviewTotals.approved / reviewTotals.total) * 100) : 0;
       const reviewColor = reviewPct >= 80 ? "text-emerald-700" : reviewPct >= 50 ? "text-amber-700" : "text-red-700";
       return {
         indicators: [
           { type: "progress", value: reviewPct, label: "Review Completion", color: reviewColor },
-          { type: "status", label: "Ops Review", state: reviewPct > 0 ? "In Review" : "Not Started", color: reviewPct > 0 ? "text-amber-600 bg-amber-50 border-amber-200" : "text-slate-500 bg-slate-50 border-slate-200" },
-          { type: "status", label: "Finance Review", state: reviewPct >= 80 ? "Complete" : "Pending", color: reviewPct >= 80 ? "text-emerald-600 bg-emerald-50 border-emerald-200" : "text-slate-500 bg-slate-50 border-slate-200" },
-          { type: "status", label: "Legal Review", state: "Not Started", color: "text-slate-500 bg-slate-50 border-slate-200" },
+          deptIndicator("Ops Review", "ops_status", ["Technical", "Shared"]),
+          deptIndicator("Finance Review", "finance_status", ["Commercial", "Shared"]),
+          deptIndicator("Legal Review", "legal_status", ["Technical", "Commercial", "Shared", "Appendix"]),
         ],
         signals: buildSignals(ws, stageValue),
         nextAction: "Resolve review signals.",
@@ -248,16 +317,36 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
     }
 
     case "final_approved": {
+      // TCW-T2 (B1/B2): "Final Approval: Approved" and "Version Integrity:
+      // Verified" were hardcoded verdicts shown regardless of any stored
+      // record. B1 now derives from the stored final approval record
+      // (type_details.final_approved.approval_record.decision — the key the
+      // Approval Record tab writes). Nothing in the clean app records a
+      // version-integrity check, so B2 states "Not recorded" instead of
+      // asserting "Verified".
+      const faDetails = ((ws.tender as any)?.typeDetails ?? (ws.tender as any)?.type_details ?? {}) as any;
+      const faDecision = faDetails?.final_approved?.approval_record?.decision;
+      const faState = faDecision === "approved" ? "Approved"
+        : faDecision === "not_approved" ? "Not Approved"
+          : faDecision === "pending" ? "Pending"
+            : "Not recorded";
+      const faColor = faDecision === "approved" ? "text-emerald-600 bg-emerald-50 border-emerald-200"
+        : faDecision === "not_approved" ? "text-red-600 bg-red-50 border-red-200"
+          : faDecision === "pending" ? "text-amber-600 bg-amber-50 border-amber-200"
+            : "text-slate-600 bg-slate-50 border-slate-200";
       return {
         indicators: [
-          { type: "status", label: "Final Approval", state: "Approved", color: "text-emerald-600 bg-emerald-50 border-emerald-200" },
+          { type: "status", label: "Final Approval", state: faState, color: faColor },
           { type: "progress", value: readiness, label: "Submission Ready", color: readinessColor },
           { type: "numeric", label: "Open Signals", value: criticalGates + warnGates, suffix: "", color: criticalGates > 0 ? "text-red-700" : warnGates > 0 ? "text-amber-700" : "text-emerald-700" },
-          { type: "status", label: "Version Integrity", state: "Verified", color: "text-emerald-600 bg-emerald-50 border-emerald-200" },
+          { type: "status", label: "Version Integrity", state: "Not recorded", color: "text-slate-600 bg-slate-50 border-slate-200" },
         ],
         signals: buildSignals(ws, stageValue),
         nextAction: "Prepare submission.",
-        tabs: ["Submission Readiness", "Final Pack", "Submission Checklist", "Approval Record"],
+        // TCW-T2 (P6 reachability): the three register tabs are routed here so
+        // the Placeholders / Required Documents / Compliance registers are
+        // reachable in the Submission Readiness area of Stage 9.
+        tabs: ["Submission Readiness", "Final Pack", "Submission Checklist", "Approval Record", "Placeholders", "Required Documents", "Compliance"],
       };
     }
 
@@ -274,7 +363,7 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
           { type: "status", label: "Submission Status", state: hasSubmissionRecord ? "Recorded" : "Not Recorded", color: hasSubmissionRecord ? "text-emerald-600 bg-emerald-50 border-emerald-200" : "text-slate-500 bg-slate-50 border-slate-200" },
           { type: "status", label: "Receipt", state: hasReceipt ? "Confirmed" : "Pending", color: hasReceipt ? "text-emerald-600 bg-emerald-50 border-emerald-200" : "text-amber-600 bg-amber-50 border-amber-200" },
           { type: "status", label: "CRM Sync", state: isCrmSynced ? "Synced" : hasCrmRecord ? "Pending" : "Not Recorded", color: isCrmSynced ? "text-emerald-600 bg-emerald-50 border-emerald-200" : hasCrmRecord ? "text-amber-600 bg-amber-50 border-amber-200" : "text-slate-500 bg-slate-50 border-slate-200" },
-          { type: "gauge", value: daysLeft, label: "Response Timer", unit: "d", color: deadlineColor },
+          (Number.isFinite(daysLeft) ? { type: "gauge", value: daysLeft, label: "Response Timer", unit: "d", color: deadlineColor } : { type: "status", label: "Response Timer", state: "Not recorded", color: "text-slate-500" }),
         ],
         signals: buildSignals(ws, stageValue),
         nextAction: "Monitor tender response.",
@@ -308,7 +397,7 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
           { type: "numeric", label: "Open Questions", value: openQa, suffix: "", color: openQa > 0 ? "text-amber-700" : "text-emerald-700" },
           { type: "progress", value: qaProgressPct, label: "Answered", color: qaProgressPct >= 80 ? "text-emerald-700" : qaProgressPct >= 50 ? "text-amber-700" : "text-red-700" },
           { type: "status", label: "Response", state: responseState, color: responseColor },
-          { type: "gauge", value: daysLeft, label: "Deadline", unit: "d", color: deadlineColor },
+          (Number.isFinite(daysLeft) ? { type: "gauge", value: daysLeft, label: "Deadline", unit: "d", color: deadlineColor } : { type: "status", label: "Deadline", state: "Not recorded", color: "text-slate-500" }),
         ],
         signals: buildSignals(ws, stageValue),
         nextAction: "Answer all clarification questions and submit responses.",
@@ -330,9 +419,18 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
       }).length;
       const ceBafo = ceData?.bafo ?? {};
       const ceBafoStatus = ceBafo.bafo_status ? ceBafo.bafo_status.replace(/_/g, " ") : "Not Requested";
+      // TCW-T2 (B3): "Evaluation: In Progress" was a hardcoded verdict. It now
+      // derives from the stored evaluation status record
+      // (type_details.client_evaluation.evaluation_status — the section the
+      // Evaluation Status tab writes), or states "Not recorded".
+      const ceStatusRecord = ceData?.evaluation_status ?? {};
+      const ceOverall = ceStatusRecord.overall_status || ceStatusRecord.technical_status || ceStatusRecord.commercial_status;
+      const ceEvalState = typeof ceOverall === "string" && ceOverall.trim().length > 0
+        ? ceOverall.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())
+        : "Not recorded";
       return {
         indicators: [
-          { type: "status", label: "Evaluation", state: "In Progress", color: "text-sky-600 bg-sky-50 border-sky-200" },
+          { type: "status", label: "Evaluation", state: ceEvalState, color: ceEvalState === "Not recorded" ? "text-slate-600 bg-slate-50 border-slate-200" : "text-sky-600 bg-sky-50 border-sky-200" },
           { type: "numeric", label: "Open Items", value: openCeRequests + openCeClarifications, suffix: "", color: openCeRequests + openCeClarifications > 0 ? "text-amber-700" : "text-emerald-700" },
           { type: "status", label: "BAFO", state: ceBafoStatus, color: ceBafoStatus === "Not Requested" ? "text-slate-500 bg-slate-50 border-slate-200" : "text-sky-600 bg-sky-50 border-sky-200" },
           { type: "gauge", value: targetGp, label: "Margin Protection", unit: "%", color: gpColor },
@@ -413,7 +511,7 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
       return {
         indicators: [
           { type: "progress", value: readiness, label: "Readiness", color: readinessColor },
-          { type: "gauge", value: daysLeft, label: "Deadline", unit: "d", color: deadlineColor },
+          (Number.isFinite(daysLeft) ? { type: "gauge", value: daysLeft, label: "Deadline", unit: "d", color: deadlineColor } : { type: "status", label: "Deadline", state: "Not recorded", color: "text-slate-500" }),
           { type: "gauge", value: targetGp, label: "GP%", unit: "%", color: gpColor },
           { type: "numeric", label: "Signals", value: criticalGates + warnGates, suffix: "", color: "text-foreground" },
         ],

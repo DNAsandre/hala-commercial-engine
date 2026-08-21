@@ -42,7 +42,7 @@ interface StageProps {
 // ─── Stage Menu Header (reusable) ────────────────────────
 
 function StageMenuHeader<T extends string>({
-  sections, activeSection, setActiveSection, stageIntelOpen, setStageIntelOpen, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved,
+  sections, activeSection, setActiveSection, stageIntelOpen, setStageIntelOpen, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved, unsaved,
 }: {
   sections: TenderStageSectionTab<T>[];
   activeSection: T;
@@ -53,6 +53,7 @@ function StageMenuHeader<T extends string>({
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
   saved?: boolean;
+  unsaved?: boolean;
 }) {
   return (
     <TenderStageTaskShell
@@ -67,6 +68,7 @@ function StageMenuHeader<T extends string>({
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
       saved={saved}
+      unsaved={unsaved}
     />
   );
 }
@@ -83,16 +85,21 @@ const LOG_SECTIONS: { key: LogSection; label: string; icon: ReactNode }[] = [
   { key: "activity_log",  label: "Activity Log",   icon: <Activity className="w-3.5 h-3.5" /> },
 ];
 
-function NegotiationLogView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; saved?: boolean }) {
+function NegotiationLogView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; hasStoredData?: boolean }) {
   const [activeSection, setActiveSection] = useState<LogSection>("meeting_log");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
   return (
     <div className="space-y-4">
       <StageMenuHeader sections={LOG_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
-        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={saved} />
+        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel}
+        saved={!!hasStoredData && !tabDirty} unsaved={tabDirty} />
       <div className={activeSection !== "meeting_log" ? "hidden" : ""}>
-        <NegotiationLogTab ws={ws} reload={reload} />
+        <NegotiationLogTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
       <div className={activeSection !== "activity_log" ? "hidden" : ""}>
         <TenderActivityTab ws={ws} tenderId={ws.tender.id} reload={reload} />
@@ -113,16 +120,21 @@ const CHANGES_SECTIONS: { key: ChangesSection; label: string; icon: ReactNode }[
   { key: "changes_audit",   label: "Audit Trail",         icon: <Clock className="w-3.5 h-3.5" /> },
 ];
 
-function RequestedChangesView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; saved?: boolean }) {
+function RequestedChangesView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; hasStoredData?: boolean }) {
   const [activeSection, setActiveSection] = useState<ChangesSection>("change_register");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
   return (
     <div className="space-y-4">
       <StageMenuHeader sections={CHANGES_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
-        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={saved} />
+        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel}
+        saved={!!hasStoredData && !tabDirty} unsaved={tabDirty} />
       <div className={activeSection !== "change_register" ? "hidden" : ""}>
-        <NegotiationChangesTab ws={ws} reload={reload} />
+        <NegotiationChangesTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
       <div className={activeSection !== "changes_audit" ? "hidden" : ""}>
         <TenderAuditTrailTab ws={ws} />
@@ -143,16 +155,21 @@ const MARGIN_SECTIONS: { key: MarginSection; label: string; icon: ReactNode }[] 
   { key: "margin_activity", label: "Activity Log",    icon: <Activity className="w-3.5 h-3.5" /> },
 ];
 
-function NegotiationMarginView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; saved?: boolean }) {
+function NegotiationMarginView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; hasStoredData?: boolean }) {
   const [activeSection, setActiveSection] = useState<MarginSection>("margin_tracker");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
   return (
     <div className="space-y-4">
       <StageMenuHeader sections={MARGIN_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
-        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={saved} />
+        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel}
+        saved={!!hasStoredData && !tabDirty} unsaved={tabDirty} />
       <div className={activeSection !== "margin_tracker" ? "hidden" : ""}>
-        <NegotiationMarginTab ws={ws} reload={reload} />
+        <NegotiationMarginTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
       <div className={activeSection !== "margin_activity" ? "hidden" : ""}>
         <TenderActivityTab ws={ws} tenderId={ws.tender.id} reload={reload} />
@@ -171,16 +188,21 @@ const REVISED_SECTIONS: { key: RevisedSection; label: string; icon: ReactNode }[
   { key: "terms_tracker", label: "Terms Tracker", icon: <FileText className="w-3.5 h-3.5" /> },
 ];
 
-function RevisedVersionsView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; saved?: boolean }) {
+function RevisedVersionsView({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel, hasStoredData }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void; hasStoredData?: boolean }) {
   const [activeSection, setActiveSection] = useState<RevisedSection>("terms_tracker");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  // TCW-T4 (C3): the badge reflects SAVE state, not data presence — amber
+  // while the tab holds unsaved edits, green only when stored data exists
+  // AND the tab is clean, grey when nothing is recorded yet.
+  const [tabDirty, setTabDirty] = useState(false);
   return (
     <div className="space-y-4">
       <StageMenuHeader sections={REVISED_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
-        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={saved} />
+        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel}
+        saved={!!hasStoredData && !tabDirty} unsaved={tabDirty} />
       <div className={activeSection !== "terms_tracker" ? "hidden" : ""}>
-        <NegotiationRevisedTermsTab ws={ws} reload={reload} />
+        <NegotiationRevisedTermsTab ws={ws} reload={reload} onDirtyChange={setTabDirty} />
       </div>
     </div>
   );
@@ -214,14 +236,14 @@ export default function NegotiationStage({ ws, activeTab, reload, onOpenDocument
   const hasRevised = !!(revised.contract_readiness && revised.contract_readiness !== "not_ready") || (Array.isArray(revised.terms) && revised.terms.length > 0);
 
   if (activeTab === "negotiation_log")
-    return <NegotiationLogView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasLog} />;
+    return <NegotiationLogView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasLog} />;
   if (activeTab === "requested_changes")
-    return <RequestedChangesView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasChanges} />;
+    return <RequestedChangesView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasChanges} />;
   if (activeTab === "negotiation_margin")
-    return <NegotiationMarginView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasMargin} />;
+    return <NegotiationMarginView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasMargin} />;
   if (activeTab === "revised_versions")
-    return <RevisedVersionsView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasRevised} />;
+    return <RevisedVersionsView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasRevised} />;
 
   // Default fallback
-  return <NegotiationLogView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={hasLog} />;
+  return <NegotiationLogView ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} hasStoredData={hasLog} />;
 }

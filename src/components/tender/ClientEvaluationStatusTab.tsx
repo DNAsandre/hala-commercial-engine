@@ -22,8 +22,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Info, Eye, CheckCircle2, XCircle, Clock, HelpCircle } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderClientEvaluationData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 const EVAL_STATUSES = [
   { value: "pending", label: "Pending", icon: Clock, color: "border-amber-300 text-amber-700 bg-amber-50" },
@@ -39,7 +45,7 @@ function deriveOverall(tech: string, comm: string): string {
   return "pending";
 }
 
-export default function ClientEvaluationStatusTab({ ws, reload }: Props) {
+export default function ClientEvaluationStatusTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.client_evaluation?.evaluation_status ?? {};
@@ -54,7 +60,7 @@ export default function ClientEvaluationStatusTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const overallStatus = useMemo(() => deriveOverall(techStatus, commStatus), [techStatus, commStatus]);
   const overallMeta = EVAL_STATUSES.find(s => s.value === overallStatus) || EVAL_STATUSES[0];
@@ -72,14 +78,15 @@ export default function ClientEvaluationStatusTab({ ws, reload }: Props) {
         competitor_intelligence: competitors,
         evaluation_notes: evalNotes,
       };
-      const res = await updateTenderClientEvaluationData(tenderId, "evaluation_status", payload, `Overall: ${overallStatus}`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Evaluation status saved.");
+      const res = await updateTenderClientEvaluationData(tenderId, "evaluation_status", payload, `Overall: ${overallStatus}`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Evaluation status saved.")) return;
       setDirty(false);
+      onDirtyChange?.(false);
       reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [techStatus, commStatus, overallStatus, expectedDecision, clientContact, contactNotes, competitors, evalNotes, tenderId, reload]);
+  }, [techStatus, commStatus, overallStatus, expectedDecision, clientContact, contactNotes, competitors, evalNotes, tenderId, reload, ws, onDirtyChange]);
 
   const StatusCard = ({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) => {
     const meta = EVAL_STATUSES.find(s => s.value === value) || EVAL_STATUSES[3];

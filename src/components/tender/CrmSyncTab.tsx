@@ -18,8 +18,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Radio, Info, CheckCircle2, ArrowRight } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderSubmissionData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 const CRM_STAGES = [
   { value: "prospecting", label: "Prospecting" },
@@ -41,7 +47,7 @@ const SYNC_STATUSES = [
   { value: "manual", label: "Manual Update" },
 ] as const;
 
-export default function CrmSyncTab({ ws, reload }: Props) {
+export default function CrmSyncTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.submission?.crm_sync ?? {};
@@ -57,7 +63,7 @@ export default function CrmSyncTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
   const hasSavedData = !!(saved.crm_stage_after || saved.synced_at);
 
   const handleSave = useCallback(async () => {
@@ -71,14 +77,15 @@ export default function CrmSyncTab({ ws, reload }: Props) {
         sync_status: syncStatus,
         sync_notes: syncNotes,
       };
-      const res = await updateTenderSubmissionData(tenderId, "crm_sync", payload, `CRM sync: ${stageBefore} → ${stageAfter}`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("CRM sync record saved.");
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      const res = await updateTenderSubmissionData(tenderId, "crm_sync", payload, `CRM sync: ${stageBefore} → ${stageAfter}`, wsRevisionToken(ws));
+      if (!reportSaveOutcome(res, "CRM sync record saved.")) return;
       setDirty(false);
+      onDirtyChange?.(false);
       reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [stageBefore, stageAfter, syncedAt, syncedBy, syncStatus, syncNotes, tenderId, reload]);
+  }, [stageBefore, stageAfter, syncedAt, syncedBy, syncStatus, syncNotes, tenderId, reload, ws, onDirtyChange]);
 
   const stageLabel = (val: string) => CRM_STAGES.find(s => s.value === val)?.label || val;
   const syncStatusColor = (s: string) => {

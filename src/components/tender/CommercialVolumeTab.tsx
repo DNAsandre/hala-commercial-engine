@@ -73,7 +73,10 @@ export default function CommercialVolumeTab({ ws, onOpenDocuments, onOpenGlobalI
       metrics={metrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
-      saved={commBlocks.length > 0}
+      /* TCW-T4 (C3): read-only filtered view of stored blocks — nothing here
+         can hold unsaved edits, so "Saved" states the in-sync fact instead of
+         proxying data presence. */
+      saved={true}
     >
       <div className="flex items-start gap-2 rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-[10px] text-muted-foreground">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-500" />

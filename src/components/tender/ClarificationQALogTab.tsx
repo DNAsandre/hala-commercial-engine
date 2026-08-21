@@ -18,8 +18,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Plus, Info, ChevronDown, ChevronRight, MessageSquare, X } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderClarificationData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 interface QAEntry {
   id: string;
@@ -65,7 +71,7 @@ const emptyEntry = (): QAEntry => ({
   notes: "",
 });
 
-export default function ClarificationQALogTab({ ws, reload }: Props) {
+export default function ClarificationQALogTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const savedLog = td?.clarification?.qa_log ?? [];
@@ -76,7 +82,7 @@ export default function ClarificationQALogTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const filtered = useMemo(() => {
     if (filterStatus === "all") return entries;
@@ -100,14 +106,15 @@ export default function ClarificationQALogTab({ ws, reload }: Props) {
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const res = await updateTenderClarificationData(tenderId, "qa_log", entries, `${entries.length} clarification questions logged`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Q&A log saved.");
+      const res = await updateTenderClarificationData(tenderId, "qa_log", entries, `${entries.length} clarification questions logged`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Q&A log saved.")) return;
       setDirty(false);
+      onDirtyChange?.(false);
       reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [entries, tenderId, reload]);
+  }, [entries, tenderId, reload, ws, onDirtyChange]);
 
   const statusColor = (s: string) => {
     if (s === "responded") return "border-emerald-300 text-emerald-700 bg-emerald-50";

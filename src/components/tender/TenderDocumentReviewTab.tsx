@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckCircle2, FileText, FolderOpen, Loader2, Save, Upload, Link2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,11 @@ import {
   IdentifiedEmptyState,
   IdentifiedSectionCard,
   IdentifiedStageShell,
+  announceTenderTabSaveOutcome,
+  identifiedSavedBadgeState,
+  resolveTenderTabSaveOutcome,
+  runTenderTabSave,
+  tenderRevisionTokenOf,
   type IdentifiedSectionTab,
 } from "./IdentifiedStageShared";
 
@@ -59,6 +64,9 @@ export default function TenderDocumentReviewTab({ ws, reload, onOpenDocuments, o
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** B12: true only after a save confirmed in this session. */
+  const [savedConfirmed, setSavedConfirmed] = useState(false);
+  const staleRetryArmed = useRef(false);
   const [linkingId, setLinkingId] = useState<string | null>(null);
 
   const [reviewStatus, setReviewStatus] = useState(saved.review_status ?? "not_started");
@@ -106,14 +114,19 @@ export default function TenderDocumentReviewTab({ ws, reload, onOpenDocuments, o
         review_notes: reviewNotes.trim(),
         updated_at: new Date().toISOString(),
       };
-      const result = await updateTenderIdentifiedData(t.id, "document_review", payload, "Document review saved");
-      if (result.success) {
-        setDirty(false);
-        toast.success("Document review saved.");
-        reload?.();
-      } else {
-        toast.error("Failed to save document review.", { description: result.error });
-      }
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderIdentifiedData(t.id, "document_review", payload, "Document review saved", expectedRevision),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "Document review saved.", failed: "Failed to save document review." },
+        onConfirmed: () => {
+          setDirty(false);
+          setSavedConfirmed(true);
+          reload?.();
+        },
+        onStale: () => reload?.(),
+      });
     } catch (error: any) {
       toast.error("Failed to save document review.", { description: error?.message || "Unexpected save error." });
     } finally {
@@ -124,14 +137,16 @@ export default function TenderDocumentReviewTab({ ws, reload, onOpenDocuments, o
   async function linkToIdentified(doc: TenderDocument) {
     setLinkingId(doc.id);
     const nextStages = Array.from(new Set([...doc.stage_relevance, "Identified" as const]));
+    // Document-list writer: revision is guarded in-call by the write layer
+    // (updateTenderDocumentList); no expectedRevision parameter exists on it.
     const result = await updateTenderDocumentMetadata(t.id, doc.id, { stage_relevance: nextStages });
     setLinkingId(null);
-    if (result.success) {
-      toast.success("Document linked to Identified.");
-      reload?.();
-    } else {
-      toast.error("Failed to link document.", { description: result.error });
-    }
+    const outcome = resolveTenderTabSaveOutcome(result, {
+      saved: "Document linked to Identified.",
+      failed: "Failed to link document.",
+    });
+    announceTenderTabSaveOutcome(outcome);
+    if (outcome.confirmedSaved) reload?.();
   }
 
   return (
@@ -144,6 +159,7 @@ export default function TenderDocumentReviewTab({ ws, reload, onOpenDocuments, o
       metrics={metrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
+      saved={identifiedSavedBadgeState(savedConfirmed, dirty)}
       unsaved={dirty}
       actionSlot={
         <Button type="button" size="sm" className="h-7 gap-1.5 rounded-md px-2.5 text-[11px]" onClick={save} disabled={!dirty || saving}>

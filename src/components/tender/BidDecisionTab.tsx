@@ -17,12 +17,13 @@
  * - Saving merges only decision, decision_checklist, recommendation keys.
  */
 
-import { useState, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderBidNoBidData } from "@/lib/supabase-tender-actions";
+import { runTenderTabSave, tenderRevisionTokenOf } from "./IdentifiedStageShared";
 import { toast } from "sonner";
 import {
   Loader2, Save, ChevronDown,
@@ -126,6 +127,21 @@ function statusBtnClass(selected: boolean, status: string): string {
 // COMPONENT
 // ═══════════════════════════════════════════════════════════
 
+/**
+ * TCW-T3 (P2b) — this tab's patch carries ONLY its own bid_no_bid_data keys
+ * (decision, decision_checklist, recommendation). The write layer patch-merges,
+ * so sibling tabs' keys (win_strategy, resource_commitment, decision_record)
+ * are preserved by the STORED facet — never re-sent from a page-load copy.
+ * Exported pure for direct testing.
+ */
+export function buildBidDecisionPatch(
+  decision: DecisionData,
+  checklist: ChecklistRow[],
+  recommendation: RecommendationData,
+): Record<string, any> {
+  return { decision, decision_checklist: checklist, recommendation };
+}
+
 interface Props {
   ws: TenderWorkspace;
   onOpenDocuments?: () => void;
@@ -172,28 +188,28 @@ export default function BidDecisionTab({ ws, onOpenDocuments, onOpenGlobalIntel,
     return { yesCount, noCount, partialCount, recSet };
   }, [checklist, recommendation]);
 
+  const staleRetryArmed = useRef(false);
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const patch: Record<string, any> = {
-        ...(existing || {}),
-        decision,
-        decision_checklist: checklist,
-        recommendation,
-      };
-      const result = await updateTenderBidNoBidData(tenderId, patch, "Bid Decision tab saved");
-      if (result.success) {
-        toast.success("Bid Decision saved.");
-        onSaved?.();
-      } else {
-        toast.error("Save failed", { description: result.error });
-      }
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderBidNoBidData(tenderId, buildBidDecisionPatch(decision, checklist, recommendation), {
+            expectedRevision,
+            reason: "Bid Decision tab saved",
+          }),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "Bid Decision saved.", failed: "Save failed" },
+        onConfirmed: () => onSaved?.(),
+        // Stale: local form state is untouched — the user's entry stays.
+      });
     } catch (e: any) {
       toast.error(e.message || "Save failed.");
     } finally {
       setSaving(false);
     }
-  }, [tenderId, decision, checklist, recommendation, existing, onSaved]);
+  }, [tenderId, decision, checklist, recommendation, onSaved, ws]);
 
   return (
     <div className="space-y-4">

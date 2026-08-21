@@ -12,16 +12,16 @@
  * Save: updateTenderPricingData → merges pnl_snapshot only
  * No AI. No document-output tooling. No fake data. No formula duplication.
  */
-import { useState, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderPricingData } from "@/lib/supabase-tender-actions";
+import { runTenderTabSave, tenderRevisionTokenOf } from "./IdentifiedStageShared";
 import { normalizeTenderPricingData } from "@/lib/tender-pricing-types";
 import { getCurrentUser } from "@/lib/auth-state";
 import { formatSAR, formatPercent } from "@/lib/store";
-import { toast } from "sonner";
 import { nanoid } from "nanoid";
 import {
   Loader2, Save, ChevronDown, Calculator,
@@ -143,6 +143,7 @@ export default function TenderPnLCalculatorPanel({ ws, reload, onOpenDocuments, 
   const [snapshotting, setSnapshotting] = useState(false);
   const [activeSection, setActiveSection] = useState<CalcSectionKey>("context");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  const staleRetryArmed = useRef(false);
 
   const handleCalcChange = useCallback((state: PnLCalculatorState, summary: PnLCalculatorSummary) => {
     setCalcState(state);
@@ -160,12 +161,24 @@ export default function TenderPnLCalculatorPanel({ ws, reload, onOpenDocuments, 
         updated_by: user.name,
         updated_at: new Date().toISOString(),
       };
+      // Contract note: `pnlData` derives from the CURRENT ws prop (memo on
+      // t.pricingData), so the section base is the freshly loaded bundle at
+      // save time, and the same bundle's revision token guards the write — a
+      // stale base can no longer silently overwrite snapshots/draft.
       const patch = { ...pnlData, working_draft: draft };
-      const result = await updateTenderPricingData(tenderId, "pnl_snapshot", patch, "P&L working draft saved");
-      if (result.success) { toast.success("P&L working draft saved"); reload(); }
-      else toast.error("Save failed", { description: result.error });
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderPricingData(tenderId, "pnl_snapshot", patch, "P&L working draft saved", expectedRevision),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "P&L working draft saved", failed: "Save failed" },
+        onConfirmed: () => reload(),
+        // Stale: calculator state is local and untouched; refresh the bundle
+        // underneath so the retry runs against the current stored pricing.
+        onStale: () => reload(),
+      });
     } finally { setSaving(false); }
-  }, [calcState, targetGpOverride, targetGpSource, user.name, pnlData, tenderId, reload]);
+  }, [calcState, targetGpOverride, targetGpSource, user.name, pnlData, tenderId, reload, ws]);
 
   // Create Snapshot
   const handleCreateSnapshot = useCallback(async () => {
@@ -199,12 +212,20 @@ export default function TenderPnLCalculatorPanel({ ws, reload, onOpenDocuments, 
       };
       const existing = Array.isArray(pnlData?.snapshots) ? [...pnlData.snapshots] : [];
       existing.push(snap);
+      // Section base = freshly loaded ws at save time; token from the same
+      // bundle guards against appending onto a stale snapshot list.
       const patch = { ...pnlData, snapshots: existing, active_snapshot_id: snap.id };
-      const result = await updateTenderPricingData(tenderId, "pnl_snapshot", patch, "P&L snapshot created");
-      if (result.success) { toast.success("P&L snapshot created"); reload(); }
-      else toast.error("Snapshot failed", { description: result.error });
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderPricingData(tenderId, "pnl_snapshot", patch, "P&L snapshot created", expectedRevision),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "P&L snapshot created", failed: "Snapshot failed" },
+        onConfirmed: () => reload(),
+        onStale: () => reload(),
+      });
     } finally { setSnapshotting(false); }
-  }, [calcState, calcSummary, effectiveTargetGp, targetGpSource, user.name, pnlData, tenderId, reload]);
+  }, [calcState, calcSummary, effectiveTargetGp, targetGpSource, user.name, pnlData, tenderId, reload, ws]);
 
   // Submit for Approval
   const handleSubmitForApproval = useCallback(async () => {
@@ -214,12 +235,20 @@ export default function TenderPnLCalculatorPanel({ ws, reload, onOpenDocuments, 
       const updated = savedSnapshots.map(s =>
         s.id === latestSnapshot.id ? { ...s, status: "Submitted for Pricing Approval" as SnapshotStatus, submitted_at: new Date().toISOString(), updated_by: user.name, updated_at: new Date().toISOString() } : s
       );
+      // Section base = freshly loaded ws at save time (savedSnapshots derives
+      // from the current bundle); the same bundle's token guards the write.
       const patch = { ...pnlData, snapshots: updated };
-      const result = await updateTenderPricingData(tenderId, "pnl_snapshot", patch, "Snapshot submitted for pricing approval");
-      if (result.success) { toast.success("Snapshot submitted for pricing approval"); reload(); }
-      else toast.error("Submit failed", { description: result.error });
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderPricingData(tenderId, "pnl_snapshot", patch, "Snapshot submitted for pricing approval", expectedRevision),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "Snapshot submitted for pricing approval", failed: "Submit failed" },
+        onConfirmed: () => reload(),
+        onStale: () => reload(),
+      });
     } finally { setSaving(false); }
-  }, [latestSnapshot, savedSnapshots, pnlData, tenderId, user.name, reload]);
+  }, [latestSnapshot, savedSnapshots, pnlData, tenderId, user.name, reload, ws]);
 
   // Check if legacy cost data exists
   const hasLegacyCost = !!(costData && (

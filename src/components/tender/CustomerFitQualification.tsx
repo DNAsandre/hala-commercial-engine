@@ -25,12 +25,13 @@
  * - If all dimensions are "Not Assessed", fit status = "Not Assessed".
  */
 
-import { useState, useCallback, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderCustomerFitData } from "@/lib/supabase-tender-actions";
+import { runTenderTabSave, tenderRevisionTokenOf } from "./IdentifiedStageShared";
 import { toast } from "sonner";
 import {
   Loader2, Save, ChevronDown, ChevronRight, Plus, X,
@@ -262,9 +263,11 @@ interface Props {
   ws: TenderWorkspace;
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
+  /** Fires ONLY after a confirmed save (the workspace shell passes reload). */
+  onSaved?: () => void;
 }
 
-export default function CustomerFitQualification({ ws, onOpenDocuments, onOpenGlobalIntel }: Props) {
+export default function CustomerFitQualification({ ws, onOpenDocuments, onOpenGlobalIntel, onSaved }: Props) {
   const t = ws.tender;
   const tenderId = t.id;
 
@@ -287,6 +290,7 @@ export default function CustomerFitQualification({ ws, onOpenDocuments, onOpenGl
 
   const [initial, setInitial] = useState(() => JSON.stringify(data));
   const [saving, setSaving] = useState(false);
+  const staleRetryArmed = useRef(false);
   const dirty = JSON.stringify(data) !== initial;
 
   // Reload if tender changes — but only if user hasn't made local edits
@@ -417,22 +421,30 @@ export default function CustomerFitQualification({ ws, onOpenDocuments, onOpenGl
   }, [data.dimensions]);
 
   // ── Save ──────────────────────────────────────────────────
+  // customer_fit_data is a single-tab facet: this tab owns ALL its keys
+  // (customer_snapshot, dimensions, evidence, gaps, recommendation) — the
+  // patch-merge payload is the full facet (design pin P2b).
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const result = await updateTenderCustomerFitData(tenderId, data);
-      if (result.success) {
-        toast.success("Customer Fit Qualification saved.");
-        setInitial(JSON.stringify(data));
-      } else {
-        toast.error(result.error || "Save failed.");
-      }
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderCustomerFitData(tenderId, data, { expectedRevision }),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "Customer Fit Qualification saved.", failed: "Save failed." },
+        onConfirmed: () => {
+          setInitial(JSON.stringify(data));
+          onSaved?.();
+        },
+        // Stale: dirty stays true, so the resync effect keeps the user's entry.
+      });
     } catch (e: any) {
       toast.error(e.message || "Save failed.");
     } finally {
       setSaving(false);
     }
-  }, [tenderId, data]);
+  }, [tenderId, data, onSaved, ws]);
 
   // ═══════════════════════════════════════════════════════════
   // RENDER

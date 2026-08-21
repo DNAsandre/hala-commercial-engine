@@ -18,8 +18,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Info, BookOpen, Plus } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderLostWithdrawnData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 interface Lesson {
   id: string;
@@ -47,7 +53,7 @@ const IMPACT_LEVELS = [
   { value: "low", label: "Low" },
 ] as const;
 
-export default function LessonsLearnedTab({ ws, reload }: Props) {
+export default function LessonsLearnedTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.lost_withdrawn_data?.lessons_learned ?? {};
@@ -58,7 +64,7 @@ export default function LessonsLearnedTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
 
   const addLesson = () => {
     setLessons(prev => [...prev, {
@@ -77,12 +83,13 @@ export default function LessonsLearnedTab({ ws, reload }: Props) {
     setSaving(true);
     try {
       const payload = { what_went_well: whatWentWell, what_went_wrong: whatWentWrong, lessons };
-      const res = await updateTenderLostWithdrawnData(tenderId, "lessons_learned", payload, `${lessons.length} lessons captured`);
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Lessons learned saved."); setDirty(false); reload();
+      const res = await updateTenderLostWithdrawnData(tenderId, "lessons_learned", payload, `${lessons.length} lessons captured`, wsRevisionToken(ws));
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      if (!reportSaveOutcome(res, "Lessons learned saved.")) return;
+      setDirty(false); onDirtyChange?.(false); reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [whatWentWell, whatWentWrong, lessons, tenderId, reload]);
+  }, [whatWentWell, whatWentWrong, lessons, tenderId, reload, ws, onDirtyChange]);
 
   const impactColor = (i: string) => {
     if (i === "critical") return "border-red-300 text-red-700 bg-red-50";
