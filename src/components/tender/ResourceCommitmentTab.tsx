@@ -17,12 +17,13 @@
  * - No stage/CRM/document-output mutation.
  */
 
-import { useState, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderBidNoBidData } from "@/lib/supabase-tender-actions";
+import { runTenderTabSave, tenderRevisionTokenOf } from "./IdentifiedStageShared";
 import { toast } from "sonner";
 import {
   Loader2, Save, ChevronDown, Plus, X,
@@ -141,6 +142,21 @@ function statusBtnClass(selected: boolean, status: string): string {
 // COMPONENT
 // ═══════════════════════════════════════════════════════════
 
+/**
+ * TCW-T3 (P2b) — this tab's patch carries ONLY its own bid_no_bid_data key
+ * (resource_commitment). The write layer patch-merges, so sibling tabs' keys
+ * are preserved by the STORED facet — never re-sent from a page-load copy.
+ * Exported pure for direct testing.
+ */
+export function buildResourceCommitmentPatch(
+  rows: ResourceRow[],
+  effort: EffortData,
+  actions: ActionRow[],
+  recommendation: ResourceRecommendationData,
+): Record<string, any> {
+  return { resource_commitment: { rows, effort, actions, recommendation } };
+}
+
 interface Props {
   ws: TenderWorkspace;
   onOpenDocuments?: () => void;
@@ -191,26 +207,27 @@ export default function ResourceCommitmentTab({ ws, onOpenDocuments, onOpenGloba
     return { availableCount, requiredCount, constrainedCount, actionsCount: actions.length, recSet };
   }, [rows, actions, recommendation]);
 
+  const staleRetryArmed = useRef(false);
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const patch: Record<string, any> = {
-        ...(existing || {}),
-        resource_commitment: { rows, effort, actions, recommendation },
-      };
-      const result = await updateTenderBidNoBidData(tenderId, patch, "Resource Commitment tab saved");
-      if (result.success) {
-        toast.success("Resource Commitment saved.");
-        onSaved?.();
-      } else {
-        toast.error("Save failed", { description: result.error });
-      }
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderBidNoBidData(tenderId, buildResourceCommitmentPatch(rows, effort, actions, recommendation), {
+            expectedRevision,
+            reason: "Resource Commitment tab saved",
+          }),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "Resource Commitment saved.", failed: "Save failed" },
+        onConfirmed: () => onSaved?.(),
+      });
     } catch (e: any) {
       toast.error(e.message || "Save failed.");
     } finally {
       setSaving(false);
     }
-  }, [tenderId, rows, effort, actions, recommendation, existing, onSaved]);
+  }, [tenderId, rows, effort, actions, recommendation, onSaved, ws]);
 
   return (
     <div className="space-y-4">

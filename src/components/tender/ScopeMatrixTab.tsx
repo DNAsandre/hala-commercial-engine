@@ -8,12 +8,13 @@
  *   2. Scope Summary
  *   3. Output Use
  */
-import { useState, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderSolutionDesignData } from "@/lib/supabase-tender-actions";
+import { runTenderTabSave, tenderRevisionTokenOf } from "./IdentifiedStageShared";
 import { toast } from "sonner";
 import { Loader2, Save, ChevronDown, Plus, X, Table, BarChart3, ArrowRight, Info, FolderOpen, PanelRightOpen } from "lucide-react";
 import { TenderStageIntelligenceSlot } from "./TenderStageTaskShell";
@@ -63,13 +64,25 @@ function inclColor(s: IncludedStatus): string {
   return "bg-slate-100 border-slate-300 text-slate-600";
 }
 
+/**
+ * TCW-T3 (P2b) — this tab's patch carries ONLY its own solution_design_data
+ * key (scope_matrix). The write layer patch-merges, so sibling tabs' keys are
+ * preserved by the STORED facet — never re-sent from a page-load copy.
+ * Exported pure for direct testing.
+ */
+export function buildScopeMatrixPatch(rows: ScopeRow[]): Record<string, any> {
+  return { scope_matrix: { rows } };
+}
+
 interface Props {
   ws: TenderWorkspace;
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
+  /** Fires ONLY after a confirmed save (the workspace shell passes reload). */
+  onSaved?: () => void;
 }
 
-export default function ScopeMatrixTab({ ws, onOpenDocuments, onOpenGlobalIntel }: Props) {
+export default function ScopeMatrixTab({ ws, onOpenDocuments, onOpenGlobalIntel, onSaved }: Props) {
   const t = ws.tender; const tenderId = t.id;
   const existing = t.solutionDesignData as any;
   const sm = existing?.scope_matrix;
@@ -91,14 +104,26 @@ export default function ScopeMatrixTab({ ws, onOpenDocuments, onOpenGlobalIntel 
     return { total: rows.length, included, excluded, partial, clarNeeded };
   }, [rows]);
 
+  const staleRetryArmed = useRef(false);
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const patch: Record<string, any> = { ...(existing || {}), scope_matrix: { rows } };
-      const result = await updateTenderSolutionDesignData(tenderId, patch, "Scope Matrix saved");
-      if (result.success) toast.success("Scope Matrix saved"); else toast.error("Save failed", { description: result.error });
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderSolutionDesignData(tenderId, buildScopeMatrixPatch(rows), {
+            expectedRevision,
+            reason: "Scope Matrix saved",
+          }),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "Scope Matrix saved", failed: "Save failed" },
+        onConfirmed: () => onSaved?.(),
+        // Stale: local form state is untouched — the user's entry stays.
+      });
+    } catch (e: any) {
+      toast.error(e.message || "Save failed.");
     } finally { setSaving(false); }
-  }, [tenderId, rows, existing]);
+  }, [tenderId, rows, onSaved, ws]);
 
   return (
     <div className="space-y-4">

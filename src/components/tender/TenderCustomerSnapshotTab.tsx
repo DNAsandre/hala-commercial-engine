@@ -35,6 +35,9 @@ import ScopeOfWorkCapture from "./ScopeOfWorkCapture";
 import {
   IdentifiedSectionCard,
   IdentifiedStageShell,
+  announceTenderTabSaveOutcome,
+  identifiedSavedBadgeState,
+  resolveTenderTabSaveOutcome,
   type IdentifiedStageMetric,
   type IdentifiedSectionTab,
 } from "./IdentifiedStageShared";
@@ -62,6 +65,10 @@ export default function TenderCustomerSnapshotTab({ ws, reload, onOpenDocuments,
 
   const [activeSection, setActiveSection] = useState<SectionKey>("metadata");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
+  /** B12: true only after a save confirmed in this session (any of the three save surfaces). */
+  const [savedConfirmed, setSavedConfirmed] = useState(false);
+  /** Dirty state lifted from the embedded Scope of Work capture. */
+  const [sowDirty, setSowDirty] = useState(false);
 
   const [probability, setProbability] = useState<number>(t.probabilityPercent ?? 0);
   const [probDirty, setProbDirty] = useState(false);
@@ -83,14 +90,22 @@ export default function TenderCustomerSnapshotTab({ ws, reload, onOpenDocuments,
   const saveProb = useCallback(async () => {
     setProbSaving(true);
     try {
+      // Column writer — T1 exposes no expectedRevision parameter here; the
+      // revision guard is the store's in-call token. Outcomes are still
+      // classified honestly (stale / audit-warning / failure).
       const r = await updateTenderProbability(t.id, prevProb.current, probability, "Manual update from Customer Snapshot");
-      if (r.success) {
+      const outcome = resolveTenderTabSaveOutcome(r, {
+        saved: `Win probability updated to ${probability}%`,
+        failed: "Failed to save probability",
+      });
+      announceTenderTabSaveOutcome(outcome);
+      if (outcome.confirmedSaved) {
         prevProb.current = probability;
         setProbDirty(false);
-        toast.success(`Win probability updated to ${probability}%`);
+        setSavedConfirmed(true);
         reload?.();
-      } else {
-        toast.error("Failed to save probability", { description: r.error });
+      } else if (outcome.kind === "stale") {
+        reload?.();
       }
     } catch (error: any) {
       toast.error("Failed to save probability", { description: error?.message || "Unexpected save error." });
@@ -125,13 +140,19 @@ export default function TenderCustomerSnapshotTab({ ws, reload, onOpenDocuments,
   const saveOwnership = useCallback(async () => {
     setOwnerSaving(true);
     try {
+      // Column writer — see saveProb note on the revision guard.
       const r = await updateTenderTeamMembers(t.id, selectedOwner, selectedMembers, "Updated from Customer Snapshot");
-      if (r.success) {
+      const outcome = resolveTenderTabSaveOutcome(r, {
+        saved: "Ownership updated",
+        failed: "Failed to save ownership",
+      });
+      announceTenderTabSaveOutcome(outcome);
+      if (outcome.confirmedSaved) {
         setOwnerDirty(false);
-        toast.success("Ownership updated");
+        setSavedConfirmed(true);
         reload?.();
-      } else {
-        toast.error("Failed to save ownership", { description: r.error });
+      } else if (outcome.kind === "stale") {
+        reload?.();
       }
     } catch (error: any) {
       toast.error("Failed to save ownership", { description: error?.message || "Unexpected save error." });
@@ -176,7 +197,8 @@ export default function TenderCustomerSnapshotTab({ ws, reload, onOpenDocuments,
       metrics={intelMetrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
-      unsaved={ownerDirty || probDirty}
+      saved={identifiedSavedBadgeState(savedConfirmed, ownerDirty || probDirty || sowDirty)}
+      unsaved={ownerDirty || probDirty || sowDirty}
     >
       <IdentifiedSectionCard
         title="Customer Metadata"
@@ -205,7 +227,12 @@ export default function TenderCustomerSnapshotTab({ ws, reload, onOpenDocuments,
       </IdentifiedSectionCard>
 
       <div className={activeSection !== "sow" ? "hidden" : ""}>
-        <ScopeOfWorkCapture ws={ws} reload={reload} />
+        <ScopeOfWorkCapture
+          ws={ws}
+          reload={reload}
+          onDirtyChange={setSowDirty}
+          onConfirmedSave={() => setSavedConfirmed(true)}
+        />
       </div>
 
       <IdentifiedSectionCard

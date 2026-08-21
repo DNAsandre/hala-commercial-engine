@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Link } from "wouter";
 import {
   AlertTriangle,
@@ -32,6 +32,7 @@ import { getCurrentUser } from "@/lib/auth-state";
 import { canEditCosts } from "@/lib/sla-integrity";
 import type { UserRole } from "@/lib/store";
 import { updateTenderPricingData } from "@/lib/supabase-tender-actions";
+import { runTenderTabSave, tenderRevisionTokenOf } from "./IdentifiedStageShared";
 import { TenderStageIntelligenceSlot } from "./TenderStageTaskShell";
 import {
   APPROVAL_CHAIN_STATUS_OPTIONS,
@@ -115,15 +116,27 @@ function useSectionForm<T>(initial: T) {
   const initialJson = useMemo(() => stableStringify(initial), [initial]);
   const [data, setData] = useState<T>(initial);
   const [savedJson, setSavedJson] = useState(initialJson);
+  const savedJsonRef = useRef(initialJson);
+  const commitBaseline = (json: string) => {
+    savedJsonRef.current = json;
+    setSavedJson(json);
+  };
 
+  // TCW-T3: resync from a refreshed bundle ONLY while the form is clean.
+  // The previous unconditional setData(initial) silently wiped unsaved edits
+  // whenever any reload landed (e.g. a stale refusal's refresh, or a drawer
+  // note save) — the exact opposite of the non-destructive contract. A dirty
+  // form keeps the user's entry; the baseline still moves to the stored copy,
+  // so "Unsaved changes" stays honest against what is now stored.
   useEffect(() => {
-    setData(initial);
-    setSavedJson(initialJson);
+    setData(prev => (stableStringify(prev) === savedJsonRef.current ? initial : prev));
+    commitBaseline(initialJson);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialJson, initial]);
 
   const dataJson = stableStringify(data);
   const dirty = dataJson !== savedJson;
-  const markSaved = (next: T) => setSavedJson(stableStringify(next));
+  const markSaved = (next: T) => commitBaseline(stableStringify(next));
 
   return { data, setData, dirty, markSaved };
 }
@@ -358,16 +371,29 @@ function StageIntelMetric({ label, value }: { label: string; value: string }) {
 // ═══════════════════════════════════════════════════════════
 
 function usePricingSave<T extends Record<string, any>>(
-  tenderId: string, section: TenderPricingSectionKey, label: string,
+  ws: TenderWorkspace, section: TenderPricingSectionKey, label: string,
   data: T, markSaved: (next: T) => void, reload: () => void,
 ) {
   const [saving, setSaving] = useState(false);
+  const staleRetryArmed = useRef(false);
   const save = async (payload: T = data) => {
     setSaving(true);
     try {
-      const result = await updateTenderPricingData(tenderId, section, payload, `${label} saved`);
-      if (result.success) { markSaved(payload); toast.success(`${label} saved`); reload(); }
-      else { toast.error("Save failed", { description: result.error }); }
+      await runTenderTabSave({
+        // Section-merge writer — expectedRevision is the 5th positional arg.
+        write: expectedRevision =>
+          updateTenderPricingData(ws.tender.id, section, payload, `${label} saved`, expectedRevision),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: `${label} saved`, failed: "Save failed" },
+        onConfirmed: () => { markSaved(payload); reload(); },
+        // Stale: the section form keeps the user's entry (markSaved is NOT
+        // called, so dirty stays true and useSectionForm's resync leaves the
+        // edited copy alone); refresh the bundle underneath for the retry.
+        onStale: () => reload(),
+      });
+    } catch (e: any) {
+      toast.error(e.message || "Save failed.");
     } finally { setSaving(false); }
   };
   return { saving, save };
@@ -388,7 +414,7 @@ const SCENARIO_TABS: { key: ScenarioSectionKey; label: string; icon: ReactNode }
 function PricingScenariosTab({ ws, reload, onOpenDocuments, onOpenGlobalIntel }: { ws: TenderWorkspace; reload: () => void; onOpenDocuments: () => void; onOpenGlobalIntel?: () => void }) {
   const pricing = useMemo(() => normalizeTenderPricingData(ws.tender.pricingData), [ws.tender.pricingData]);
   const { data, setData, dirty, markSaved } = useSectionForm<PricingScenariosData>(pricing.scenarios);
-  const { saving, save } = usePricingSave(ws.tender.id, "scenarios", "Pricing Scenarios", data as any, markSaved as any, reload);
+  const { saving, save } = usePricingSave(ws, "scenarios", "Pricing Scenarios", data as any, markSaved as any, reload);
   const summary = calculatePricingScenarioSummary(data);
   const [activeSection, setActiveSection] = useState<ScenarioSectionKey>("register");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
@@ -518,7 +544,7 @@ const COMMERCIAL_TABS: { key: CommercialSectionKey; label: string; icon: ReactNo
 function CommercialTermsTab({ ws, reload, onOpenDocuments, onOpenGlobalIntel }: { ws: TenderWorkspace; reload: () => void; onOpenDocuments: () => void; onOpenGlobalIntel?: () => void }) {
   const pricing = useMemo(() => normalizeTenderPricingData(ws.tender.pricingData), [ws.tender.pricingData]);
   const { data, setData, dirty, markSaved } = useSectionForm<CommercialTermsData>(pricing.commercial_terms);
-  const { saving, save } = usePricingSave(ws.tender.id, "commercial_terms", "Commercial Terms", data as any, markSaved as any, reload);
+  const { saving, save } = usePricingSave(ws, "commercial_terms", "Commercial Terms", data as any, markSaved as any, reload);
   const [activeSection, setActiveSection] = useState<CommercialSectionKey>("payment");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
 
@@ -725,7 +751,7 @@ const APPROVAL_TABS: { key: ApprovalSectionKey; label: string; icon: ReactNode }
 function PricingApprovalTab({ ws, reload, onOpenDocuments, onOpenGlobalIntel }: { ws: TenderWorkspace; reload: () => void; onOpenDocuments: () => void; onOpenGlobalIntel?: () => void }) {
   const pricing = useMemo(() => normalizeTenderPricingData(ws.tender.pricingData), [ws.tender.pricingData]);
   const { data, setData, dirty, markSaved } = useSectionForm<PricingApprovalData>(pricing.approval);
-  const { saving, save } = usePricingSave(ws.tender.id, "approval", "Pricing Approval", data as any, markSaved as any, reload);
+  const { saving, save } = usePricingSave(ws, "approval", "Pricing Approval", data as any, markSaved as any, reload);
   const [activeSection, setActiveSection] = useState<ApprovalSectionKey>("summary");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
 

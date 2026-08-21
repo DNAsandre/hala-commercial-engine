@@ -23,7 +23,7 @@
  * - No localStorage.
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,10 @@ import {
   emptySowData,
 } from "@/lib/sow-data-types";
 import { updateTenderSowData } from "@/lib/supabase-tender-actions";
+import {
+  runTenderTabSave,
+  tenderRevisionTokenOf,
+} from "./IdentifiedStageShared";
 import { toast } from "sonner";
 import {
   Loader2, Save, Globe, ChevronDown, ChevronRight, Plus, X,
@@ -135,6 +139,43 @@ function cloneSow(sow: SowData): SowData {
   return JSON.parse(JSON.stringify(sow));
 }
 
+/**
+ * TCW-T3 F7 — the state a mount starts from is EXACTLY the stored facet
+ * (normalized), with no template rows injected. An empty stored KPI list stays
+ * empty; DEFAULT_KPI_NAMES exist only as add-on-click suggestions below.
+ * Exported pure for direct testing.
+ */
+export function initialSowState(saved: unknown): SowData {
+  if (saved && typeof saved === "object") {
+    const stored = saved as Partial<SowData> & Record<string, any>;
+    const base = emptySowData();
+    return {
+      ...base,
+      ...stored,
+      warehousing: { ...base.warehousing, ...(stored.warehousing ?? {}) },
+      transport: { ...base.transport, ...(stored.transport ?? {}) },
+      technology: { ...base.technology, ...(stored.technology ?? {}) },
+      compliance: { ...base.compliance, ...(stored.compliance ?? {}) },
+      service_lines: Array.isArray(stored.service_lines) ? stored.service_lines : [],
+      sla_kpis: Array.isArray(stored.sla_kpis) ? stored.sla_kpis : [],
+      execution_regions: Array.isArray(stored.execution_regions) ? stored.execution_regions : [],
+      sites: Array.isArray(stored.sites) ? stored.sites : [],
+      clarifications: Array.isArray(stored.clarifications) ? stored.clarifications : [],
+    };
+  }
+  return emptySowData();
+}
+
+/**
+ * TCW-T3 F7 — suggestion names not yet present in the captured rows. Clicking
+ * one adds a row to LOCAL state only; nothing persists until the user saves.
+ * Exported pure for direct testing.
+ */
+export function kpiSuggestionsFor(rows: SowSlaKpi[]): string[] {
+  const used = new Set(rows.map(row => row.name.trim().toLowerCase()).filter(Boolean));
+  return DEFAULT_KPI_NAMES.filter(name => !used.has(name.toLowerCase()));
+}
+
 // ═══════════════════════════════════════════════════════════
 // CHIP MULTI-SELECT
 // ═══════════════════════════════════════════════════════════
@@ -210,34 +251,27 @@ function SectionHeader({
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════
 
-interface Props { ws: TenderWorkspace; reload?: () => void; }
+interface Props {
+  ws: TenderWorkspace;
+  reload?: () => void;
+  /** Lifts the unsaved-edits state to the hosting stage tab (badge truth). */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** Fires ONLY after a confirmed save (badge truth in the hosting stage tab). */
+  onConfirmedSave?: () => void;
+}
 
-export default function ScopeOfWorkCapture({ ws, reload }: Props) {
+export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfirmedSave }: Props) {
   // ── State ────────────────────────────────────────────────
-  const [sow, setSow] = useState<SowData>(() => {
-    const saved = ws.tender.sowData;
-    if (saved && typeof saved === "object") {
-      // Merge with empty to ensure all keys exist
-      const base = emptySowData();
-      return {
-        ...base,
-        ...saved,
-        warehousing: { ...base.warehousing, ...(saved.warehousing ?? {}) },
-        transport: { ...base.transport, ...(saved.transport ?? {}) },
-        technology: { ...base.technology, ...(saved.technology ?? {}) },
-        compliance: { ...base.compliance, ...(saved.compliance ?? {}) },
-        service_lines: Array.isArray(saved.service_lines) ? saved.service_lines : [],
-        sla_kpis: Array.isArray(saved.sla_kpis) ? saved.sla_kpis : [],
-        execution_regions: Array.isArray(saved.execution_regions) ? saved.execution_regions : [],
-        sites: Array.isArray(saved.sites) ? saved.sites : [],
-        clarifications: Array.isArray(saved.clarifications) ? saved.clarifications : [],
-      };
-    }
-    return emptySowData();
-  });
+  // F7: initialize from the stored facet only — no template KPI seeding.
+  const [sow, setSow] = useState<SowData>(() => initialSowState(ws.tender.sowData));
 
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const staleRetryArmed = useRef(false);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   // Collapsible sections
   const [warehouseCollapsed, setWarehouseCollapsed] = useState(false);
@@ -263,35 +297,37 @@ export default function ScopeOfWorkCapture({ ws, reload }: Props) {
   }, []);
 
   // ── Save ─────────────────────────────────────────────────
+  // sow_data is a single-tab facet: this component owns ALL its keys, so the
+  // patch-merge payload is the full facet (per design pin P2b).
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const result = await updateTenderSowData(ws.tender.id, sow as Record<string, any>, "Manual SOW capture");
-      if (result.success) {
-        setDirty(false);
-        toast.success("Scope of Work saved successfully.");
-        reload?.();
-      } else {
-        toast.error("Failed to save Scope of Work", { description: result.error });
-      }
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderSowData(ws.tender.id, sow as Record<string, any>, {
+            expectedRevision,
+            reason: "Manual SOW capture",
+          }),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "Scope of Work saved successfully.", failed: "Failed to save Scope of Work" },
+        onConfirmed: () => {
+          setDirty(false);
+          onConfirmedSave?.();
+          reload?.();
+        },
+        onStale: () => reload?.(),
+      });
     } catch (error: any) {
       toast.error("Failed to save Scope of Work", { description: error?.message || "Unexpected save error." });
     } finally {
       setSaving(false);
     }
-  }, [ws.tender.id, sow, reload]);
+  }, [ws, sow, reload, onConfirmedSave]);
 
-  // ── Initialize default KPI rows if empty ─────────────────
-  useEffect(() => {
-    if (sow.sla_kpis.length === 0) {
-      setSow(prev => ({
-        ...prev,
-        sla_kpis: DEFAULT_KPI_NAMES.map(name => emptyKpi(name)),
-      }));
-    }
-    // Only on first mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // F7: the former on-mount DEFAULT_KPI_NAMES seeding is removed — an empty
+  // stored KPI list renders empty. The names survive only as click-to-add
+  // suggestions in the SLA/KPI section (persisted solely by a user save).
 
   return (
     <Card className="border-border shadow-none border-l-4 border-l-[#075eea]">
@@ -537,6 +573,11 @@ export default function ScopeOfWorkCapture({ ws, reload }: Props) {
           </div>
           {!slaCollapsed && (
             <div className="p-0">
+              {sow.sla_kpis.length === 0 && (
+                <div className="px-4 pt-3 text-[10px] text-muted-foreground">
+                  No SLA / KPI requirements captured yet. Add rows manually or pick from the suggestions below — nothing is saved until you press Save.
+                </div>
+              )}
               <div className="overflow-x-auto">
                 <table className="w-full text-[10px]">
                   <thead>
@@ -591,11 +632,27 @@ export default function ScopeOfWorkCapture({ ws, reload }: Props) {
                   </tbody>
                 </table>
               </div>
-              <div className="p-2">
+              <div className="p-2 space-y-2">
                 <Button type="button" variant="outline" size="sm" className="h-7 gap-1 text-xs"
                   onClick={() => update(d => { d.sla_kpis.push(emptyKpi()); })}>
                   <Plus className="w-3 h-3" /> Add KPI / SLA
                 </Button>
+                {kpiSuggestionsFor(sow.sla_kpis).length > 0 && (
+                  <div>
+                    <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                      Common KPI suggestions (click to add a row — saved only when you press Save)
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {kpiSuggestionsFor(sow.sla_kpis).map(name => (
+                        <button key={name} type="button"
+                          onClick={() => update(d => { d.sla_kpis.push(emptyKpi(name)); })}
+                          className="px-2 py-1 rounded-md border border-slate-200 bg-white text-[9px] text-slate-600 hover:border-[#075eea]/40 hover:bg-[#075eea]/5 hover:text-[#064fc4] transition-colors">
+                          + {name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

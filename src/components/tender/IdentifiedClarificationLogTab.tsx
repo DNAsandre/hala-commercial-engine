@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Loader2, MessageSquare, Plus, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -12,7 +12,14 @@ import {
   IdentifiedEmptyState,
   IdentifiedSectionCard,
   IdentifiedStageShell,
+  announceTenderTabSaveOutcome,
+  identifiedSavedBadgeState,
+  resolveTenderTabSaveOutcome,
+  tenderRevisionTokenOf,
   type IdentifiedSectionTab,
+  type TenderStaleRetryFlag,
+  type TenderTabSaveOutcome,
+  type TenderTabSaveResult,
 } from "./IdentifiedStageShared";
 
 type SectionKey = "register" | "status" | "notes";
@@ -58,6 +65,112 @@ function newRow(): ClarificationRow {
   };
 }
 
+// ═══════════════════════════════════════════════════════════
+// TCW-T3 item 6 — the stage-1 clarification TWO-WRITE pair.
+//
+// `updateTenderIdentifiedData` persists exactly ONE section per call, and the
+// log lives in two sections (`clarification_log` rows + `clarification_log_notes`),
+// so a single-write save is not possible without changing the T1 writer (out of
+// this lane's grant). The pair is therefore kept as two sequential writes with:
+//   - the UI-load revision token threaded into the FIRST write only. The first
+//     write bumps the row's `updated_at` and ActionResult does not expose the
+//     new token, so the SECOND write passes no explicit token — the section
+//     writer's own fresh in-call read supplies the post-first-write revision
+//     ("reload between" at the save layer).
+//   - HONEST PARTIAL REPORTING: if the second write fails, the outcome states
+//     exactly which half persisted (questions saved, notes not saved).
+//
+// Exported pure so the pair discipline is unit-tested without a DOM.
+// ═══════════════════════════════════════════════════════════
+
+export interface ClarificationPairIo {
+  /** Write 1: the clarification_log rows (receives the threaded token). */
+  saveLog: (expectedRevision: string | undefined) => Promise<TenderTabSaveResult>;
+  /** Write 2: clarification_log_notes — runs ONLY if write 1 confirmed. */
+  saveNotes: () => Promise<TenderTabSaveResult>;
+  revisionToken: string | undefined;
+  staleRetryArmed?: TenderStaleRetryFlag;
+}
+
+export interface ClarificationPairResult {
+  savedRows: boolean;
+  savedNotes: boolean;
+  outcome: TenderTabSaveOutcome;
+}
+
+export async function saveClarificationPair(io: ClarificationPairIo): Promise<ClarificationPairResult> {
+  const armed = io.staleRetryArmed?.current === true;
+  const token = armed ? undefined : io.revisionToken;
+
+  let logResult: TenderTabSaveResult;
+  try {
+    logResult = await io.saveLog(token);
+  } catch (error) {
+    logResult = { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+
+  const logOutcome = resolveTenderTabSaveOutcome(logResult, {
+    saved: "Clarification log saved.",
+    failed: "Failed to save the clarification log. Nothing was saved.",
+  });
+  if (io.staleRetryArmed) io.staleRetryArmed.current = logOutcome.kind === "stale";
+  if (!logOutcome.confirmedSaved) {
+    return { savedRows: false, savedNotes: false, outcome: logOutcome };
+  }
+
+  let notesResult: TenderTabSaveResult;
+  try {
+    notesResult = await io.saveNotes();
+  } catch (error) {
+    notesResult = { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+
+  const notesOutcome = resolveTenderTabSaveOutcome(notesResult, {
+    saved: "Clarification notes saved.",
+    failed: "Clarification notes not saved.",
+  });
+
+  if (!notesOutcome.confirmedSaved) {
+    // Honest partial outcome: the rows ARE stored, the notes are NOT.
+    return {
+      savedRows: true,
+      savedNotes: false,
+      outcome: {
+        kind: "failed",
+        toastKind: "error",
+        title: "Partial save — questions saved, notes NOT saved.",
+        description: `The clarification question rows were saved, but the notes were not: ${notesResult.error ?? "no reason returned by the service"}. Your entries are kept on screen — Save again to retry (the question rows are re-saved unchanged).`,
+        confirmedSaved: false,
+      },
+    };
+  }
+
+  const auditWarnings = [
+    logResult.status === "saved_with_audit_warning" ? `questions: ${logResult.auditWarning ?? "audit entry not recorded"}` : null,
+    notesResult.status === "saved_with_audit_warning" ? `notes: ${notesResult.auditWarning ?? "audit entry not recorded"}` : null,
+  ].filter(Boolean) as string[];
+
+  if (auditWarnings.length > 0) {
+    return {
+      savedRows: true,
+      savedNotes: true,
+      outcome: {
+        kind: "saved_with_audit_warning",
+        toastKind: "warning",
+        title: "Saved — audit entry not recorded",
+        description: auditWarnings.join(" · "),
+        confirmedSaved: true,
+      },
+    };
+  }
+
+  return {
+    savedRows: true,
+    savedNotes: true,
+    outcome: { kind: "saved", toastKind: "success", title: "Clarification log saved.", confirmedSaved: true },
+  };
+}
+
 export default function IdentifiedClarificationLogTab({ ws, reload, onOpenDocuments, onOpenGlobalIntel }: Props) {
   const t = ws.tender;
   const details = ((t as any).typeDetails || (t as any).type_details || {}) as any;
@@ -67,6 +180,9 @@ export default function IdentifiedClarificationLogTab({ ws, reload, onOpenDocume
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** B12: true only after BOTH halves of the pair confirmed in this session. */
+  const [savedConfirmed, setSavedConfirmed] = useState(false);
+  const staleRetryArmed = useRef(false);
   const [rows, setRows] = useState<ClarificationRow[]>(Array.isArray(savedRows) ? savedRows : []);
   const [notes, setNotes] = useState(savedNotes);
 
@@ -115,16 +231,24 @@ export default function IdentifiedClarificationLogTab({ ws, reload, onOpenDocume
         owner: row.owner.trim(),
         notes: row.notes.trim(),
       }));
-      const logResult = await updateTenderIdentifiedData(t.id, "clarification_log", cleanedRows, "Identified clarification log saved");
-      const notesResult = logResult.success
-        ? await updateTenderIdentifiedData(t.id, "clarification_log_notes", notes.trim(), "Identified clarification notes saved")
-        : logResult;
-      if (logResult.success && notesResult.success) {
+      const pair = await saveClarificationPair({
+        saveLog: expectedRevision =>
+          updateTenderIdentifiedData(t.id, "clarification_log", cleanedRows, "Identified clarification log saved", expectedRevision),
+        saveNotes: () =>
+          updateTenderIdentifiedData(t.id, "clarification_log_notes", notes.trim(), "Identified clarification notes saved"),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+      });
+      announceTenderTabSaveOutcome(pair.outcome);
+      if (pair.savedRows && pair.savedNotes) {
         setDirty(false);
-        toast.success("Clarification log saved.");
+        setSavedConfirmed(true);
         reload?.();
       } else {
-        toast.error("Failed to save clarification log.", { description: logResult.error || notesResult.error });
+        // Stale or partial: the user's rows/notes stay on screen (dirty stays
+        // true, so the resync effect will not overwrite them); refresh the
+        // bundle underneath so the next attempt runs against current data.
+        reload?.();
       }
     } catch (error: any) {
       toast.error("Failed to save clarification log.", { description: error?.message || "Unexpected save error." });
@@ -143,6 +267,7 @@ export default function IdentifiedClarificationLogTab({ ws, reload, onOpenDocume
       metrics={metrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
+      saved={identifiedSavedBadgeState(savedConfirmed, dirty)}
       unsaved={dirty}
       actionSlot={
         <Button type="button" size="sm" className="h-7 gap-1.5 rounded-md px-2.5 text-[11px]" onClick={save} disabled={!dirty || saving}>

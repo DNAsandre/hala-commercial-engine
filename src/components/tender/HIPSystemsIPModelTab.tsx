@@ -11,12 +11,13 @@
  *   5. HIP Recommendation
  *   6. Output Use
  */
-import { useState, useCallback, type ReactNode } from "react";
+import { useState, useCallback, useRef, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderSolutionDesignData } from "@/lib/supabase-tender-actions";
+import { runTenderTabSave, tenderRevisionTokenOf } from "./IdentifiedStageShared";
 import { toast } from "sonner";
 import { Loader2, Save, ChevronDown, Plus, X, Cpu, Link2, FileText, BarChart3, ArrowRight, Info, FolderOpen, PanelRightOpen } from "lucide-react";
 import { TenderStageIntelligenceSlot } from "./TenderStageTaskShell";
@@ -69,13 +70,31 @@ function emptyReport(): ReportRow { return { report: "", frequency: "", audience
 function btnCls(sel: boolean): string { return sel ? "bg-blue-100 border-blue-300 text-blue-700 font-medium" : "bg-card border-border text-muted-foreground hover:bg-muted/30"; }
 function chipCls(sel: boolean): string { return sel ? "bg-[#075eea]/15 border-[#075eea]/30 text-[#075eea] font-medium cursor-pointer" : "bg-card border-border text-muted-foreground hover:bg-muted/30 cursor-pointer"; }
 
+/**
+ * TCW-T3 (P2b) — this tab's patch carries ONLY its own solution_design_data
+ * key (hip). The write layer patch-merges, so sibling tabs' keys are
+ * preserved by the STORED facet — never re-sent from a page-load copy.
+ * Exported pure for direct testing.
+ */
+export function buildHipPatch(
+  systems: string[],
+  integration: IntegrationData,
+  sops: SOPRow[],
+  reports: ReportRow[],
+  recommendation: { readiness: ReadinessStatus; notes: string },
+): Record<string, any> {
+  return { hip: { systems, integration, sops, reports, recommendation } };
+}
+
 interface Props {
   ws: TenderWorkspace;
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
+  /** Fires ONLY after a confirmed save (the workspace shell passes reload). */
+  onSaved?: () => void;
 }
 
-export default function HIPSystemsIPModelTab({ ws, onOpenDocuments, onOpenGlobalIntel }: Props) {
+export default function HIPSystemsIPModelTab({ ws, onOpenDocuments, onOpenGlobalIntel, onSaved }: Props) {
   const t = ws.tender; const tenderId = t.id;
   const existing = t.solutionDesignData as any; const hip = existing?.hip;
 
@@ -97,14 +116,26 @@ export default function HIPSystemsIPModelTab({ ws, onOpenDocuments, onOpenGlobal
   const rmReport = (i: number) => setReports(p => p.filter((_, x) => x !== i));
   const upReport = (i: number, f: keyof ReportRow, v: any) => setReports(p => p.map((r, x) => x === i ? { ...r, [f]: v } : r));
 
+  const staleRetryArmed = useRef(false);
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const patch: Record<string, any> = { ...(existing || {}), hip: { systems, integration, sops, reports, recommendation } };
-      const result = await updateTenderSolutionDesignData(tenderId, patch, "HIP Systems & IP Model saved");
-      if (result.success) toast.success("HIP Systems & IP Model saved"); else toast.error("Save failed", { description: result.error });
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderSolutionDesignData(tenderId, buildHipPatch(systems, integration, sops, reports, recommendation), {
+            expectedRevision,
+            reason: "HIP Systems & IP Model saved",
+          }),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "HIP Systems & IP Model saved", failed: "Save failed" },
+        onConfirmed: () => onSaved?.(),
+        // Stale: local form state is untouched — the user's entry stays.
+      });
+    } catch (e: any) {
+      toast.error(e.message || "Save failed.");
     } finally { setSaving(false); }
-  }, [tenderId, systems, integration, sops, reports, recommendation, existing]);
+  }, [tenderId, systems, integration, sops, reports, recommendation, onSaved, ws]);
 
   return (
     <div className="space-y-4">
