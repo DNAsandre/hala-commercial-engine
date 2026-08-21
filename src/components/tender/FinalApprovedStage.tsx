@@ -40,6 +40,10 @@ function generateAIUnavailable(): { content: string; tokensInput: number; tokens
 }
 import { supabase } from "@/lib/supabase";
 import { updateTenderDraftingData, updateTenderFinalApprovedData } from "@/lib/supabase-tender-actions";
+import { getCurrentUser } from "@/lib/auth-state";
+import { normalizeSubmissionReadinessFacet } from "@/lib/tender-source-record";
+import { countByStatus, DEPARTMENT_LABELS, DEPARTMENT_VOLUMES, type ReviewDepartment } from "@/lib/internal-review-types";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
 // ─── Props ──────────────────────────────────────────────────
 
@@ -51,24 +55,147 @@ interface Props {
   onOpenGlobalIntel?: () => void;
 }
 
-// ─── Required Documents (from governance config) ────────────
+// ─── Required documents — recorded register only (TCW-T4 B17/B18/F4) ───
+//
+// The previous build rendered a hardcoded 14-item document list here and
+// marked rows "Uploaded" when any uploaded document name contained the FIRST
+// WORD of the requirement — a fabricated requirement set with fuzzy verdicts.
+// The checklist now derives ONLY from the tender's recorded
+// `type_details.submission_readiness.required_documents` register (the same
+// rows `bundle.submissionReadiness.facet.required_documents` projects — both
+// read the identical canonical facet on the tender row). No recorded register
+// ⇒ an honest "no requirement set recorded" state, never a substitute list.
 
-const REQUIRED_DOCS = [
-  { doc: "Final Tender Pack PDF", pack: "All", signed: false, stamp: false },
-  { doc: "OBK Native Excel", pack: "Bulk / PGP", signed: false, stamp: false },
-  { doc: "OBK Signed/Stamped PDF", pack: "Bulk / PGP", signed: true, stamp: true },
-  { doc: "Bid Statement Signed/Stamped PDF", pack: "All", signed: true, stamp: true },
-  { doc: "Transition Plan", pack: "All", signed: false, stamp: false },
-  { doc: "Continuous Improvement Proposal Form", pack: "All", signed: false, stamp: false },
-  { doc: "Compliance Pack", pack: "All", signed: false, stamp: false },
-  { doc: "Commercial Registration", pack: "All", signed: true, stamp: false },
-  { doc: "VAT Certificate", pack: "All", signed: true, stamp: false },
-  { doc: "ISO Certificates", pack: "All", signed: true, stamp: false },
-  { doc: "Insurance Certificates", pack: "All", signed: true, stamp: false },
-  { doc: "ADR Class 2 Certifications", pack: "All", signed: true, stamp: false },
-  { doc: "Reference Credentials", pack: "All", signed: false, stamp: false },
-  { doc: "Performance Guarantee Confirmation", pack: "All", signed: true, stamp: true },
-];
+interface RequiredDocumentRegisterRow {
+  id: string;
+  document_name: string;
+  status: string;
+  linked_document_id?: string;
+  owner?: string;
+  due_date?: string;
+  notes?: string;
+}
+
+export interface SubmissionChecklistRow extends RequiredDocumentRegisterRow {
+  /** True when the recorded row is accounted for (see satisfiedBy). */
+  satisfied: boolean;
+  /**
+   * How the requirement is satisfied:
+   *  - 'status': the register itself records uploaded/approved
+   *  - 'linked_document': linked_document_id matches an uploaded document id
+   *  - 'name_match': the FULL recorded name appears in an uploaded document
+   *    name (never a first-word/prefix match)
+   */
+  satisfiedBy: "status" | "linked_document" | "name_match" | null;
+}
+
+export interface SubmissionChecklistSummary {
+  /** False ⇒ nothing recorded; render the honest empty state, no counts. */
+  recorded: boolean;
+  rows: SubmissionChecklistRow[];
+  /** Rows counted toward completion (recorded rows minus 'na'). */
+  required: number;
+  satisfied: number;
+  missing: number;
+}
+
+/** Reads the recorded required-documents register from the tender row's type_details. */
+export function readRequiredDocumentsRegister(details: Record<string, any>): RequiredDocumentRegisterRow[] {
+  const facet = normalizeSubmissionReadinessFacet(details?.submission_readiness);
+  return facet.required_documents as unknown as RequiredDocumentRegisterRow[];
+}
+
+/**
+ * TCW-T4 (B18): register-driven checklist. Matching is exact-id
+ * (linked_document_id) or FULL-name containment — the entire recorded name
+ * must appear in the uploaded document's name. First-word fuzzy matching is
+ * deliberately not implemented (guard test re-introduces it to prove the
+ * suite catches it).
+ */
+export function buildSubmissionChecklist(
+  registerRows: RequiredDocumentRegisterRow[],
+  uploadedDocuments: Array<{ id: string; document_name: string }>,
+): SubmissionChecklistSummary {
+  const rows = Array.isArray(registerRows) ? registerRows : [];
+  if (rows.length === 0) {
+    return { recorded: false, rows: [], required: 0, satisfied: 0, missing: 0 };
+  }
+
+  const uploadedIds = new Set(uploadedDocuments.map(d => d.id).filter(Boolean));
+  const uploadedNames = uploadedDocuments
+    .map(d => (d.document_name ?? "").toLowerCase().trim())
+    .filter(Boolean);
+
+  const checklist: SubmissionChecklistRow[] = rows.map(row => {
+    let satisfiedBy: SubmissionChecklistRow["satisfiedBy"] = null;
+    if (row.status === "uploaded" || row.status === "approved") {
+      satisfiedBy = "status";
+    } else if (row.linked_document_id && uploadedIds.has(row.linked_document_id)) {
+      satisfiedBy = "linked_document";
+    } else {
+      const name = (row.document_name ?? "").toLowerCase().trim();
+      if (name.length > 0 && uploadedNames.some(n => n.includes(name))) {
+        satisfiedBy = "name_match";
+      }
+    }
+    return { ...row, satisfied: satisfiedBy !== null, satisfiedBy };
+  });
+
+  // 'na' rows are declared not applicable — outside both counters (P1).
+  const applicable = checklist.filter(row => row.status !== "na");
+  const satisfied = applicable.filter(row => row.satisfied).length;
+  return {
+    recorded: true,
+    rows: checklist,
+    required: applicable.length,
+    satisfied,
+    // Never negative: the denominator is the recorded set itself.
+    missing: Math.max(0, applicable.length - satisfied),
+  };
+}
+
+// ─── Departmental review truth (TCW-T4 / P6) ────────────────
+//
+// `tender_drafting.departmental_reviews` is an ORPHAN facet: no code path has
+// ever written it, so every reader that checked it ("departments reviewed")
+// was permanently false. The data that actually exists is the per-block
+// `<dept>_status` review fields written by updateBlockReviewStatus. This
+// derivation reads THOSE, and is shared by the Stage-9 checklist, the global
+// intelligence drawer and PreviousStageIntelligence. No new writer is
+// invented.
+
+export interface DepartmentalReviewProgress {
+  /** Departments whose relevant blocks all carry a decision (none Pending). */
+  fullyReviewed: ReviewDepartment[];
+  fullyReviewedLabels: string[];
+  /** True when at least one review decision is recorded anywhere. */
+  anyDecision: boolean;
+  /** Count of (block, department) pairs currently Rejected. */
+  rejectedCount: number;
+  /** True when there are blocks to review at all. */
+  hasBlocks: boolean;
+}
+
+export function deriveDepartmentalReviewProgress(blocksRaw: unknown): DepartmentalReviewProgress {
+  const blocks = Array.isArray(blocksRaw) ? blocksRaw : [];
+  const departments: ReviewDepartment[] = ["ops", "finance", "legal"];
+  const fullyReviewed: ReviewDepartment[] = [];
+  let anyDecision = false;
+  let rejectedCount = 0;
+  for (const dept of departments) {
+    const stats = countByStatus(blocks, dept, DEPARTMENT_VOLUMES[dept]);
+    if (stats.approved + stats.rejected > 0) anyDecision = true;
+    rejectedCount += stats.rejected;
+    if (stats.total > 0 && stats.pending === 0) fullyReviewed.push(dept);
+  }
+  return {
+    fullyReviewed,
+    fullyReviewedLabels: fullyReviewed.map(dept => DEPARTMENT_LABELS[dept]),
+    anyDecision,
+    rejectedCount,
+    hasBlocks: blocks.length > 0,
+  };
+}
 
 // ─── Stage checklist derivation ─────────────────────────────
 
@@ -146,14 +273,17 @@ function deriveStageChecklist(t: any, ws: TenderWorkspace): StageCheck[] {
     detail: blocks.length > 0 ? `${blocks.length} blocks, ${blocksApproved} approved` : "No blocks drafted yet",
   });
 
-  const reviews = td.departmental_reviews ?? {};
-  const depts = ["operations", "finance", "legal"];
-  const submitted = depts.filter(d => reviews[d]?.submitted_at);
+  // TCW-T4 (P6): derived from the per-block `<dept>_status` review decisions
+  // that DepartmentalReviewTab actually persists — never from the orphan
+  // `tender_drafting.departmental_reviews` facet nothing writes.
+  const reviewProgress = deriveDepartmentalReviewProgress(blocks);
   checks.push({
-    stage: "internal_review", label: "Internal Review", complete: submitted.length === 3,
-    detail: submitted.length > 0
-      ? `${submitted.length}/3 departments reviewed (${submitted.map(d => d.charAt(0).toUpperCase() + d.slice(1)).join(", ")})`
-      : "No departments reviewed yet",
+    stage: "internal_review", label: "Internal Review", complete: reviewProgress.fullyReviewed.length === 3,
+    detail: reviewProgress.fullyReviewed.length > 0
+      ? `${reviewProgress.fullyReviewed.length}/3 departments fully reviewed (${reviewProgress.fullyReviewedLabels.join(", ")})${reviewProgress.rejectedCount > 0 ? `, ${reviewProgress.rejectedCount} rejected` : ""}`
+      : reviewProgress.anyDecision
+        ? `Review in progress${reviewProgress.rejectedCount > 0 ? ` — ${reviewProgress.rejectedCount} rejected` : ""}`
+        : "No department review decisions recorded yet",
   });
 
   const matrix = approvalMatrixFor(t);
@@ -174,7 +304,7 @@ function deriveStageChecklist(t: any, ws: TenderWorkspace): StageCheck[] {
 // ─── Stage Menu Header (reusable) ────────────────────────
 
 function StageMenuHeader<T extends string>({
-  sections, activeSection, setActiveSection, stageIntelOpen, setStageIntelOpen, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved,
+  sections, activeSection, setActiveSection, stageIntelOpen, setStageIntelOpen, intelMetrics, onOpenDocuments, onOpenGlobalIntel, saved, unsaved,
 }: {
   sections: TenderStageSectionTab<T>[];
   activeSection: T;
@@ -185,6 +315,7 @@ function StageMenuHeader<T extends string>({
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
   saved?: boolean;
+  unsaved?: boolean;
 }) {
   return (
     <TenderStageTaskShell
@@ -199,6 +330,7 @@ function StageMenuHeader<T extends string>({
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
       saved={saved}
+      unsaved={unsaved}
     />
   );
 }
@@ -229,6 +361,9 @@ function SubmissionReadinessTab({ ws, intelMetrics, onOpenDocuments, onOpenGloba
 
   return (
     <div className="space-y-4">
+      {/* TCW-T4 (B9): read-only projection of stored stage data — nothing on
+          this tab can hold unsaved edits, so "Saved" (view ≡ store) is the
+          truthful constant, not a fabricated save event. */}
       <StageMenuHeader sections={READINESS_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
         onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={true} />
@@ -361,24 +496,40 @@ function FinalPackTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalI
       const pricing = t.pricingData ?? {};
       const scenarios = Array.isArray(pricing?.scenarios) ? pricing.scenarios : [];
       const gps = scenarios.map((s: any) => Number(s.gp_percent)).filter((n: number) => !isNaN(n));
-      const reviews = td.departmental_reviews ?? {};
       const matrix = approvalMatrixFor(t);
       const matrixApprovals: any[] = Array.isArray(matrix.approvals) ? matrix.approvals : [];
+
+      // TCW-T4 (P6): review facts derive from the per-block review fields the
+      // app actually writes (quality_scores / ai_flags / <dept>_status) — the
+      // `departmental_reviews` facet read here previously has no writer.
+      const reviewProgress = deriveDepartmentalReviewProgress(blocks);
+      const deptScoreOf = (b: any, dept: ReviewDepartment): number | null => {
+        const score = b?.quality_scores?.[dept]?.score;
+        return typeof score === "number" ? score : null;
+      };
 
       const blockScores = blocks.map((b: any) => ({
         id: b.id, title: b.title || "Untitled", volume: b.volume || "—",
         section_number: b.section_number || "—", approval_status: b.approval_status || "Draft",
         draft_status: b.draft_status || "Not Ready",
-        quality_score_ops: reviews.operations?.block_scores?.[b.id] ?? null,
-        quality_score_finance: reviews.finance?.block_scores?.[b.id] ?? null,
-        quality_score_legal: reviews.legal?.block_scores?.[b.id] ?? null,
+        quality_score_ops: deptScoreOf(b, "ops"),
+        quality_score_finance: deptScoreOf(b, "finance"),
+        quality_score_legal: deptScoreOf(b, "legal"),
       }));
 
-      const countFlags = (dept: string, severity: string) => {
-        const r = reviews[dept]?.report;
-        if (!Array.isArray(r)) return 0;
-        return r.reduce((sum: number, rep: any) => sum + (Array.isArray(rep.flags) ? rep.flags.filter((f: any) => f.severity === severity).length : 0), 0);
+      const countFlags = (dept: ReviewDepartment, severity: string) =>
+        blocks.reduce((sum: number, b: any) => {
+          const flags = Array.isArray(b?.ai_flags) ? b.ai_flags : [];
+          return sum + flags.filter((f: any) => f?.department === dept && f?.severity === severity).length;
+        }, 0);
+
+      const deptAverage = (dept: ReviewDepartment): number | null => {
+        const scores = blocks
+          .map((b: any) => deptScoreOf(b, dept))
+          .filter((n: number | null): n is number => n !== null);
+        return scores.length > 0 ? Math.round(scores.reduce((s: number, n: number) => s + n, 0) / scores.length) : null;
       };
+      const deptFullyReviewed = (dept: ReviewDepartment) => reviewProgress.fullyReviewed.includes(dept);
 
       const payload = {
         tender_identity: {
@@ -393,16 +544,26 @@ function FinalPackTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalI
           pnl_pricing: { scenarios_count: scenarios.length, gp_percent_lowest: gps.length > 0 ? Math.min(...gps) : null, gp_percent_highest: gps.length > 0 ? Math.max(...gps) : null, target_gp_percent: t.targetGpPercent || null, variance: gps.length > 0 && t.targetGpPercent ? Math.min(...gps) - t.targetGpPercent : null },
           tender_drafting: { blocks_total: blocks.length, blocks_approved: counts.approved, blocks_rejected: blocks.filter((b: any) => b.approval_status === "Rejected").length, blocks_pending: blocks.filter((b: any) => !b.approval_status || b.approval_status === "Draft" || b.approval_status === "Pending").length, volumes_covered: [...new Set(blocks.map((b: any) => b.volume).filter(Boolean))] },
           internal_review: {
-            ops_review: { submitted: !!reviews.operations?.submitted_at, quality_score: reviews.operations?.average_score ?? null, high_flags: countFlags("operations", "high"), medium_flags: countFlags("operations", "medium"), low_flags: countFlags("operations", "low") },
-            finance_review: { submitted: !!reviews.finance?.submitted_at, quality_score: reviews.finance?.average_score ?? null, high_flags: countFlags("finance", "high"), medium_flags: countFlags("finance", "medium"), low_flags: countFlags("finance", "low") },
-            legal_review: { submitted: !!reviews.legal?.submitted_at, quality_score: reviews.legal?.average_score ?? null, high_flags: countFlags("legal", "high"), medium_flags: countFlags("legal", "medium"), low_flags: countFlags("legal", "low") },
+            ops_review: { fully_reviewed: deptFullyReviewed("ops"), quality_score: deptAverage("ops"), high_flags: countFlags("ops", "high"), medium_flags: countFlags("ops", "medium"), low_flags: countFlags("ops", "low") },
+            finance_review: { fully_reviewed: deptFullyReviewed("finance"), quality_score: deptAverage("finance"), high_flags: countFlags("finance", "high"), medium_flags: countFlags("finance", "medium"), low_flags: countFlags("finance", "low") },
+            legal_review: { fully_reviewed: deptFullyReviewed("legal"), quality_score: deptAverage("legal"), high_flags: countFlags("legal", "high"), medium_flags: countFlags("legal", "medium"), low_flags: countFlags("legal", "low") },
           },
           approval_matrix: { required_approvers: matrixApprovals.length, approved_count: matrixApprovals.filter((a: any) => a.decision === "approved").length, rejected_count: matrixApprovals.filter((a: any) => a.decision === "rejected").length, pending_count: matrixApprovals.filter((a: any) => a.decision === "pending").length, all_approved: matrixApprovals.length > 0 && matrixApprovals.every((a: any) => a.decision === "approved") },
         },
         compliance: { total_items: ws.complianceItems.length, compliant: ws.complianceItems.filter(c => c.status === "compliant").length, non_compliant: ws.complianceItems.filter(c => c.status === "non_compliant").length, partial: ws.complianceItems.filter(c => c.status === "partial").length, clarification_required: ws.complianceItems.filter(c => c.status === "clarification_required").length },
-        documents: { total_uploaded: ws.documents.length, required_count: REQUIRED_DOCS.length, missing_count: REQUIRED_DOCS.length - ws.documents.length },
+        // TCW-T4 (F4): denominator is the RECORDED requirement register, never
+        // a hardcoded list; missing_count can no longer go negative.
+        documents: (() => {
+          const checklist = buildSubmissionChecklist(readRequiredDocumentsRegister(tenderDetails(t)), ws.documents);
+          return {
+            total_uploaded: ws.documents.length,
+            requirement_set_recorded: checklist.recorded,
+            required_count: checklist.required,
+            missing_count: checklist.missing,
+          };
+        })(),
         proposal_blocks: blockScores,
-        departmental_flags_summary: { high_severity_total: countFlags("operations", "high") + countFlags("finance", "high") + countFlags("legal", "high"), medium_severity_total: countFlags("operations", "medium") + countFlags("finance", "medium") + countFlags("legal", "medium"), unresolved_discrepancies: 0, blocks_below_60_score: blockScores.filter(b => (b.quality_score_ops !== null && b.quality_score_ops < 60) || (b.quality_score_finance !== null && b.quality_score_finance < 60) || (b.quality_score_legal !== null && b.quality_score_legal < 60)).length },
+        departmental_flags_summary: { high_severity_total: countFlags("ops", "high") + countFlags("finance", "high") + countFlags("legal", "high"), medium_severity_total: countFlags("ops", "medium") + countFlags("finance", "medium") + countFlags("legal", "medium"), unresolved_discrepancies: 0, blocks_below_60_score: blockScores.filter(b => (b.quality_score_ops !== null && b.quality_score_ops < 60) || (b.quality_score_finance !== null && b.quality_score_finance < 60) || (b.quality_score_legal !== null && b.quality_score_legal < 60)).length },
       };
 
       const { data: botRow, error: botErr } = await supabase.from("ai_bots").select("id, model, current_version_id").eq("id", "bot-final-approval").single();
@@ -429,14 +590,16 @@ function FinalPackTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalI
       delete sanitizedResult[legacyExportKey];
       sanitizedResult.ready_for_final_pack = sanitizedResult.status === "READY_FOR_SUBMISSION" || sanitizedResult.ready_for_final_pack === true;
 
+      // P4 (F2): the recorded runner is the SESSION user (auth-state mirror),
+      // never the literal "Current User".
       const saveResult = await updateTenderDraftingData(
         tenderId,
         "final_approval_check",
-        { ...sanitizedResult, ran_at: new Date().toISOString(), ran_by: "Current User" },
+        { ...sanitizedResult, ran_at: new Date().toISOString(), ran_by: getCurrentUser().name },
         "Advisory final approval check saved",
+        wsRevisionToken(ws),
       );
-      if (!saveResult.success) { toast.error(`Save failed: ${saveResult.error || "Unknown error"}`); }
-      else { toast.success(`Final Approval Check: ${sanitizedResult.status || "Complete"}`); reload(); }
+      if (reportSaveOutcome(saveResult, `Final Approval Check: ${sanitizedResult.status || "Complete"}`)) reload();
     } catch (err: any) { toast.error(err.message || "Final Approval Check failed."); }
     setRunning(false);
   }, [t, ws, blocks, counts, td, tenderId, reload]);
@@ -449,6 +612,9 @@ function FinalPackTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalI
 
   return (
     <div className="space-y-4">
+      {/* TCW-T4 (B9): this tab holds no draft interval — the only write is the
+          immediate check-save above, so the rendered content is always the
+          stored content. "Saved" here states that in-sync fact. */}
       <StageMenuHeader sections={PACK_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
         onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={true} />
@@ -474,8 +640,14 @@ function FinalPackTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalI
             </div>
           </CardHeader>
           <CardContent className="p-4">
+            {/* TCW-T4 honesty: the check itself is refused in this build; say so
+                up front instead of presenting a working control. */}
+            <div className="flex items-center gap-2 text-[10px] text-muted-foreground mb-2">
+              <Info className="w-3 h-3 shrink-0" />
+              <span>AI final approval check is not available in this build (Sprint X) — running it reports the refusal.</span>
+            </div>
             {!botResult ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground"><Info className="w-3.5 h-3.5 shrink-0" /><span>Run the Final Approval Check to assess tender readiness before final pack assembly.</span></div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground"><Info className="w-3.5 h-3.5 shrink-0" /><span>No advisory check result is stored for this tender.</span></div>
             ) : (
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
@@ -604,13 +776,31 @@ const CHECKLIST_SECTIONS: { key: ChecklistSection; label: string; icon: ReactNod
   { key: "required_docs", label: "Required Documents", icon: <FileText className="w-3.5 h-3.5" /> },
 ];
 
+const REGISTER_STATUS_BADGE: Record<string, string> = {
+  missing: "border-red-300 text-red-700 bg-red-50",
+  in_progress: "border-amber-300 text-amber-700 bg-amber-50",
+  uploaded: "border-emerald-300 text-emerald-700 bg-emerald-50",
+  approved: "border-emerald-300 text-emerald-700 bg-emerald-50",
+  na: "border-slate-200 text-slate-500 bg-slate-50",
+};
+
 function SubmissionChecklistTab({ ws, intelMetrics, onOpenDocuments, onOpenGlobalIntel }: { ws: TenderWorkspace; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void }) {
-  const uploadedNames = useMemo(() => ws.documents.map(d => d.document_name.toLowerCase()), [ws.documents]);
+  const t = ws.tender as any;
+  // TCW-T4 (B17/B18/F4): derived ONLY from the tender's recorded
+  // submission_readiness.required_documents register — the same canonical rows
+  // ws.submissionReadiness.facet.required_documents projects. No hardcoded
+  // list; matching is linked-document-id or FULL-name containment.
+  const checklist = useMemo(
+    () => buildSubmissionChecklist(readRequiredDocumentsRegister(tenderDetails(t)), ws.documents),
+    [t, ws.documents],
+  );
   const [activeSection, setActiveSection] = useState<ChecklistSection>("required_docs");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
 
   return (
     <div className="space-y-4">
+      {/* TCW-T4 (B9): read-only projection of the stored register — nothing on
+          this tab can hold unsaved edits, so "Saved" states the in-sync fact. */}
       <StageMenuHeader sections={CHECKLIST_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
         onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={true} />
@@ -619,39 +809,62 @@ function SubmissionChecklistTab({ ws, intelMetrics, onOpenDocuments, onOpenGloba
         <div className="flex items-center gap-2 mb-1">
           <ClipboardCheck className="w-4 h-4 text-muted-foreground" />
           <span className="text-xs font-semibold">Required Documents for Submission</span>
-          <Badge variant="outline" className="text-[8px]">{REQUIRED_DOCS.length} items</Badge>
+          {checklist.recorded && (
+            <Badge variant="outline" className="text-[8px]">{checklist.satisfied}/{checklist.required} accounted for</Badge>
+          )}
         </div>
-        <div className="border rounded-lg overflow-hidden">
-          <table className="w-full text-[11px]">
-            <thead className="bg-muted/50 border-b"><tr>
-              <th className="px-3 py-2 text-left font-semibold w-8">#</th>
-              <th className="px-3 py-2 text-left font-semibold">Document</th>
-              <th className="px-3 py-2 text-left font-semibold">Pack</th>
-              <th className="px-3 py-2 text-center font-semibold">Signed</th>
-              <th className="px-3 py-2 text-center font-semibold">Stamped</th>
-              <th className="px-3 py-2 text-center font-semibold">Status</th>
-            </tr></thead>
-            <tbody>
-              {REQUIRED_DOCS.map((doc, i) => {
-                const isUploaded = uploadedNames.some(n => n.includes(doc.doc.toLowerCase().split(" ")[0]));
-                return (
-                  <tr key={i} className={`border-t border-border hover:bg-muted/20 ${!isUploaded ? "bg-red-50/30" : ""}`}>
-                    <td className="px-3 py-2 text-muted-foreground font-mono">{i + 1}</td>
-                    <td className="px-3 py-2 font-medium">{doc.doc}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{doc.pack}</td>
-                    <td className="px-3 py-2 text-center">{doc.signed ? <Badge variant="outline" className="text-[8px] border-amber-200 text-amber-700 bg-amber-50">Required</Badge> : <span className="text-muted-foreground">—</span>}</td>
-                    <td className="px-3 py-2 text-center">{doc.stamp ? <Badge variant="outline" className="text-[8px] border-amber-200 text-amber-700 bg-amber-50">Required</Badge> : <span className="text-muted-foreground">—</span>}</td>
-                    <td className="px-3 py-2 text-center">{isUploaded ? <Badge variant="outline" className="text-[8px] border-emerald-300 text-emerald-700 bg-emerald-50 gap-0.5"><CheckCircle2 className="w-2.5 h-2.5" />Uploaded</Badge> : <Badge variant="outline" className="text-[8px] border-red-300 text-red-700 bg-red-50 gap-0.5"><XCircle className="w-2.5 h-2.5" />Missing</Badge>}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div className="flex items-start gap-2 text-[10px] text-muted-foreground bg-muted/30 rounded-lg border border-border px-3 py-2">
-          <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <span>Document matching is based on document names in the Document Library. Upload documents via the Document Library drawer to update statuses.</span>
-        </div>
+        {!checklist.recorded ? (
+          <div className="flex items-start gap-2 text-xs text-muted-foreground p-4 rounded-lg border border-border bg-slate-50">
+            <Inbox className="w-4 h-4 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium text-foreground">No requirement set recorded for this tender.</p>
+              <p className="text-[10px] mt-1">
+                The submission checklist derives from the tender's own required-documents register
+                (Submission Readiness → Required Documents). Nothing is recorded there yet, so there is
+                no list to check against — this screen does not substitute a template list.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="border rounded-lg overflow-hidden">
+              <table className="w-full text-[11px]">
+                <thead className="bg-muted/50 border-b"><tr>
+                  <th className="px-3 py-2 text-left font-semibold w-8">#</th>
+                  <th className="px-3 py-2 text-left font-semibold">Document</th>
+                  <th className="px-3 py-2 text-left font-semibold">Owner</th>
+                  <th className="px-3 py-2 text-left font-semibold">Recorded Status</th>
+                  <th className="px-3 py-2 text-center font-semibold">Accounted For</th>
+                </tr></thead>
+                <tbody>
+                  {checklist.rows.map((row, i) => (
+                    <tr key={row.id} className={`border-t border-border hover:bg-muted/20 ${!row.satisfied && row.status !== "na" ? "bg-red-50/30" : ""}`}>
+                      <td className="px-3 py-2 text-muted-foreground font-mono">{i + 1}</td>
+                      <td className="px-3 py-2 font-medium">{row.document_name || "(unnamed requirement)"}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{row.owner || "—"}</td>
+                      <td className="px-3 py-2">
+                        <Badge variant="outline" className={`text-[8px] ${REGISTER_STATUS_BADGE[row.status] ?? "border-slate-200 text-slate-600"}`}>
+                          {row.status.replace(/_/g, " ")}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {row.status === "na"
+                          ? <span className="text-muted-foreground text-[10px]">Not applicable</span>
+                          : row.satisfied
+                            ? <Badge variant="outline" className="text-[8px] border-emerald-300 text-emerald-700 bg-emerald-50 gap-0.5"><CheckCircle2 className="w-2.5 h-2.5" />{row.satisfiedBy === "status" ? "Recorded" : row.satisfiedBy === "linked_document" ? "Linked upload" : "Name match"}</Badge>
+                            : <Badge variant="outline" className="text-[8px] border-red-300 text-red-700 bg-red-50 gap-0.5"><XCircle className="w-2.5 h-2.5" />Outstanding</Badge>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-start gap-2 text-[10px] text-muted-foreground bg-muted/30 rounded-lg border border-border px-3 py-2">
+              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>A requirement counts as accounted for when its register status is uploaded/approved, its linked document id matches an uploaded document, or its FULL recorded name appears in an uploaded document's name. Partial or first-word matching is never used.</span>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -696,6 +909,17 @@ function ApprovalRecordTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGl
     setRecord(storedRecord);
   }, [storedRecord]);
 
+  // TCW-T4 (B9): real save state — amber while the form differs from the
+  // stored record, green only when a stored record exists and matches the form.
+  const dirty = useMemo(
+    () => (Object.keys(record) as Array<keyof FinalApprovalRecord>).some(key => record[key] !== storedRecord[key]),
+    [record, storedRecord],
+  );
+  const hasStoredRecord = useMemo(() => {
+    const stored = details.final_approved?.approval_record;
+    return !!(stored && typeof stored === "object" && Object.keys(stored).length > 0);
+  }, [details.final_approved]);
+
   const saveFinalApproval = useCallback(async () => {
     setSavingRecord(true);
     try {
@@ -706,28 +930,28 @@ function ApprovalRecordTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGl
           ...record,
           approved_at: record.approved_at ? new Date(record.approved_at).toISOString() : "",
           recorded_at: new Date().toISOString(),
-          recorded_by: "Current User",
+          // P4 (F2): the recorder is the SESSION user, never a literal.
+          recorded_by: getCurrentUser().name,
         },
         "Manual final approval record",
+        wsRevisionToken(ws),
       );
-      if (!result.success) {
-        toast.error(`Failed to save final approval: ${result.error || "Unknown error"}`);
-        return;
-      }
-      toast.success("Final approval record saved.");
+      // Stale outcome keeps the form entry on screen — no reload.
+      if (!reportSaveOutcome(result, "Final approval record saved.")) return;
       reload();
     } catch (error: any) {
       toast.error(error.message || "Failed to save final approval.");
     } finally {
       setSavingRecord(false);
     }
-  }, [record, reload, t.id]);
+  }, [record, reload, t.id, ws]);
 
   return (
     <div className="space-y-4">
       <StageMenuHeader sections={RECORD_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
-        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={true} />
+        onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel}
+        saved={hasStoredRecord && !dirty} unsaved={dirty} />
 
       {/* ── 1. Final Approval ── */}
       <div className={activeSection !== "final_approval" ? "hidden" : "space-y-4"}>
@@ -854,13 +1078,20 @@ export default function FinalApprovedStage({ ws, activeTab, reload, onOpenDocume
   const pct = checks.length > 0 ? Math.round((completedCount / checks.length) * 100) : 0;
   const botResult = td.final_approval_check ?? null;
   const blocks: any[] = Array.isArray(td.proposal_blocks) ? td.proposal_blocks : [];
-  const docsUploaded = ws.documents.length;
 
+  // TCW-T4 (B17): the documents metric measures against the RECORDED
+  // requirement register only; with no register there is no denominator.
+  const docChecklist = buildSubmissionChecklist(readRequiredDocumentsRegister(tenderDetails(t)), ws.documents);
   const intelMetrics = [
     { label: "Stage Readiness", value: `${pct}% (${completedCount}/${checks.length} stages)` },
     { label: "Bot Check", value: botResult ? (botResult.status || "Run") : "Not run" },
     { label: "Blocks", value: `${blocks.length} total, ${blocks.filter((b: any) => b.approval_status === "Approved" || b.approval_status === "Locked").length} approved` },
-    { label: "Documents", value: `${docsUploaded}/${REQUIRED_DOCS.length} uploaded` },
+    {
+      label: "Required Documents",
+      value: docChecklist.recorded
+        ? `${docChecklist.satisfied}/${docChecklist.required} accounted for`
+        : "No requirement set recorded",
+    },
   ];
 
   if (activeTab === "submission_readiness") return <SubmissionReadinessTab ws={ws} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} />;
