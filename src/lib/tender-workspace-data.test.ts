@@ -152,7 +152,6 @@ describe("buildRequiredDocumentsProgress — no fabricated denominator", () => {
 // ─── TCW-T2 (P1): the canonical submission_readiness register ──────────────
 
 import {
-  deriveTenderAssessmentFlags,
   type SubmissionReadinessRequiredDocument,
 } from "./tender-workspace-data";
 
@@ -236,15 +235,8 @@ describe("buildRequiredDocumentsProgress — accepts the P1 submission_readiness
   });
 });
 
-describe("deriveTenderAssessmentFlags — loaded-flag truth (P1)", () => {
-  it("requiredDocumentsAssessed is exactly the required-documents loader flag", () => {
-    expect(deriveTenderAssessmentFlags({ complianceItemsLoaded: false, requiredDocumentsLoaded: true }).requiredDocumentsAssessed).toBe(true);
-    expect(deriveTenderAssessmentFlags({ complianceItemsLoaded: true, requiredDocumentsLoaded: false }).requiredDocumentsAssessed).toBe(false);
-  });
-
-  it("riskInputsAssessed requires BOTH risk inputs to have been loaded", () => {
-    expect(deriveTenderAssessmentFlags({ complianceItemsLoaded: true, requiredDocumentsLoaded: true }).riskInputsAssessed).toBe(true);
-    expect(deriveTenderAssessmentFlags({ complianceItemsLoaded: true, requiredDocumentsLoaded: false }).riskInputsAssessed).toBe(false);
-    expect(deriveTenderAssessmentFlags({ complianceItemsLoaded: false, requiredDocumentsLoaded: true }).riskInputsAssessed).toBe(false);
-  });
-});
+// TCW integration note: `deriveTenderAssessmentFlags` (added by T2 against the
+// anticipated two-loader shape) was removed as superseded — T1's read layer
+// derives both flags from the ONE confirmed register read on the tender row
+// itself (supabase-tender-data.ts), making a two-input helper vacuous. The
+// flag truth is pinned in supabase-tender-data.test.ts instead.

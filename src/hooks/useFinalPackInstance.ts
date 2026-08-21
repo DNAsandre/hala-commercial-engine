@@ -12,6 +12,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
+import { getCurrentUser } from "@/lib/auth-state";
 import type { BlockSnapshot, OutputBlock, PackType } from "@/lib/final-pack-loader";
 import { CONNECTED_TICKET_DEFAULTS } from "@/lib/document-source";
 import { DEFAULT_TEMPLATE_CLASS } from "@/lib/final-pack-snapshot-contract";
@@ -228,7 +229,9 @@ export function useFinalPackInstance(): UseFinalPackInstanceReturn {
           updated_at: nowIso,
           source_snapshot: sourceSnapshot,
           blocks: snapshot.blocks,
-          created_by: "User",
+          // TCW integration (P4): the real session actor, never a fabricated
+          // literal. Signed-out fallback is auth-state's own honest value.
+          created_by: getCurrentUser().name || "Unauthenticated",
         };
 
         // Insert WITHOUT select-after-insert. The select round-trip can stall

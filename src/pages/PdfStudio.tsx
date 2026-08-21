@@ -150,7 +150,9 @@ export default function FinalPackStudio() {
   const resetSplit = useCallback(() => setPreviewWidth(null), []);
 
   const meId = appUser?.id || appUser?.email || "anon";
-  const meName = appUser?.email || appUser?.id || "User";
+  // TCW integration (P4): never the fabricated literal "User" — signed-out is
+  // stated honestly.
+  const meName = appUser?.email || appUser?.id || "Unauthenticated";
 
   // FPS-007: version history + presence (both fully non-blocking).
   const versionsApi = useInstanceVersions(activeInstance?.id ?? null);
@@ -727,7 +729,7 @@ export default function FinalPackStudio() {
           {reusableSaveBlock && (
             <SaveBlockDialog
               block={reusableSaveBlock}
-              createdBy={appUser?.email || appUser?.id || "User"}
+              createdBy={appUser?.email || appUser?.id || "Unauthenticated"}
               onClose={() => setReusableSaveBlock(null)}
             />
           )}
@@ -742,7 +744,7 @@ export default function FinalPackStudio() {
               refNumber={coverVars.ref_number || ""}
               brandingProfileId={branding.id}
               layout={activeInstance.source_snapshot.layout}
-              createdBy={appUser?.email || appUser?.id || "User"}
+              createdBy={appUser?.email || appUser?.id || "Unauthenticated"}
               onClose={() => setSavingAsTemplate(false)}
             />
           )}
@@ -775,7 +777,7 @@ function StandaloneEntry({
 }) {
   const [view, setView] = useState<EntryView>("start");
   const { appUser } = useAuth();
-  const authoringUser = appUser?.email || appUser?.id || "User";
+  const authoringUser = appUser?.email || appUser?.id || "Unauthenticated"; // TCW P4: honest signed-out label
   const { instance, loadInstance, listAllInstances, error: instanceError } = useFinalPackInstance();
   const [resumeList, setResumeList] = useState<FinalPackInstance[]>([]);
   const [loadingResume, setLoadingResume] = useState(false);

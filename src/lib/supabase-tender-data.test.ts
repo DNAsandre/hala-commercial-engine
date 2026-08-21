@@ -385,6 +385,17 @@ describe('risk verdict — W04-C4, rebased on the P1 register (TCW-T1)', () => {
     expect(ws?.riskInputsAssessed).toBe(true);
     expect(ws?.requiredDocumentsAssessed).toBe(true);
   });
+
+  it('carries the verbatim revision token onto the workspace the tabs thread (P2a seam)', async () => {
+    sb.results.commercial_tickets = { data: tenderRow(), error: null };
+    sb.results.commercial_ticket_audit = { data: [], error: null };
+
+    const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
+    const ws = mod.bundleToTenderWorkspace(bundle);
+
+    expect(bundle.revisionToken).toBeTruthy();
+    expect(ws?.revisionToken).toBe(bundle.revisionToken);
+  });
 });
 
 describe('submission readiness register read — TCW-T1 P1', () => {

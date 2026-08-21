@@ -1067,5 +1067,9 @@ export function bundleToTenderWorkspace(bundle: TenderWorkspaceBundle): TenderWo
     splitChecks: (bundle as any).splitChecks ?? [],
     packOutputs: (bundle as any).packOutputs ?? [],
     submissionEmails: (bundle as any).submissionEmails ?? [],
+    // TCW integration (P2a): the load-time optimistic token the tabs thread
+    // into every writer. Copied verbatim from the bundle (tender row
+    // `updated_at`); the lanes' accessors handle null honestly.
+    revisionToken: bundle.revisionToken,
   };
 }

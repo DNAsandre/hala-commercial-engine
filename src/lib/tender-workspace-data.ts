@@ -652,16 +652,6 @@ export function buildRequiredDocumentsProgress(input: {
  * Integration TODO (T1): route the real loaders' loaded flags through this
  * helper when assembling the workspace bundle.
  */
-export function deriveTenderAssessmentFlags(input: {
-  complianceItemsLoaded: boolean;
-  requiredDocumentsLoaded: boolean;
-}): { riskInputsAssessed: boolean; requiredDocumentsAssessed: boolean } {
-  return {
-    riskInputsAssessed: input.complianceItemsLoaded && input.requiredDocumentsLoaded,
-    requiredDocumentsAssessed: input.requiredDocumentsLoaded,
-  };
-}
-
 export const REQUIRED_DOC_CATEGORIES: { value: RequiredDocCategory | "all"; label: string }[] = [
   { value: "all", label: "All Categories" },
   { value: "pricing_obk", label: "Pricing / OBK" },
@@ -800,6 +790,14 @@ export interface TenderWorkspace {
   splitChecks?: TenderSplitCheck[];
   packOutputs?: TenderPackOutput[];
   submissionEmails?: TenderSubmissionEmail[];
+  /**
+   * TCW integration (P2a): the tender row's `updated_at` VERBATIM at load
+   * time — the optimistic-concurrency token tabs thread into every writer as
+   * `expectedRevision`. Null when the row carried no usable timestamp; tab
+   * accessors (`wsRevisionToken`/`tenderRevisionTokenOf`) treat null/absent as
+   * "no token" and writers fall back to their own fresh-read guard.
+   */
+  revisionToken: string | null;
 }
 
 // ─── SPLIT PACK GENERATOR TYPES ────────────────────────────
