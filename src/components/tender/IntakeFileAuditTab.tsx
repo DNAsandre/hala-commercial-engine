@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CalendarClock, ClipboardList, FileText, Loader2, Save, StickyNote, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,9 @@ import { updateTenderIdentifiedData } from "@/lib/supabase-tender-actions";
 import {
   IdentifiedSectionCard,
   IdentifiedStageShell,
+  identifiedSavedBadgeState,
+  runTenderTabSave,
+  tenderRevisionTokenOf,
   type IdentifiedSectionTab,
 } from "./IdentifiedStageShared";
 
@@ -57,6 +60,9 @@ export default function IntakeFileAuditTab({ ws, reload, onOpenDocuments, onOpen
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** B12: true only after a save confirmed in this session. */
+  const [savedConfirmed, setSavedConfirmed] = useState(false);
+  const staleRetryArmed = useRef(false);
 
   const [receivedFiles, setReceivedFiles] = useState(asTextList(saved.received_files));
   const [sourceChannel, setSourceChannel] = useState(saved.source_channel ?? "");
@@ -101,14 +107,21 @@ export default function IntakeFileAuditTab({ ws, reload, onOpenDocuments, onOpen
         initial_notes: initialNotes.trim(),
         updated_at: new Date().toISOString(),
       };
-      const result = await updateTenderIdentifiedData(t.id, "intake_file_audit", payload, "Intake file audit saved");
-      if (result.success) {
-        setDirty(false);
-        toast.success("Intake file audit saved.");
-        reload?.();
-      } else {
-        toast.error("Failed to save intake file audit.", { description: result.error });
-      }
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderIdentifiedData(t.id, "intake_file_audit", payload, "Intake file audit saved", expectedRevision),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "Intake file audit saved.", failed: "Failed to save intake file audit." },
+        onConfirmed: () => {
+          setDirty(false);
+          setSavedConfirmed(true);
+          reload?.();
+        },
+        // Stale: entry stays on screen (dirty stays true, so the resync effect
+        // will not overwrite the form); refresh the bundle underneath for retry.
+        onStale: () => reload?.(),
+      });
     } catch (error: any) {
       toast.error("Failed to save intake file audit.", { description: error?.message || "Unexpected save error." });
     } finally {
@@ -126,6 +139,7 @@ export default function IntakeFileAuditTab({ ws, reload, onOpenDocuments, onOpen
       metrics={metrics}
       onOpenDocuments={onOpenDocuments}
       onOpenGlobalIntel={onOpenGlobalIntel}
+      saved={identifiedSavedBadgeState(savedConfirmed, dirty)}
       unsaved={dirty}
       actionSlot={
         <Button type="button" size="sm" className="h-7 gap-1.5 rounded-md px-2.5 text-[11px]" onClick={save} disabled={!dirty || saving}>
