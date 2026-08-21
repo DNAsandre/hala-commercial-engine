@@ -142,6 +142,13 @@ export interface TenderWorkspaceBundle {
    * value to highlight; that coercion must never be presented as stored truth.
    */
   crmPipelineStageRaw: string | null;
+  /**
+   * TCW-T1 (P2a): the row's `updated_at` VERBATIM at load time — the optimistic
+   * revision token a tab passes as `expectedRevision` to every writer. (The
+   * tender.updatedAt field is date-sliced for display and must never be used as
+   * a token.) Null only when the bundle did not load.
+   */
+  revisionToken: string | null;
 }
 
 function emptyTenderWorkspaceBundle(
@@ -181,6 +188,7 @@ function emptyTenderWorkspaceBundle(
     crmSyncStatus: 'not_synced',
     submissionModel: 'single_pack',
     crmPipelineStageRaw: null,
+    revisionToken: null,
   };
 }
 
@@ -1027,6 +1035,9 @@ export async function fetchTenderWorkspaceBundleFromSupabase(tenderId: string): 
     submissionModel: packs.length > 1 ? 'multi_pack' : 'single_pack',
     crmPipelineStageRaw: typeof header.row.crm_pipeline_stage === 'string' && header.row.crm_pipeline_stage.trim()
       ? header.row.crm_pipeline_stage
+      : null,
+    revisionToken: typeof header.row.updated_at === 'string' && header.row.updated_at
+      ? header.row.updated_at
       : null,
   };
 }

@@ -453,6 +453,28 @@ describe('submission readiness register read — TCW-T1 P1', () => {
   });
 });
 
+describe('revision token — the optimistic-lock handle for every writer (TCW-T1 P2a)', () => {
+  it('carries the row updated_at VERBATIM (tender.updatedAt is date-sliced and is NOT the token)', async () => {
+    sb.results.commercial_tickets = { data: tenderRow(), error: null };
+    sb.results.commercial_ticket_audit = { data: [], error: null };
+
+    const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
+
+    expect(bundle.revisionToken).toBe('2026-07-13T21:00:43.304184+00:00');
+    expect(bundle.tender?.updatedAt).toBe('2026-07-13');
+    expect(bundle.revisionToken).not.toBe(bundle.tender?.updatedAt);
+  });
+
+  it('is null when the bundle did not load', async () => {
+    sb.results.commercial_tickets = { data: null, error: { message: 'permission denied' } };
+    sb.results.commercial_ticket_audit = { data: [], error: null };
+
+    const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
+
+    expect(bundle.revisionToken).toBeNull();
+  });
+});
+
 describe('activity / audit history — F5 single deduplicated feed (TCW-T1)', () => {
   it('issues exactly ONE commercial_ticket_audit query and derives both projections from it', async () => {
     sb.results.commercial_tickets = { data: tenderRow(), error: null };
