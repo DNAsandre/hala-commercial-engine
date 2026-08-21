@@ -25,9 +25,14 @@ export interface StageConfig {
 export function buildSignals(ws: TenderWorkspace, stageValue: string): Signal[] {
   const signals: Signal[] = [];
 
-  const daysLeft = ws.tender && ws.tender.submissionDeadline
-    ? Math.ceil((new Date(ws.tender.submissionDeadline).getTime() - Date.now()) / 86400000)
-    : 999;
+  // TCW-AUD fix (defect 4): NaN (no recorded deadline) never fires the
+  // pressure signal — an unrecorded deadline is not evidence of runway.
+  const signalDeadlineMs = ws.tender && ws.tender.submissionDeadline
+    ? new Date(ws.tender.submissionDeadline).getTime()
+    : Number.NaN;
+  const daysLeft = Number.isFinite(signalDeadlineMs)
+    ? Math.ceil((signalDeadlineMs - Date.now()) / 86400000)
+    : Number.NaN;
   if (daysLeft <= 7 && stageValue !== "submitted" && stageValue !== "awarded" && stageValue !== "lost_withdrawn") {
     signals.push({
       title: "Deadline Pressure",
@@ -85,9 +90,15 @@ export function buildSignals(ws: TenderWorkspace, stageValue: string): Signal[] 
 }
 
 export function buildStageConfig(ws: TenderWorkspace, stageValue: string): StageConfig {
-  const daysLeft = ws.tender && ws.tender.submissionDeadline
-    ? Math.ceil((new Date(ws.tender.submissionDeadline).getTime() - Date.now()) / 86400000)
-    : 999;
+  // TCW-AUD fix (defect 4): the old 999-day sentinel presented an absent
+  // deadline as fifteen months of runway. NaN = "not recorded"; consumers
+  // must render it as such, never as a number of days.
+  const deadlineMs = ws.tender && ws.tender.submissionDeadline
+    ? new Date(ws.tender.submissionDeadline).getTime()
+    : Number.NaN;
+  const daysLeft = Number.isFinite(deadlineMs)
+    ? Math.ceil((deadlineMs - Date.now()) / 86400000)
+    : Number.NaN;
   const targetGp = ws.tender?.targetGpPercent ?? 0;
   const readiness = ws.readinessScore;
   const missingPlaceholders = ws.packs.reduce((s, p) => s + (p.placeholdersTotal - p.placeholdersPopulated), 0);
@@ -116,7 +127,7 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
       return {
         indicators: [
           { type: "progress", value: readiness, label: "Tender Capture", color: readinessColor },
-          { type: "gauge", value: daysLeft, label: "Deadline", unit: "d", color: deadlineColor },
+          (Number.isFinite(daysLeft) ? { type: "gauge", value: daysLeft, label: "Deadline", unit: "d", color: deadlineColor } : { type: "status", label: "Deadline", state: "Not recorded", color: "text-slate-500" }),
           { type: "gauge", value: ws.tender?.estimatedValue ? Math.min(Math.round(ws.tender.estimatedValue / 1000000), 100) : 0, label: "Est. Value", unit: "M SAR", color: "text-foreground" },
           { type: "status", label: "Source Quality", state: ws.tender?.source ?? "Unknown", color: "text-slate-600 bg-slate-50 border-slate-200" },
         ],
@@ -174,8 +185,10 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
       return {
         indicators: [
           { type: "progress", value: readiness, label: "Bid Decision", color: readinessColor },
-          { type: "gauge", value: compliancePct, label: "Strategic Fit", color: compPctColor },
-          { type: "numeric", label: "Resource Burden", value: criticalGates + warnGates, suffix: "", color: criticalGates > 0 ? "text-red-700" : warnGates > 0 ? "text-amber-700" : "text-emerald-700" },
+          // TCW-AUD fix (defect 4): pack-derived gauges over never-loaded
+          // collections rendered permanent fabricated verdicts. Honest state.
+          { type: "status", label: "Strategic Fit", state: "Not assessed", color: "text-slate-500" },
+          { type: "status", label: "Resource Burden", state: "Not assessed", color: "text-slate-500" },
           { type: "gauge", value: ws.tender?.probabilityPercent ?? 0, label: "Win Probability", unit: "%", color: (ws.tender?.probabilityPercent ?? 0) >= 50 ? "text-emerald-700" : "text-amber-700" },
         ],
         signals: buildSignals(ws, stageValue),
@@ -188,9 +201,10 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
       return {
         indicators: [
           { type: "progress", value: readiness, label: "Solution", color: readinessColor },
-          { type: "gauge", value: compliancePct, label: "Feasibility", color: compPctColor },
-          { type: "progress", value: docsPct, label: "Scope Clarity", color: docsPctColor },
-          { type: "numeric", label: "Complexity Risk", value: criticalGates, suffix: "", color: criticalGates > 0 ? "text-red-700" : "text-emerald-700" },
+          // TCW-AUD fix (defect 4): same fabricated pack-derived gauges.
+          { type: "status", label: "Feasibility", state: "Not assessed", color: "text-slate-500" },
+          { type: "status", label: "Scope Clarity", state: "Not assessed", color: "text-slate-500" },
+          { type: "status", label: "Complexity Risk", state: "Not assessed", color: "text-slate-500" },
         ],
         signals: buildSignals(ws, stageValue),
         nextAction: "Complete solution design.",
@@ -349,7 +363,7 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
           { type: "status", label: "Submission Status", state: hasSubmissionRecord ? "Recorded" : "Not Recorded", color: hasSubmissionRecord ? "text-emerald-600 bg-emerald-50 border-emerald-200" : "text-slate-500 bg-slate-50 border-slate-200" },
           { type: "status", label: "Receipt", state: hasReceipt ? "Confirmed" : "Pending", color: hasReceipt ? "text-emerald-600 bg-emerald-50 border-emerald-200" : "text-amber-600 bg-amber-50 border-amber-200" },
           { type: "status", label: "CRM Sync", state: isCrmSynced ? "Synced" : hasCrmRecord ? "Pending" : "Not Recorded", color: isCrmSynced ? "text-emerald-600 bg-emerald-50 border-emerald-200" : hasCrmRecord ? "text-amber-600 bg-amber-50 border-amber-200" : "text-slate-500 bg-slate-50 border-slate-200" },
-          { type: "gauge", value: daysLeft, label: "Response Timer", unit: "d", color: deadlineColor },
+          (Number.isFinite(daysLeft) ? { type: "gauge", value: daysLeft, label: "Response Timer", unit: "d", color: deadlineColor } : { type: "status", label: "Response Timer", state: "Not recorded", color: "text-slate-500" }),
         ],
         signals: buildSignals(ws, stageValue),
         nextAction: "Monitor tender response.",
@@ -383,7 +397,7 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
           { type: "numeric", label: "Open Questions", value: openQa, suffix: "", color: openQa > 0 ? "text-amber-700" : "text-emerald-700" },
           { type: "progress", value: qaProgressPct, label: "Answered", color: qaProgressPct >= 80 ? "text-emerald-700" : qaProgressPct >= 50 ? "text-amber-700" : "text-red-700" },
           { type: "status", label: "Response", state: responseState, color: responseColor },
-          { type: "gauge", value: daysLeft, label: "Deadline", unit: "d", color: deadlineColor },
+          (Number.isFinite(daysLeft) ? { type: "gauge", value: daysLeft, label: "Deadline", unit: "d", color: deadlineColor } : { type: "status", label: "Deadline", state: "Not recorded", color: "text-slate-500" }),
         ],
         signals: buildSignals(ws, stageValue),
         nextAction: "Answer all clarification questions and submit responses.",
@@ -497,7 +511,7 @@ export function buildStageConfig(ws: TenderWorkspace, stageValue: string): Stage
       return {
         indicators: [
           { type: "progress", value: readiness, label: "Readiness", color: readinessColor },
-          { type: "gauge", value: daysLeft, label: "Deadline", unit: "d", color: deadlineColor },
+          (Number.isFinite(daysLeft) ? { type: "gauge", value: daysLeft, label: "Deadline", unit: "d", color: deadlineColor } : { type: "status", label: "Deadline", state: "Not recorded", color: "text-slate-500" }),
           { type: "gauge", value: targetGp, label: "GP%", unit: "%", color: gpColor },
           { type: "numeric", label: "Signals", value: criticalGates + warnGates, suffix: "", color: "text-foreground" },
         ],

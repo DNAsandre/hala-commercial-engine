@@ -66,7 +66,7 @@ import TenderPnLCalculatorPanel from "@/components/tender/TenderPnLCalculatorPan
 import TenderDraftingStage from "@/components/tender/TenderDraftingStage";
 import InternalReviewStage from "@/components/tender/InternalReviewStage";
 import ApprovalMatrixStage from "@/components/tender/ApprovalMatrixStage";
-import FinalApprovedStage from "@/components/tender/FinalApprovedStage";
+import FinalApprovedStage, { deriveDepartmentalReviewProgress } from "@/components/tender/FinalApprovedStage";
 import SubmittedStage from "@/components/tender/SubmittedStage";
 import ClarificationStage from "@/components/tender/ClarificationStage";
 import ClientEvaluationStage from "@/components/tender/ClientEvaluationStage";
@@ -1344,13 +1344,16 @@ export function buildFinalApprovedTaskProgress(tabId: string, ws: TenderWorkspac
     const pricing = t.pricingData;
     const hasPricing = (Array.isArray(pricing?.scenarios) && pricing.scenarios.length > 0) || !!(pricing?.summary);
     const blocks = Array.isArray(td.proposal_blocks) ? td.proposal_blocks : [];
-    const reviews = td.departmental_reviews ?? {};
-    const submitted = ["operations", "finance", "legal"].filter(d => reviews[d]?.submitted_at);
+    // TCW-AUD fix (defect 1): `tender_drafting.departmental_reviews` is a
+    // phantom facet no code path writes — deriving from it capped this meter
+    // at 6/7 forever. Derive from the per-block review statuses, the same
+    // source the Stage-9 tab checklist uses (deriveDepartmentalReviewProgress).
+    const reviewDone = deriveDepartmentalReviewProgress(blocks).fullyReviewed.length === 3;
     // TCW-T2: canonical-first approval matrix (see projectedApprovalMatrix).
     const matrix = projectedApprovalMatrix(ws) as any;
     const approvals: any[] = Array.isArray(matrix?.approvals) ? matrix.approvals : [];
     const allApproved = approvals.length > 0 && approvals.every((a: any) => a.decision === "approved");
-    return { hasQual, hasBid, hasSd, hasPricing, hasBlocks: blocks.length > 0, reviewDone: submitted.length === 3, allApproved };
+    return { hasQual, hasBid, hasSd, hasPricing, hasBlocks: blocks.length > 0, reviewDone, allApproved };
   })();
 
   if (tabId === "submission_readiness") {
@@ -1675,7 +1678,11 @@ export default function TenderWorkspaceDetail() {
 
   const t = ws.tender;
   const persistedInternalStage = normalizeTenderInternalStage(t.internalStageRaw);
-  const daysLeft = Math.ceil((new Date(t.submissionDeadline).getTime() - Date.now()) / 86400000);
+  // TCW-AUD fix (defect 2): an absent/unparseable deadline used to produce
+  // NaN, which the drawer rendered as a fabricated "Overdue" verdict. NaN is
+  // passed through as NaN and the consumers render "Not set" honestly.
+  const deadlineMs = new Date(t.submissionDeadline).getTime();
+  const daysLeft = Number.isFinite(deadlineMs) ? Math.ceil((deadlineMs - Date.now()) / 86400000) : NaN;
   // Signal count derived from real compliance data — no mock gates
   const signalCount = ws.complianceItems.filter(c =>
     c.status === 'non_compliant' || c.status === 'clarification_required'
@@ -1766,7 +1773,7 @@ export default function TenderWorkspaceDetail() {
             }
             const prev = ws.crmPipelineStageRaw ?? '(not set)';
             const result = await updateTenderCrmStage(id!, prev, stage, 'Manual CRM stage move');
-            if (result.success) { toast.success(`CRM Pipeline moved to ${stage}`, { description: 'Persisted to Supabase.' }); reload(); }
+            if (result.success) { if (result.auditWarning) { toast.warning(`CRM Pipeline moved to ${stage} — audit entry not recorded`, { description: result.auditWarning }); } else { toast.success(`CRM Pipeline moved to ${stage}`, { description: 'Persisted to Supabase.' }); } reload(); }
             else toast.warning('CRM stage update failed', { description: result.error });
           }}
           crmDealId={t.id.substring(0, 6)}
@@ -2208,7 +2215,7 @@ export default function TenderWorkspaceDetail() {
                     return;
                   }
                   const result = await updateTenderCrmStage(id!, prev, crmCognitionStage.value, 'Manual CRM stage move');
-                  if (result.success) { toast.success(`CRM Pipeline moved to ${crmCognitionStage.label}`, { description: 'Persisted to Supabase.' }); reload(); }
+                  if (result.success) { if (result.auditWarning) { toast.warning(`CRM Pipeline moved to ${crmCognitionStage.label} — audit entry not recorded`, { description: result.auditWarning }); } else { toast.success(`CRM Pipeline moved to ${crmCognitionStage.label}`, { description: 'Persisted to Supabase.' }); } reload(); }
                   else toast.warning('CRM stage update failed', { description: result.error });
                   setCrmCognitionStage(null);
                 }}>Confirm: Move CRM to {crmCognitionStage.label}</Button>
@@ -2241,7 +2248,7 @@ export default function TenderWorkspaceDetail() {
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Move to this stage?</p>
                   <Button className="w-full text-sm" onClick={async () => {
                     const result = await updateTenderPhase(id!, persistedInternalStage, internalCognitionStage.value, 'Manual internal Tender stage change');
-                    if (result.success) { toast.success(`Stage moved to ${internalCognitionStage.label}`, { description: 'Persisted to Supabase.' }); reload(); }
+                    if (result.success) { if (result.auditWarning) { toast.warning(`Stage moved to ${internalCognitionStage.label} — audit entry not recorded`, { description: result.auditWarning }); } else { toast.success(`Stage moved to ${internalCognitionStage.label}`, { description: 'Persisted to Supabase.' }); } reload(); }
                     else toast.warning('Stage update failed', { description: result.error });
                     setInternalCognitionStage(null);
                   }}>Confirm: Move to {internalCognitionStage.label}</Button>

@@ -369,12 +369,16 @@ function CognitionPanel({ ws, daysLeft, targetGp, signalCount }: { ws: TenderWor
           <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Deadline</span>
         </div>
         <div className="flex items-end justify-between">
-          <span className={`text-sm font-bold font-mono ${deadlineRisk}`}>
-            {daysLeft > 0 ? `${daysLeft}d left` : daysLeft === 0 ? "Today" : "Overdue"}
+          {/* TCW-AUD fix (defect 2): no captured deadline (NaN) renders an
+              honest "Not set" — never a fabricated "Overdue" verdict. */}
+          <span className={`text-sm font-bold font-mono ${Number.isNaN(daysLeft) ? "text-muted-foreground" : deadlineRisk}`}>
+            {Number.isNaN(daysLeft) ? "Not set" : daysLeft > 0 ? `${daysLeft}d left` : daysLeft === 0 ? "Today" : "Overdue"}
           </span>
-          <Clock className={`w-4 h-4 ${deadlineRisk}`} />
+          <Clock className={`w-4 h-4 ${Number.isNaN(daysLeft) ? "text-muted-foreground" : deadlineRisk}`} />
         </div>
-        <span className={`text-[9px] ${deadlineRisk}`}>{daysLeft > 14 ? "On Track" : daysLeft > 0 ? "Urgent" : "Overdue"}</span>
+        <span className={`text-[9px] ${Number.isNaN(daysLeft) ? "text-muted-foreground" : deadlineRisk}`}>
+          {Number.isNaN(daysLeft) ? "No deadline recorded" : daysLeft > 14 ? "On Track" : daysLeft > 0 ? "Urgent" : "Overdue"}
+        </span>
       </div>
 
       {/* Margin Health */}

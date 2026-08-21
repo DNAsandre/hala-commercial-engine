@@ -319,3 +319,54 @@ describe("reload wiring — every saving stage tab dispatch hands the bundle rel
     },
   );
 });
+
+// ─── TCW-AUD defect-1 fix pin: the Stage-9 checklist meter derives its
+// internal-review item from PER-BLOCK review statuses, never from the phantom
+// tender_drafting.departmental_reviews facet (which nothing writes). ─────────
+describe("stage-9 checklist meter — internal review derives from block statuses (TCW-AUD fix)", () => {
+  const reviewedBlock = {
+    id: "b1", volume: "Shared",
+    ops_status: "Approved", finance_status: "Approved", legal_status: "Approved",
+  };
+
+  it("counts the review item when every department's blocks are fully reviewed", () => {
+    const ws = makeWs(
+      {
+        sowQualificationData: { coverage_matrix: [{ area: "A", status: "Clear" }] },
+        bidNoBidData: { decision: { decision: "Bid" } },
+        solutionDesignData: { configuration: { deployment_type: "3PL" } },
+        pricingData: { scenarios: [{ id: "s1" }] },
+        tenderDraftingData: { proposal_blocks: [reviewedBlock] },
+        typeDetails: { approval_matrix: { approvals: [{ id: "a1", decision: "approved" }] } },
+      },
+    );
+    const segs = buildFinalApprovedTaskProgress("submission_readiness", ws);
+    const checklist = segs?.find(s => /checklist/i.test(s.label));
+    expect(checklist?.percent).toBe(100);
+  });
+
+  it("GUARD: a departmental_reviews facet alone can NOT satisfy the review item (phantom facet)", () => {
+    const ws = makeWs(
+      {
+        sowQualificationData: { coverage_matrix: [{ area: "A", status: "Clear" }] },
+        bidNoBidData: { decision: { decision: "Bid" } },
+        solutionDesignData: { configuration: { deployment_type: "3PL" } },
+        pricingData: { scenarios: [{ id: "s1" }] },
+        tenderDraftingData: {
+          proposal_blocks: [{ id: "b1", volume: "Shared", ops_status: "Pending", finance_status: "Pending", legal_status: "Pending" }],
+          departmental_reviews: {
+            operations: { submitted_at: "2026-08-01" },
+            finance: { submitted_at: "2026-08-01" },
+            legal: { submitted_at: "2026-08-01" },
+          },
+        },
+        typeDetails: { approval_matrix: { approvals: [{ id: "a1", decision: "approved" }] } },
+      },
+    );
+    const segs = buildFinalApprovedTaskProgress("submission_readiness", ws);
+    const checklist = segs?.find(s => /checklist/i.test(s.label));
+    // 6 of 7 checks pass; the review item must stay unsatisfied because the
+    // blocks are Pending — the phantom facet carries no weight.
+    expect(checklist?.percent).toBeLessThan(100);
+  });
+});
