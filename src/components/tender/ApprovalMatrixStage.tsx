@@ -45,7 +45,7 @@ interface Props {
   onOpenGlobalIntel?: () => void;
 }
 
-interface ApprovalRecord {
+export interface ApprovalRecord {
   id: string;
   role: string;
   role_label: string;
@@ -54,6 +54,28 @@ interface ApprovalRecord {
   decided_by: string;
   comment: string;
   decided_at: string | null;
+}
+
+/**
+ * P4 (F1) — pure decision applier, exported for the actor-truth test: the
+ * persisted `decided_by` is exactly the SESSION user name passed in
+ * (auth-state mirror), never the fabricated literal "Current User".
+ */
+export function applyApprovalDecision(
+  records: ApprovalRecord[],
+  args: { role: string; roleLabel: string; type: "approval" | "feasibility"; decision: "approved" | "rejected"; comment: string },
+  decidedByName: string,
+  decidedAtIso: string = new Date().toISOString(),
+): ApprovalRecord[] {
+  return records.map(record => record.role === args.role ? {
+    ...record,
+    role_label: args.roleLabel,
+    type: args.type,
+    decision: args.decision,
+    decided_by: decidedByName,
+    comment: args.comment,
+    decided_at: decidedAtIso,
+  } : record);
 }
 
 // ─── Extract GP% ONLY from this tender's pricing stage ────
@@ -230,18 +252,14 @@ export default function ApprovalMatrixStage({ ws, activeTab, reload, onOpenDocum
   const handleDecision = useCallback(async (role: string, roleLabel: string, type: "approval" | "feasibility", decision: "approved" | "rejected") => {
     setSaving(role);
     try {
-      const next = existingApprovals.map((record) => record.role === role ? {
-        ...record,
-        role_label: roleLabel,
-        type,
-        decision,
-        // P4 (F1): the persisted decider is the SESSION user (auth-state
-        // mirror; signed-out sessions record its honest "Unauthenticated"
-        // literal) — never the fabricated string "Current User".
-        decided_by: getCurrentUser().name,
-        comment: approvalComment,
-        decided_at: new Date().toISOString(),
-      } : record);
+      // P4 (F1): the persisted decider is the SESSION user (auth-state
+      // mirror; signed-out sessions record its honest "Unauthenticated"
+      // literal) — never the fabricated string "Current User".
+      const next = applyApprovalDecision(
+        existingApprovals,
+        { role, roleLabel, type, decision, comment: approvalComment },
+        getCurrentUser().name,
+      );
       const result = await saveApprovals(next, `${roleLabel}: ${decision}`);
       // Stale/failure keeps the typed comment for a retry.
       if (!reportSaveOutcome(result, `${roleLabel}: ${decision === "approved" ? "Approved" : "Rejected"}`)) return;

@@ -43,7 +43,7 @@ import { updateTenderDraftingData, updateTenderFinalApprovedData } from "@/lib/s
 import { getCurrentUser } from "@/lib/auth-state";
 import { normalizeSubmissionReadinessFacet } from "@/lib/tender-source-record";
 import { countByStatus, DEPARTMENT_LABELS, DEPARTMENT_VOLUMES, type ReviewDepartment } from "@/lib/internal-review-types";
-import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
+import { reportSaveOutcome, saveTenderSectionWithOutcome, wsRevisionToken } from "./tender-save-outcome";
 
 // ─── Props ──────────────────────────────────────────────────
 
@@ -212,6 +212,24 @@ interface FinalApprovalRecord {
   approved_at: string;
   reference: string;
   notes: string;
+}
+
+/**
+ * P4 (F2) — pure payload builder for the final approval record, exported for
+ * the actor-truth test: `recorded_by` is exactly the SESSION user name passed
+ * in (auth-state mirror), never the fabricated literal "Current User".
+ */
+export function buildFinalApprovalRecordPayload(
+  record: { decision: string; approved_by: string; approved_at: string; reference: string; notes: string },
+  recordedByName: string,
+  recordedAtIso: string = new Date().toISOString(),
+): Record<string, unknown> {
+  return {
+    ...record,
+    approved_at: record.approved_at ? new Date(record.approved_at).toISOString() : "",
+    recorded_at: recordedAtIso,
+    recorded_by: recordedByName,
+  };
 }
 
 function tenderDetails(t: any): Record<string, any> {
@@ -923,21 +941,19 @@ function ApprovalRecordTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGl
   const saveFinalApproval = useCallback(async () => {
     setSavingRecord(true);
     try {
-      const result = await updateTenderFinalApprovedData(
+      // P4 (F2): the recorder is the SESSION user, never a literal.
+      // P2a: threaded through saveTenderSectionWithOutcome (unit-tested path).
+      const result = await saveTenderSectionWithOutcome(
+        updateTenderFinalApprovedData,
         t.id,
         "approval_record",
-        {
-          ...record,
-          approved_at: record.approved_at ? new Date(record.approved_at).toISOString() : "",
-          recorded_at: new Date().toISOString(),
-          // P4 (F2): the recorder is the SESSION user, never a literal.
-          recorded_by: getCurrentUser().name,
-        },
+        buildFinalApprovalRecordPayload(record, getCurrentUser().name),
         "Manual final approval record",
-        wsRevisionToken(ws),
+        ws,
+        "Final approval record saved.",
       );
       // Stale outcome keeps the form entry on screen — no reload.
-      if (!reportSaveOutcome(result, "Final approval record saved.")) return;
+      if (!result.success) return;
       reload();
     } catch (error: any) {
       toast.error(error.message || "Failed to save final approval.");

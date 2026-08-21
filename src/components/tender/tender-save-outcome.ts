@@ -102,3 +102,33 @@ export function reportSaveOutcome(result: ActionResult, successTitle: string): b
   }
   return outcome.success;
 }
+
+/** The positional signature every T1 section-merge writer exposes. */
+export type TenderSectionWriter = (
+  tenderId: string,
+  section: string,
+  sectionData: any,
+  reason?: string,
+  expectedRevision?: string,
+) => Promise<ActionResult>;
+
+/**
+ * One threaded, outcome-honest section save: threads the ws revision token
+ * into the writer's trailing `expectedRevision` and renders the outcome.
+ * Returns true only for a confirmed primary write. Unit-tested with a spy
+ * writer; the highest-traffic handlers (drafting blocks, approval record,
+ * submission record) run through this exact function.
+ */
+export async function saveTenderSectionWithOutcome(
+  writer: TenderSectionWriter,
+  tenderId: string,
+  section: string,
+  payload: unknown,
+  reason: string,
+  ws: unknown,
+  successTitle: string,
+): Promise<ActionResult> {
+  const result = await writer(tenderId, section, payload, reason, wsRevisionToken(ws));
+  reportSaveOutcome(result, successTitle);
+  return result;
+}

@@ -19,7 +19,7 @@ import { toast } from "sonner";
 import { Save, Loader2, Send, CheckCircle2, Info, Mail, Building2, Hash, FileText, Clock, User } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderSubmissionData } from "@/lib/supabase-tender-actions";
-import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
+import { saveTenderSectionWithOutcome } from "./tender-save-outcome";
 
 interface Props {
   ws: TenderWorkspace;
@@ -82,8 +82,11 @@ export default function SubmissionLogTab({ ws, reload, onDirtyChange }: Props) {
         receipt_notes: receiptNotes,
       };
       // P2a threading + honest outcome; stale keeps the entry on screen.
-      const res = await updateTenderSubmissionData(tenderId, "submission_record", payload, "Submission log recorded", wsRevisionToken(ws));
-      if (!reportSaveOutcome(res, "Submission record saved.")) return;
+      // Routed through the unit-tested saveTenderSectionWithOutcome path.
+      const res = await saveTenderSectionWithOutcome(
+        updateTenderSubmissionData, tenderId, "submission_record", payload, "Submission log recorded", ws, "Submission record saved.",
+      );
+      if (!res.success) return;
       setDirty(false);
       onDirtyChange?.(false);
       reload();

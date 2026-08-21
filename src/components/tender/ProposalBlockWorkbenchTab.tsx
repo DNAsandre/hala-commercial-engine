@@ -23,7 +23,7 @@ import {
 import { cn } from "@/lib/utils";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderDraftingData } from "@/lib/supabase-tender-actions";
-import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
+import { saveTenderSectionWithOutcome, wsRevisionToken } from "./tender-save-outcome";
 import TenderProposalEditorBlock, {
   buildInitialEditorContent,
   normalizeEditorStage,
@@ -330,8 +330,10 @@ export default function ProposalBlockWorkbenchTab({ ws, reload, onOpenDocuments,
     try {
       // P2a threading + honest outcome; a stale refusal keeps the edited
       // blocks on screen (no reload) for a non-destructive retry.
-      const res = await updateTenderDraftingData(tenderId, "proposal_blocks", blocks, "Proposal blocks updated", wsRevisionToken(ws));
-      if (!reportSaveOutcome(res, "Proposal blocks saved.")) {
+      const res = await saveTenderSectionWithOutcome(
+        updateTenderDraftingData, tenderId, "proposal_blocks", blocks, "Proposal blocks updated", ws, "Proposal blocks saved.",
+      );
+      if (!res.success) {
         console.error("[ProposalBlockWorkbench] Save not confirmed:", res.status, res.error);
         return;
       }
