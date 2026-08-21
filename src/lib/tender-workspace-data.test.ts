@@ -148,3 +148,103 @@ describe("buildRequiredDocumentsProgress — no fabricated denominator", () => {
     expect(p.percent).toBe(50);
   });
 });
+
+// ─── TCW-T2 (P1): the canonical submission_readiness register ──────────────
+
+import {
+  deriveTenderAssessmentFlags,
+  type SubmissionReadinessRequiredDocument,
+} from "./tender-workspace-data";
+
+function registerRow(overrides: Partial<SubmissionReadinessRequiredDocument> = {}): SubmissionReadinessRequiredDocument {
+  return {
+    id: "reg-1",
+    document_name: "VAT Certificate",
+    status: "missing",
+    updated_at: "2026-08-01T00:00:00.000Z",
+    updated_by: "owner",
+    ...overrides,
+  };
+}
+
+describe("buildRequiredDocumentsProgress — accepts the P1 submission_readiness register", () => {
+  it("treats the register's own satisfied statuses as authoritative", () => {
+    const p = buildRequiredDocumentsProgress({
+      requiredDocuments: [
+        registerRow({ id: "a", document_name: "VAT Certificate", status: "approved" }),
+        registerRow({ id: "b", document_name: "Commercial Registration", status: "uploaded" }),
+        registerRow({ id: "c", document_name: "Insurance Certificate", status: "missing" }),
+      ],
+      requiredDocumentsAssessed: true,
+      uploadedDocumentNames: [],
+    });
+    expect(p.total).toBe(3);
+    expect(p.satisfied).toBe(2);
+    expect(p.percent).toBe(67);
+  });
+
+  it("excludes rows recorded as not applicable from both numerator and denominator", () => {
+    const p = buildRequiredDocumentsProgress({
+      requiredDocuments: [
+        registerRow({ id: "a", document_name: "VAT Certificate", status: "approved" }),
+        registerRow({ id: "b", document_name: "Bank Guarantee", status: "na" }),
+      ],
+      requiredDocumentsAssessed: true,
+      uploadedDocumentNames: [],
+    });
+    expect(p.total).toBe(1);
+    expect(p.satisfied).toBe(1);
+    expect(p.percent).toBe(100);
+  });
+
+  it("matches an uploaded document through linked_document_id", () => {
+    const p = buildRequiredDocumentsProgress({
+      requiredDocuments: [
+        registerRow({ id: "a", document_name: "Commercial Registration", status: "missing", linked_document_id: "doc-77" }),
+      ],
+      requiredDocumentsAssessed: true,
+      uploadedDocumentNames: ["Some Other File.pdf"],
+      uploadedDocumentIds: ["doc-77"],
+    });
+    expect(p.satisfied).toBe(1);
+    expect(p.percent).toBe(100);
+  });
+
+  it("register rows use full-name matching only — a shared first word is not a match", () => {
+    const decoy = buildRequiredDocumentsProgress({
+      requiredDocuments: [registerRow({ id: "a", document_name: "Performance Guarantee Confirmation" })],
+      requiredDocumentsAssessed: true,
+      uploadedDocumentNames: ["Performance Review Notes.pdf"],
+    });
+    expect(decoy.satisfied).toBe(0);
+
+    const real = buildRequiredDocumentsProgress({
+      requiredDocuments: [registerRow({ id: "a", document_name: "Performance Guarantee Confirmation" })],
+      requiredDocumentsAssessed: true,
+      uploadedDocumentNames: ["Performance Guarantee Confirmation v2.pdf"],
+    });
+    expect(real.satisfied).toBe(1);
+  });
+
+  it("an unread register still yields no percentage regardless of rows passed", () => {
+    const p = buildRequiredDocumentsProgress({
+      requiredDocuments: [registerRow({ status: "approved" })],
+      requiredDocumentsAssessed: false,
+      uploadedDocumentNames: [],
+    });
+    expect(p.percent).toBeNull();
+  });
+});
+
+describe("deriveTenderAssessmentFlags — loaded-flag truth (P1)", () => {
+  it("requiredDocumentsAssessed is exactly the required-documents loader flag", () => {
+    expect(deriveTenderAssessmentFlags({ complianceItemsLoaded: false, requiredDocumentsLoaded: true }).requiredDocumentsAssessed).toBe(true);
+    expect(deriveTenderAssessmentFlags({ complianceItemsLoaded: true, requiredDocumentsLoaded: false }).requiredDocumentsAssessed).toBe(false);
+  });
+
+  it("riskInputsAssessed requires BOTH risk inputs to have been loaded", () => {
+    expect(deriveTenderAssessmentFlags({ complianceItemsLoaded: true, requiredDocumentsLoaded: true }).riskInputsAssessed).toBe(true);
+    expect(deriveTenderAssessmentFlags({ complianceItemsLoaded: true, requiredDocumentsLoaded: false }).riskInputsAssessed).toBe(false);
+    expect(deriveTenderAssessmentFlags({ complianceItemsLoaded: false, requiredDocumentsLoaded: true }).riskInputsAssessed).toBe(false);
+  });
+});
