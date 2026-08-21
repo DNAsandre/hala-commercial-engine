@@ -142,6 +142,12 @@ export async function readOrchestrationState(
  * Persist a new orchestration state by merging ONLY the `orchestration` key into
  * the tender's existing type_details. All other buckets are preserved verbatim.
  * Uses .select('id') 0-row detection (RLS-block aware), exactly like SUPA-008.
+ *
+ * TCW-T1 (P2c): the update carries the `updated_at` revision token this
+ * function itself just read (`.eq('updated_at', token)`), closing the
+ * read-merge-write race: a row changed by anyone between the read and the
+ * update matches ZERO rows and returns an honest stale/conflict error instead
+ * of silently last-write-winning over the concurrent edit.
  */
 async function writeOrchestrationState(
   tenderId: string,
@@ -150,7 +156,7 @@ async function writeOrchestrationState(
 ): Promise<OrchestrationResult> {
   const existing = await supabase
     .from("commercial_tickets")
-    .select("id,type_details")
+    .select("id,type_details,updated_at")
     .eq("id", tenderId)
     .eq("ticket_type", "tender")
     .eq("active", true)
@@ -158,6 +164,15 @@ async function writeOrchestrationState(
 
   if (existing.error) return { success: false, error: existing.error.message };
   if (!existing.data) return { success: false, error: "Tender not found." };
+
+  const revisionToken = typeof existing.data.updated_at === "string" && existing.data.updated_at
+    ? existing.data.updated_at
+    : null;
+  if (!revisionToken) {
+    // Without a token the guard cannot hold; refuse honestly rather than fall
+    // back to a silent last-write-wins update.
+    return { success: false, error: "Tender row carries no updated_at revision token; refusing an unguarded orchestration write." };
+  }
 
   const currentDetails =
     existing.data.type_details && typeof existing.data.type_details === "object" && !Array.isArray(existing.data.type_details)
@@ -177,12 +192,27 @@ async function writeOrchestrationState(
       updated_at: nowIso(),
     })
     .eq("id", tenderId)
+    .eq("updated_at", revisionToken)
     .select("id")
     .then((res) => ({ error: res.error, count: res.data?.length ?? 0 }));
 
   if (error) return { success: false, error: error.message };
   if (count === 0) {
-    return { success: false, error: "Update failed — no rows affected (possible RLS block; try re-login)." };
+    // Zero rows: either the revision moved (concurrent edit) or the role may
+    // not perform the update (RLS). Distinguish them honestly — never report
+    // success, never silently retry over the other writer's data.
+    const recheck = await supabase
+      .from("commercial_tickets")
+      .select("id,updated_at")
+      .eq("id", tenderId)
+      .maybeSingle();
+    const movedRevision = !recheck.error && recheck.data && recheck.data.updated_at !== revisionToken;
+    return {
+      success: false,
+      error: movedRevision
+        ? "Update refused — the tender changed while this orchestration write was in flight (concurrent edit). Nothing was overwritten; reload and retry."
+        : "Update failed — no rows affected (possible RLS block; try re-login).",
+    };
   }
 
   writeOrchestrationAudit({

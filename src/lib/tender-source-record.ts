@@ -225,6 +225,193 @@ export function mergeTenderTypeDetails(current: unknown, patch: JsonObject): Jso
   return { ...objectOrEmpty(current), ...patch };
 }
 
+// ─────────────────────────────────────────────────────────────
+// Submission Readiness register — TCW-T1, design pin P1.
+//
+// The three registers (placeholders / required documents / compliance items)
+// live in ONE canonical facet: `type_details.submission_readiness` on the
+// tender's commercial_tickets row. No child tables. Rows are written only
+// through supabase-tender-actions.ts (updateTenderSubmissionReadinessData and
+// the three per-item status operations), all through the guarded
+// saveTenderSourceRecord store.
+//
+// Everything here is pure and network-free so both the write layer and the
+// read layer share one contract.
+// ─────────────────────────────────────────────────────────────
+
+export const SUBMISSION_READINESS_FACET_KEY = 'submission_readiness';
+
+export const SUBMISSION_READINESS_SECTION_KEYS = [
+  'placeholders',
+  'required_documents',
+  'compliance_items',
+] as const;
+export type SubmissionReadinessSectionKey = (typeof SUBMISSION_READINESS_SECTION_KEYS)[number];
+
+export const SUBMISSION_PLACEHOLDER_STATUSES = ['pending', 'in_progress', 'approved', 'na'] as const;
+export type SubmissionPlaceholderStatus = (typeof SUBMISSION_PLACEHOLDER_STATUSES)[number];
+
+export const SUBMISSION_REQUIRED_DOCUMENT_STATUSES = ['missing', 'in_progress', 'uploaded', 'approved', 'na'] as const;
+export type SubmissionRequiredDocumentStatus = (typeof SUBMISSION_REQUIRED_DOCUMENT_STATUSES)[number];
+
+export const SUBMISSION_COMPLIANCE_STATUSES = ['pending', 'in_review', 'compliant', 'non_compliant', 'na'] as const;
+export type SubmissionComplianceStatus = (typeof SUBMISSION_COMPLIANCE_STATUSES)[number];
+
+export interface SubmissionReadinessPlaceholder extends JsonObject {
+  id: string;
+  label: string;
+  status: SubmissionPlaceholderStatus;
+  value?: string;
+  owner?: string;
+  notes?: string;
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface SubmissionReadinessRequiredDocument extends JsonObject {
+  id: string;
+  document_name: string;
+  status: SubmissionRequiredDocumentStatus;
+  /** Exact id of an uploaded tender document satisfying this requirement (full-id matching only — never fuzzy). */
+  linked_document_id?: string;
+  owner?: string;
+  due_date?: string;
+  notes?: string;
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface SubmissionReadinessComplianceItem extends JsonObject {
+  id: string;
+  requirement: string;
+  status: SubmissionComplianceStatus;
+  evidence?: string;
+  source_reference?: string;
+  owner?: string;
+  notes?: string;
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface SubmissionReadinessFacet extends JsonObject {
+  placeholders: SubmissionReadinessPlaceholder[];
+  required_documents: SubmissionReadinessRequiredDocument[];
+  compliance_items: SubmissionReadinessComplianceItem[];
+}
+
+interface SubmissionReadinessSectionContract {
+  /** The row field that names the item to a human. */
+  nameField: 'label' | 'document_name' | 'requirement';
+  nameLabel: string;
+  statuses: readonly string[];
+  /** Status a structurally valid stored row falls back to when its status is absent. */
+  defaultStatus: string;
+}
+
+export const SUBMISSION_READINESS_SECTION_CONTRACTS: Record<SubmissionReadinessSectionKey, SubmissionReadinessSectionContract> = {
+  placeholders: {
+    nameField: 'label',
+    nameLabel: 'label',
+    statuses: SUBMISSION_PLACEHOLDER_STATUSES,
+    defaultStatus: 'pending',
+  },
+  required_documents: {
+    nameField: 'document_name',
+    nameLabel: 'document name',
+    statuses: SUBMISSION_REQUIRED_DOCUMENT_STATUSES,
+    defaultStatus: 'missing',
+  },
+  compliance_items: {
+    nameField: 'requirement',
+    nameLabel: 'requirement',
+    statuses: SUBMISSION_COMPLIANCE_STATUSES,
+    defaultStatus: 'pending',
+  },
+};
+
+export function isSubmissionReadinessSectionKey(value: unknown): value is SubmissionReadinessSectionKey {
+  return typeof value === 'string' && (SUBMISSION_READINESS_SECTION_KEYS as readonly string[]).includes(value);
+}
+
+function normalizeRegisterRow(raw: unknown, section: SubmissionReadinessSectionKey): JsonObject | null {
+  if (!isObject(raw)) return null;
+  const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id : null;
+  if (!id) return null;
+  const contract = SUBMISSION_READINESS_SECTION_CONTRACTS[section];
+  const name = typeof raw[contract.nameField] === 'string' ? (raw[contract.nameField] as string) : '';
+  // A stored status outside the section union is preserved verbatim (reads never
+  // silently rewrite stored data); the WRITE layer refuses to store such values.
+  const status = typeof raw.status === 'string' && raw.status.trim() ? raw.status : contract.defaultStatus;
+  return {
+    ...raw,
+    id,
+    [contract.nameField]: name,
+    status,
+    updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : '',
+    updated_by: typeof raw.updated_by === 'string' ? raw.updated_by : '',
+  };
+}
+
+function normalizeRegisterSection(value: unknown, section: SubmissionReadinessSectionKey): JsonObject[] {
+  return arrayOrEmpty(value)
+    .map((row) => normalizeRegisterRow(row, section))
+    .filter((row): row is JsonObject => row !== null);
+}
+
+/**
+ * Read-side normalizer. Structurally invalid rows (no object / no id) are
+ * dropped from the NORMALIZED view only — the write layer never round-trips a
+ * normalized facet back into storage; it patches the raw stored facet, so a
+ * malformed sibling row is never destroyed by an unrelated save.
+ * Unknown facet-level keys and unknown row-level keys are preserved.
+ */
+export function normalizeSubmissionReadinessFacet(value: unknown): SubmissionReadinessFacet {
+  const raw = objectOrEmpty(value);
+  return {
+    ...raw,
+    placeholders: normalizeRegisterSection(raw.placeholders, 'placeholders') as unknown as SubmissionReadinessPlaceholder[],
+    required_documents: normalizeRegisterSection(raw.required_documents, 'required_documents') as unknown as SubmissionReadinessRequiredDocument[],
+    compliance_items: normalizeRegisterSection(raw.compliance_items, 'compliance_items') as unknown as SubmissionReadinessComplianceItem[],
+  };
+}
+
+export function isValidSubmissionReadinessStatus(section: SubmissionReadinessSectionKey, status: unknown): boolean {
+  return typeof status === 'string' && SUBMISSION_READINESS_SECTION_CONTRACTS[section].statuses.includes(status);
+}
+
+/**
+ * Write-side validation for a full-section replacement. Returns the honest
+ * refusal reason, or null when the rows are storable. Requirements: an array of
+ * objects, each with a unique non-empty string id, a non-empty name field, and
+ * a status inside the section's union.
+ */
+export function validateSubmissionReadinessRows(
+  section: SubmissionReadinessSectionKey,
+  rows: unknown,
+): string | null {
+  if (!Array.isArray(rows)) {
+    return `Submission readiness ${section} must be an array of rows.`;
+  }
+  const contract = SUBMISSION_READINESS_SECTION_CONTRACTS[section];
+  const seen = new Set<string>();
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!isObject(row)) return `Submission readiness ${section} row ${i + 1} is not an object.`;
+    const id = row.id;
+    if (typeof id !== 'string' || !id.trim()) return `Submission readiness ${section} row ${i + 1} has no id. Every register row needs a stable id.`;
+    if (seen.has(id)) return `Submission readiness ${section} contains duplicate id "${id}". Row ids must be unique so per-item updates target exactly one row.`;
+    seen.add(id);
+    const name = row[contract.nameField];
+    if (typeof name !== 'string' || !name.trim()) {
+      return `Submission readiness ${section} row "${id}" has no ${contract.nameLabel}.`;
+    }
+    if (!isValidSubmissionReadinessStatus(section, row.status)) {
+      return `Submission readiness ${section} row "${id}" has status "${String(row.status)}" which is not one of: ${contract.statuses.join(', ')}.`;
+    }
+  }
+  return null;
+}
+
 export function buildTenderSourceAggregate(
   row: TenderSourceRow,
   audit: TenderSourceAuditRecord[] = [],

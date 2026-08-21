@@ -115,7 +115,9 @@ export const TENDER_INTERNAL_STAGES: readonly TenderInternalStageDefinition[] = 
     purpose: 'Record the final human approval fact and the version or reference it applies to.',
     outputs: ['Final approval record', 'Submission preparation context'],
     nextAction: 'Confirm or revise the final approval record.',
-    storageFacets: ['type_details.final_approved'],
+    // TCW-T1 (P1): submission_readiness carries the three advisory registers
+    // (placeholders / required_documents / compliance_items).
+    storageFacets: ['type_details.final_approved', 'type_details.submission_readiness'],
     navigation: 'open',
   },
   {
@@ -256,7 +258,13 @@ export function projectTenderStageTruth(rawDetails: unknown): TenderStageTruth {
       departmental_reviews: recordOrEmpty(drafting.departmental_reviews),
     },
     approval_matrix: approvalMatrix,
-    final_approved: recordOrEmpty(details.final_approved),
+    // TCW-T1 (P1): the submission_readiness register is projected ADDITIVELY
+    // into the final_approved stage truth — existing final_approved keys are
+    // untouched; consumers that never look for the new key see no change.
+    final_approved: {
+      ...recordOrEmpty(details.final_approved),
+      submission_readiness: recordOrEmpty(details.submission_readiness),
+    },
     submitted: recordOrEmpty(details.submission ?? details.submitted),
     clarification: recordOrEmpty(details.clarification),
     client_evaluation: recordOrEmpty(details.client_evaluation),

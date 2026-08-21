@@ -305,6 +305,48 @@ describe('createActivityNote — success means a stored row', () => {
   });
 });
 
+/**
+ * TCW-T1 (P3) — the activity/audit append behind every stage & field write is
+ * now AWAITED and confirmed. A failed append never blocks the already-saved
+ * primary write, but it is never silent: the result says
+ * 'saved_with_audit_warning' with the real reason.
+ */
+describe('audit honesty on stage writes — P3', () => {
+  it("a failed audit insert → success:true with status 'saved_with_audit_warning' and the reason", async () => {
+    sb.insertError = { message: 'permission denied for table commercial_ticket_audit' };
+
+    const result = await actions.updateTenderPhase(TENDER_ID, 'clarification', 'negotiation');
+
+    expect(result.success).toBe(true);
+    expect(result.status).toBe('saved_with_audit_warning');
+    expect(result.auditWarning).toContain('audit entry was not recorded');
+    expect(result.auditWarning).toContain('permission denied');
+    // The primary write really landed.
+    expect(sb.row!.internal_stage).toBe('negotiation');
+  });
+
+  it('an audit insert that resolves without a stored row is also surfaced, not silenced', async () => {
+    sb.insertMatchesNothing = true;
+
+    const result = await actions.updateTenderPhase(TENDER_ID, 'clarification', 'negotiation');
+
+    expect(result.success).toBe(true);
+    expect(result.status).toBe('saved_with_audit_warning');
+    expect(result.auditWarning).toContain('no stored row');
+  });
+
+  it('a clean save appends a confirmed pipe-format activity row (id selected back) and reports plain success', async () => {
+    const result = await actions.updateTenderPhase(TENDER_ID, 'clarification', 'negotiation', 'stage move');
+
+    expect(result).toEqual({ success: true });
+    const insert = sb.inserts.find(i => i.table === 'commercial_ticket_audit');
+    expect(insert).toBeDefined();
+    expect(insert!.projection).toBe('id');
+    expect(insert!.row.notes).toContain('Tender Stage Change | Phase changed from "clarification" to "negotiation". stage move | Reason: stage move');
+    expect(insert!.row.user_name).toBe('UAT Operator');
+  });
+});
+
 describe('the two trackers are independently sourced', () => {
   it('a CRM move followed by an internal move leaves both columns at their own values', async () => {
     await actions.updateTenderCrmStage(TENDER_ID, 'qualified', 'shortlisted');
