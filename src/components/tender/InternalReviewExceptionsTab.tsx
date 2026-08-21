@@ -19,6 +19,8 @@ import {
   type TenderStageSectionTab,
 } from "./TenderStageTaskShell";
 import { updateBlockReviewStatus } from "@/lib/supabase-tender-actions";
+import { getCurrentUser } from "@/lib/auth-state";
+import { reportSaveOutcome } from "./tender-save-outcome";
 import {
   ensureReviewFields,
   DEPARTMENT_LABELS,
@@ -83,12 +85,11 @@ export default function InternalReviewExceptionsTab({ ws, reload, onOpenDocument
   const handleResubmit = async (entry: RejectedEntry) => {
     const key = `${entry.blockId}-${entry.department}`;
     setResubmitting(key);
-    const res = await updateBlockReviewStatus(tenderId, entry.blockId, entry.department, "Pending", "", "Resubmitted by drafter");
-    if (res.success) {
-      toast.success(`Block "§${entry.blockSection} ${entry.blockTitle}" resubmitted to ${DEPARTMENT_LABELS[entry.department]}.`);
+    // P4 (F3): the persisted ACTOR is the session user — never the phrase
+    // "Resubmitted by drafter", which used to be stored as the reviewer name.
+    const res = await updateBlockReviewStatus(tenderId, entry.blockId, entry.department, "Pending", "", getCurrentUser().name);
+    if (reportSaveOutcome(res, `Block "§${entry.blockSection} ${entry.blockTitle}" resubmitted to ${DEPARTMENT_LABELS[entry.department]}.`)) {
       reload();
-    } else {
-      toast.error(res.error || "Failed to resubmit.");
     }
     setResubmitting(null);
   };
@@ -106,7 +107,10 @@ export default function InternalReviewExceptionsTab({ ws, reload, onOpenDocument
         metrics={intelMetrics}
         onOpenDocuments={onOpenDocuments}
         onOpenGlobalIntel={onOpenGlobalIntel}
-        saved
+        /* TCW-T4 (B11): read-only projection of stored review decisions with an
+           immediate resubmit action — no draft interval exists here, so "Saved"
+           states the in-sync fact rather than fabricating a save event. */
+        saved={true}
       />
 
       {/* ── 1. Exceptions Inbox ── */}

@@ -133,7 +133,10 @@ export default function InternalReviewDashboardTab({ ws, onOpenDocuments, onOpen
         metrics={intelMetrics}
         onOpenDocuments={onOpenDocuments}
         onOpenGlobalIntel={onOpenGlobalIntel}
-        saved
+        /* TCW-T4 (B11): pure read-only dashboard over stored review data —
+           nothing here can hold unsaved edits, so "Saved" states the in-sync
+           fact rather than fabricating a save event. */
+        saved={true}
       />
 
       <div className="p-4 space-y-4">
