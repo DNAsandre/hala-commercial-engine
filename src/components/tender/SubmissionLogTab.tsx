@@ -19,8 +19,14 @@ import { toast } from "sonner";
 import { Save, Loader2, Send, CheckCircle2, Info, Mail, Building2, Hash, FileText, Clock, User } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderSubmissionData } from "@/lib/supabase-tender-actions";
+import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
 
-interface Props { ws: TenderWorkspace; reload: () => void }
+interface Props {
+  ws: TenderWorkspace;
+  reload: () => void;
+  /** TCW-T4 (C3): lets the stage shell render the real Unsaved/Saved badge. */
+  onDirtyChange?: (dirty: boolean) => void;
+}
 
 const SUBMISSION_METHODS = [
   { value: "email", label: "Email" },
@@ -30,7 +36,7 @@ const SUBMISSION_METHODS = [
   { value: "other", label: "Other" },
 ] as const;
 
-export default function SubmissionLogTab({ ws, reload }: Props) {
+export default function SubmissionLogTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
   const saved = td?.submission?.submission_record ?? {};
@@ -51,8 +57,11 @@ export default function SubmissionLogTab({ ws, reload }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const mark = () => setDirty(true);
+  const mark = () => { setDirty(true); onDirtyChange?.(true); };
   const hasSavedData = !!(saved.submitted_at || saved.submitted_by);
+  // TCW-T4 (C2): the receipt status indicator reflects the CONFIRMED STORED
+  // value only — the local switch state drives the input, never the status dot.
+  const storedReceiptConfirmed = saved.receipt_confirmed === true;
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -72,21 +81,24 @@ export default function SubmissionLogTab({ ws, reload }: Props) {
         receipt_confirmed_at: receiptConfirmedAt,
         receipt_notes: receiptNotes,
       };
-      const res = await updateTenderSubmissionData(tenderId, "submission_record", payload, "Submission log recorded");
-      if (!res.success) { toast.error(res.error || "Save failed."); return; }
-      toast.success("Submission log saved.");
+      // P2a threading + honest outcome; stale keeps the entry on screen.
+      const res = await updateTenderSubmissionData(tenderId, "submission_record", payload, "Submission log recorded", wsRevisionToken(ws));
+      if (!reportSaveOutcome(res, "Submission record saved.")) return;
       setDirty(false);
+      onDirtyChange?.(false);
       reload();
     } catch (e: any) { toast.error(e.message || "Save failed."); }
     finally { setSaving(false); }
-  }, [submittedAt, submittedBy, method, methodDetail, recipientName, recipientEmail, recipientOrg, refNumber, attachmentsCount, notes, receiptConfirmed, receiptConfirmedAt, receiptNotes, tenderId, reload]);
+  }, [submittedAt, submittedBy, method, methodDetail, recipientName, recipientEmail, recipientOrg, refNumber, attachmentsCount, notes, receiptConfirmed, receiptConfirmedAt, receiptNotes, tenderId, reload, ws, onDirtyChange]);
 
   return (
     <div className="space-y-4">
-      {/* Info Banner */}
+      {/* Info Banner — TCW-T4 (B22): the old text claimed "an immutable log
+          entry"; this record is a mutable manual entry and the audit append is
+          confirmed separately, so say exactly that. */}
       <div className="flex items-start gap-2 text-[10px] text-muted-foreground bg-[#075eea]/10 border border-[#075eea]/15 rounded-md px-3 py-2">
         <Info className="w-3.5 h-3.5 mt-0.5 text-[#0b73ff] shrink-0" />
-        <span>Record the official tender submission details. This creates an immutable log entry for audit purposes.</span>
+        <span>Record the official tender submission details. This is a manual record and stays editable here; each save also appends an audit-trail entry, and a failed audit append is reported rather than hidden.</span>
       </div>
 
       {/* Status Strip */}
@@ -98,10 +110,12 @@ export default function SubmissionLogTab({ ws, reload }: Props) {
             {hasSavedData ? "Submission Recorded" : "Not Yet Recorded"}
           </span>
         </div>
+        {/* TCW-T4 (C2): green only after a CONFIRMED SAVE recorded the receipt —
+            never from the not-yet-saved local toggle. */}
         <div className="flex items-center gap-1.5 ml-3">
-          <div className={`w-2 h-2 rounded-full ${receiptConfirmed ? "bg-emerald-500" : "bg-slate-300"}`} />
-          <span className={`text-[10px] ${receiptConfirmed ? "text-emerald-700 font-medium" : "text-muted-foreground"}`}>
-            {receiptConfirmed ? "Receipt Confirmed" : "Receipt Pending"}
+          <div className={`w-2 h-2 rounded-full ${storedReceiptConfirmed ? "bg-emerald-500" : "bg-slate-300"}`} />
+          <span className={`text-[10px] ${storedReceiptConfirmed ? "text-emerald-700 font-medium" : "text-muted-foreground"}`}>
+            {storedReceiptConfirmed ? "Receipt Confirmed" : receiptConfirmed ? "Receipt marked — not saved yet" : "Receipt Pending"}
           </span>
         </div>
         <div className="ml-auto">
@@ -117,7 +131,8 @@ export default function SubmissionLogTab({ ws, reload }: Props) {
           <div className="flex items-center gap-2">
             <Send className="w-3.5 h-3.5 text-[#075eea]" />
             <span className="text-xs font-semibold">Submission Record</span>
-            {hasSavedData && <Badge variant="outline" className="text-[8px] border-emerald-200 text-emerald-700 bg-emerald-50">Saved</Badge>}
+            {/* "Recorded" states data presence; the shell badge carries save state. */}
+            {hasSavedData && <Badge variant="outline" className="text-[8px] border-emerald-200 text-emerald-700 bg-emerald-50">Recorded</Badge>}
           </div>
         </CardHeader>
         <CardContent className="p-4">
@@ -184,7 +199,8 @@ export default function SubmissionLogTab({ ws, reload }: Props) {
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
             <span className="text-xs font-semibold">Receipt Confirmation</span>
-            {receiptConfirmed && <Badge variant="outline" className="text-[8px] border-emerald-200 text-emerald-700 bg-emerald-50">Confirmed</Badge>}
+            {/* TCW-T4 (C2): stored value only — not the unsaved toggle. */}
+            {storedReceiptConfirmed && <Badge variant="outline" className="text-[8px] border-emerald-200 text-emerald-700 bg-emerald-50">Confirmed</Badge>}
           </div>
         </CardHeader>
         <CardContent className="p-4">
