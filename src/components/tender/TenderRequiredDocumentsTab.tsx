@@ -1,168 +1,213 @@
 /**
- * TND-004: Tender Required Documents Tab
- * Extracted component for the Required Documents tab inside TenderWorkspaceDetail.
- * Shows document register, filters, summary cards, requirement indicators, and review modal.
+ * TenderRequiredDocumentsTab.tsx — TCW-T5 rebuild (Tender Functional Closure Wave).
+ *
+ * REAL register manager for
+ * `type_details.submission_readiness.required_documents` on the canonical
+ * commercial_tickets tender row (design pin P1):
+ *   - honest three-state load through the tab's own guarded read;
+ *   - full row CRUD via `updateTenderSubmissionReadinessData` (read-back
+ *     confirmed) and per-row status changes via `updateRequiredDocStatus`
+ *     (exact id, revision-guarded);
+ *   - `linked_document_id` links a requirement to an UPLOADED tender document
+ *     by exact id (full-name display; never fuzzy matching);
+ *   - `expectedRevision` threaded from this tab's confirmed read; 'stale'
+ *     preserves the entry and invites retry; 'saved_with_audit_warning' is
+ *     amber, never plain green.
+ *
+ * ADVISORY ONLY. Nothing in this register gates stage movement or submission.
  */
-import { useState, useMemo } from "react";
-import { Badge } from "@/components/ui/badge";
+import { useCallback, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ShieldAlert, Eye, CheckCircle2, XCircle, FileText, Stamp, PenLine, Database } from "lucide-react";
+import { FileText, Link2, Loader2, Pencil, Plus, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { updateRequiredDocStatus } from "@/lib/supabase-tender-actions";
+import { type TenderDocument, type TenderWorkspace } from "@/lib/tender-workspace-data";
 import {
-  type TenderRequiredDocument,
-  type TenderWorkspace,
-  type RequiredDocStatus,
-  getDocStatusLabel,
-  getDocStatusColor,
-  getDocCategoryLabel,
-  getFileReqLabel,
-  getFileReqColor,
-  REQUIRED_DOC_CATEGORIES,
-} from "@/lib/tender-workspace-data";
+  newRegisterRowId,
+  nextRowsWithout,
+  nextRowsWithUpsert,
+  notifyTenderWriteOutcome,
+  patchedRowForSave,
+  RegisterAdvisoryBanner,
+  RegisterStateNotice,
+  registerStatusBadgeClass,
+  registerStatusLabel,
+  registerStatusOptions,
+  sectionCrudBlocker,
+  submitRegisterSectionRows,
+  useSubmissionReadinessRegister,
+  describeTenderWriteOutcome,
+  type RegisterMutationDeps,
+  type TenderWriteOutcome,
+} from "./TenderPlaceholdersTab";
 
-// ─── HELPERS ─────────────────────────────────────────────────
+// ── Linked-document helpers (pure; exact-id matching ONLY) ───
 
-function isOBK(doc: TenderRequiredDocument): boolean {
-  return doc.category === "pricing_obk";
+export interface LinkedDocumentOption {
+  id: string;
+  name: string;
 }
 
-// ─── DOCUMENT REVIEW MODAL ──────────────────────────────────
+/** Uploaded tender documents a requirement can link to (exact stored ids). */
+export function documentLinkOptions(documents: TenderDocument[] | undefined): LinkedDocumentOption[] {
+  return (documents ?? [])
+    .filter((d) => typeof d.id === "string" && d.id.trim())
+    .map((d) => ({ id: d.id, name: d.document_name || d.id }));
+}
 
-function DocumentReviewModal({
-  doc,
+/**
+ * Resolve a stored `linked_document_id` to its FULL document name by exact id.
+ * A set-but-unresolvable id is reported as such — never fuzzy-matched, never
+ * silently blank.
+ */
+export function linkedDocumentDisplay(
+  linkedDocumentId: unknown,
+  documents: TenderDocument[] | undefined,
+): { linked: boolean; label: string } {
+  const id = typeof linkedDocumentId === "string" ? linkedDocumentId.trim() : "";
+  if (!id) return { linked: false, label: "Not linked" };
+  const match = (documents ?? []).find((d) => d.id === id);
+  return match
+    ? { linked: true, label: match.document_name || id }
+    : { linked: true, label: `Linked document not found in this tender (id ${id})` };
+}
+
+/** Per-item required-document status change — exact id, revision-guarded. */
+export async function submitRequiredDocStatusChange(
+  deps: RegisterMutationDeps,
+  row: { id: string; document_name: string; status: string },
+  nextStatus: string,
+  update: typeof updateRequiredDocStatus = updateRequiredDocStatus,
+): Promise<TenderWriteOutcome> {
+  const result = await update(
+    deps.tenderId,
+    row.id,
+    row.document_name,
+    row.status,
+    nextStatus,
+    { expectedRevision: deps.revisionToken },
+  );
+  return describeTenderWriteOutcome(result);
+}
+
+/** UX-level draft validation (the write layer re-validates authoritatively). */
+export function validateRequiredDocumentDraft(form: { document_name: string }): string | null {
+  if (!form.document_name.trim()) return "A document name is required.";
+  return null;
+}
+
+// ── Form dialog ──────────────────────────────────────────────
+
+const NO_LINK = "__none__";
+
+interface RequiredDocFormState {
+  id: string | null;
+  document_name: string;
+  status: string;
+  linked_document_id: string;
+  owner: string;
+  due_date: string;
+  notes: string;
+}
+
+function emptyRequiredDocForm(): RequiredDocFormState {
+  return { id: null, document_name: "", status: "missing", linked_document_id: "", owner: "", due_date: "", notes: "" };
+}
+
+function RequiredDocFormDialog({
+  form,
+  setForm,
+  linkOptions,
+  saving,
+  onSave,
   onClose,
-  tenderId,
-  reload
 }: {
-  doc: TenderRequiredDocument;
+  form: RequiredDocFormState;
+  setForm: (updater: (prev: RequiredDocFormState) => RequiredDocFormState) => void;
+  linkOptions: LinkedDocumentOption[];
+  saving: boolean;
+  onSave: () => void;
   onClose: () => void;
-  tenderId: string;
-  reload: () => void;
 }) {
-  const handleMarkApproved = async () => {
-    const result = await updateRequiredDocStatus(tenderId, doc.id, doc.documentName, doc.status, 'approved');
-    if (result.success) {
-      toast.success(`Document "${doc.documentName}" marked as approved.`, { description: 'Persisted to Supabase.' });
-      reload();
-    } else {
-      toast.warning('Status change failed — UI not blocked.', { description: result.error });
-    }
-    onClose();
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="fixed inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-background rounded-xl border shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="p-5 border-b">
+      <div className="relative mx-4 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border bg-background shadow-2xl">
+        <div className="border-b p-5">
           <div className="flex items-start justify-between">
             <div>
-              <h3 className="text-sm font-serif font-bold">Document Review</h3>
-              <p className="text-[10px] text-muted-foreground mt-0.5">Status changes persist to Supabase.</p>
+              <h3 className="font-serif text-sm font-bold">{form.id ? "Edit Required Document" : "Add Required Document"}</h3>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                The save is confirmed against the stored register before it is reported as saved.
+              </p>
             </div>
             <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onClose}>
-              <XCircle className="w-4 h-4" />
+              <XCircle className="h-4 w-4" />
             </Button>
           </div>
         </div>
-        <div className="p-5 space-y-4">
-          {/* Document name */}
+        <div className="space-y-4 p-5">
           <div>
-            <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Document Name</label>
-            <p className="text-xs font-medium mt-1">{doc.documentName}</p>
-            {isOBK(doc) && (
-              <Badge variant="outline" className="text-[9px] mt-1 border-amber-300 text-amber-700 bg-amber-50">OBK Control</Badge>
-            )}
+            <Label className="text-xs">Document Name</Label>
+            <Input
+              value={form.document_name}
+              onChange={(e) => setForm((p) => ({ ...p, document_name: e.target.value }))}
+              placeholder="e.g. Commercial registration certificate"
+            />
           </div>
-          {/* Pack + Category */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Pack</label>
-              <p className="text-xs mt-1">{doc.packName}</p>
+              <Label className="text-xs">Status</Label>
+              <Select value={form.status} onValueChange={(v) => setForm((p) => ({ ...p, status: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {registerStatusOptions("required_documents").map((o) => (
+                    <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
-              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Category</label>
-              <p className="text-xs mt-1">{getDocCategoryLabel(doc.category)}</p>
+              <Label className="text-xs">Owner</Label>
+              <Input value={form.owner} onChange={(e) => setForm((p) => ({ ...p, owner: e.target.value }))} />
             </div>
           </div>
-          {/* Owner + Status */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Owner</label>
-              <p className="text-xs mt-1">{doc.owner}</p>
-            </div>
-            <div>
-              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Current Status</label>
-              <div className="mt-1">
-                <Badge variant="outline" className={`text-[9px] ${getDocStatusColor(doc.status)}`}>{getDocStatusLabel(doc.status)}</Badge>
-              </div>
-            </div>
+          <div>
+            <Label className="text-xs">Linked Uploaded Document</Label>
+            <Select
+              value={form.linked_document_id || NO_LINK}
+              onValueChange={(v) => setForm((p) => ({ ...p, linked_document_id: v === NO_LINK ? "" : v }))}
+            >
+              <SelectTrigger><SelectValue placeholder="Link an uploaded document" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_LINK} className="text-xs">Not linked</SelectItem>
+                {linkOptions.map((o) => (
+                  <SelectItem key={o.id} value={o.id} className="text-xs">{o.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              Links by the uploaded document's exact id — the full document name is shown; no fuzzy matching.
+            </p>
           </div>
-          {/* Requirements */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="p-2 rounded-md border bg-muted/30 text-center">
-              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground block mb-1">Native</label>
-              <p className="text-xs">{doc.nativeRequired ? getFileReqLabel(doc.nativeStatus) : "Not Required"}</p>
-            </div>
-            <div className="p-2 rounded-md border bg-muted/30 text-center">
-              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground block mb-1">Signed PDF</label>
-              <p className="text-xs">{doc.signedPdfRequired ? getFileReqLabel(doc.signedPdfStatus) : "Not Required"}</p>
-            </div>
-            <div className="p-2 rounded-md border bg-muted/30 text-center">
-              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground block mb-1">Stamp</label>
-              <p className="text-xs">{doc.stampRequired ? "Required" : "Not Required"}</p>
-            </div>
+          <div>
+            <Label className="text-xs">Due Date</Label>
+            <Input type="date" value={form.due_date} onChange={(e) => setForm((p) => ({ ...p, due_date: e.target.value }))} />
           </div>
-          {/* Version + Output */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Version</label>
-              <p className="text-xs mt-1">v{doc.version}</p>
-            </div>
-            <div>
-              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Included in Output</label>
-              <p className="text-xs mt-1">{doc.includedInOutput ? "Yes" : "No"}</p>
-            </div>
+          <div>
+            <Label className="text-xs">Notes</Label>
+            <Textarea value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} />
           </div>
-          {/* Notes */}
-          {doc.notes && (
-            <div>
-              <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Notes</label>
-              <p className="text-xs mt-1 text-muted-foreground">{doc.notes}</p>
-            </div>
-          )}
-          {/* OBK warning */}
-          {isOBK(doc) && (
-            <div className="p-2.5 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30">
-              <p className="text-xs text-amber-800 flex items-center gap-1.5">
-                <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-                Native Excel + signed/stamped PDF required for production submission.
-              </p>
-            </div>
-          )}
-          {/* Would block warning */}
-          {doc.wouldBlockInProduction && doc.status === "awaiting" && (
-            <div className="p-2.5 rounded-md border border-red-300 bg-red-50 dark:bg-red-950/30">
-              <p className="text-xs text-red-800 flex items-center gap-1.5">
-                <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-                Advisory signal: review recommended. This document should be provided before submission. Override is always available.
-              </p>
-            </div>
-          )}
         </div>
-        <div className="p-5 border-t flex items-center gap-2 justify-end">
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs h-8"
-            onClick={handleMarkApproved}
-          >
-            <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Mark Approved
-          </Button>
-          <Button variant="ghost" size="sm" className="text-xs h-8" onClick={onClose}>
-            Close
+        <div className="flex items-center justify-end gap-2 border-t p-5">
+          <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={onSave} disabled={saving}>
+            {saving ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+            {saving ? "Saving…" : "Save"}
           </Button>
         </div>
       </div>
@@ -170,203 +215,303 @@ function DocumentReviewModal({
   );
 }
 
-// ─── SUMMARY CARD ────────────────────────────────────────────
+// ── Main component ───────────────────────────────────────────
 
-function SummaryCard({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div className="rounded-lg border p-3 text-center">
-      <p className={`text-lg font-bold font-mono ${color}`}>{value}</p>
-      <p className="text-[10px] text-muted-foreground mt-0.5">{label}</p>
-    </div>
+export default function TenderRequiredDocumentsTab({
+  ws,
+  tenderId,
+  reload,
+}: {
+  ws: TenderWorkspace;
+  tenderId: string;
+  reload: () => void;
+}) {
+  const { view, refresh } = useSubmissionReadinessRegister(tenderId);
+  const [form, setForm] = useState<RequiredDocFormState | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
+
+  const rows = view.phase === "loaded" ? view.facet.required_documents : [];
+  const rawRows = useMemo(
+    () => (view.phase === "loaded" ? view.rawRows("required_documents") : []),
+    [view],
   );
-}
+  const crudBlocker = view.phase === "loaded" ? sectionCrudBlocker("required_documents", rawRows) : null;
+  const linkOptions = useMemo(() => documentLinkOptions(ws.documents), [ws.documents]);
 
-// ─── FILE REQ CELL ───────────────────────────────────────────
+  const counts = useMemo(() => {
+    const by = (s: string) => rows.filter((r) => r.status === s).length;
+    return {
+      total: rows.length,
+      missing: by("missing"),
+      inProgress: by("in_progress"),
+      uploaded: by("uploaded"),
+      approved: by("approved"),
+      na: by("na"),
+    };
+  }, [rows]);
 
-function FileReqCell({ required, status }: { required: boolean; status: string }) {
-  if (!required) return <span className="text-[10px] text-muted-foreground">Not Required</span>;
-  const label = getFileReqLabel(status as any);
-  const color = getFileReqColor(status as any);
-  return (
-    <Badge variant="outline" className={`text-[9px] ${color}`}>
-      {label}
-    </Badge>
-  );
-}
+  const afterSaved = useCallback(async () => {
+    await refresh();
+    reload();
+  }, [refresh, reload]);
 
-// ─── MAIN COMPONENT ──────────────────────────────────────────
+  const handleSaveForm = async () => {
+    if (view.phase !== "loaded" || !form) return;
+    const draftError = validateRequiredDocumentDraft(form);
+    if (draftError) {
+      toast.error("Not saved.", { description: draftError });
+      return;
+    }
+    setSaving(true);
+    try {
+      const existing = form.id ? rawRows.find((r) => r && typeof r === "object" && r.id === form.id) : undefined;
+      const patch = {
+        document_name: form.document_name.trim(),
+        status: form.status,
+        linked_document_id: form.linked_document_id,
+        owner: form.owner,
+        due_date: form.due_date,
+        notes: form.notes,
+      };
+      const row = existing
+        ? patchedRowForSave(existing, patch)
+        : { id: newRegisterRowId("required_documents"), ...patch };
+      const outcome = await submitRegisterSectionRows(
+        { tenderId, revisionToken: view.revisionToken },
+        "required_documents",
+        nextRowsWithUpsert(rawRows, row),
+        form.id ? `Required document edited: ${patch.document_name}` : `Required document added: ${patch.document_name}`,
+      );
+      const savedOk = notifyTenderWriteOutcome(
+        outcome,
+        form.id ? `Required document "${patch.document_name}" updated.` : `Required document "${patch.document_name}" added.`,
+      );
+      if (savedOk) {
+        setForm(null);
+        await afterSaved();
+      } else if (outcome.kind === "stale") {
+        await refresh();
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
 
-export default function TenderRequiredDocumentsTab({ ws, tenderId, reload }: { ws: TenderWorkspace; tenderId: string; reload: () => void }) {
-  const [packFilter, setPackFilter] = useState<string>("all");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
-  const [reviewDoc, setReviewDoc] = useState<TenderRequiredDocument | null>(null);
+  const handleRemove = async (row: { id: string; document_name: string }) => {
+    if (view.phase !== "loaded") return;
+    setRemovingId(row.id);
+    try {
+      const outcome = await submitRegisterSectionRows(
+        { tenderId, revisionToken: view.revisionToken },
+        "required_documents",
+        nextRowsWithout(rawRows, row.id),
+        `Required document removed: ${row.document_name}`,
+      );
+      if (notifyTenderWriteOutcome(outcome, `Required document "${row.document_name}" removed.`)) {
+        await afterSaved();
+      } else if (outcome.kind === "stale") {
+        await refresh();
+      }
+    } finally {
+      setRemovingId(null);
+    }
+  };
 
-  const docs = ws.requiredDocuments;
-
-  // Summary counts
-  const totalCount = docs.length;
-  const awaitingCount = docs.filter(d => d.status === "awaiting").length;
-  const inReviewCount = docs.filter(d => d.status === "in_review").length;
-  const readyCount = docs.filter(d => ["ready", "signed", "stamped", "approved"].includes(d.status)).length;
-  const includedCount = docs.filter(d => d.includedInOutput).length;
-  const wouldBlockCount = docs.filter(d => d.wouldBlockInProduction && !["ready", "signed", "stamped", "approved", "submitted_mock"].includes(d.status)).length;
-
-  // Filtered list
-  const filtered = useMemo(() => {
-    return docs.filter(d => {
-      if (packFilter !== "all" && d.packId !== packFilter) return false;
-      if (statusFilter !== "all" && d.status !== statusFilter) return false;
-      if (categoryFilter !== "all" && d.category !== categoryFilter) return false;
-      return true;
-    });
-  }, [docs, packFilter, statusFilter, categoryFilter]);
-
-  // Pack options
-  const packOptions = useMemo(() => {
-    const packs = ws.packs.map(p => ({ value: p.id, label: p.packName }));
-    return [{ value: "all", label: "All Packs" }, ...packs];
-  }, [ws.packs]);
-
-  const statusOptions: { value: string; label: string }[] = [
-    { value: "all", label: "All Statuses" },
-    { value: "awaiting", label: "Awaiting" },
-    { value: "uploaded", label: "Uploaded" },
-    { value: "draft", label: "Draft" },
-    { value: "in_review", label: "In Review" },
-    { value: "approved", label: "Approved" },
-    { value: "signed", label: "Signed" },
-    { value: "stamped", label: "Stamped" },
-    { value: "ready", label: "Ready" },
-    { value: "rejected", label: "Rejected" },
-    { value: "superseded", label: "Superseded" },
-    { value: "submitted_mock", label: "Submitted" },
-  ];
-
-  if (docs.length === 0) {
-    return <p className="text-sm text-muted-foreground py-8 text-center">No required documents configured yet.</p>;
-  }
+  const handleStatusChange = async (
+    row: { id: string; document_name: string; status: string },
+    nextStatus: string,
+  ) => {
+    if (view.phase !== "loaded" || nextStatus === row.status) return;
+    setStatusBusyId(row.id);
+    try {
+      const outcome = await submitRequiredDocStatusChange(
+        { tenderId, revisionToken: view.revisionToken },
+        row,
+        nextStatus,
+      );
+      if (
+        notifyTenderWriteOutcome(
+          outcome,
+          `"${row.document_name}": ${registerStatusLabel("required_documents", row.status)} → ${registerStatusLabel("required_documents", nextStatus)}.`,
+        )
+      ) {
+        await afterSaved();
+      } else if (outcome.kind === "stale") {
+        await refresh();
+      }
+    } finally {
+      setStatusBusyId(null);
+    }
+  };
 
   return (
     <div className="space-y-4">
-      {/* Advisory banner */}
-      <div className="p-3 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 flex items-center justify-between gap-2.5">
-        <div className="flex items-center gap-2.5">
-          <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
-          <p className="text-xs text-amber-700">
-            Advisory signals only: required documents are tracked as readiness indicators. Missing items escalate to review — they do not block testing or submission.
+      <RegisterAdvisoryBanner noun="required documents" />
+
+      <div className="flex items-center justify-between gap-2">
+        <div className="grid flex-1 grid-cols-6 gap-2">
+          {[
+            { label: "Total", value: counts.total, color: "text-foreground" },
+            { label: "Missing", value: counts.missing, color: "text-red-600" },
+            { label: "In Progress", value: counts.inProgress, color: "text-amber-600" },
+            { label: "Uploaded", value: counts.uploaded, color: "text-blue-600" },
+            { label: "Approved", value: counts.approved, color: "text-emerald-600" },
+            { label: "N/A", value: counts.na, color: "text-slate-500" },
+          ].map((c) => (
+            <div key={c.label} className="rounded-lg border p-3 text-center">
+              <p className={`font-mono text-lg font-bold ${c.color}`}>{c.value}</p>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">{c.label}</p>
+            </div>
+          ))}
+        </div>
+        <Button
+          size="sm"
+          className="h-8 gap-1 text-xs"
+          disabled={view.phase !== "loaded" || Boolean(crudBlocker)}
+          onClick={() => setForm(emptyRequiredDocForm())}
+        >
+          <Plus className="h-3.5 w-3.5" /> Add Required Document
+        </Button>
+      </div>
+
+      {crudBlocker && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+          <p className="text-xs text-amber-800">
+            Row add/edit/remove is unavailable: the stored section would be refused by the write contract —{" "}
+            {crudBlocker} Per-row status changes still work.
           </p>
         </div>
-        <Badge variant="outline" className="text-[10px] border-emerald-400 text-emerald-700 bg-emerald-50 flex items-center gap-1 shrink-0"><Database className="w-2.5 h-2.5" />Supabase-Backed</Badge>
-      </div>
+      )}
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-        <SummaryCard label="Total Docs" value={totalCount} color="text-foreground" />
-        <SummaryCard label="Awaiting" value={awaitingCount} color="text-red-600" />
-        <SummaryCard label="In Review" value={inReviewCount} color="text-[#075eea]" />
-        <SummaryCard label="Ready / Approved" value={readyCount} color="text-emerald-600" />
-        <SummaryCard label="In Output" value={includedCount} color="text-blue-600" />
-        <SummaryCard label="Review Rec." value={wouldBlockCount} color="text-amber-600" />
-      </div>
-
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Select value={packFilter} onValueChange={setPackFilter}>
-          <SelectTrigger size="sm" className="w-[180px] text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>{packOptions.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}</SelectContent>
-        </Select>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger size="sm" className="w-[160px] text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>{statusOptions.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}</SelectContent>
-        </Select>
-        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-          <SelectTrigger size="sm" className="w-[200px] text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>{REQUIRED_DOC_CATEGORIES.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}</SelectContent>
-        </Select>
-        <span className="text-[10px] text-muted-foreground ml-1">{filtered.length} of {totalCount} shown</span>
-      </div>
-
-      {/* Documents table */}
-      <div className="border rounded-lg overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead className="bg-muted/50">
-            <tr>
-              <th className="px-3 py-2 text-left font-semibold">Required Document</th>
-              <th className="px-3 py-2 text-left font-semibold">Pack</th>
-              <th className="px-3 py-2 text-left font-semibold">Category</th>
-              <th className="px-3 py-2 text-left font-semibold">Owner</th>
-              <th className="px-3 py-2 text-left font-semibold">Status</th>
-              <th className="px-3 py-2 text-center font-semibold">Native</th>
-              <th className="px-3 py-2 text-center font-semibold">Signed PDF</th>
-              <th className="px-3 py-2 text-center font-semibold">Stamp</th>
-              <th className="px-3 py-2 text-center font-semibold">Ver</th>
-              <th className="px-3 py-2 text-center font-semibold">In Output</th>
-              <th className="px-3 py-2 text-center font-semibold">Block?</th>
-              <th className="px-3 py-2 text-center font-semibold">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map(doc => (
-              <tr key={doc.id} className={`border-t border-border hover:bg-muted/30 ${doc.status === "awaiting" ? "bg-red-50/30" : ""} ${isOBK(doc) ? "border-l-2 border-l-amber-400" : ""}`}>
-                <td className="px-3 py-2">
-                  <div>
-                    <p className="font-medium">{doc.documentName}</p>
-                    {isOBK(doc) && (
-                      <Badge variant="outline" className="text-[8px] mt-0.5 border-amber-300 text-amber-700 bg-amber-50">OBK Control</Badge>
-                    )}
-                  </div>
-                </td>
-                <td className="px-3 py-2 text-muted-foreground max-w-[120px] truncate">{doc.packName}</td>
-                <td className="px-3 py-2"><Badge variant="outline" className="text-[9px]">{getDocCategoryLabel(doc.category)}</Badge></td>
-                <td className="px-3 py-2 text-muted-foreground">{doc.owner}</td>
-                <td className="px-3 py-2">
-                  <Badge variant="outline" className={`text-[9px] ${getDocStatusColor(doc.status)}`}>
-                    {getDocStatusLabel(doc.status)}
-                  </Badge>
-                </td>
-                <td className="px-3 py-2 text-center"><FileReqCell required={doc.nativeRequired} status={doc.nativeStatus} /></td>
-                <td className="px-3 py-2 text-center"><FileReqCell required={doc.signedPdfRequired} status={doc.signedPdfStatus} /></td>
-                <td className="px-3 py-2 text-center">
-                  {doc.stampRequired ? (
-                    <Badge variant="outline" className="text-[9px] text-amber-700 bg-amber-50 border-amber-200">Required</Badge>
-                  ) : (
-                    <span className="text-[10px] text-muted-foreground">—</span>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-center text-muted-foreground font-mono">v{doc.version}</td>
-                <td className="px-3 py-2 text-center">
-                  {doc.includedInOutput ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mx-auto" />
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-center">
-                  {doc.wouldBlockInProduction && !["ready", "signed", "stamped", "approved", "submitted_mock"].includes(doc.status) ? (
-                    <Badge variant="outline" className="text-[9px] text-amber-700 bg-amber-50 border-amber-200">Review Rec.</Badge>
-                  ) : ["ready", "signed", "stamped", "approved", "submitted_mock"].includes(doc.status) ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mx-auto" />
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-center">
-                  <Button variant="ghost" size="sm" className="h-7 text-[10px] gap-1" onClick={() => setReviewDoc(doc)}>
-                    <Eye className="w-3 h-3" /> Review
-                  </Button>
-                </td>
+      {view.phase !== "loaded" ? (
+        <RegisterStateNotice state={view} onRetry={() => void refresh()} />
+      ) : rows.length === 0 ? (
+        <RegisterStateNotice
+          state={{ phase: "empty", addFirstLabel: "No required documents recorded yet — add the first." }}
+        />
+      ) : (
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="px-3 py-2 text-left font-semibold">Required Document</th>
+                <th className="px-3 py-2 text-left font-semibold">Linked Upload</th>
+                <th className="px-3 py-2 text-left font-semibold">Owner</th>
+                <th className="px-3 py-2 text-left font-semibold">Due</th>
+                <th className="px-3 py-2 text-left font-semibold">Status</th>
+                <th className="px-3 py-2 text-left font-semibold">Updated</th>
+                <th className="px-3 py-2 text-center font-semibold">Actions</th>
               </tr>
-            ))}
-            {filtered.length === 0 && (
-              <tr><td colSpan={12} className="text-center py-8 text-muted-foreground">No documents match current filters.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const owner = typeof row.owner === "string" ? row.owner : "";
+                const dueDate = typeof row.due_date === "string" ? row.due_date : "";
+                const notes = typeof row.notes === "string" ? row.notes : "";
+                const linkedId = typeof row.linked_document_id === "string" ? row.linked_document_id : "";
+                const link = linkedDocumentDisplay(linkedId, ws.documents);
+                return (
+                  <tr key={row.id} className={`border-t border-border hover:bg-muted/30 ${row.status === "missing" ? "bg-red-50/30" : ""}`}>
+                    <td className="px-3 py-2">
+                      <p className="flex items-center gap-1.5 font-medium">
+                        <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        {row.document_name}
+                      </p>
+                      {notes && <p className="mt-0.5 max-w-[260px] truncate text-[10px] text-muted-foreground">{notes}</p>}
+                    </td>
+                    <td className="max-w-[220px] px-3 py-2">
+                      {link.linked ? (
+                        <span className="flex items-center gap-1 text-[11px]">
+                          <Link2 className="h-3 w-3 shrink-0 text-[#075eea]" />
+                          <span className="truncate" title={link.label}>{link.label}</span>
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">{owner || "—"}</td>
+                    <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">{dueDate || "—"}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1.5">
+                        <Select
+                          value={row.status}
+                          onValueChange={(v) =>
+                            void handleStatusChange(
+                              { id: row.id, document_name: row.document_name, status: row.status },
+                              v,
+                            )
+                          }
+                          disabled={statusBusyId === row.id || saving}
+                        >
+                          <SelectTrigger size="sm" className={`h-7 w-[130px] text-[10px] ${registerStatusBadgeClass(row.status)}`}>
+                            <SelectValue>{registerStatusLabel("required_documents", row.status)}</SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {registerStatusOptions("required_documents").map((o) => (
+                              <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {statusBusyId === row.id && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">
+                      {row.updated_at ? `${row.updated_at.slice(0, 10)} · ${row.updated_by || "unknown"}` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          aria-label={`Edit ${row.document_name}`}
+                          disabled={Boolean(crudBlocker) || saving}
+                          onClick={() =>
+                            setForm({
+                              id: row.id,
+                              document_name: row.document_name,
+                              status: row.status,
+                              linked_document_id: linkedId,
+                              owner,
+                              due_date: dueDate,
+                              notes,
+                            })
+                          }
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-red-600 hover:text-red-700"
+                          aria-label={`Remove ${row.document_name}`}
+                          disabled={Boolean(crudBlocker) || removingId === row.id || saving}
+                          onClick={() => void handleRemove({ id: row.id, document_name: row.document_name })}
+                        >
+                          {removingId === row.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      {/* Review modal */}
-      {reviewDoc && <DocumentReviewModal doc={reviewDoc} onClose={() => setReviewDoc(null)} tenderId={tenderId} reload={reload} />}
+      {form && view.phase === "loaded" && (
+        <RequiredDocFormDialog
+          form={form}
+          setForm={(updater) => setForm((prev) => (prev ? updater(prev) : prev))}
+          linkOptions={linkOptions}
+          saving={saving}
+          onSave={() => void handleSaveForm()}
+          onClose={() => setForm(null)}
+        />
+      )}
     </div>
   );
 }
