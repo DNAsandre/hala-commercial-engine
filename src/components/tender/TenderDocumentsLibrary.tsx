@@ -36,20 +36,31 @@ function categoryCount(docs: TenderDocument[], category: TenderDocumentCategory)
 }
 
 async function openDocument(doc: TenderDocument) {
-  if (!doc.storage_path && !doc.file_url) {
-    toast.info("No file link is available for this document.");
-    return;
+  // TCW-T5: this used to run without a try/catch — a signing-transport failure
+  // became an unhandled rejection and the user saw NOTHING (which reads as a
+  // dead button). Failures now surface with their reason, like the drawer.
+  try {
+    if (!doc.storage_path && !doc.file_url) {
+      toast.info("No file link is available for this document.");
+      return;
+    }
+    if (doc.file_url) {
+      window.open(doc.file_url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const url = await getSignedDownloadUrl(doc.storage_path);
+    if (!url) {
+      toast.error("Could not create a download link.", {
+        description: "The storage service returned no signed URL for this file's stored path.",
+      });
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  } catch (err) {
+    toast.error("Could not open this document.", {
+      description: err instanceof Error ? err.message : "The download link request failed.",
+    });
   }
-  if (doc.file_url) {
-    window.open(doc.file_url, "_blank", "noopener,noreferrer");
-    return;
-  }
-  const url = await getSignedDownloadUrl(doc.storage_path);
-  if (!url) {
-    toast.error("Could not create a download link.");
-    return;
-  }
-  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 export default function TenderDocumentsLibrary({ ws, tenderId, reload, initialCategory = "all", initialStage = "all" }: TenderDocumentsLibraryProps) {

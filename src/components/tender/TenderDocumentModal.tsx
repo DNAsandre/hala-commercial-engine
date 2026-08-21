@@ -1,3 +1,24 @@
+/**
+ * TenderDocumentModal.tsx — TCW-T5 documents-chain honesty.
+ *
+ * The upload path is a THREE-step chain:
+ *   1. Supabase Storage upload           (document-vault.uploadDocument)
+ *   2. generated_documents row insert    (same call; both steps throw on failure)
+ *   3. tender register entry             (addTenderDocument →
+ *      type_details.documents on the canonical commercial_tickets row)
+ *
+ * A step-3 failure AFTER steps 1–2 succeeded used to surface as a generic
+ * "Document save failed", inviting a re-upload that would duplicate the stored
+ * file. It is now reported as exactly what it is: stored in the vault but NOT
+ * listed on this tender. 'saved_with_audit_warning' renders amber, never plain
+ * success.
+ *
+ * NOTE (contract gap, reported to integration): the T1-landed document writers
+ * (addTenderDocument / updateTenderDocumentMetadata / changeTenderDocumentStatus)
+ * accept NO expectedRevision — they self-guard with a fresh read inside
+ * updateTenderDocumentList — so the UI-read-time revision cannot be threaded
+ * from here without changing T1's file.
+ */
 import { useEffect, useMemo, useState } from "react";
 import { Upload } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -9,7 +30,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { uploadDocument, type DocumentCategory } from "@/lib/document-vault";
-import { addTenderDocument, updateTenderDocumentMetadata } from "@/lib/supabase-tender-actions";
+import { addTenderDocument, updateTenderDocumentMetadata, type ActionResult } from "@/lib/supabase-tender-actions";
 import {
   canonicalTenderDocumentStageRelevance,
   TENDER_DOCUMENT_CATEGORIES,
@@ -39,6 +60,73 @@ function vaultCategoryForTenderCategory(category: TenderDocumentCategory): Docum
   if (category === "Supporting") return "Supporting";
   if (category === "Archived") return "Historical";
   return "Tenders";
+}
+
+// ─── Honest chain reporting (pure/injectable — exported for tests) ───
+
+/** What actually happened, step by step — the toast layer renders this 1:1. */
+export type DocumentSaveReport =
+  | { kind: "saved"; amber?: string }
+  | { kind: "uploaded_not_linked"; message: string }
+  | { kind: "not_saved"; message: string };
+
+/** The honest step-3-failed-after-step-2-succeeded message. */
+export function describeUploadLinkFailure(uploadedVaultId: string, reason: string | undefined): string {
+  return (
+    `The file WAS uploaded to storage and recorded in the document vault (record ${uploadedVaultId}), ` +
+    `but adding it to this tender's document list failed: ${reason ?? "no reason was returned"}. ` +
+    `Do not upload the file again — that would store a duplicate copy. Reload and check the library first.`
+  );
+}
+
+/** Map a confirmed metadata-save ActionResult onto the report contract. */
+export function describeMetadataSaveResult(result: ActionResult): DocumentSaveReport {
+  if (!result.success) {
+    return { kind: "not_saved", message: result.error ?? "Document metadata save failed." };
+  }
+  return {
+    kind: "saved",
+    amber: result.status === "saved_with_audit_warning"
+      ? result.auditWarning ?? "Saved, but the audit entry was not recorded."
+      : undefined,
+  };
+}
+
+/**
+ * Run the upload chain and report each failure mode distinctly:
+ *   - steps 1–2 fail  → nothing stored (uploadDocument throws before returning);
+ *   - step 3 fails    → stored in the vault but NOT listed on the tender —
+ *     reported as such, never as a generic failure and never as success;
+ *   - step 3 succeeds → success, amber when the audit append was not recorded.
+ */
+export async function performDocumentUploadChain<TUploaded extends { id: string }>(deps: {
+  upload: () => Promise<TUploaded>;
+  link: (uploaded: TUploaded) => Promise<ActionResult>;
+}): Promise<DocumentSaveReport> {
+  let uploaded: TUploaded;
+  try {
+    uploaded = await deps.upload();
+  } catch (err) {
+    return {
+      kind: "not_saved",
+      message: err instanceof Error ? err.message : "File upload failed before anything was stored.",
+    };
+  }
+  let linkResult: ActionResult;
+  try {
+    linkResult = await deps.link(uploaded);
+  } catch (err) {
+    linkResult = { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  if (!linkResult.success) {
+    return { kind: "uploaded_not_linked", message: describeUploadLinkFailure(uploaded.id, linkResult.error) };
+  }
+  return {
+    kind: "saved",
+    amber: linkResult.status === "saved_with_audit_warning"
+      ? linkResult.auditWarning ?? "Saved, but the audit entry was not recorded."
+      : undefined,
+  };
 }
 
 function blankForm(defaultCategory: TenderDocumentCategory, defaultStage?: TenderStageRelevance) {
@@ -125,53 +213,89 @@ export default function TenderDocumentModal({
     setSaving(true);
     try {
       if (isEdit && document) {
-        const result = await updateTenderDocumentMetadata(tenderId, document.id, form);
-        if (!result.success) throw new Error(result.error);
-        toast.success("Document metadata updated.");
+        const report = describeMetadataSaveResult(
+          await updateTenderDocumentMetadata(tenderId, document.id, form),
+        );
+        if (report.kind !== "saved") {
+          toast.error("Document metadata NOT saved.", { description: report.message });
+          return; // dialog stays open; the entry is preserved for retry
+        }
+        if (report.amber) {
+          toast.warning("Document metadata updated.", { description: report.amber });
+        } else {
+          toast.success("Document metadata updated.", { description: "Confirmed against the stored tender record." });
+        }
       } else if (file) {
-        const uploaded = await uploadDocument({
-          name: form.document_name.trim(),
-          category: vaultCategoryForTenderCategory(form.document_category),
-          customerId: customerId || "unknown",
-          customerName: customerName || "Unknown Customer",
-          tenderId,
-          tenderName,
-          file,
-          notes: form.notes,
-          tags: [],
-          permissionLevel: "internal",
+        const report = await performDocumentUploadChain({
+          // Steps 1–2: storage object + generated_documents row (throws on either failure).
+          upload: () =>
+            uploadDocument({
+              name: form.document_name.trim(),
+              category: vaultCategoryForTenderCategory(form.document_category),
+              customerId: customerId || "unknown",
+              customerName: customerName || "Unknown Customer",
+              tenderId,
+              tenderName,
+              file,
+              notes: form.notes,
+              tags: [],
+              permissionLevel: "internal",
+            }),
+          // Step 3: the tender's own document register (type_details.documents).
+          link: (uploaded) => {
+            const tenderDocument: TenderDocument = {
+              id: uploaded.id,
+              tender_id: tenderId,
+              document_name: form.document_name.trim(),
+              document_category: form.document_category,
+              document_type: form.document_type.trim(),
+              file_url: "",
+              storage_path: uploaded.filePath ?? "",
+              version: form.version.trim(),
+              status: form.status,
+              stage_relevance: form.stage_relevance,
+              owner: form.owner.trim(),
+              uploaded_by: uploaded.uploadedBy,
+              uploaded_at: new Date().toISOString(),
+              received_date: form.received_date,
+              expiry_date: form.expiry_date,
+              required_for_submission: form.required_for_submission,
+              linked_requirement_id: form.linked_requirement_id.trim(),
+              linked_proposal_section: form.linked_proposal_section.trim(),
+              source_channel: form.source_channel.trim(),
+              buyer_reference_number: form.buyer_reference_number.trim(),
+              notes: form.notes.trim(),
+            };
+            return addTenderDocument(tenderId, tenderDocument);
+          },
         });
-        const tenderDocument: TenderDocument = {
-          id: uploaded.id,
-          tender_id: tenderId,
-          document_name: form.document_name.trim(),
-          document_category: form.document_category,
-          document_type: form.document_type.trim(),
-          file_url: "",
-          storage_path: uploaded.filePath ?? "",
-          version: form.version.trim(),
-          status: form.status,
-          stage_relevance: form.stage_relevance,
-          owner: form.owner.trim(),
-          uploaded_by: uploaded.uploadedBy,
-          uploaded_at: new Date().toISOString(),
-          received_date: form.received_date,
-          expiry_date: form.expiry_date,
-          required_for_submission: form.required_for_submission,
-          linked_requirement_id: form.linked_requirement_id.trim(),
-          linked_proposal_section: form.linked_proposal_section.trim(),
-          source_channel: form.source_channel.trim(),
-          buyer_reference_number: form.buyer_reference_number.trim(),
-          notes: form.notes.trim(),
-        };
-        const result = await addTenderDocument(tenderId, tenderDocument);
-        if (!result.success) throw new Error(result.error);
-        toast.success("Document uploaded to tender documents.");
+
+        if (report.kind === "not_saved") {
+          toast.error("Document NOT saved.", { description: report.message });
+          return; // nothing was stored; the dialog keeps the entry for retry
+        }
+        if (report.kind === "uploaded_not_linked") {
+          // Steps 1–2 stored the file; step 3 did not list it on this tender.
+          // Close the dialog (a retry via this button would duplicate the file)
+          // and refresh so the caller shows the true current state.
+          toast.error("Uploaded, but NOT listed on this tender.", {
+            description: report.message,
+            duration: 15000,
+          });
+          onSaved();
+          onOpenChange(false);
+          return;
+        }
+        if (report.amber) {
+          toast.warning("Document uploaded to tender documents.", { description: report.amber });
+        } else {
+          toast.success("Document uploaded to tender documents.", {
+            description: "Storage, vault record and tender listing all confirmed.",
+          });
+        }
       }
       onSaved();
       onOpenChange(false);
-    } catch (err: any) {
-      toast.error(err?.message || "Document save failed.");
     } finally {
       setSaving(false);
     }
