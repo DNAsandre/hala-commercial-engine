@@ -11,12 +11,13 @@
  *   5. Assumptions Recommendation
  *   6. Output Use
  */
-import { useState, useCallback, type ReactNode } from "react";
+import { useState, useCallback, useRef, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderSolutionDesignData } from "@/lib/supabase-tender-actions";
+import { runTenderTabSave, tenderRevisionTokenOf } from "./IdentifiedStageShared";
 import { toast } from "sonner";
 import { Loader2, Save, ChevronDown, Plus, X, FileText, Link2, XCircle, HelpCircle, ArrowRight, Info, FolderOpen, BarChart3, PanelRightOpen } from "lucide-react";
 import { TenderStageIntelligenceSlot } from "./TenderStageTaskShell";
@@ -68,13 +69,31 @@ function emptyClr(): ClarificationRow { return { question: "", related_area: "",
 
 function btnCls(sel: boolean): string { return sel ? "bg-blue-100 border-blue-300 text-blue-700 font-medium" : "bg-card border-border text-muted-foreground hover:bg-muted/30"; }
 
+/**
+ * TCW-T3 (P2b) — this tab's patch carries ONLY its own solution_design_data
+ * key (assumptions_dependencies). The write layer patch-merges, so sibling tabs' keys are
+ * preserved by the STORED facet — never re-sent from a page-load copy.
+ * Exported pure for direct testing.
+ */
+export function buildAssumptionsDependenciesPatch(
+  assumptions: AssumptionRow[],
+  dependencies: DependencyRow[],
+  exclusions: ExclusionRow[],
+  clarifications: ClarificationRow[],
+  recommendation: { readiness: ReadinessStatus; notes: string },
+): Record<string, any> {
+  return { assumptions_dependencies: { assumptions, dependencies, exclusions, clarifications, recommendation } };
+}
+
 interface Props {
   ws: TenderWorkspace;
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
+  /** Fires ONLY after a confirmed save (the workspace shell passes reload). */
+  onSaved?: () => void;
 }
 
-export default function AssumptionsDependenciesTab({ ws, onOpenDocuments, onOpenGlobalIntel }: Props) {
+export default function AssumptionsDependenciesTab({ ws, onOpenDocuments, onOpenGlobalIntel, onSaved }: Props) {
   const t = ws.tender; const tenderId = t.id;
   const existing = t.solutionDesignData as any;
   const ad = existing?.assumptions_dependencies;
@@ -102,14 +121,26 @@ export default function AssumptionsDependenciesTab({ ws, onOpenDocuments, onOpen
   const rmC = (i: number) => setClarifications(p => p.filter((_, x) => x !== i));
   const upC = (i: number, f: keyof ClarificationRow, v: any) => setClarifications(p => p.map((r, x) => x === i ? { ...r, [f]: v } : r));
 
+  const staleRetryArmed = useRef(false);
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const patch: Record<string, any> = { ...(existing || {}), assumptions_dependencies: { assumptions, dependencies, exclusions, clarifications, recommendation } };
-      const result = await updateTenderSolutionDesignData(tenderId, patch, "Assumptions & Dependencies saved");
-      if (result.success) toast.success("Assumptions & Dependencies saved"); else toast.error("Save failed", { description: result.error });
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderSolutionDesignData(tenderId, buildAssumptionsDependenciesPatch(assumptions, dependencies, exclusions, clarifications, recommendation), {
+            expectedRevision,
+            reason: "Assumptions & Dependencies saved",
+          }),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "Assumptions & Dependencies saved", failed: "Save failed" },
+        onConfirmed: () => onSaved?.(),
+        // Stale: local form state is untouched — the user's entry stays.
+      });
+    } catch (e: any) {
+      toast.error(e.message || "Save failed.");
     } finally { setSaving(false); }
-  }, [tenderId, assumptions, dependencies, exclusions, clarifications, recommendation, existing]);
+  }, [tenderId, assumptions, dependencies, exclusions, clarifications, recommendation, onSaved, ws]);
 
   return (
     <div className="space-y-4">

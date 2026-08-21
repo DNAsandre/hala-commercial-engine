@@ -12,12 +12,13 @@
  * Save: updateTenderSolutionDesignData → merges hop only
  */
 
-import { useState, useCallback, type ReactNode } from "react";
+import { useState, useCallback, useRef, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderSolutionDesignData } from "@/lib/supabase-tender-actions";
+import { runTenderTabSave, tenderRevisionTokenOf } from "./IdentifiedStageShared";
 import { toast } from "sonner";
 import {
   Loader2, Save, ChevronDown, Plus, X,
@@ -136,13 +137,30 @@ function chipClass(selected: boolean): string {
 // COMPONENT
 // ═══════════════════════════════════════════════════════════
 
+/**
+ * TCW-T3 (P2b) — this tab's patch carries ONLY its own solution_design_data
+ * key (hop). The write layer patch-merges, so sibling tabs' keys are
+ * preserved by the STORED facet — never re-sent from a page-load copy.
+ * Exported pure for direct testing.
+ */
+export function buildHopPatch(
+  warehouse: WarehouseData,
+  transport: TransportData,
+  flow: OperationalFlowStep[],
+  recommendation: { readiness: ReadinessStatus; notes: string },
+): Record<string, any> {
+  return { hop: { warehouse, transport, operational_flow: flow, recommendation } };
+}
+
 interface Props {
   ws: TenderWorkspace;
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
+  /** Fires ONLY after a confirmed save (the workspace shell passes reload). */
+  onSaved?: () => void;
 }
 
-export default function HOPOperationsModelTab({ ws, onOpenDocuments, onOpenGlobalIntel }: Props) {
+export default function HOPOperationsModelTab({ ws, onOpenDocuments, onOpenGlobalIntel, onSaved }: Props) {
   const t = ws.tender;
   const tenderId = t.id;
   const existing = t.solutionDesignData as any;
@@ -167,15 +185,26 @@ export default function HOPOperationsModelTab({ ws, onOpenDocuments, onOpenGloba
   const removeFlowStep = (i: number) => setFlow(p => p.filter((_, idx) => idx !== i));
   const updateFlowStep = (i: number, f: keyof OperationalFlowStep, v: string) => setFlow(p => p.map((r, idx) => idx === i ? { ...r, [f]: v } : r));
 
+  const staleRetryArmed = useRef(false);
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const patch: Record<string, any> = { ...(existing || {}), hop: { warehouse, transport, operational_flow: flow, recommendation } };
-      const result = await updateTenderSolutionDesignData(tenderId, patch, "HOP Operations Model saved");
-      if (result.success) toast.success("HOP Operations Model saved");
-      else toast.error("Save failed", { description: result.error });
+      await runTenderTabSave({
+        write: expectedRevision =>
+          updateTenderSolutionDesignData(tenderId, buildHopPatch(warehouse, transport, flow, recommendation), {
+            expectedRevision,
+            reason: "HOP Operations Model saved",
+          }),
+        revisionToken: tenderRevisionTokenOf(ws),
+        staleRetryArmed,
+        labels: { saved: "HOP Operations Model saved", failed: "Save failed" },
+        onConfirmed: () => onSaved?.(),
+        // Stale: local form state is untouched — the user's entry stays.
+      });
+    } catch (e: any) {
+      toast.error(e.message || "Save failed.");
     } finally { setSaving(false); }
-  }, [tenderId, warehouse, transport, flow, recommendation, existing]);
+  }, [tenderId, warehouse, transport, flow, recommendation, onSaved, ws]);
 
   // ═══════════════════════════════════════════════════════════
   // RENDER
