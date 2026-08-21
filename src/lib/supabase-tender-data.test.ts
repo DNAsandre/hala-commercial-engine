@@ -264,53 +264,101 @@ describe('CRM stage round-trip fidelity', () => {
   });
 });
 
-describe('risk verdict — W04-C4', () => {
+describe('risk verdict — W04-C4, rebased on the P1 register (TCW-T1)', () => {
   /**
-   * The header rendered a green "On Track" badge derived from complianceItems +
-   * requiredDocuments. Both are hard stubs that no query ever populates, so the
-   * verdict was computed over data nobody read: EVERY tender was low risk,
-   * always. A verdict may only be stated when its inputs were actually loaded.
+   * The verdict inputs are no longer stubs: the compliance / required-document
+   * registers live in type_details.submission_readiness ON the tender row, so
+   * reading the row IS reading the registers. Honesty now splits two ways:
+   *   - inputs count as assessed when the row read succeeded (they were read);
+   *   - but a read-and-EMPTY register still carries NO verdict — "nothing
+   *     recorded" must never render as a green "On Track".
    */
-  it('reports risk as not_assessed while its inputs are not read', async () => {
+  it('a loaded row with no recorded register: inputs assessed, verdict still not_assessed', async () => {
     sb.results.commercial_tickets = { data: tenderRow(), error: null };
     sb.results.commercial_ticket_audit = { data: [], error: null };
 
     const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
 
     expect(bundle.loadState.kind).toBe('loaded');
-    // The tender itself loaded fine…
     expect(bundle.tender?.id).toBe(ALLOWED_ID);
-    // …but nothing was read for compliance or required documents.
+    // The registers were genuinely read (from the row) and are empty…
+    expect(bundle.riskInputsAssessed).toBe(true);
     expect(bundle.complianceItems).toEqual([]);
     expect(bundle.requiredDocuments).toEqual([]);
-    // So no verdict, and specifically NOT the reassuring one.
-    expect(bundle.riskInputsAssessed).toBe(false);
+    // …so there is nothing recorded to derive a verdict from.
     expect(bundle.riskLevel).toBe('not_assessed');
     expect(bundle.riskLevel).not.toBe('green');
   });
 
-  it('no query is issued for compliance items or required documents at all', async () => {
+  it('the registers are read from the tender row itself — no extra table is queried', async () => {
     sb.results.commercial_tickets = { data: tenderRow(), error: null };
     sb.results.commercial_ticket_audit = { data: [], error: null };
 
     await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
 
-    // Proof the collections are stubs, not empty reads: no table other than
-    // commercial_tickets / commercial_ticket_audit was ever touched.
     const tables = new Set(sb.calls.map(c => c.table));
     expect([...tables].sort()).toEqual(['commercial_ticket_audit', 'commercial_tickets']);
   });
 
-  it('reports the required-document set as not recorded, not as an empty one', async () => {
+  it('reports the required-document set as read (assessed) with zero rows recorded', async () => {
     sb.results.commercial_tickets = { data: tenderRow(), error: null };
     sb.results.commercial_ticket_audit = { data: [], error: null };
 
     const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
 
-    expect(bundle.requiredDocumentsAssessed).toBe(false);
+    // The set was genuinely read; "nothing recorded" is expressed by the empty
+    // array + buildRequiredDocumentsProgress's null-percent branch, not by a
+    // false "never read" flag.
+    expect(bundle.requiredDocumentsAssessed).toBe(true);
+    expect(bundle.requiredDocuments).toEqual([]);
   });
 
-  it('a bundle that never loaded carries no verdict either', async () => {
+  it('derives amber from an explicitly recorded compliance gap', async () => {
+    sb.results.commercial_tickets = {
+      data: tenderRow({
+        type_details: {
+          submission_readiness: {
+            compliance_items: [
+              { id: 'ci-1', requirement: 'ADR certified drivers', status: 'non_compliant', updated_at: 't', updated_by: 'u' },
+              { id: 'ci-2', requirement: 'ISO 9001', status: 'compliant', updated_at: 't', updated_by: 'u' },
+            ],
+          },
+        },
+      }),
+      error: null,
+    };
+    sb.results.commercial_ticket_audit = { data: [], error: null };
+
+    const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
+
+    expect(bundle.riskInputsAssessed).toBe(true);
+    expect(bundle.riskLevel).toBe('amber');
+  });
+
+  it('derives green ONLY when rows are recorded and none records a gap', async () => {
+    sb.results.commercial_tickets = {
+      data: tenderRow({
+        type_details: {
+          submission_readiness: {
+            required_documents: [
+              { id: 'rd-1', document_name: 'Company registration', status: 'uploaded', updated_at: 't', updated_by: 'u' },
+            ],
+            compliance_items: [
+              { id: 'ci-1', requirement: 'ISO 9001', status: 'compliant', updated_at: 't', updated_by: 'u' },
+            ],
+          },
+        },
+      }),
+      error: null,
+    };
+    sb.results.commercial_ticket_audit = { data: [], error: null };
+
+    const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
+
+    expect(bundle.riskLevel).toBe('green');
+  });
+
+  it('a bundle that never loaded carries no verdict — and says the register was not read', async () => {
     sb.results.commercial_tickets = { data: null, error: { message: 'permission denied' } };
     sb.results.commercial_ticket_audit = { data: [], error: null };
 
@@ -319,9 +367,13 @@ describe('risk verdict — W04-C4', () => {
     expect(bundle.loadState.kind).toBe('error');
     expect(bundle.riskLevel).toBe('not_assessed');
     expect(bundle.riskInputsAssessed).toBe(false);
+    // The loaded flag stays truthful on a failed row read.
+    expect(bundle.submissionReadiness.loaded).toBe(false);
+    expect(bundle.submissionReadiness.error).toContain('permission denied');
+    expect(bundle.requiredDocumentsAssessed).toBe(false);
   });
 
-  it('carries both honesty flags through to the workspace the page renders', async () => {
+  it('carries the honesty flags through to the workspace the page renders', async () => {
     sb.results.commercial_tickets = { data: tenderRow(), error: null };
     sb.results.commercial_ticket_audit = { data: [], error: null };
 
@@ -330,8 +382,94 @@ describe('risk verdict — W04-C4', () => {
     );
 
     expect(ws?.riskLevel).toBe('not_assessed');
-    expect(ws?.riskInputsAssessed).toBe(false);
-    expect(ws?.requiredDocumentsAssessed).toBe(false);
+    expect(ws?.riskInputsAssessed).toBe(true);
+    expect(ws?.requiredDocumentsAssessed).toBe(true);
+  });
+});
+
+describe('submission readiness register read — TCW-T1 P1', () => {
+  const REGISTER = {
+    placeholders: [
+      { id: 'ph-1', label: 'Bid validity period', status: 'approved', value: '90 days', owner: 'Amin', updated_at: '2026-08-20T10:00:00Z', updated_by: 'Amin' },
+      { id: 'ph-2', label: 'Bank guarantee ref', status: 'pending', updated_at: '2026-08-20T10:00:00Z', updated_by: 'Amin' },
+    ],
+    required_documents: [
+      { id: 'rd-1', document_name: 'Commercial registration', status: 'missing', linked_document_id: '', updated_at: '2026-08-20T10:00:00Z', updated_by: 'Amin' },
+    ],
+    compliance_items: [
+      { id: 'ci-1', requirement: 'GDP compliance', status: 'in_review', evidence: '', updated_at: '2026-08-20T10:00:00Z', updated_by: 'Amin' },
+    ],
+  };
+
+  it('exposes the raw register rows verbatim on bundle.submissionReadiness', async () => {
+    sb.results.commercial_tickets = { data: tenderRow({ type_details: { submission_readiness: REGISTER } }), error: null };
+    sb.results.commercial_ticket_audit = { data: [], error: null };
+
+    const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
+
+    expect(bundle.submissionReadiness.loaded).toBe(true);
+    expect(bundle.submissionReadiness.facet.placeholders.map(r => r.id)).toEqual(['ph-1', 'ph-2']);
+    // Raw statuses (incl. states the legacy UI unions cannot express) survive.
+    expect(bundle.submissionReadiness.facet.compliance_items[0].status).toBe('in_review');
+    expect(bundle.submissionReadiness.facet.required_documents[0].status).toBe('missing');
+  });
+
+  it('projects register rows into the legacy UI arrays with their EXACT register ids', async () => {
+    sb.results.commercial_tickets = { data: tenderRow({ type_details: { submission_readiness: REGISTER } }), error: null };
+    sb.results.commercial_ticket_audit = { data: [], error: null };
+
+    const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
+
+    // Exact ids — the id a tab passes to updatePlaceholderStatus & co. IS the register row id.
+    expect(bundle.placeholders.map(p => p.id)).toEqual(['ph-1', 'ph-2']);
+    expect(bundle.requiredDocuments.map(d => d.id)).toEqual(['rd-1']);
+    expect(bundle.complianceItems.map(c => c.id)).toEqual(['ci-1']);
+    // Documented lossy status projection (conservative for verdict types).
+    expect(bundle.placeholders.find(p => p.id === 'ph-2')?.status).toBe('missing');
+    expect(bundle.requiredDocuments[0].status).toBe('awaiting');
+    expect(bundle.complianceItems[0].status).toBe('not_reviewed');
+  });
+
+  it('drops structurally invalid stored rows from the normalized view without failing the read', async () => {
+    sb.results.commercial_tickets = {
+      data: tenderRow({
+        type_details: {
+          submission_readiness: {
+            placeholders: [
+              { label: 'row without id', status: 'pending' },
+              { id: 'ph-ok', label: 'Valid row', status: 'approved', updated_at: 't', updated_by: 'u' },
+              'not-an-object',
+            ],
+          },
+        },
+      }),
+      error: null,
+    };
+    sb.results.commercial_ticket_audit = { data: [], error: null };
+
+    const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
+
+    expect(bundle.submissionReadiness.facet.placeholders.map(r => r.id)).toEqual(['ph-ok']);
+  });
+});
+
+describe('activity / audit history — F5 single deduplicated feed (TCW-T1)', () => {
+  it('issues exactly ONE commercial_ticket_audit query and derives both projections from it', async () => {
+    sb.results.commercial_tickets = { data: tenderRow(), error: null };
+    sb.results.commercial_ticket_audit = {
+      data: [
+        { id: 'a-1', ticket_id: ALLOWED_ID, action: 'updated', field_changed: 'pricing.summary', notes: 'P&L / Pricing updated | summary', user_name: 'Amin', created_at: '2026-08-20T10:00:00Z' },
+      ],
+      error: null,
+    };
+
+    const bundle = await mod.fetchTenderWorkspaceBundleFromSupabase(ALLOWED_ID);
+
+    const auditCalls = sb.calls.filter(c => c.table === 'commercial_ticket_audit');
+    expect(auditCalls).toHaveLength(1);
+    // Both collections are projections of that one feed: same rows, same ids.
+    expect(bundle.activityEvents.map(e => e.id)).toEqual(['a-1']);
+    expect(bundle.auditEntries.map(e => e.id)).toEqual(['a-1']);
   });
 });
 
