@@ -12,8 +12,44 @@
  * the choice of path, and the distinction the old code destroyed: "no stored
  * file" and "could not reach the stored file" are different answers.
  */
-import { describe, expect, it } from "vitest";
-import { getFileUrl, hasRealFile, resolveVersionFilePath } from "./document-vault";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getFileUrl, getPersistedDocumentStatus, hasRealFile, resolveVersionFilePath, restoreDocument, softDeleteDocument } from "./document-vault";
+
+const db = vi.hoisted(() => ({
+  updates: [] as Array<{ table: string; row: Record<string, unknown>; id?: string }>,
+  error: null as { message: string } | null,
+  readRows: [{ id: "doc-1", status: "generated" }] as Array<{ id: string; status: string }>,
+}));
+
+vi.mock("./supabase", () => ({
+  supabase: {
+    from(table: string) {
+      const call = { table, row: {} as Record<string, unknown>, id: undefined as string | undefined };
+      let mode: "read" | "update" = "read";
+      const builder: any = {
+        update(row: Record<string, unknown>) { mode = "update"; call.row = row; db.updates.push(call); return builder; },
+        eq(_column: string, value: string) { call.id = value; return builder; },
+        select() { return builder; },
+        then(resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) {
+          const result = db.error
+            ? { data: null, error: db.error }
+            : mode === "update"
+              ? { data: [{ id: call.id, status: call.row.status }], error: null }
+              : { data: db.readRows.filter(row => !call.id || row.id === call.id), error: null };
+          return Promise.resolve(result).then(resolve, reject);
+        },
+      };
+      return builder;
+    },
+    storage: { from: () => ({ createSignedUrl: vi.fn() }) },
+  },
+}));
+
+beforeEach(() => {
+  db.updates.length = 0;
+  db.error = null;
+  db.readRows = [{ id: "doc-1", status: "generated" }];
+});
 
 const version = (n: number, filePath: string | null) =>
   ({ versionNumber: n, filePath, fileName: `v${n}.pdf` }) as any;
@@ -51,5 +87,28 @@ describe("resolveVersionFilePath", () => {
     expect(resolveVersionFilePath(doc, 1)).toBe("documents/kafd/quote.pdf");
     // and the helper the viewer used to rely on still cannot produce one
     expect(getFileUrl("any-id", 1)).toBeNull();
+  });
+});
+
+describe("document archive persistence", () => {
+  it("distinguishes a canonical-only Tender document from a stored vault row", async () => {
+    db.readRows = [];
+    await expect(getPersistedDocumentStatus("canonical-only")).resolves.toBeNull();
+    expect(db.updates).toHaveLength(0);
+  });
+
+  it("confirms the archived status before reporting completion", async () => {
+    await softDeleteDocument("doc-1");
+    expect(db.updates).toEqual([{ table: "generated_documents", row: { status: "archived" }, id: "doc-1" }]);
+  });
+
+  it("confirms restore before reporting completion", async () => {
+    await restoreDocument("doc-1", "superseded");
+    expect(db.updates[0]).toMatchObject({ table: "generated_documents", row: { status: "superseded" }, id: "doc-1" });
+  });
+
+  it("throws an honest error when the stored status update fails", async () => {
+    db.error = { message: "permission denied" };
+    await expect(softDeleteDocument("doc-1")).rejects.toThrow("permission denied");
   });
 });

@@ -185,6 +185,7 @@ export interface UnifiedDocument {
 
 const BUCKET = "documents";
 const DOCUMENT_TABLE = "generated_documents";
+export type PersistedDocumentStatus = "generated" | "superseded" | "archived";
 
 const documentVault: UnifiedDocument[] = [];
 let vaultLoadPromise: Promise<void> | null = null;
@@ -477,26 +478,50 @@ export async function uploadDocument(input: UploadDocumentInput): Promise<Unifie
   return doc;
 }
 
-function persistVaultStatus(docId: string, status: "generated" | "superseded" | "archived"): void {
-  void supabase
+async function persistVaultStatus(
+  docId: string,
+  status: PersistedDocumentStatus,
+): Promise<void> {
+  const { data, error } = await supabase
     .from(DOCUMENT_TABLE)
     .update({ status })
     .eq("id", docId)
-    .then(({ error }) => {
-      if (error) handleSupabaseError("documentVaultStatusUpdate", error, { silent: true });
-    });
+    .select("id, status");
+
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as Array<{ id?: string; status?: string }>;
+  if (rows.length !== 1 || rows[0]?.id !== docId || rows[0]?.status !== status) {
+    throw new Error("The document status change was not confirmed by the stored record.");
+  }
+}
+
+export async function getPersistedDocumentStatus(docId: string): Promise<PersistedDocumentStatus | null> {
+  const { data, error } = await supabase
+    .from(DOCUMENT_TABLE)
+    .select("id, status")
+    .eq("id", docId);
+
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as Array<{ id?: string; status?: string }>;
+  if (rows.length === 0) return null;
+  if (rows.length !== 1 || rows[0]?.id !== docId) {
+    throw new Error("The stored document record could not be identified uniquely.");
+  }
+  const status = rows[0]?.status;
+  if (status === "generated" || status === "superseded" || status === "archived") return status;
+  throw new Error("The stored document has an unknown status and was not changed.");
 }
 
 /**
  * Soft delete: sets status to "Archived" locally and persists the archived
  * status to generated_documents. The record is retained.
  */
-export function softDeleteDocument(docId: string): UnifiedDocument | null {
+export async function softDeleteDocument(docId: string): Promise<UnifiedDocument | null> {
+  await persistVaultStatus(docId, "archived");
   const doc = documentVault.find(d => d.id === docId);
   if (!doc) return null;
   doc.status = "Archived";
   doc.updatedAt = new Date().toISOString().slice(0, 10);
-  persistVaultStatus(docId, "archived");
   return doc;
 }
 
@@ -504,12 +529,15 @@ export function softDeleteDocument(docId: string): UnifiedDocument | null {
  * Restore: sets status back to "Draft" (safe default) locally and persists
  * the active status to generated_documents.
  */
-export function restoreDocument(docId: string): UnifiedDocument | null {
+export async function restoreDocument(
+  docId: string,
+  persistedStatus: PersistedDocumentStatus = "generated",
+): Promise<UnifiedDocument | null> {
+  await persistVaultStatus(docId, persistedStatus);
   const doc = documentVault.find(d => d.id === docId);
   if (!doc) return null;
-  doc.status = "Draft";
+  doc.status = mapVaultRowStatus(persistedStatus);
   doc.updatedAt = new Date().toISOString().slice(0, 10);
-  persistVaultStatus(docId, "generated");
   return doc;
 }
 

@@ -1,6 +1,6 @@
 # TENDER-WAVE-CLOSEOUT-REPORT
 **Wave:** HALA CLEAN APP — TENDER FUNCTIONAL CLOSURE · **Orchestrator:** Fable · **Dates:** 2026-08-20 → 2026-08-21
-**Baseline:** clean-app master `93799d3` (tag `tender-closure-start`) · **Delivered tree:** `tcw/integration` (final evidence commit atop `276a28d`)
+**Baseline:** clean-app master `93799d3` (tag `tender-closure-start`) · **Tender closure merge:** clean-app master `4f0048a` (tag `tender-closure-complete`)
 
 ## Verdict
 **PASS.** Every primary outcome of the wave mandate is met and was verified twice: once by automated gates on the integrated tree, and once by a consolidated authenticated Human UAT in the architect's own browser session, with independent read-only DB probes confirming every on-screen claim. No mock data, no simulated success, no fabricated counters; every "saved" was proven by read-back.
@@ -48,3 +48,24 @@ See TENDER-LEFT-BEHIND-INVENTORY and the drift register's P8 + UAT-observation s
 
 ## Stop
 Per the wave mandate this report ends the wave. The orchestrator does not self-approve: the wave now stops for **one bounded Codex inspection** and the architect's review. No Proposal closure, no Renewals, no Sprint X, no AI activation has been started.
+
+## Post-closeout polish (2026-08-24)
+Architect-authorized functional polish after the bounded Codex inspection:
+
+- Removed the three proven-unreachable Tender components and five zero-caller refusal APIs listed in the left-behind inventory.
+- Added confirmed, reversible archive controls for active Tenders and uploaded Tender documents. Hard deletion remains unavailable because the current database contract denies it; the UI does not claim otherwise.
+- PDF actions now attempt a direct high-fidelity browser download from the exact Preview HTML. Native Print / Save as PDF remains the honest fallback when high-fidelity browser rendering cannot return bytes.
+- Future clean-app UAT must not read credentials from the old application's environment. The earlier cleanup incident remains disclosed in the drift register; no credential or policy work was introduced here.
+
+## Adversarial repair verification (2026-08-24)
+Codex re-audited the polish changes for failure paths and repaired every defect found:
+
+- Archived Tender documents are excluded from stage evidence, readiness totals, required-document matches, document linking, and downstream Tender context.
+- Document archive now supports canonical-only records, preserves the exact prior vault status for rollback, and reports a combined error if compensation itself fails. A missing document id causes zero writes.
+- Tender Overview now provides an Archived Tenders view and a confirmed Restore command backed by stored read-back. No hard-delete capability is claimed.
+- The delayed browser-download cleanup no longer raises a teardown error after the document context has gone away.
+- The actual high-fidelity PDF renderer, not a mocked engine, produced **23,502 bytes** beginning with the valid `%PDF-` signature from the running standalone app.
+
+Current gates on the repaired tree: `tsc --noEmit` **PASS**; full suite **960/960 tests across 68 files PASS with zero unhandled errors**; production build **PASS, 2,495 modules**. Browser verification confirmed the Active/Archived Tender views render correctly. No production record was created merely to manufacture a Restore-button screenshot; the archived query, restore write, read-back, and audit contracts are covered by regression tests.
+
+No AI activation, workflow gate, approval lock, security hardening, old-app dependency, or live-data change was introduced by this repair.

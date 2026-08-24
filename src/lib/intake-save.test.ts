@@ -64,7 +64,7 @@ vi.mock("./supabase", () => ({
   supabase: { from: (table: string) => makeBuilder(table) },
 }));
 
-import { changeStage } from "./intake-save";
+import { activateTicket, changeStage, deactivateTicket } from "./intake-save";
 
 const TICKET = "a1100000-0000-4000-8000-000000000040";
 
@@ -145,5 +145,35 @@ describe("changeStage — success requires confirmed persistence", () => {
 
     expect(stageUpdates()[0].payload).toEqual({ internal_stage: "discovery" });
     expect(Object.keys(stageUpdates()[0].payload as object)).not.toContain("crm_pipeline_stage");
+  });
+});
+
+describe("ticket archive and restore — confirmed persistence", () => {
+  it("archives only after active=false reads back", async () => {
+    updateResult = { data: [{ id: TICKET, active: false }], error: null };
+    const result = await deactivateTicket(TICKET, "Tester");
+    expect(result.error).toBeNull();
+    expect(stageUpdates()[0].payload).toEqual({ active: false });
+    expect(auditWrites()).toHaveLength(1);
+  });
+
+  it("restores only after active=true reads back", async () => {
+    updateResult = { data: [{ id: TICKET, active: true }], error: null };
+    const result = await activateTicket(TICKET, "Tester");
+    expect(result.error).toBeNull();
+    expect(stageUpdates()[0].payload).toEqual({ active: true });
+    expect(auditWrites()[0].payload).toMatchObject({
+      action: "updated",
+      field_changed: "active",
+      old_value: "false",
+      new_value: "true",
+    });
+  });
+
+  it("does not claim restore success when no row was updated", async () => {
+    updateResult = { data: [], error: null };
+    const result = await activateTicket(TICKET, "Tester");
+    expect(result.error).toContain("not restored");
+    expect(auditWrites()).toHaveLength(0);
   });
 });

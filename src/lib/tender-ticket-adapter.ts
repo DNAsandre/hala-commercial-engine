@@ -87,12 +87,12 @@ export interface TenderPortfolioRead {
   withheld: number;
 }
 
-export async function fetchTenderPortfolioRead(): Promise<TenderPortfolioRead> {
+async function fetchTenderPortfolioReadByActive(active: boolean): Promise<TenderPortfolioRead> {
   const { data, error } = await supabase
     .from("commercial_tickets")
     .select("*")
     .eq("ticket_type", "tender")
-    .eq("active", true)
+    .eq("active", active)
     .neq("lineage_status", "rejected")
     .order("created_at", { ascending: false });
 
@@ -106,6 +106,14 @@ export async function fetchTenderPortfolioRead(): Promise<TenderPortfolioRead> {
     fetched: fetchedRows.length,
     withheld: fetchedRows.length - allowed.length,
   };
+}
+
+export async function fetchTenderPortfolioRead(): Promise<TenderPortfolioRead> {
+  return fetchTenderPortfolioReadByActive(true);
+}
+
+export async function fetchArchivedTenderPortfolioRead(): Promise<TenderPortfolioRead> {
+  return fetchTenderPortfolioReadByActive(false);
 }
 
 export async function fetchTenderPortfolioRows(): Promise<TenderPortfolioRow[]> {

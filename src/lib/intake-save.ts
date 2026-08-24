@@ -355,8 +355,7 @@ export async function deactivateTicket(
   // Confirmed-write shape, matching changeStage: an update matching zero rows
   // returns no error, so without the read-back this would report success — and
   // write a "deactivated" audit row — for a record it never touched. This
-  // function currently has no callers; it is corrected rather than left as a
-  // landmine for whoever wires it up.
+  // Callers receive success only after the exact row reads back inactive.
   const { data, error } = await supabase
     .from("commercial_tickets")
     .update({ active: false })
@@ -382,6 +381,45 @@ export async function deactivateTicket(
     action: "deactivated",
     user_name: userName,
     notes: reason ?? "Deactivated by user",
+  });
+
+  return { error: null };
+}
+
+/** Restore a previously archived ticket after confirmed read-back. */
+export async function activateTicket(
+  ticketId: string,
+  userName: string,
+  reason?: string,
+): Promise<{ error: string | null }> {
+  const { data, error } = await supabase
+    .from("commercial_tickets")
+    .update({ active: true })
+    .eq("id", ticketId)
+    .select("id, active");
+
+  if (error) return { error: error.message };
+
+  const rows = (data ?? []) as Array<{ active?: boolean }>;
+  if (rows.length === 0) {
+    return {
+      error:
+        "The record was not restored: no matching record was updated. " +
+        "It may have been removed, or this account may not be permitted to change it.",
+    };
+  }
+  if (rows[0]?.active !== true) {
+    return { error: "The record was not restored: it still reads as archived." };
+  }
+
+  await writeAudit({
+    ticket_id: ticketId,
+    action: "updated",
+    field_changed: "active",
+    old_value: "false",
+    new_value: "true",
+    user_name: userName,
+    notes: reason ?? "Restored by user",
   });
 
   return { error: null };

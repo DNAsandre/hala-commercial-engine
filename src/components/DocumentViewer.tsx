@@ -32,6 +32,7 @@ import {
   DOCUMENT_STATUSES,
 } from "@/lib/document-vault";
 import { useAuditLog } from "@/hooks/useSupabase";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -150,19 +151,33 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
     return () => { cancelled = true; };
   }, [doc?.id, preview.state, preview.url]);
 
-  const handleDelete = useCallback(() => {
+  const handleDelete = useCallback(async () => {
     if (!doc) return;
-    softDeleteDocument(doc.id);
-    setShowDeleteConfirm(false);
-    onDocumentChanged?.();
-    onClose();
+    try {
+      await softDeleteDocument(doc.id);
+      setShowDeleteConfirm(false);
+      onDocumentChanged?.();
+      onClose();
+      toast.success("Document archived.");
+    } catch (error) {
+      toast.error("Document was not archived.", {
+        description: error instanceof Error ? error.message : "The stored record did not confirm the change.",
+      });
+    }
   }, [doc, onClose, onDocumentChanged]);
 
-  const handleRestore = useCallback(() => {
+  const handleRestore = useCallback(async () => {
     if (!doc) return;
-    restoreDocument(doc.id);
-    onDocumentChanged?.();
-    onClose();
+    try {
+      await restoreDocument(doc.id);
+      onDocumentChanged?.();
+      onClose();
+      toast.success("Document restored.");
+    } catch (error) {
+      toast.error("Document was not restored.", {
+        description: error instanceof Error ? error.message : "The stored record did not confirm the change.",
+      });
+    }
   }, [doc, onClose, onDocumentChanged]);
 
   if (!doc) return null;

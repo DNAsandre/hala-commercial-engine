@@ -22,6 +22,12 @@ import { executeExport, type ExportRequest } from "@/lib/final-pack-export";
 import { DEFAULT_BRANDING } from "@/lib/final-pack-preview";
 import type { OutputBlock } from "@/lib/final-pack-loader";
 
+const pdfEngine = vi.hoisted(() => ({ bodyBytes: new Uint8Array([1, 2, 3]) as Uint8Array | null }));
+vi.mock("@/lib/final-pack-pdf", () => ({
+  htmlToBodyPdfBytes: vi.fn(async () => pdfEngine.bodyBytes),
+  mergeCoverAndBody: vi.fn(async (_cover: Uint8Array, body: Uint8Array) => body),
+}));
+
 // DOMPurify's default export is the un-instantiated factory outside a DOM;
 // this pass-through double lets the REAL preview/export code run unchanged.
 const purify = vi.hoisted(() => ({ failNext: false }));
@@ -144,6 +150,7 @@ beforeEach(() => {
   db.inserts.length = 0;
   db.insertError = null;
   purify.failNext = false;
+  pdfEngine.bodyBytes = new Uint8Array([1, 2, 3]);
   vi.unstubAllGlobals();
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -163,17 +170,25 @@ describe("executeExport — reports what was actually done", () => {
     expect(clicks).toContain("click");
   });
 
-  it("a PDF export via the print pipeline is NOT reported as a file being written", async () => {
+  it("a high-fidelity PDF export is handed directly to the browser for download", async () => {
+    const clicks = stubDownload();
+
+    const res = await executeExport(request({ action: "pdf", exportMode: "draft" }));
+
+    expect(res.success).toBe(true);
+    expect(res.delivered).toBe("file_downloaded");
+    expect(clicks).toContain("click");
+  });
+
+  it("falls back honestly to Print/Save-as-PDF when high-fidelity bytes are unavailable", async () => {
+    pdfEngine.bodyBytes = null;
     const printState = stubPrintWindow();
 
     const res = await executeExport(request({ action: "pdf", exportMode: "draft" }));
 
     expect(res.success).toBe(true);
     expect(printState.opened).toBe(true);
-    // The distinction the old code lost: the print pipeline was invoked; whether
-    // the user's "Save as PDF" completed is not observable from this page.
     expect(res.delivered).toBe("print_dialog_opened");
-    expect(res.delivered).not.toBe("file_downloaded");
   });
 
   it("a failed render reports failure and audits it as failed", async () => {

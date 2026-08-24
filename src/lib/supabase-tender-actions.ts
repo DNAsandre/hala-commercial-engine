@@ -387,7 +387,7 @@ async function patchCanonicalTenderFacet(
 
 async function updateTenderDocumentList(
   tenderId: string,
-  updater: (documents: TenderDocument[]) => TenderDocument[],
+  updater: (documents: TenderDocument[]) => TenderDocument[] | null,
 ): Promise<{ handled: boolean; error?: string; status?: TenderSaveStatus; before: TenderDocument[]; after: TenderDocument[] }> {
   let aggregate;
   try {
@@ -416,6 +416,15 @@ async function updateTenderDocumentList(
     ? aggregate.typeDetails.documents as TenderDocument[]
     : [];
   const after = updater(before);
+  if (after === null) {
+    return {
+      handled: true,
+      status: 'not_found',
+      error: 'The document is not recorded on this tender. Nothing was changed.',
+      before,
+      after: before,
+    };
+  }
   const result = await saveTenderSourceRecord(tenderSourceRecordStore, {
     tenderId,
     expectedRevision: aggregate.revision.token,
@@ -1256,20 +1265,34 @@ export async function markTenderDocumentSuperseded(
   return changeTenderDocumentStatus(tenderId, documentId, 'Superseded');
 }
 
-
 /**
- * 2. Update pack status
+ * Archive one document from the Tender library. The row stays recoverable in
+ * the canonical documents list; ordinary Tender views omit Archived entries.
  */
-export async function updatePackStatus(
+export async function archiveTenderDocument(
   tenderId: string,
-  packId: string,
-  packName: string,
-  previousStatus: string,
-  newStatus: string,
+  documentId: string,
 ): Promise<ActionResult> {
-  void tenderId; void packId; void packName; void previousStatus; void newStatus;
-  return disabledLegacyTenderChildWrite('Tender pack status updates');
+  let documentName = '';
+  const canonical = await updateTenderDocumentList(tenderId, documents => {
+    const existing = documents.find(doc => doc.id === documentId);
+    if (!existing) return null;
+    documentName = existing.document_name;
+    return documents.map(doc => doc.id === documentId
+      ? { ...doc, document_category: 'Archived' as const }
+      : doc);
+  });
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
+
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
+    tenderId,
+    fieldChanged: 'documents.category',
+    oldValue: 'active',
+    newValue: 'Archived',
+    notes: `Document archived | ${documentName || documentId}`,
+  }));
 }
+
 
 // ─── Submission Readiness register (TCW-T1, design pin P1) ────
 //
@@ -1564,34 +1587,6 @@ export async function updateComplianceStatus(
 }
 
 /**
- * 6. Update gate status (pass/warn/fail/mock_bypassed)
- */
-export async function updateGateStatus(
-  tenderId: string,
-  gateId: string,
-  gateName: string,
-  previousStatus: string,
-  newStatus: string,
-  reason: string = '',
-): Promise<ActionResult> {
-  void tenderId; void gateId; void gateName; void previousStatus; void newStatus; void reason;
-  return disabledLegacyTenderChildWrite('Tender submission gate updates');
-}
-
-/**
- * 7. Log advisory override (event-only, no production enforcement)
- */
-export async function logMockBypass(
-  tenderId: string,
-  gateId: string,
-  gateName: string,
-  reason: string = 'Advisory override activated',
-): Promise<ActionResult> {
-  void tenderId; void gateId; void gateName; void reason;
-  return disabledLegacyTenderChildWrite('Tender advisory overrides');
-}
-
-/**
  * 8. Create activity note.
  *
  * W04-C4: this used to call the fire-and-forget `_insertActivityEvent` and then
@@ -1614,19 +1609,6 @@ export async function createActivityNote(
     notes: [title, description].filter(Boolean).join(' | '),
   });
 }
-
-/**
- * 9. Submission simulation disabled
- */
-export async function logEmailSimulation(
-  tenderId: string,
-  emailType: string,
-  packName: string,
-): Promise<ActionResult> {
-  console.warn('[SUPA-008] logEmailSimulation disabled. No submission event was written.', { tenderId, emailType, packName });
-  return { success: false, error: 'Submission simulation is disabled until a verified submission workflow exists.' };
-}
-
 
 /**
  * 10. Internal Review — Update block review status per department

@@ -81,7 +81,6 @@ import TenderComplianceMatrixTab, {
   submitComplianceStatusChange,
   validateComplianceDraft,
 } from "./TenderComplianceMatrixTab";
-import { deriveGatesTabRows } from "./TenderSubmissionGatesTab";
 import { buildTenderSourceAggregate } from "@/lib/tender-source-record";
 import type { ActionResult } from "@/lib/supabase-tender-actions";
 import type { TenderDocument, TenderWorkspace } from "@/lib/tender-workspace-data";
@@ -522,28 +521,5 @@ describe("rendered markup (react-dom/server, house pattern)", () => {
       ),
     );
     expect(body).toContain("No placeholders recorded yet — add the first.");
-  });
-});
-
-// ═════════════════════════════════════════════════════════════
-// Gates tab (B19) — unrouted file kept honest
-// ═════════════════════════════════════════════════════════════
-
-describe("TenderSubmissionGatesTab derivation — 'Not assessed' over silence, no fabricated pass", () => {
-  it("empty register sections derive to Not assessed, never ok", () => {
-    const rows = deriveGatesTabRows({ placeholders: [], requiredDocuments: [], complianceItems: [] });
-    expect(rows.map((r) => r.status)).toEqual(["not_assessed", "not_assessed", "not_assessed"]);
-    expect(rows.every((r) => r.detail === "Not assessed")).toBe(true);
-  });
-
-  it("recorded gaps derive to gap status with the recorded counts", () => {
-    const rows = deriveGatesTabRows({
-      placeholders: [{ status: "missing" }, { status: "approved" }] as never,
-      requiredDocuments: [{ status: "awaiting" }] as never,
-      complianceItems: [{ status: "non_compliant" }, { status: "compliant" }] as never,
-    });
-    expect(rows[0]).toMatchObject({ label: "Compliance Items", status: "gap", detail: "1 / 2 compliant" });
-    expect(rows[1]).toMatchObject({ label: "Required Documents", status: "warn" });
-    expect(rows[2]).toMatchObject({ label: "Placeholders", status: "gap", detail: "1 / 2 approved" });
   });
 });

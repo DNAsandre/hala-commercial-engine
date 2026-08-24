@@ -90,6 +90,7 @@ vi.mock("./supabase", () => ({
 }));
 
 import {
+  fetchArchivedTenderPortfolioRead,
   fetchTenderPortfolioRead,
   fetchTenderPortfolioRows,
   mapCommercialTicketToTenderPortfolioRow,
@@ -204,6 +205,16 @@ describe("fetchTenderPortfolioRows — what reaches the database", () => {
     expect(row.estimated_value).toBe(4200000);
     // type_details.submission_deadline wins over target_date when present.
     expect(row.submission_deadline).toBe("2026-09-15");
+  });
+});
+
+describe("fetchArchivedTenderPortfolioRead — reversible archive view", () => {
+  it("queries the same canonical Tender source with active=false", async () => {
+    queue({ data: [tenderRow({ active: false })], error: null });
+    const read = await fetchArchivedTenderPortfolioRead();
+    expect(calls).toContainEqual(["eq", "ticket_type", "tender"]);
+    expect(calls).toContainEqual(["eq", "active", false]);
+    expect(read.rows.map(row => row.id)).toEqual([LINDE_ID]);
   });
 });
 

@@ -114,15 +114,16 @@ export function readRequiredDocumentsRegister(details: Record<string, any>): Req
  */
 export function buildSubmissionChecklist(
   registerRows: RequiredDocumentRegisterRow[],
-  uploadedDocuments: Array<{ id: string; document_name: string }>,
+  uploadedDocuments: Array<{ id: string; document_name: string; document_category?: string }>,
 ): SubmissionChecklistSummary {
   const rows = Array.isArray(registerRows) ? registerRows : [];
   if (rows.length === 0) {
     return { recorded: false, rows: [], required: 0, satisfied: 0, missing: 0 };
   }
 
-  const uploadedIds = new Set(uploadedDocuments.map(d => d.id).filter(Boolean));
-  const uploadedNames = uploadedDocuments
+  const activeDocuments = uploadedDocuments.filter(d => d.document_category !== "Archived");
+  const uploadedIds = new Set(activeDocuments.map(d => d.id).filter(Boolean));
+  const uploadedNames = activeDocuments
     .map(d => (d.document_name ?? "").toLowerCase().trim())
     .filter(Boolean);
 
@@ -574,7 +575,7 @@ function FinalPackTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalI
         documents: (() => {
           const checklist = buildSubmissionChecklist(readRequiredDocumentsRegister(tenderDetails(t)), ws.documents);
           return {
-            total_uploaded: ws.documents.length,
+            total_uploaded: ws.documents.filter(doc => doc.document_category !== "Archived").length,
             requirement_set_recorded: checklist.recorded,
             required_count: checklist.required,
             missing_count: checklist.missing,

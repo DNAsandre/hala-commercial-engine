@@ -14,7 +14,9 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  documentsForTenderStage,
   buildRequiredDocumentsProgress,
+  type TenderDocument,
   type TenderRequiredDocument,
 } from "./tender-workspace-data";
 
@@ -146,6 +148,23 @@ describe("buildRequiredDocumentsProgress — no fabricated denominator", () => {
 
     expect(p.satisfied).toBe(1);
     expect(p.percent).toBe(50);
+  });
+});
+
+describe("documentsForTenderStage — active document truth", () => {
+  it("keeps archived documents out of active stage evidence", () => {
+    const active = {
+      id: "active",
+      document_category: "Source",
+      stage_relevance: ["Identified"],
+    } as TenderDocument;
+    const archived = {
+      id: "archived",
+      document_category: "Archived",
+      stage_relevance: ["Identified"],
+    } as TenderDocument;
+
+    expect(documentsForTenderStage([active, archived], "identified").map(doc => doc.id)).toEqual(["active"]);
   });
 });
 

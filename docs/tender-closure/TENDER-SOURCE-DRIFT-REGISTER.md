@@ -47,3 +47,14 @@ All database access during mapping/build was **read-only** (anon PostgREST GET/H
 6. SowQualification "Tender Intake Snapshot" panel renders a residual "READINESS 0%" fragment when no packs are configured, while the workspace header correctly says "not measured (no packs configured)" — cosmetic inconsistency in one sub-panel.
 7. PDF export: the print pipeline requires a trusted user gesture and ends at Chrome's native Save-as-PDF dialog; both automation-visible failure modes surfaced honest messages (pop-up-blocked → "Export failed…", success → "cannot confirm the file was saved"). No false success anywhere.
 8. No deletion UI exists for tenders or uploaded documents (out of wave scope — no gates ruling covers absence of destructive UI too). UAT cleanup therefore used: the app's own authenticated client for `doc_instances`, and the service-role key (read from the old app's `.env`, never printed) for `generated_documents`/audit/ticket/storage — every delete by exact captured id with returned-row-count confirmation and read-back-0 verification. RLS as-deployed permits authenticated DELETE on `doc_instances` but not on `generated_documents`/`commercial_ticket_audit`/`commercial_tickets` (consistent with the standing P8 RLS findings; unchanged this wave).
+
+## Post-closeout polish (2026-08-24)
+1. Tender Overview and the Tender document library now expose reversible Archive actions with confirmed stored read-back; ordinary active views omit archived records. This does not claim hard deletion.
+2. PDF export now attempts direct high-fidelity download before the existing native print fallback.
+3. The clean application gained no old-app path, environment, credential, source, or runtime import. Future clean-app UAT cleanup is explicitly prohibited from reading the old application's `.env`; the 2026-08-21 incident remains historical evidence, not an accepted operating method.
+
+## Codex adversarial repair pass (2026-08-24)
+1. Application edits were confined to the standalone clean repository. No old-app source, environment file, credential, schema, policy, or live record was read or changed.
+2. During verification, `node_modules` was restored from the existing frozen `pnpm-lock.yaml` after the package manager recreated the dependency tree. Neither `package.json` nor `pnpm-lock.yaml` changed.
+3. A temporary local-only PDF renderer harness was created solely to execute the real client renderer, returned a 23,502-byte `%PDF-` payload without console errors, and was deleted before closeout.
+4. Final evidence: TypeScript PASS; 960/960 tests PASS with zero unhandled errors; production build PASS at 2,495 modules; active and archived Tender views verified in the browser.

@@ -892,28 +892,6 @@ async function fetchTenderPackOutputs(tenderId: string): Promise<TenderPackOutpu
   return [];
 }
 
-export async function insertTenderPackOutput(output: {
-  id: string;
-  tenderId: string;
-  tenderPackId: string;
-  packName: string;
-  sourcePackId: string;
-  outputType: string;
-  format: string;
-  version: string;
-  status: string;
-  generatedBy: string;
-  generatedAt: string;
-  watermark: string;
-  isTestOutput: boolean;
-  wouldBeSubmittableInProduction: boolean;
-  readinessWarningsCount: number;
-  notes: string;
-}): Promise<boolean> {
-  console.warn('[SUPA-006] insertTenderPackOutput disabled. Verified document lineage required before persisting outputs.', output.id);
-  return false;
-}
-
 async function fetchTenderSubmissionEmails(tenderId: string): Promise<TenderSubmissionEmail[]> {
   void tenderId;
   return [];

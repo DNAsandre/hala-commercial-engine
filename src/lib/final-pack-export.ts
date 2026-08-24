@@ -121,11 +121,12 @@ export async function executeExport(req: ExportRequest): Promise<ExportResult> {
     };
     const html = buildPreviewHTML(options);
 
-    // Execute the action. PDF + Print use the browser's NATIVE print pipeline
-    // (Save as PDF) — reliable, vector-quality, works in sandboxed/agent browsers.
+    // Execute the action. PDF first attempts a high-fidelity browser download
+    // over the same HTML used by Preview. Print remains the native print path,
+    // and PDF falls back to it when the browser renderer cannot return bytes.
     // FPS-007: Final PDF first attempts a server render (feature-flagged OFF by
     // default); it ALWAYS falls back to the client path, so export never gates.
-    let renderer: "client" | "server" | "client-pdf-merge" = "client";
+    let renderer: "client" | "server" | "client-pdf" | "client-pdf-merge" = "client";
     let delivered: ExportDelivery = "print_dialog_opened";
 
     // FPS-013: when this document has an imported PDF cover, a PDF export tries
@@ -163,11 +164,26 @@ export async function executeExport(req: ExportRequest): Promise<ExportResult> {
         window.open(serverResult.download_url, "_blank");
         delivered = "server_file_opened";
       } else {
-        openPrintablePdf(html, req); // client fallback
+        const downloaded = await tryDirectPdfExport(html, req);
+        if (downloaded) {
+          renderer = "client-pdf";
+          delivered = "file_downloaded";
+        } else {
+          openPrintablePdf(html, req);
+          delivered = "print_dialog_opened";
+        }
+      }
+    } else if (req.action === "pdf") {
+      const downloaded = await tryDirectPdfExport(html, req);
+      if (downloaded) {
+        renderer = "client-pdf";
+        delivered = "file_downloaded";
+      } else {
+        openPrintablePdf(html, req);
         delivered = "print_dialog_opened";
       }
     } else {
-      // Draft/Test PDF + Print → native client print.
+      // Explicit Print action → native client print.
       openPrintablePdf(html, req);
       delivered = "print_dialog_opened";
     }
@@ -313,6 +329,26 @@ async function tryImportedPdfExport(
   }
 }
 
+/**
+ * Download a high-fidelity PDF directly from the exact Preview HTML. If the
+ * browser cannot rasterize that HTML, return false and let the caller use the
+ * native Print/Save-as-PDF path. The text-only fallback is intentionally off
+ * here because a direct download must preserve the visible document layout.
+ */
+async function tryDirectPdfExport(html: string, req: ExportRequest): Promise<boolean> {
+  try {
+    const bytes = await htmlToBodyPdfBytes(html, {
+      title: req.title,
+      allowTextFallback: false,
+    });
+    if (!bytes || bytes.length === 0) return false;
+    downloadPdfBytes(bytes, buildFilename(req, "pdf"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function downloadPdfBytes(bytes: Uint8Array, filename: string): void {
   const blob = new Blob([bytes], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
@@ -324,7 +360,7 @@ function downloadPdfBytes(bytes: Uint8Array, filename: string): void {
   a.click();
   setTimeout(() => {
     URL.revokeObjectURL(url);
-    if (a.parentNode) document.body.removeChild(a);
+    if (a.parentNode) a.parentNode.removeChild(a);
   }, 100);
 }
 
@@ -347,7 +383,7 @@ function downloadHtml(html: string, req: ExportRequest): void {
   // Cleanup
   setTimeout(() => {
     URL.revokeObjectURL(url);
-    document.body.removeChild(a);
+    if (a.parentNode) a.parentNode.removeChild(a);
   }, 100);
 }
 
@@ -360,7 +396,7 @@ async function writeAuditRow(
   req: ExportRequest,
   status: "success" | "failed",
   errorText: string | undefined,
-  renderer: "client" | "server" | "client-pdf-merge",
+  renderer: "client" | "server" | "client-pdf" | "client-pdf-merge",
   exportedBlocks: OutputBlock[],
 ): Promise<{ persisted: boolean; error?: string }> {
   const watermarkMap: Record<ExportMode, string> = {

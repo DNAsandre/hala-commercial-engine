@@ -238,7 +238,10 @@ export default function TenderRequiredDocumentsTab({
     [view],
   );
   const crudBlocker = view.phase === "loaded" ? sectionCrudBlocker("required_documents", rawRows) : null;
-  const linkOptions = useMemo(() => documentLinkOptions(ws.documents), [ws.documents]);
+  const linkOptions = useMemo(
+    () => documentLinkOptions(ws.documents.filter(doc => doc.document_category !== "Archived")),
+    [ws.documents],
+  );
 
   const counts = useMemo(() => {
     const by = (s: string) => rows.filter((r) => r.status === s).length;

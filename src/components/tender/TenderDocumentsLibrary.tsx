@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Download, Edit, FileText, FolderOpen, Search, Upload } from "lucide-react";
+import { Archive, Download, Edit, FileText, FolderOpen, Loader2, Search, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { getSignedDownloadUrl } from "@/lib/document-vault";
+import { archiveTenderDocumentRecords } from "@/lib/tender-document-archive";
 import {
   displayTenderDocumentStageRelevance,
   getTenderDocumentStatusColor,
@@ -71,6 +72,7 @@ export default function TenderDocumentsLibrary({ ws, tenderId, reload, initialCa
   const [search, setSearch] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [editDoc, setEditDoc] = useState<TenderDocument | null>(null);
+  const [archivingDocId, setArchivingDocId] = useState<string | null>(null);
 
   const docs = ws.documents ?? [];
   const documentTypes = useMemo(() => Array.from(new Set(docs.map(doc => doc.document_type).filter(Boolean))).sort(), [docs]);
@@ -79,6 +81,7 @@ export default function TenderDocumentsLibrary({ ws, tenderId, reload, initialCa
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return docs.filter(doc => {
+      if (category === "all" && doc.document_category === "Archived") return false;
       if (category !== "all" && doc.document_category !== category) return false;
       if (status !== "all" && doc.status !== status) return false;
       if (stage !== "all" && !tenderDocumentMatchesStage(doc, stage)) return false;
@@ -87,6 +90,30 @@ export default function TenderDocumentsLibrary({ ws, tenderId, reload, initialCa
       return true;
     });
   }, [category, docs, search, stage, status, type]);
+
+  const archiveDocument = async (doc: TenderDocument) => {
+    if (!window.confirm(`Archive "${doc.document_name}"? The record stays recoverable and is removed from active Tender views.`)) return;
+    setArchivingDocId(doc.id);
+    try {
+      const result = await archiveTenderDocumentRecords(tenderId, doc.id);
+      if (!result.success) {
+        throw new Error(result.error || "The Tender document register did not confirm the archive.");
+      }
+      if (result.auditWarning) {
+        toast.warning("Document archived, but the history entry was not recorded.", { description: result.auditWarning });
+      } else {
+        toast.success("Document archived.");
+      }
+      await Promise.resolve(reload());
+    } catch (error) {
+      toast.error("Document was not archived.", {
+        description: error instanceof Error ? error.message : "The stored records did not confirm the change.",
+      });
+      await Promise.resolve(reload());
+    } finally {
+      setArchivingDocId(null);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -193,6 +220,18 @@ export default function TenderDocumentsLibrary({ ws, tenderId, reload, initialCa
                     <div className="flex justify-end gap-1">
                       <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setEditDoc(doc)}><Edit className="h-3.5 w-3.5" /></Button>
                       <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => openDocument(doc)}><Download className="h-3.5 w-3.5" /></Button>
+                      {doc.document_category !== "Archived" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-red-600 hover:text-red-700"
+                          title="Archive document"
+                          disabled={archivingDocId === doc.id}
+                          onClick={() => archiveDocument(doc)}
+                        >
+                          {archivingDocId === doc.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5" />}
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>

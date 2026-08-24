@@ -380,8 +380,16 @@ export function tenderDocumentMatchesStage(doc: TenderDocument, stage: string): 
   return doc.stage_relevance.includes(relevance);
 }
 
+export function isActiveTenderDocument(doc: TenderDocument): boolean {
+  return doc.document_category !== "Archived";
+}
+
+export function activeTenderDocuments(docs: TenderDocument[]): TenderDocument[] {
+  return docs.filter(isActiveTenderDocument);
+}
+
 export function documentsForTenderStage(docs: TenderDocument[], stage: string): TenderDocument[] {
-  return docs.filter(doc => tenderDocumentMatchesStage(doc, stage));
+  return docs.filter(doc => isActiveTenderDocument(doc) && tenderDocumentMatchesStage(doc, stage));
 }
 
 // Internal (non-exported): return shape of summarizeTenderDocuments.

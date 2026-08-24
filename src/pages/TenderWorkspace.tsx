@@ -108,9 +108,9 @@ function buildRequiredDocumentsSegment(ws: TenderWorkspace): StageTaskProgressSe
   const progress = buildRequiredDocumentsProgress({
     requiredDocuments: ws.requiredDocuments ?? [],
     requiredDocumentsAssessed: ws.requiredDocumentsAssessed,
-    uploadedDocumentNames: (ws.documents ?? []).map(d => d.document_name),
+    uploadedDocumentNames: (ws.documents ?? []).filter(d => d.document_category !== "Archived").map(d => d.document_name),
     // TCW-T2 (P1): lets register rows satisfy via linked_document_id.
-    uploadedDocumentIds: (ws.documents ?? []).map(d => d.id),
+    uploadedDocumentIds: (ws.documents ?? []).filter(d => d.document_category !== "Archived").map(d => d.id),
   });
   return {
     key: "required_docs",
@@ -212,7 +212,9 @@ function buildIntakeFileAuditTaskProgress(ws: TenderWorkspace): StageTaskProgres
 
 function buildDocumentReviewTaskProgress(ws: TenderWorkspace): StageTaskProgressSegment[] {
   const data = getIdentifiedDetails(ws).document_review ?? {};
-  const identifiedDocs = (ws.documents ?? []).filter(doc => doc.stage_relevance.includes("Identified"));
+  const identifiedDocs = (ws.documents ?? []).filter(
+    doc => doc.document_category !== "Archived" && doc.stage_relevance.includes("Identified"),
+  );
   const reviewedDocs = identifiedDocs.filter(doc => doc.status === "Reviewed" || doc.status === "Final").length;
   const reviewFields = [data.review_status && data.review_status !== "not_started" ? data.review_status : null, data.reviewer, data.review_date, data.key_obligations, data.review_notes];
   const missingFields = [data.missing_documents];
@@ -2074,14 +2076,6 @@ export default function TenderWorkspaceDetail() {
                       if (tabId === "placeholders") return <TenderPlaceholdersTab ws={ws} tenderId={id!} reload={reload} />;
                       if (tabId === "compliance_matrix" || tabId === "compliance_alignment" || tabId === "compliance") return <TenderComplianceMatrixTab ws={ws} tenderId={id!} reload={reload} />;
                       if (tabId === "required_documents" || tabId === "technical_evidence") return <TenderRequiredDocumentsTab ws={ws} tenderId={id!} reload={reload} />;
-                      /* TCW-T2 (P6 dead-branch removal): a
-                         `submission_readiness` route to TenderSubmissionGatesTab
-                         stood here. Orphan proof: "Submission Readiness" only
-                         exists in the final_approved tab list, and that stage's
-                         gated branch above intercepts the id first, so this
-                         route could never render. The gates tab itself is
-                         T5-owned and stays advisory; re-routing it is not part
-                         of P6's reachability additions. */
                       if (tabId === "activity" || tabId === "clarification_log" || tabId === "negotiation_log" || tabId === "submission_log" || tabId === "response_history") return <TenderActivityTab ws={ws} tenderId={id!} reload={reload} />;
                       if (tabId === "audit_trail" || tabId === "approval_record") return <TenderAuditTrailTab ws={ws} />;
                       if (tabId === "pnl_calculator") {
@@ -2189,11 +2183,6 @@ export default function TenderWorkspaceDetail() {
         targetGp={t.targetGpPercent}
         signalCount={signalCount}
       />
-      {/* TCW-T2 (P6 dead-branch removal): the TenderSplitPackGenerator and
-          TenderSubmissionEmailReview dialogs rendered here, but their ONLY
-          openers (setSplitGenOpen / setEmailSimOpen) lived inside the removed
-          dead packs branch — they could never open. */}
-
       {/* â”€â”€ CRM STAGE COGNITION DIALOG â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <Dialog open={!!crmCognitionStage} onOpenChange={() => setCrmCognitionStage(null)}>
         <DialogContent className="max-w-md">

@@ -21,6 +21,8 @@ import {
   Clock,
   Briefcase,
   AlertTriangle,
+  Archive,
+  RotateCcw,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,7 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useLocation } from "wouter";
-import { fetchTenderPortfolioRead, type TenderPortfolioRow } from "@/lib/tender-ticket-adapter";
+import { fetchArchivedTenderPortfolioRead, fetchTenderPortfolioRead, type TenderPortfolioRow } from "@/lib/tender-ticket-adapter";
 import {
   resolveReadState,
   describeRenderedCount,
@@ -43,6 +45,9 @@ import {
   sumCaptured,
 } from "@/lib/pipeline-tickets";
 import { cleanHref } from "@clean/lib/clean-routing";
+import { activateTicket, deactivateTicket } from "@/lib/intake-save";
+import { getCurrentUser } from "@/lib/auth-state";
+import { toast } from "sonner";
 
 type TenderRow = TenderPortfolioRow;
 
@@ -268,13 +273,42 @@ function TenderPreviewPopup({
   tender,
   open,
   onClose,
+  archivedMode,
+  onStatusChanged,
 }: {
   tender: TenderRow | null;
   open: boolean;
   onClose: () => void;
+  archivedMode: boolean;
+  onStatusChanged: () => void;
 }) {
   const [, navigate] = useLocation();
+  const [updating, setUpdating] = useState(false);
   if (!tender) return null;
+
+  const updateArchivedState = async () => {
+    const label = tender.title || tender.customer_name || tender.id;
+    const command = archivedMode ? "Restore" : "Archive";
+    const detail = archivedMode
+      ? "It will return to active Tender views."
+      : "It will leave active Tender views and remain available here for restoration.";
+    if (!window.confirm(`${command} "${label}"? ${detail}`)) return;
+    setUpdating(true);
+    try {
+      const result = archivedMode
+        ? await activateTicket(tender.id, getCurrentUser().name, "Restored from Archived Tenders")
+        : await deactivateTicket(tender.id, getCurrentUser().name, "Archived from Tender Overview");
+      if (result.error) throw new Error(result.error);
+      toast.success(archivedMode ? "Tender restored." : "Tender archived.");
+      onStatusChanged();
+    } catch (error) {
+      toast.error(archivedMode ? "Tender was not restored." : "Tender was not archived.", {
+        description: error instanceof Error ? error.message : "The stored record did not confirm the change.",
+      });
+    } finally {
+      setUpdating(false);
+    }
+  };
 
   const days = daysUntilDeadline(tender.submission_deadline);
   const facts = [
@@ -332,13 +366,28 @@ function TenderPreviewPopup({
         )}
 
         <div className="px-8 py-4 flex items-center justify-between">
-          <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
-          <Button
-            size="sm"
-            onClick={() => { onClose(); navigate(cleanHref(`/tenders/${tender.id}`)); }}
-          >
-            Open Tender Workspace <ChevronRight className="w-3 h-3 ml-1" />
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={archivedMode ? "text-emerald-700 hover:text-emerald-800" : "text-red-600 hover:text-red-700"}
+              onClick={updateArchivedState}
+              disabled={updating}
+            >
+              {updating
+                ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                : archivedMode
+                  ? <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                  : <Archive className="mr-1.5 h-3.5 w-3.5" />}
+              {archivedMode ? "Restore Tender" : "Archive Tender"}
+            </Button>
+          </div>
+          {!archivedMode && (
+            <Button size="sm" onClick={() => { onClose(); navigate(cleanHref(`/tenders/${tender.id}`)); }}>
+              Open Tender Workspace <ChevronRight className="w-3 h-3 ml-1" />
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>
@@ -359,13 +408,15 @@ export default function TendersOverview() {
   const [filterOwner, setFilterOwner] = useState("all");
   const [filterRegion, setFilterRegion] = useState("all");
   const [previewTender, setPreviewTender] = useState<TenderRow | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
 
-    fetchTenderPortfolioRead()
+    const read = showArchived ? fetchArchivedTenderPortfolioRead() : fetchTenderPortfolioRead();
+    read
       .then(read => {
         if (cancelled) return;
         // Keep the pre-isolation count so the empty state can say how many rows
@@ -387,7 +438,7 @@ export default function TendersOverview() {
       });
 
     return () => { cancelled = true; };
-  }, [refreshKey]);
+  }, [refreshKey, showArchived]);
 
   const crmStages = useMemo(() => Array.from(new Set(tenders.map(t => t.crm_pipeline_stage).filter(Boolean))).sort() as string[], [tenders]);
   const phases = useMemo(() => Array.from(new Set(tenders.map(t => t.phase).filter(Boolean))).sort() as string[], [tenders]);
@@ -469,13 +520,25 @@ export default function TendersOverview() {
         <div>
           <div className="flex items-center gap-2">
             <Gavel className="w-5 h-5 text-red-600" />
-            <h1 className="text-2xl font-serif font-bold">Tender Pipeline Overview</h1>
+            <h1 className="text-2xl font-serif font-bold">{showArchived ? "Archived Tenders" : "Tender Pipeline Overview"}</h1>
           </div>
           <p className="text-sm text-muted-foreground mt-0.5">
             {describeRenderedCount(filtered.length, tenders.length, "tender")} · {formatSarCompact(totalValue)} pipeline value
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant={showArchived ? "default" : "outline"}
+            size="sm"
+            onClick={() => {
+              setShowArchived(value => !value);
+              setPreviewTender(null);
+              clearFilters();
+            }}
+          >
+            {showArchived ? <Gavel className="w-3.5 h-3.5 mr-1.5" /> : <Archive className="w-3.5 h-3.5 mr-1.5" />}
+            {showArchived ? "Active Tenders" : "Archived Tenders"}
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setRefreshKey(k => k + 1)}>
             <RefreshCw className="w-3 h-3 mr-1.5" /> Refresh
           </Button>
@@ -618,6 +681,11 @@ export default function TendersOverview() {
         tender={previewTender}
         open={!!previewTender}
         onClose={() => setPreviewTender(null)}
+        archivedMode={showArchived}
+        onStatusChanged={() => {
+          setPreviewTender(null);
+          setRefreshKey(key => key + 1);
+        }}
       />
     </div>
   );

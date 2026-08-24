@@ -554,7 +554,7 @@ export default function ProposalBlockWorkbenchTab({ ws, reload, onOpenDocuments,
   }, [ws.tender]);
 
   const buildLinkedDocumentsContext = useCallback(() => {
-    const docs = ws.documents ?? [];
+    const docs = (ws.documents ?? []).filter(doc => doc.document_category !== "Archived");
     if (docs.length === 0) return "## Linked Documents\nNo documents linked";
     const lines = ["## Linked Documents"];
     docs.slice(0, 10).forEach((d: any) => {

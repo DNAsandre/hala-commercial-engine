@@ -24,7 +24,7 @@ import {
   readRequiredDocumentsRegister,
 } from "@/components/tender/FinalApprovedStage";
 
-const doc = (id: string, name: string) => ({ id, document_name: name });
+const doc = (id: string, name: string, document_category?: string) => ({ id, document_name: name, document_category });
 
 describe("readRequiredDocumentsRegister", () => {
   it("reads the canonical submission_readiness.required_documents rows", () => {
@@ -78,6 +78,15 @@ describe("buildSubmissionChecklist (register-driven, B17/B18/F4)", () => {
     );
     expect(summary.satisfied).toBe(1);
     expect(summary.rows[0].satisfiedBy).toBe("linked_document");
+  });
+
+  it("an archived document cannot satisfy readiness by id or name", () => {
+    const summary = buildSubmissionChecklist(
+      [{ id: "r1", document_name: "Performance Guarantee Confirmation", status: "missing", linked_document_id: "doc-77" }],
+      [doc("doc-77", "Performance Guarantee Confirmation.pdf", "Archived")],
+    );
+    expect(summary.satisfied).toBe(0);
+    expect(summary.rows[0].satisfiedBy).toBeNull();
   });
 
   it("FULL-name containment satisfies; the whole recorded name must appear", () => {

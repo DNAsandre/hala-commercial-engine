@@ -218,6 +218,38 @@ describe('updateTenderPhase — internal tender process tracker', () => {
   });
 });
 
+describe('archiveTenderDocument — canonical document truth', () => {
+  it('performs zero writes when the document id is not present', async () => {
+    sb.row = storedRow({ type_details: { documents: [] } });
+
+    const result = await actions.archiveTenderDocument(TENDER_ID, 'missing-doc');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not recorded');
+    expect(sb.updateCalls).toHaveLength(0);
+    expect(sb.inserts).toHaveLength(0);
+  });
+
+  it('archives the exact document and preserves its other metadata', async () => {
+    const document = {
+      id: 'doc-1',
+      tender_id: TENDER_ID,
+      document_name: 'Scope.pdf',
+      document_category: 'Source',
+      status: 'Reviewed',
+    };
+    sb.row = storedRow({ type_details: { documents: [document] } });
+
+    const result = await actions.archiveTenderDocument(TENDER_ID, 'doc-1');
+
+    expect(result.success).toBe(true);
+    const update = sb.updateCalls.find(call => call.table === 'commercial_tickets');
+    expect(update?.patch.type_details.documents).toEqual([
+      { ...document, document_category: 'Archived' },
+    ]);
+  });
+});
+
 describe('updateTenderCrmStage — CRM pipeline tracker', () => {
   it('writes crm_pipeline_stage on the requested row and touches no other stage column', async () => {
     const result = await actions.updateTenderCrmStage(TENDER_ID, 'qualified', 'proposal_sent', 'Manual CRM stage move');

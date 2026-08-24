@@ -52,6 +52,8 @@ export async function mergeCoverAndBody(
 export interface BodyPdfOptions {
   /** A filename hint (not the saved name — we control download separately). */
   title?: string;
+  /** When false, return null instead of degrading to the text-only renderer. */
+  allowTextFallback?: boolean;
 }
 
 /**
@@ -68,10 +70,11 @@ export interface BodyPdfOptions {
  */
 export async function htmlToBodyPdfBytes(
   html: string,
-  _opts: BodyPdfOptions = {},
+  opts: BodyPdfOptions = {},
 ): Promise<Uint8Array | null> {
   const hi = await tryHtml2Pdf(html);
   if (hi && hi.length > 0) return hi;
+  if (opts.allowTextFallback === false) return null;
   // Fallback: always-works text body (no html2canvas dependency).
   return textBodyPdfBytes(html);
 }

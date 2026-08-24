@@ -348,7 +348,7 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
         contextData.pricing_commercial_terms = ((t.pricingData ?? {}).commercial_terms) ?? {};
       }
 
-      const docs = ws.documents ?? [];
+      const docs = (ws.documents ?? []).filter(doc => doc.document_category !== "Archived");
       contextData.uploaded_documents = docs.map((d: any) => ({
         name: d.document_name,
         type: d.document_type,
