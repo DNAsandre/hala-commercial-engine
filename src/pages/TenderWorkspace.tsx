@@ -45,7 +45,6 @@ import TenderDocumentsLibrary from "@/components/tender/TenderDocumentsLibrary";
 import TenderDocumentDrawer from "@/components/tender/TenderDocumentDrawer";
 import TenderGlobalIntelligenceDrawer from "@/components/tender/TenderGlobalIntelligenceDrawer";
 import SuggestedProposalBlocksPanel from "@/components/tender/SuggestedProposalBlocksPanel";
-import TenderOrchestrationReviewSection from "@/components/orchestration/TenderOrchestrationReviewSection";
 import TenderKnowledgeBaseSection from "@/components/tenders/TenderKnowledgeBaseSection";
 import { toStageKey } from "@/lib/proposal-block-foundation";
 import BidDecisionTab from "@/components/tender/BidDecisionTab";
@@ -2157,9 +2156,6 @@ export default function TenderWorkspaceDetail() {
 
         {/* Tender Knowledge Base — document organization for orchestration (Wave 3). */}
         <TenderKnowledgeBaseSection tenderId={id!} documents={ws?.documents ?? []} reload={reload} />
-
-        {/* AI Orchestration Review — review-only suggestion surface (Wave 2). */}
-        <TenderOrchestrationReviewSection tenderId={id!} />
 
       </div>
       <TenderDocumentDrawer
