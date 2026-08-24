@@ -99,7 +99,7 @@ export const PROPOSAL_STAGE_TASKS: Record<string, ProposalStageTask[]> = {
     { key: "recipient_contact_log", label: "Recipient / Contact Log", tabs: [{ key: "recipient_contact_log", label: "Recipient / Contact Log" }] },
     { key: "attachments_register", label: "Attachments Register", tabs: [{ key: "attachments_register", label: "Attachments Register" }] },
     { key: "crm_sync", label: "CRM Sync", tabs: [{ key: "proposal_crm_sync", label: "CRM Sync" }] },
-    { key: "audit_trail", label: "Audit Trail", tabs: [{ key: "proposal_sent_audit_trail", label: "Audit Trail" }] },
+    { key: "delivery_notes", label: "Delivery Notes", tabs: [{ key: "proposal_sent_audit_trail", label: "Delivery Notes" }] },
     { key: "supporting_documents", label: "Supporting Documents", tabs: [{ key: "supporting_docs", label: "Supporting Documents" }] },
   ],
   negotiation: [

@@ -38,6 +38,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { toast } from "sonner";
+import { getCurrentUser } from "@/lib/auth-state";
 import { Button } from "@/components/ui/button";
 import {
   ProcessStageEmptyState,
@@ -69,17 +70,7 @@ import {
   getQuoteStageDataSignature,
   getQualifiedStageDataSignature,
   getSolutionDesignStageDataSignature,
-  loadProposalDiscoveryStageData,
-  loadProposalContractSignedStageData,
-  loadProposalCommercialApprovalStageData,
-  loadProposalGoLiveStageData,
-  loadProposalNegotiationStageData,
-  loadProposalPnlPricingStageData,
-  loadProposalDraftingStageData,
-  loadProposalSentStageData,
-  loadProposalQuoteStageData,
-  loadProposalQualifiedStageData,
-  loadProposalSolutionDesignStageData,
+  loadProposalWorkspaceSnapshot,
   mergeDiscoveryStageData,
   mergeProposalContractSignedStageData,
   mergeProposalCommercialApprovalStageData,
@@ -130,8 +121,6 @@ import {
   calcQualificationReadiness,
   calcSolutionReadiness,
   createDefaultWorkspaceData,
-  logDataChange,
-  logProposalAudit,
   type ProposalWorkspaceData,
 } from "./proposal-workspace-state";
 import { CustomerFitTab, OpportunityBriefTab, QualificationSummaryTab, RequiredInfoTab } from "./stages/QualifiedStage";
@@ -958,6 +947,7 @@ function mapGeneratedDocumentToSupportingDocument(
   row: Record<string, unknown>,
   activeProposal: ActiveProposalIdentity,
 ): SupportingDocument | null {
+  if (docText(row.status).toLowerCase() === "archived") return null;
   const decoded = decodeProposalDocumentNotes(docText(row.notes));
   if (!decoded.meta) return null;
 
@@ -970,7 +960,7 @@ function mapGeneratedDocumentToSupportingDocument(
 
   return {
     id,
-    fileName,
+    fileName: decoded.meta.displayName || fileName,
     category: (docText(row.document_type) || "Supporting") as SupportingDocCategory,
     proposalId: activeProposal.proposalId,
     proposalName: activeProposal.title,
@@ -1040,6 +1030,7 @@ export default function ProposalStageWorkbench({
   customerName,
   documents = [],
   onDocUpload,
+  onNavigateToComposer,
   wsData: externalData,
   onWsDataChange,
   onSavePnlVersions,
@@ -1057,6 +1048,7 @@ export default function ProposalStageWorkbench({
   const [documentsTruncated, setDocumentsTruncated] = useState(false);
   const [documentsLimit, setDocumentsLimit] = useState<number | null>(null);
   const [documentsReloadKey, setDocumentsReloadKey] = useState(0);
+  const [proposalDataReloadKey, setProposalDataReloadKey] = useState(0);
   const [qualifiedLoadState, setQualifiedLoadState] = useState<"idle" | "loading" | "loaded" | "error">("idle");
   const [qualifiedSaveState, setQualifiedSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [qualifiedSavedAt, setQualifiedSavedAt] = useState<string | null>(null);
@@ -1123,6 +1115,7 @@ export default function ProposalStageWorkbench({
   const [lastSavedProposalGoLiveSignature, setLastSavedProposalGoLiveSignature] = useState(() =>
     getProposalGoLiveStageDataSignature(extractProposalGoLiveStageData(createDefaultWorkspaceData()))
   );
+  const [workspaceRevision, setWorkspaceRevision] = useState<string | null>(null);
   const previousStageRef = useRef(activeStage);
 
   const proposalDataScopeId = activeProposal?.proposalId ?? workspaceId;
@@ -1259,6 +1252,7 @@ export default function ProposalStageWorkbench({
     setLocalDocuments([]);
 
     if (!proposalId) {
+      setWorkspaceRevision(null);
       setQualifiedLoadState("idle");
       setQualifiedSavedAt(null);
       setLastSavedQualifiedSignature(getQualifiedStageDataSignature(extractQualifiedStageData(wsData)));
@@ -1330,21 +1324,22 @@ export default function ProposalStageWorkbench({
     setProposalGoLiveSaveState("idle");
     setProposalGoLiveSavedAt(null);
 
-    Promise.all([
-      loadProposalQualifiedStageData(proposalId),
-      loadProposalDiscoveryStageData(proposalId),
-      loadProposalSolutionDesignStageData(proposalId),
-      loadProposalPnlPricingStageData(proposalId),
-      loadProposalQuoteStageData(proposalId),
-      loadProposalDraftingStageData(proposalId),
-      loadProposalSentStageData(proposalId),
-      loadProposalNegotiationStageData(proposalId),
-      loadProposalCommercialApprovalStageData(proposalId),
-      loadProposalContractSignedStageData(proposalId),
-      loadProposalGoLiveStageData(proposalId),
-    ])
-      .then(([qualifiedResult, discoveryResult, solutionDesignResult, pnlPricingResult, quoteResult, proposalDraftingResult, proposalSentResult, proposalNegotiationResult, proposalCommercialApprovalResult, proposalContractSignedResult, proposalGoLiveResult]) => {
+    loadProposalWorkspaceSnapshot(proposalId)
+      .then(snapshot => {
         if (cancelled) return;
+        const {
+          qualified: qualifiedResult,
+          discovery: discoveryResult,
+          solutionDesign: solutionDesignResult,
+          pnlPricing: pnlPricingResult,
+          quote: quoteResult,
+          proposalDrafting: proposalDraftingResult,
+          proposalSent: proposalSentResult,
+          negotiation: proposalNegotiationResult,
+          commercialApproval: proposalCommercialApprovalResult,
+          contractSigned: proposalContractSignedResult,
+          goLive: proposalGoLiveResult,
+        } = snapshot;
         let nextData = mergeQualifiedStageData(createDefaultWorkspaceData(), qualifiedResult.baselineData);
         nextData = mergeQualifiedStageData(nextData, qualifiedResult.savedData);
         nextData = mergeDiscoveryStageData(nextData, discoveryResult.baselineData);
@@ -1401,6 +1396,7 @@ export default function ProposalStageWorkbench({
         setProposalCommercialApprovalSavedAt(proposalCommercialApprovalResult.savedAt);
         setProposalContractSignedSavedAt(proposalContractSignedResult.savedAt);
         setProposalGoLiveSavedAt(proposalGoLiveResult.savedAt);
+        setWorkspaceRevision(qualifiedResult.revision);
         setQualifiedLoadState(qualifiedResult.ticketFound ? "loaded" : "error");
         setDiscoveryLoadState(discoveryResult.ticketFound ? "loaded" : "error");
         setSolutionDesignLoadState(solutionDesignResult.ticketFound ? "loaded" : "error");
@@ -1412,7 +1408,7 @@ export default function ProposalStageWorkbench({
         setProposalCommercialApprovalLoadState(proposalCommercialApprovalResult.ticketFound ? "loaded" : "error");
         setProposalContractSignedLoadState(proposalContractSignedResult.ticketFound ? "loaded" : "error");
         setProposalGoLiveLoadState(proposalGoLiveResult.ticketFound ? "loaded" : "error");
-        if (!qualifiedResult.ticketFound || !discoveryResult.ticketFound || !solutionDesignResult.ticketFound || !pnlPricingResult.ticketFound || !quoteResult.ticketFound || !proposalDraftingResult.ticketFound || !proposalSentResult.ticketFound || !proposalNegotiationResult.ticketFound || !proposalCommercialApprovalResult.ticketFound || !proposalContractSignedResult.ticketFound || !proposalGoLiveResult.ticketFound) {
+        if (!snapshot.ticketFound) {
           toast.error("Workspace remains editable, but saving needs a real active proposal ticket.");
         }
       })
@@ -1438,7 +1434,7 @@ export default function ProposalStageWorkbench({
     // Load is keyed to the active proposal identity only. This prevents typed
     // edits from retriggering hydration while the user is working.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProposal?.proposalId]);
+  }, [activeProposal?.proposalId, proposalDataReloadKey]);
 
   useEffect(() => {
     const defaultTask = getDefaultProposalTaskKey(activeStage);
@@ -1460,12 +1456,7 @@ export default function ProposalStageWorkbench({
     }
   }, [activeStage, activeTaskKey, activeTab, stageTasks]);
 
-  const updateWsData = (newData: ProposalWorkspaceData, stage: string, dataKey: keyof ProposalWorkspaceData) => {
-    const oldSection = wsData[dataKey];
-    const newSection = newData[dataKey];
-    if (oldSection && newSection && typeof oldSection === "object" && !Array.isArray(oldSection)) {
-      logDataChange(proposalDataScopeId, stage, String(dataKey), oldSection as Record<string, any>, newSection as Record<string, any>);
-    }
+  const updateWsData = (newData: ProposalWorkspaceData, _stage: string, _dataKey: keyof ProposalWorkspaceData) => {
     setWsData(newData);
   };
 
@@ -1485,12 +1476,16 @@ export default function ProposalStageWorkbench({
 
   const missingProposalSaveMessage = "Workspace remains editable, but saving needs a real active proposal ticket.";
   const proposalSaveTimeoutMs = 12000;
+  const proposalSaveOptions = {
+    expectedRevision: workspaceRevision,
+    actorName: getCurrentUser().name,
+  };
 
   const withProposalSaveTimeout = async <T,>(save: Promise<T>, label: string): Promise<T> => {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(
-        () => reject(new Error(`${label} did not finish within ${proposalSaveTimeoutMs / 1000}s. Please check the connection and try again.`)),
+        () => reject(new Error(`${label} did not finish within ${proposalSaveTimeoutMs / 1000}s. Its outcome is unknown; reload before retrying so a delayed save is not overwritten.`)),
         proposalSaveTimeoutMs,
       );
     });
@@ -1512,15 +1507,18 @@ export default function ProposalStageWorkbench({
     try {
       const data = extractQualifiedStageData(wsData);
       const signature = getQualifiedStageDataSignature(data);
-      const result = await withProposalSaveTimeout(saveProposalQualifiedStageData(activeProposal.proposalId, data), "Qualified stage save");
+      const result = await withProposalSaveTimeout(saveProposalQualifiedStageData(activeProposal.proposalId, data, proposalSaveOptions), "Qualified stage save");
       setLastSavedQualifiedSignature(signature);
       setQualifiedSavedAt(result.savedAt);
+      setWorkspaceRevision(result.revision);
       setQualifiedLoadState("loaded");
       setQualifiedSaveState("saved");
-      toast.success("Qualified stage saved.");
+      result.auditWritten
+        ? toast.success("Qualified stage saved.")
+        : toast.warning("Qualified stage saved, but the audit entry was not recorded.", { description: result.auditWarning });
     } catch (err: any) {
       setQualifiedSaveState("error");
-      toast.error(`Qualified stage save failed: ${err.message ?? "Unknown error"}`);
+      toast.error(`Qualified stage save could not be confirmed: ${err.message ?? "Unknown error"}`);
     }
   };
 
@@ -1534,15 +1532,18 @@ export default function ProposalStageWorkbench({
     try {
       const data = extractDiscoveryStageData(wsData);
       const signature = getDiscoveryStageDataSignature(data);
-      const result = await withProposalSaveTimeout(saveProposalDiscoveryStageData(activeProposal.proposalId, data), "Discovery stage save");
+      const result = await withProposalSaveTimeout(saveProposalDiscoveryStageData(activeProposal.proposalId, data, proposalSaveOptions), "Discovery stage save");
       setLastSavedDiscoverySignature(signature);
       setDiscoverySavedAt(result.savedAt);
+      setWorkspaceRevision(result.revision);
       setDiscoveryLoadState("loaded");
       setDiscoverySaveState("saved");
-      toast.success("Discovery stage saved.");
+      result.auditWritten
+        ? toast.success("Discovery stage saved.")
+        : toast.warning("Discovery stage saved, but the audit entry was not recorded.", { description: result.auditWarning });
     } catch (err: any) {
       setDiscoverySaveState("error");
-      toast.error(`Discovery stage save failed: ${err.message ?? "Unknown error"}`);
+      toast.error(`Discovery stage save could not be confirmed: ${err.message ?? "Unknown error"}`);
     }
   };
 
@@ -1556,15 +1557,18 @@ export default function ProposalStageWorkbench({
     try {
       const data = extractSolutionDesignStageData(wsData);
       const signature = getSolutionDesignStageDataSignature(data);
-      const result = await withProposalSaveTimeout(saveProposalSolutionDesignStageData(activeProposal.proposalId, data), "Solution Design stage save");
+      const result = await withProposalSaveTimeout(saveProposalSolutionDesignStageData(activeProposal.proposalId, data, proposalSaveOptions), "Solution Design stage save");
       setLastSavedSolutionDesignSignature(signature);
       setSolutionDesignSavedAt(result.savedAt);
+      setWorkspaceRevision(result.revision);
       setSolutionDesignLoadState("loaded");
       setSolutionDesignSaveState("saved");
-      toast.success("Solution Design stage saved.");
+      result.auditWritten
+        ? toast.success("Solution Design stage saved.")
+        : toast.warning("Solution Design stage saved, but the audit entry was not recorded.", { description: result.auditWarning });
     } catch (err: any) {
       setSolutionDesignSaveState("error");
-      toast.error(`Solution Design stage save failed: ${err.message ?? "Unknown error"}`);
+      toast.error(`Solution Design stage save could not be confirmed: ${err.message ?? "Unknown error"}`);
     }
   };
 
@@ -1578,15 +1582,18 @@ export default function ProposalStageWorkbench({
     try {
       const data = extractPnlPricingStageData(wsData);
       const signature = getPnlPricingStageDataSignature(data);
-      const result = await withProposalSaveTimeout(saveProposalPnlPricingStageData(activeProposal.proposalId, data), "P&L / Pricing stage save");
+      const result = await withProposalSaveTimeout(saveProposalPnlPricingStageData(activeProposal.proposalId, data, proposalSaveOptions), "P&L / Pricing stage save");
       setLastSavedPnlPricingSignature(signature);
       setPnlPricingSavedAt(result.savedAt);
+      setWorkspaceRevision(result.revision);
       setPnlPricingLoadState("loaded");
       setPnlPricingSaveState("saved");
-      toast.success("P&L / Pricing stage saved.");
+      result.auditWritten
+        ? toast.success("P&L / Pricing stage saved.")
+        : toast.warning("P&L / Pricing stage saved, but the audit entry was not recorded.", { description: result.auditWarning });
     } catch (err: any) {
       setPnlPricingSaveState("error");
-      toast.error(`P&L / Pricing stage save failed: ${err.message ?? "Unknown error"}`);
+      toast.error(`P&L / Pricing stage save could not be confirmed: ${err.message ?? "Unknown error"}`);
     }
   };
 
@@ -1600,15 +1607,18 @@ export default function ProposalStageWorkbench({
     try {
       const data = extractQuoteStageData(wsData);
       const signature = getQuoteStageDataSignature(data);
-      const result = await withProposalSaveTimeout(saveProposalQuoteStageData(activeProposal.proposalId, data), "Quote stage save");
+      const result = await withProposalSaveTimeout(saveProposalQuoteStageData(activeProposal.proposalId, data, proposalSaveOptions), "Quote stage save");
       setLastSavedQuoteSignature(signature);
       setQuoteSavedAt(result.savedAt);
+      setWorkspaceRevision(result.revision);
       setQuoteLoadState("loaded");
       setQuoteSaveState("saved");
-      toast.success("Quote stage saved.");
+      result.auditWritten
+        ? toast.success("Quote stage saved.")
+        : toast.warning("Quote stage saved, but the audit entry was not recorded.", { description: result.auditWarning });
     } catch (err: any) {
       setQuoteSaveState("error");
-      toast.error(`Quote stage save failed: ${err.message ?? "Unknown error"}`);
+      toast.error(`Quote stage save could not be confirmed: ${err.message ?? "Unknown error"}`);
     }
   };
 
@@ -1622,15 +1632,18 @@ export default function ProposalStageWorkbench({
     try {
       const data = extractProposalDraftingStageData(wsData);
       const signature = getProposalDraftingStageDataSignature(data);
-      const result = await withProposalSaveTimeout(saveProposalDraftingStageData(activeProposal.proposalId, data), "Proposal Drafting stage save");
+      const result = await withProposalSaveTimeout(saveProposalDraftingStageData(activeProposal.proposalId, data, proposalSaveOptions), "Proposal Drafting stage save");
       setLastSavedProposalDraftingSignature(signature);
       setProposalDraftingSavedAt(result.savedAt);
+      setWorkspaceRevision(result.revision);
       setProposalDraftingLoadState("loaded");
       setProposalDraftingSaveState("saved");
-      toast.success("Proposal Drafting stage saved.");
+      result.auditWritten
+        ? toast.success("Proposal Drafting stage saved.")
+        : toast.warning("Proposal Drafting stage saved, but the audit entry was not recorded.", { description: result.auditWarning });
     } catch (err: any) {
       setProposalDraftingSaveState("error");
-      toast.error(`Proposal Drafting stage save failed: ${err.message ?? "Unknown error"}`);
+      toast.error(`Proposal Drafting stage save could not be confirmed: ${err.message ?? "Unknown error"}`);
     }
   };
 
@@ -1644,15 +1657,18 @@ export default function ProposalStageWorkbench({
     try {
       const data = extractProposalSentStageData(wsData);
       const signature = getProposalSentStageDataSignature(data);
-      const result = await withProposalSaveTimeout(saveProposalSentStageData(activeProposal.proposalId, data), "Proposal Sent stage save");
+      const result = await withProposalSaveTimeout(saveProposalSentStageData(activeProposal.proposalId, data, proposalSaveOptions), "Proposal Sent stage save");
       setLastSavedProposalSentSignature(signature);
       setProposalSentSavedAt(result.savedAt);
+      setWorkspaceRevision(result.revision);
       setProposalSentLoadState("loaded");
       setProposalSentSaveState("saved");
-      toast.success("Proposal Sent stage saved.");
+      result.auditWritten
+        ? toast.success("Proposal Sent stage saved.")
+        : toast.warning("Proposal Sent stage saved, but the audit entry was not recorded.", { description: result.auditWarning });
     } catch (err: any) {
       setProposalSentSaveState("error");
-      toast.error(`Proposal Sent stage save failed: ${err.message ?? "Unknown error"}`);
+      toast.error(`Proposal Sent stage save could not be confirmed: ${err.message ?? "Unknown error"}`);
     }
   };
 
@@ -1666,15 +1682,18 @@ export default function ProposalStageWorkbench({
     try {
       const data = extractProposalNegotiationStageData(wsData);
       const signature = getProposalNegotiationStageDataSignature(data);
-      const result = await withProposalSaveTimeout(saveProposalNegotiationStageData(activeProposal.proposalId, data), "Negotiation stage save");
+      const result = await withProposalSaveTimeout(saveProposalNegotiationStageData(activeProposal.proposalId, data, proposalSaveOptions), "Negotiation stage save");
       setLastSavedProposalNegotiationSignature(signature);
       setProposalNegotiationSavedAt(result.savedAt);
+      setWorkspaceRevision(result.revision);
       setProposalNegotiationLoadState("loaded");
       setProposalNegotiationSaveState("saved");
-      toast.success("Negotiation stage saved.");
+      result.auditWritten
+        ? toast.success("Negotiation stage saved.")
+        : toast.warning("Negotiation stage saved, but the audit entry was not recorded.", { description: result.auditWarning });
     } catch (err: any) {
       setProposalNegotiationSaveState("error");
-      toast.error(`Negotiation stage save failed: ${err.message ?? "Unknown error"}`);
+      toast.error(`Negotiation stage save could not be confirmed: ${err.message ?? "Unknown error"}`);
     }
   };
 
@@ -1688,15 +1707,18 @@ export default function ProposalStageWorkbench({
     try {
       const data = extractProposalCommercialApprovalStageData(wsData);
       const signature = getProposalCommercialApprovalStageDataSignature(data);
-      const result = await withProposalSaveTimeout(saveProposalCommercialApprovalStageData(activeProposal.proposalId, data), "Commercial Approval stage save");
+      const result = await withProposalSaveTimeout(saveProposalCommercialApprovalStageData(activeProposal.proposalId, data, proposalSaveOptions), "Commercial Approval stage save");
       setLastSavedProposalCommercialApprovalSignature(signature);
       setProposalCommercialApprovalSavedAt(result.savedAt);
+      setWorkspaceRevision(result.revision);
       setProposalCommercialApprovalLoadState("loaded");
       setProposalCommercialApprovalSaveState("saved");
-      toast.success("Commercial Approval stage saved.");
+      result.auditWritten
+        ? toast.success("Commercial Approval stage saved.")
+        : toast.warning("Commercial Approval stage saved, but the audit entry was not recorded.", { description: result.auditWarning });
     } catch (err: any) {
       setProposalCommercialApprovalSaveState("error");
-      toast.error(`Commercial Approval stage save failed: ${err.message ?? "Unknown error"}`);
+      toast.error(`Commercial Approval stage save could not be confirmed: ${err.message ?? "Unknown error"}`);
     }
   };
 
@@ -1710,15 +1732,18 @@ export default function ProposalStageWorkbench({
     try {
       const data = extractProposalContractSignedStageData(wsData);
       const signature = getProposalContractSignedStageDataSignature(data);
-      const result = await withProposalSaveTimeout(saveProposalContractSignedStageData(activeProposal.proposalId, data), "Contract Signed stage save");
+      const result = await withProposalSaveTimeout(saveProposalContractSignedStageData(activeProposal.proposalId, data, proposalSaveOptions), "Contract Signed stage save");
       setLastSavedProposalContractSignedSignature(signature);
       setProposalContractSignedSavedAt(result.savedAt);
+      setWorkspaceRevision(result.revision);
       setProposalContractSignedLoadState("loaded");
       setProposalContractSignedSaveState("saved");
-      toast.success("Contract Signed stage saved.");
+      result.auditWritten
+        ? toast.success("Contract Signed stage saved.")
+        : toast.warning("Contract Signed stage saved, but the audit entry was not recorded.", { description: result.auditWarning });
     } catch (err: any) {
       setProposalContractSignedSaveState("error");
-      toast.error(`Contract Signed stage save failed: ${err.message ?? "Unknown error"}`);
+      toast.error(`Contract Signed stage save could not be confirmed: ${err.message ?? "Unknown error"}`);
     }
   };
 
@@ -1732,15 +1757,18 @@ export default function ProposalStageWorkbench({
     try {
       const data = extractProposalGoLiveStageData(wsData);
       const signature = getProposalGoLiveStageDataSignature(data);
-      const result = await withProposalSaveTimeout(saveProposalGoLiveStageData(activeProposal.proposalId, data), "Go-Live stage save");
+      const result = await withProposalSaveTimeout(saveProposalGoLiveStageData(activeProposal.proposalId, data, proposalSaveOptions), "Go-Live stage save");
       setLastSavedProposalGoLiveSignature(signature);
       setProposalGoLiveSavedAt(result.savedAt);
+      setWorkspaceRevision(result.revision);
       setProposalGoLiveLoadState("loaded");
       setProposalGoLiveSaveState("saved");
-      toast.success("Go-Live stage saved.");
+      result.auditWritten
+        ? toast.success("Go-Live stage saved.")
+        : toast.warning("Go-Live stage saved, but the audit entry was not recorded.", { description: result.auditWarning });
     } catch (err: any) {
       setProposalGoLiveSaveState("error");
-      toast.error(`Go-Live stage save failed: ${err.message ?? "Unknown error"}`);
+      toast.error(`Go-Live stage save could not be confirmed: ${err.message ?? "Unknown error"}`);
     }
   };
 
@@ -1764,29 +1792,7 @@ export default function ProposalStageWorkbench({
     { label: "Inner Tabs", value: String(activeTabs.length) },
     { label: "Proposal", value: activeProposal?.title ?? customerName },
     {
-      label: activeStage === "qualified"
-        ? "Qualified Readiness"
-        : activeStage === "discovery"
-          ? "Discovery Complete"
-          : activeStage === "solution_design"
-            ? "Solution Ready"
-            : activeStage === "pnl_pricing"
-              ? "Pricing Confidence"
-              : activeStage === "quote"
-                ? "Quote Readiness"
-                : activeStage === "proposal_drafting"
-                  ? "Drafting Readiness"
-                  : activeStage === "proposal_sent"
-                    ? "Sent Readiness"
-                    : activeStage === "negotiation"
-                      ? "Negotiation Readiness"
-                      : activeStage === "commercial_approval"
-                        ? "Commercial Readiness"
-                        : activeStage === "contract_signed"
-                          ? "Contract Readiness"
-                          : activeStage === "go_live"
-                            ? "Go-Live Readiness"
-                          : "Mode",
+      label: PROPOSAL_TRACKER_STAGES.some(stage => stage.key === activeStage) ? "Core Fields" : "Mode",
       value: activeStage === "qualified"
         ? `${calcQualificationReadiness(wsData)}%`
         : activeStage === "discovery"
@@ -1876,7 +1882,49 @@ export default function ProposalStageWorkbench({
     <ProcessStageEmptyState text={`${label} workspace is ready for the next data sprint.`} />
   );
 
+  const activeStageLoadState = activeStage === "qualified"
+    ? qualifiedLoadState
+    : activeStage === "discovery"
+      ? discoveryLoadState
+      : activeStage === "solution_design"
+        ? solutionDesignLoadState
+        : activeStage === "pnl_pricing"
+          ? pnlPricingLoadState
+          : activeStage === "quote"
+            ? quoteLoadState
+            : activeStage === "proposal_drafting"
+              ? proposalDraftingLoadState
+              : activeStage === "proposal_sent"
+                ? proposalSentLoadState
+                : activeStage === "negotiation"
+                  ? proposalNegotiationLoadState
+                  : activeStage === "commercial_approval"
+                    ? proposalCommercialApprovalLoadState
+                    : activeStage === "contract_signed"
+                      ? proposalContractSignedLoadState
+                      : proposalGoLiveLoadState;
+
   const renderTabContent = (tabKey: string): ReactNode => {
+    if (activeStageLoadState === "loading") {
+      return (
+        <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Reading the saved Proposal stage…
+        </div>
+      );
+    }
+    if (activeStageLoadState === "error") {
+      return (
+        <div className="flex min-h-48 flex-col items-center justify-center gap-3 px-6 text-center">
+          <AlertTriangle className="h-6 w-6 text-amber-600" />
+          <p className="max-w-xl text-sm text-muted-foreground">
+            This Proposal stage could not be read. Editing is paused so saved information is not accidentally replaced.
+          </p>
+          <Button type="button" variant="outline" size="sm" onClick={() => setProposalDataReloadKey(key => key + 1)}>
+            Retry stage data
+          </Button>
+        </div>
+      );
+    }
     if (tabKey === "supporting_docs") return renderSupportingDocuments(tabKey);
 
     switch (tabKey) {
@@ -1891,18 +1939,7 @@ export default function ProposalStageWorkbench({
       case "required_info":
         return <RequiredInfoTab data={wsData.requiredInfo} onChange={data => updateWsData({ ...wsData, requiredInfo: data }, "qualified", "requiredInfo")} />;
       case "meeting_notes":
-        return <MeetingNotesTab data={wsData.meetingNotes} onChange={data => {
-          if (data.length !== wsData.meetingNotes.length) {
-            logProposalAudit({
-              workspaceId: proposalDataScopeId,
-              action: data.length > wsData.meetingNotes.length ? "meeting_added" : "meeting_removed",
-              stage: "discovery",
-              tab: "meeting_notes",
-              details: `Meeting notes count: ${data.length}`,
-            });
-          }
-          updateWsData({ ...wsData, meetingNotes: data }, "discovery", "meetingNotes");
-        }} />;
+        return <MeetingNotesTab data={wsData.meetingNotes} onChange={data => updateWsData({ ...wsData, meetingNotes: data }, "discovery", "meetingNotes")} />;
       case "customer_needs":
         return <CustomerNeedsTab data={wsData.customerNeeds} onChange={data => updateWsData({ ...wsData, customerNeeds: data }, "discovery", "customerNeeds")} />;
       case "volumes_lanes_inventory":
@@ -1947,13 +1984,26 @@ export default function ProposalStageWorkbench({
       case "quote_service_scope":
         return <QuoteServiceScopeTab data={wsData.quoteServiceScope} onChange={data => updateWsData({ ...wsData, quoteServiceScope: data }, "quote", "quoteServiceScope")} />;
       case "quote_pricing_summary":
-        return <QuotePricingSummaryTab data={wsData.quotePricingSummary} onChange={data => updateWsData({ ...wsData, quotePricingSummary: data }, "quote", "quotePricingSummary")} />;
+        return <QuotePricingSummaryTab
+          data={wsData.quotePricingSummary}
+          workingPnl={wsData.pnlVersions.find(version => version.id === wsData.activePnlVersion) ?? wsData.pnlVersions.find(version => version.isApproved)}
+          onChange={data => updateWsData({ ...wsData, quotePricingSummary: data }, "quote", "quotePricingSummary")}
+        />;
       case "quote_terms_assumptions_exclusions":
         return <QuoteTermsAssumptionsExclusionsTab data={wsData.quoteTermsAssumptionsExclusions} onChange={data => updateWsData({ ...wsData, quoteTermsAssumptionsExclusions: data }, "quote", "quoteTermsAssumptionsExclusions")} />;
       case "quote_versions":
         return <QuoteVersionsTab data={wsData.quoteVersions} onChange={data => updateWsData({ ...wsData, quoteVersions: data }, "quote", "quoteVersions")} />;
       case "toc_planner":
-        return <TocPlannerTab data={wsData.proposalTocSections} onChange={data => updateWsData({ ...wsData, proposalTocSections: data }, "proposal_drafting", "proposalTocSections")} />;
+        return <TocPlannerTab data={wsData.proposalTocSections} onChange={data => {
+          const sectionIds = new Set(data.map(section => section.id));
+          updateWsData({
+            ...wsData,
+            proposalTocSections: data,
+            proposalSourceMap: wsData.proposalSourceMap.filter(item => !item.targetSectionId || sectionIds.has(item.targetSectionId)),
+            proposalDraftBlocks: wsData.proposalDraftBlocks.filter(item => !item.sectionId || sectionIds.has(item.sectionId)),
+            proposalEvidenceItems: wsData.proposalEvidenceItems.filter(item => !item.linkedSectionId || sectionIds.has(item.linkedSectionId)),
+          }, "proposal_drafting", "proposalTocSections");
+        }} />;
       case "source_map":
         return <SourceMapTab data={wsData.proposalSourceMap} tocSections={wsData.proposalTocSections} onChange={data => updateWsData({ ...wsData, proposalSourceMap: data }, "proposal_drafting", "proposalSourceMap")} />;
       case "block_register":
@@ -1983,19 +2033,19 @@ export default function ProposalStageWorkbench({
       case "commercial_volume":
         return <CommercialVolumeTab data={wsData.proposalCommercialVolume} onChange={data => updateWsData({ ...wsData, proposalCommercialVolume: data }, "proposal_drafting", "proposalCommercialVolume")} />;
       case "evidence_register":
-        return <EvidenceRegisterTab data={wsData.proposalEvidenceItems} tocSections={wsData.proposalTocSections} onChange={data => updateWsData({ ...wsData, proposalEvidenceItems: data }, "proposal_drafting", "proposalEvidenceItems")} />;
+        return <EvidenceRegisterTab data={wsData.proposalEvidenceItems} tocSections={wsData.proposalTocSections} documents={workbenchDocuments} onChange={data => updateWsData({ ...wsData, proposalEvidenceItems: data }, "proposal_drafting", "proposalEvidenceItems")} />;
       case "appendix_notes":
         return <AppendixNotesTab data={wsData.proposalAppendixNotes} onChange={data => updateWsData({ ...wsData, proposalAppendixNotes: data }, "proposal_drafting", "proposalAppendixNotes")} />;
       case "final_draft_review":
         return <FinalDraftReviewTab data={wsData.proposalFinalDraftReview} onChange={data => updateWsData({ ...wsData, proposalFinalDraftReview: data }, "proposal_drafting", "proposalFinalDraftReview")} />;
       case "sent_version":
-        return <SentVersionTab data={wsData.proposalSentVersion} onChange={data => updateWsData({ ...wsData, proposalSentVersion: data }, "proposal_sent", "proposalSentVersion")} />;
+        return <SentVersionTab data={wsData.proposalSentVersion} documents={workbenchDocuments} onChange={data => updateWsData({ ...wsData, proposalSentVersion: data }, "proposal_sent", "proposalSentVersion")} />;
       case "delivery_record":
         return <DeliveryRecordTab data={wsData.proposalDeliveryRecord} onChange={data => updateWsData({ ...wsData, proposalDeliveryRecord: data }, "proposal_sent", "proposalDeliveryRecord")} />;
       case "recipient_contact_log":
         return <RecipientContactLogTab data={wsData.proposalRecipientContacts} onChange={data => updateWsData({ ...wsData, proposalRecipientContacts: data }, "proposal_sent", "proposalRecipientContacts")} />;
       case "attachments_register":
-        return <AttachmentsRegisterTab data={wsData.proposalSentAttachments} onChange={data => updateWsData({ ...wsData, proposalSentAttachments: data }, "proposal_sent", "proposalSentAttachments")} />;
+        return <AttachmentsRegisterTab data={wsData.proposalSentAttachments} documents={workbenchDocuments} onChange={data => updateWsData({ ...wsData, proposalSentAttachments: data }, "proposal_sent", "proposalSentAttachments")} />;
       case "proposal_crm_sync":
         return <ProposalCrmSyncTab data={wsData.proposalCrmSyncRecord} onChange={data => updateWsData({ ...wsData, proposalCrmSyncRecord: data }, "proposal_sent", "proposalCrmSyncRecord")} />;
       case "proposal_sent_audit_trail":
@@ -2009,7 +2059,7 @@ export default function ProposalStageWorkbench({
       case "negotiation_margin_impact":
         return <NegotiationMarginImpactTab data={wsData.proposalNegotiationMarginImpact} onChange={data => updateWsData({ ...wsData, proposalNegotiationMarginImpact: data }, "negotiation", "proposalNegotiationMarginImpact")} />;
       case "revised_versions":
-        return <RevisedVersionsTab data={wsData.proposalRevisedVersions} onChange={data => updateWsData({ ...wsData, proposalRevisedVersions: data }, "negotiation", "proposalRevisedVersions")} />;
+        return <RevisedVersionsTab data={wsData.proposalRevisedVersions} documents={workbenchDocuments} onChange={data => updateWsData({ ...wsData, proposalRevisedVersions: data }, "negotiation", "proposalRevisedVersions")} />;
       case "negotiation_notes":
         return <NegotiationNotesTab data={wsData.proposalNegotiationNotes} onChange={data => updateWsData({ ...wsData, proposalNegotiationNotes: data }, "negotiation", "proposalNegotiationNotes")} />;
       case "approval_summary":
@@ -2023,7 +2073,7 @@ export default function ProposalStageWorkbench({
       case "approval_record":
         return <ApprovalRecordTab data={wsData.proposalApprovalRecord} onChange={data => updateWsData({ ...wsData, proposalApprovalRecord: data }, "commercial_approval", "proposalApprovalRecord")} />;
       case "signed_contract_reference":
-        return <SignedContractReferenceTab data={wsData.proposalSignedContractReference} onChange={data => updateWsData({ ...wsData, proposalSignedContractReference: data }, "contract_signed", "proposalSignedContractReference")} />;
+        return <SignedContractReferenceTab data={wsData.proposalSignedContractReference} documents={workbenchDocuments} onChange={data => updateWsData({ ...wsData, proposalSignedContractReference: data }, "contract_signed", "proposalSignedContractReference")} />;
       case "final_scope":
         return <FinalScopeTab data={wsData.proposalFinalContractScope} onChange={data => updateWsData({ ...wsData, proposalFinalContractScope: data }, "contract_signed", "proposalFinalContractScope")} />;
       case "final_pricing":
@@ -2120,6 +2170,12 @@ export default function ProposalStageWorkbench({
   ) : null;
 
   const proposalDraftingSaveAction = activeStage === "proposal_drafting" ? (
+    <div className="flex items-center gap-2">
+    {onNavigateToComposer && (
+      <Button type="button" variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => onNavigateToComposer("proposal")}>
+        Open PDF Studio
+      </Button>
+    )}
     <Button
       type="button"
       variant="outline"
@@ -2131,6 +2187,7 @@ export default function ProposalStageWorkbench({
       {proposalDraftingSaveState === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
       {proposalDraftingSaveState === "saving" ? "Saving" : "Save"}
     </Button>
+    </div>
   ) : null;
 
   const proposalSentSaveAction = activeStage === "proposal_sent" ? (
@@ -2204,27 +2261,27 @@ export default function ProposalStageWorkbench({
   ) : null;
 
   const activeStageSaved = activeStage === "qualified"
-    ? qualifiedLoadState === "loaded" && !qualifiedDirty
+    ? qualifiedLoadState === "loaded" && qualifiedSavedAt !== null && !qualifiedDirty
     : activeStage === "discovery"
-      ? discoveryLoadState === "loaded" && !discoveryDirty
+      ? discoveryLoadState === "loaded" && discoverySavedAt !== null && !discoveryDirty
       : activeStage === "solution_design"
-        ? solutionDesignLoadState === "loaded" && !solutionDesignDirty
+        ? solutionDesignLoadState === "loaded" && solutionDesignSavedAt !== null && !solutionDesignDirty
         : activeStage === "pnl_pricing"
-          ? pnlPricingLoadState === "loaded" && !pnlPricingDirty
+          ? pnlPricingLoadState === "loaded" && pnlPricingSavedAt !== null && !pnlPricingDirty
           : activeStage === "quote"
-            ? quoteLoadState === "loaded" && !quoteDirty
+            ? quoteLoadState === "loaded" && quoteSavedAt !== null && !quoteDirty
             : activeStage === "proposal_drafting"
-              ? proposalDraftingLoadState === "loaded" && !proposalDraftingDirty
+              ? proposalDraftingLoadState === "loaded" && proposalDraftingSavedAt !== null && !proposalDraftingDirty
               : activeStage === "proposal_sent"
-                ? proposalSentLoadState === "loaded" && !proposalSentDirty
+                ? proposalSentLoadState === "loaded" && proposalSentSavedAt !== null && !proposalSentDirty
                 : activeStage === "negotiation"
-                  ? proposalNegotiationLoadState === "loaded" && !proposalNegotiationDirty
+                  ? proposalNegotiationLoadState === "loaded" && proposalNegotiationSavedAt !== null && !proposalNegotiationDirty
                   : activeStage === "commercial_approval"
-                    ? proposalCommercialApprovalLoadState === "loaded" && !proposalCommercialApprovalDirty
+                    ? proposalCommercialApprovalLoadState === "loaded" && proposalCommercialApprovalSavedAt !== null && !proposalCommercialApprovalDirty
                     : activeStage === "contract_signed"
-                      ? proposalContractSignedLoadState === "loaded" && !proposalContractSignedDirty
+                      ? proposalContractSignedLoadState === "loaded" && proposalContractSignedSavedAt !== null && !proposalContractSignedDirty
                       : activeStage === "go_live"
-                        ? proposalGoLiveLoadState === "loaded" && !proposalGoLiveDirty
+                        ? proposalGoLiveLoadState === "loaded" && proposalGoLiveSavedAt !== null && !proposalGoLiveDirty
                       : false;
   const activeStageUnsaved = activeStage === "qualified"
     ? qualifiedDirty
@@ -2779,7 +2836,9 @@ export default function ProposalStageWorkbench({
         </div>
         <div className="rounded-md border border-border bg-muted/20 p-3">
           <p className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Documents</p>
-          <p className="mt-1 text-xs font-medium text-foreground">{workbenchDocuments.length} linked</p>
+          <p className="mt-1 text-xs font-medium text-foreground">
+            {workbenchDocuments.filter(document => document.linkedStage === activeStage || document.linkedStage === "all").length} linked to this stage
+          </p>
         </div>
       </div>
       {qualifiedStageIntel}
@@ -2854,7 +2913,6 @@ export default function ProposalStageWorkbench({
           onStageIntelOpenChange={setStageIntelOpen}
           metrics={metrics}
           onOpenDocuments={handleOpenDocuments}
-          onOpenGlobalIntel={() => toast.info("Global intelligence will show active-proposal memory only.")}
           saved={activeStageSaved}
           unsaved={activeStageUnsaved}
           actionSlot={activeStageSaveAction}

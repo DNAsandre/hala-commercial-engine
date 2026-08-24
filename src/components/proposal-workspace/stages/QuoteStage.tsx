@@ -8,6 +8,7 @@ import type {
   QuoteSummary,
   QuoteTermsAssumptionsExclusions,
   QuoteVersion,
+  PnlVersion,
 } from "../proposal-workspace-state";
 
 export function QuoteSummaryTab({
@@ -75,9 +76,11 @@ export function QuoteServiceScopeTab({
 export function QuotePricingSummaryTab({
   data,
   onChange,
+  workingPnl,
 }: {
   data: QuotePricingSummary;
   onChange: (d: QuotePricingSummary) => void;
+  workingPnl?: PnlVersion;
 }) {
   const update = (field: keyof QuotePricingSummary, value: string | number) => onChange({ ...data, [field]: value });
   const captured = [
@@ -89,6 +92,22 @@ export function QuotePricingSummaryTab({
     data.pricingSummary,
     data.pricingTableNotes,
   ].filter(Boolean).length;
+  const carryForwardPnl = () => {
+    if (!workingPnl) return;
+    const totalRevenue = workingPnl.revenue.reduce((sum, line) => sum + line.amount, 0);
+    const directCost = workingPnl.costs.reduce((sum, line) => sum + line.amount, 0);
+    const totalCost = directCost * (1 + workingPnl.overheadPercent / 100);
+    const grossProfit = totalRevenue - totalCost;
+    onChange({
+      ...data,
+      linkedPnlVersionId: workingPnl.id,
+      linkedPnlVersionName: workingPnl.name,
+      totalRevenue,
+      totalCost,
+      grossProfit,
+      grossProfitPercent: totalRevenue > 0 ? grossProfit / totalRevenue * 100 : 0,
+    });
+  };
 
   return (
     <div className="space-y-3">
@@ -116,6 +135,17 @@ export function QuotePricingSummaryTab({
         </div>
       </div>
       <Section title="Quote Pricing" defaultOpen icon={<ReceiptText className="h-4 w-4 text-[#075eea]" />}>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/20 p-3">
+          <div>
+            <p className="text-xs font-semibold">Working P&amp;L carry-forward</p>
+            <p className="text-[11px] text-muted-foreground">
+              {workingPnl ? `${workingPnl.name} is available to copy into this quote.` : "Select a working scenario in P&L / Pricing first."}
+            </p>
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={carryForwardPnl} disabled={!workingPnl}>
+            Use Working P&amp;L
+          </Button>
+        </div>
         <div className="grid gap-x-4 lg:grid-cols-2">
           <FieldRow label="P&L ID"><FieldInput value={data.linkedPnlVersionId} onChange={v => update("linkedPnlVersionId", v)} placeholder="Linked working P&L version ID" /></FieldRow>
           <FieldRow label="P&L Name"><FieldInput value={data.linkedPnlVersionName} onChange={v => update("linkedPnlVersionName", v)} placeholder="Linked working P&L version name" /></FieldRow>

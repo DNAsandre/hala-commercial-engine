@@ -105,6 +105,7 @@ export default function CleanApp() {
 
           {/* Proposal workspace — composer-free rebuild.
               Reached from PipelineCard, which emits /proposals/:id. */}
+          <Route path="/proposals/:proposalId/final-pack">{() => <LazyPage><PdfStudio /></LazyPage>}</Route>
           <Route path="/proposals/:id">{() => <LazyPage><ProposalWorkspace /></LazyPage>}</Route>
           <Route path="/proposals">{() => <Redirect to="/workspaces/proposals" />}</Route>
 

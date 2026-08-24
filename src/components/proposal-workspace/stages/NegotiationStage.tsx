@@ -10,6 +10,7 @@ import type {
   ProposalRequestedScopeChange,
   ProposalRevisedVersion,
 } from "../proposal-workspace-state";
+import { DocumentReferenceSelect, type SupportingDocument } from "../SupportingDocumentsPanel";
 
 const FEEDBACK_TYPE_OPTIONS = [
   { value: "clarification", label: "Clarification" },
@@ -252,9 +253,11 @@ export function NegotiationMarginImpactTab({
 export function RevisedVersionsTab({
   data,
   onChange,
+  documents = [],
 }: {
   data: ProposalRevisedVersion[];
   onChange: (d: ProposalRevisedVersion[]) => void;
+  documents?: SupportingDocument[];
 }) {
   const add = () => onChange([
     ...data,
@@ -285,7 +288,7 @@ export function RevisedVersionsTab({
                 <FieldInput value={item.versionLabel} onChange={v => update(index, { versionLabel: v })} placeholder="Version label" />
                 <FieldInput value={item.sourceVersion} onChange={v => update(index, { sourceVersion: v })} placeholder="Source version" />
                 <FieldSelect value={item.status} onChange={v => update(index, { status: v })} options={VERSION_STATUS_OPTIONS} placeholder="Status" />
-                <FieldInput value={item.documentRef} onChange={v => update(index, { documentRef: v })} placeholder="Document reference" />
+                <DocumentReferenceSelect value={item.documentRef} onChange={v => update(index, { documentRef: v })} documents={documents} />
                 <button type="button" aria-label="Remove revised version" onClick={() => remove(index)} className="flex h-9 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>

@@ -54,9 +54,10 @@ interface CrmPipelineStripProps {
   activeCrmStage: CRMStage;
   crmDealId?: string;
   onCrmStageChange: (stage: CRMStage) => void;
+  saving?: boolean;
 }
 
-export default function CrmPipelineStrip({ activeCrmStage, crmDealId, onCrmStageChange }: CrmPipelineStripProps) {
+export default function CrmPipelineStrip({ activeCrmStage, crmDealId, onCrmStageChange, saving = false }: CrmPipelineStripProps) {
   const isTerminal = TERMINAL_STAGES.some(s => s.key === activeCrmStage);
   const activeIdx = STRIP_STAGES.findIndex(s => s.key === activeCrmStage);
 
@@ -78,8 +79,8 @@ export default function CrmPipelineStrip({ activeCrmStage, crmDealId, onCrmStage
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm" className="text-xs h-7 gap-1 bg-emerald-600 text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-emerald-700 hover:shadow-md active:translate-y-0 active:bg-emerald-800">
-                Move CRM Stage <ChevronDown className="w-3 h-3" />
+              <Button disabled={saving} size="sm" className="text-xs h-7 gap-1 bg-emerald-600 text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-emerald-700 hover:shadow-md active:translate-y-0 active:bg-emerald-800">
+                {saving ? "Saving CRM Stage" : "Move CRM Stage"} <ChevronDown className="w-3 h-3" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="max-h-72 overflow-y-auto">
@@ -126,6 +127,7 @@ export default function CrmPipelineStrip({ activeCrmStage, crmDealId, onCrmStage
             return (
               <div key={s.key} className="flex items-center shrink-0">
                 <button
+                  disabled={saving || isCurrent}
                   onClick={() => onCrmStageChange(s.key)}
                   title={s.label}
                   className={`

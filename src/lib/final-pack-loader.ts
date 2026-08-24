@@ -268,7 +268,7 @@ export function resolveTenderCustomer(tender: Record<string, any>): string {
  * source hash is computed over. Pure — same row in, same object out.
  */
 export function buildTenderSourceData(tender: Record<string, any>): Record<string, unknown> {
-  const td = safeObject(tender?.type_details);
+  const td = normalizeCommercialTicketDetails(safeObject(tender?.type_details));
   return {
     tender_id: tender?.id,
     tender_title: resolveTenderTitle(tender),
@@ -281,6 +281,61 @@ export function buildTenderSourceData(tender: Record<string, any>): Record<strin
     solution_design_data: td.solution_design_data ?? null,
     sow_data: td.sow_data ?? null,
     tender_metadata: td.tender ?? null,
+  };
+}
+
+/**
+ * FinalPack has one document contract. Proposal work is stored under
+ * proposal_workspace, so translate that persisted truth into the established
+ * read-only document projection without writing back to the commercial ticket.
+ */
+export function normalizeCommercialTicketDetails(details: Record<string, any>): Record<string, any> {
+  const workspace = safeObject(details.proposal_workspace);
+  const draftingStage = safeObject(workspace.proposal_drafting ?? workspace.proposalDrafting);
+  const drafting = safeObject(Object.keys(safeObject(draftingStage.data)).length ? draftingStage.data : draftingStage);
+  const toc = Array.isArray(drafting.proposalTocSections) ? drafting.proposalTocSections : [];
+  const tocById = new Map(toc.map((section: any) => [safeString(section.id), safeString(section.sectionTitle)]));
+  const proposalBlocks = Array.isArray(drafting.proposalDraftBlocks)
+    ? drafting.proposalDraftBlocks.map((block: any) => ({
+        id: safeString(block.id),
+        section_key: safeString(block.sectionId),
+        block_key: safeString(block.sectionId),
+        title: safeString(block.blockTitle) || tocById.get(safeString(block.sectionId)) || "Proposal section",
+        content_html: safeString(block.content),
+        source_refs: safeString(block.sourceRefs),
+      }))
+    : [];
+
+  const pnlStage = safeObject(workspace.pnl_pricing ?? workspace.pnlPricing);
+  const pnl = safeObject(Object.keys(safeObject(pnlStage.data)).length ? pnlStage.data : pnlStage);
+  const pnlVersions = Array.isArray(pnl.pnlVersions) ? pnl.pnlVersions : [];
+  const pricingRows = pnlVersions.map((version: any) => {
+    const revenue = Array.isArray(version.revenue) ? version.revenue.reduce((sum: number, line: any) => sum + Number(line.amount || 0), 0) : 0;
+    const directCost = Array.isArray(version.costs) ? version.costs.reduce((sum: number, line: any) => sum + Number(line.amount || 0), 0) : 0;
+    const cost = directCost * (1 + Number(version.overheadPercent || 0) / 100);
+    const gp = revenue - cost;
+    return {
+      id: safeString(version.id),
+      scenario_name: safeString(version.name),
+      scenario_type: version.isApproved ? "Working scenario" : "Alternative",
+      revenue: String(revenue),
+      cost: String(cost),
+      gp_percent: revenue > 0 ? String(gp / revenue * 100) : "0",
+      recommended: version.isApproved ? "Working scenario" : "Alternative",
+      notes: safeString(version.notes),
+    };
+  });
+
+  if (proposalBlocks.length === 0 && pricingRows.length === 0) return details;
+  return {
+    ...details,
+    tender_drafting: {
+      ...safeObject(details.tender_drafting),
+      proposal_blocks: proposalBlocks,
+    },
+    pricing: pricingRows.length > 0
+      ? { ...safeObject(details.pricing), scenarios: { rows: pricingRows, selected_scenario: { selected_scenario_id: safeString(pnl.activePnlVersion) } } }
+      : details.pricing,
   };
 }
 
@@ -359,7 +414,7 @@ export async function loadTenderPack(
     return errorSnapshot(tenderId, packType, templateId, `Tender ${tenderId} not found in commercial_tickets`);
   }
 
-  const td = safeObject(tender.type_details);
+  const td = normalizeCommercialTicketDetails(safeObject(tender.type_details));
   const tenderTitle = resolveTenderTitle(tender);
   const customerName = resolveTenderCustomer(tender);
 
@@ -923,7 +978,8 @@ function extractProposalContent(block: any): string | undefined {
     block.content_html ||
     block.editor_content ||
     block.draft_content ||
-    block.content_text;
+    block.content_text ||
+    block.content;
 
   if (!content || typeof content !== "string") return undefined;
   return content;

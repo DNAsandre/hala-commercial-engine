@@ -30,6 +30,7 @@ interface ProposalTrackerStripProps {
   onStageChange: (key: string) => void;
   hydration?: ProposalTrackerHydration;
   onRetryHydration?: () => void;
+  saving?: boolean;
 }
 
 export default function ProposalTrackerStrip({
@@ -37,6 +38,7 @@ export default function ProposalTrackerStrip({
   onStageChange,
   hydration,
   onRetryHydration,
+  saving = false,
 }: ProposalTrackerStripProps) {
   const activeIdx = getProposalStageIndex(activeStage);
   const activeInfo = PROPOSAL_TRACKER_STAGES[activeIdx];
@@ -87,8 +89,8 @@ export default function ProposalTrackerStrip({
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="text-xs h-7 gap-1 border-[#075eea]/20 text-[#075eea] hover:bg-[#075eea]/10">
-                Move Proposal Stage <ChevronDown className="w-3 h-3" />
+              <Button disabled={saving || hydrationState === "loading" || hydrationState === "error"} variant="outline" size="sm" className="text-xs h-7 gap-1 border-[#075eea]/20 text-[#075eea] hover:bg-[#075eea]/10">
+                {saving ? "Saving Proposal Stage" : "Move Proposal Stage"} <ChevronDown className="w-3 h-3" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="max-h-64 overflow-y-auto">
@@ -120,6 +122,7 @@ export default function ProposalTrackerStrip({
             return (
               <div key={s.key} className="flex items-center shrink-0">
                 <button
+                  disabled={saving || isCurrent || hydrationState === "loading" || hydrationState === "error"}
                   onClick={() => onStageChange(s.key)}
                   title={s.description}
                   className={`

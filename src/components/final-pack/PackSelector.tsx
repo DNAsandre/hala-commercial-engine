@@ -26,6 +26,7 @@ import { supabase } from "@/lib/supabase";
 
 interface PackSelectorProps {
   tenderId: string;
+  sourceKind?: "tender" | "proposal";
   onInstanceReady: (instance: FinalPackInstance) => void;
 }
 
@@ -84,7 +85,7 @@ const PACK_TYPES: PackTypeOption[] = [
 // Component
 // ═══════════════════════════════════════════════════════════
 
-export default function PackSelector({ tenderId, onInstanceReady }: PackSelectorProps) {
+export default function PackSelector({ tenderId, sourceKind = "tender", onInstanceReady }: PackSelectorProps) {
   const { createInstance, listInstances, loadInstance, instance, loading, error } =
     useFinalPackInstance();
 
@@ -257,9 +258,9 @@ export default function PackSelector({ tenderId, onInstanceReady }: PackSelector
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="max-w-md text-center space-y-3">
           <AlertTriangle className="h-8 w-8 text-muted-foreground mx-auto" />
-          <h2 className="text-base font-semibold text-foreground">Tender not found</h2>
+          <h2 className="text-base font-semibold text-foreground">{sourceKind === "proposal" ? "Proposal" : "Tender"} not found</h2>
           <p className="text-sm text-muted-foreground">
-            No tender with id <span className="font-mono text-xs">{tenderId}</span> is
+            No {sourceKind} with id <span className="font-mono text-xs">{tenderId}</span> is
             visible to your account. It may have been removed, or you may not have access.
           </p>
         </div>
@@ -269,7 +270,7 @@ export default function PackSelector({ tenderId, onInstanceReady }: PackSelector
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-8">
-      {/* ── Tender Header ── */}
+      {/* ── Source record header ── */}
       <div>
         <h2 className="text-xl font-semibold text-foreground">{tenderTitle}</h2>
         <p className="text-sm text-muted-foreground mt-1">{customerName}</p>
@@ -283,7 +284,10 @@ export default function PackSelector({ tenderId, onInstanceReady }: PackSelector
         {scenarios.length === 0 ? (
           <div className="flex items-center gap-2 px-3 py-2 rounded-md fps-warning-banner">
             <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-            <span>No pricing scenarios captured for this tender. Pricing blocks will show "Not captured yet".</span>
+            <span>
+              No pricing scenarios captured for this {sourceKind}. Pricing blocks will show
+              {" \"Not captured yet\"."}
+            </span>
           </div>
         ) : (
           <select
@@ -306,7 +310,7 @@ export default function PackSelector({ tenderId, onInstanceReady }: PackSelector
         <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-500/40 bg-amber-500/5 text-amber-700 text-xs">
           <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
           <span>
-            Existing documents for this tender could not be listed ({listError}). Any that
+            Existing documents for this {sourceKind} could not be listed ({listError}). Any that
             exist are not shown — creating a new pack still works.
           </span>
         </div>

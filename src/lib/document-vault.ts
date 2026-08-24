@@ -427,6 +427,12 @@ export async function uploadDocument(input: UploadDocumentInput): Promise<Unifie
 
   if (dbErr || !created) {
     console.error("[document-vault] Document record insert failed:", dbErr);
+    const { error: rollbackError } = await supabase.storage
+      .from(BUCKET)
+      .remove([storagePath]);
+    if (rollbackError) {
+      throw new Error(`${dbErr?.message || "Failed to create document record"}. Uploaded file rollback also failed: ${rollbackError.message}`);
+    }
     throw new Error(dbErr?.message || "Failed to create document record");
   }
 

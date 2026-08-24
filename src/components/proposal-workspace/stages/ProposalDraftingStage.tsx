@@ -12,6 +12,7 @@ import type {
   ProposalTechnicalVolume,
   ProposalTocSection,
 } from "../proposal-workspace-state";
+import { DocumentReferenceSelect, type SupportingDocument } from "../SupportingDocumentsPanel";
 
 const VOLUME_OPTIONS = [
   { value: "technical", label: "Technical" },
@@ -388,10 +389,12 @@ export function EvidenceRegisterTab({
   data,
   tocSections,
   onChange,
+  documents = [],
 }: {
   data: ProposalEvidenceItem[];
   tocSections: ProposalTocSection[];
   onChange: (d: ProposalEvidenceItem[]) => void;
+  documents?: SupportingDocument[];
 }) {
   const sectionOptions = tocSections.map(section => ({ value: section.id, label: section.sectionTitle || "Untitled section" }));
   const add = () => onChange([
@@ -437,7 +440,7 @@ export function EvidenceRegisterTab({
                 </button>
               </div>
               <div className="mt-2 grid gap-2 lg:grid-cols-2">
-                <FieldInput value={item.documentRef} onChange={v => update(index, { documentRef: v })} placeholder="Document reference" />
+                <DocumentReferenceSelect value={item.documentRef} onChange={v => update(index, { documentRef: v })} documents={documents} />
                 <FieldInput value={item.notes} onChange={v => update(index, { notes: v })} placeholder="Evidence notes" />
               </div>
             </div>

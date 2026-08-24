@@ -45,6 +45,7 @@ export type SupportingDocCategory = typeof SUPPORTING_DOC_CATEGORIES[number] | (
 const PROPOSAL_DOCUMENT_META_PREFIX = "HALA_PROPOSAL_DOCUMENT_META:";
 
 interface ProposalDocumentMeta {
+  displayName?: string;
   linkedStage: string;
   linkedTab: string;
   usedInPricing: boolean;
@@ -80,6 +81,7 @@ export function decodeProposalDocumentNotes(notes: string | null | undefined): {
     return {
       notes: lines.filter((_, index) => index !== markerIndex).join("\n").trim(),
       meta: {
+        displayName: typeof parsed.displayName === "string" ? parsed.displayName.trim() : "",
         linkedStage,
         linkedTab,
         usedInPricing: parsed.usedInPricing === true,
@@ -110,6 +112,31 @@ export interface SupportingDocument {
   usedInProposal: boolean;
   confidenceLevel: "high" | "medium" | "low";
   expiryDate?: string;
+}
+
+export function DocumentReferenceSelect({
+  value,
+  onChange,
+  documents,
+  placeholder = "Select a stored document",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  documents: SupportingDocument[];
+  placeholder?: string;
+}) {
+  const selectedExists = documents.some(document => document.id === value);
+  return (
+    <select
+      value={value}
+      onChange={event => onChange(event.target.value)}
+      className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs text-foreground"
+    >
+      <option value="">{placeholder}</option>
+      {value && !selectedExists && <option value={value}>Legacy reference: {value}</option>}
+      {documents.map(document => <option key={document.id} value={document.id}>{document.fileName}</option>)}
+    </select>
+  );
 }
 
 interface SupportingDocumentsPanelProps {
@@ -198,7 +225,7 @@ export default function SupportingDocumentsPanel({
 
     const documentScopeId = proposalId ?? workspaceId ?? tenderId ?? null;
     const documentScopeName = proposalName ?? workspaceName ?? tenderName ?? null;
-    const resolvedCustomerId = customerId ?? proposalId ?? workspaceId ?? tenderId ?? null;
+    const resolvedCustomerId = customerId ?? null;
     const resolvedCustomerName = customerName ?? proposalName ?? workspaceName ?? tenderName ?? null;
     if (!documentScopeId || !resolvedCustomerId || !resolvedCustomerName) {
       toast.error("Active proposal context is missing. Document upload was not started.");
@@ -220,6 +247,7 @@ export default function SupportingDocumentsPanel({
         dealId: proposalId ?? null,
         dealName: proposalName ?? null,
         notes: encodeProposalDocumentNotes(uploadNotes, {
+          displayName: uploadName.trim(),
           linkedStage,
           linkedTab,
           usedInPricing: uploadUsedPricing,

@@ -70,7 +70,8 @@ vi.mock("@/lib/supabase", () => {
       if (call.op === "update") {
         if (db.updateError) return { data: null, error: db.updateError };
         // PostgREST semantics: an UPDATE that matches no row is NOT an error.
-        if (db.updateMatchesNoRow || !row) return { data: null, error: null };
+        const matches = row && call.filters.every(([column, value]) => row[column] === value);
+        if (db.updateMatchesNoRow || !matches) return { data: null, error: null };
         for (const [column, value] of Object.entries(call.payload ?? {})) {
           row[column] = db.storeValueAs ?? value;
         }
@@ -97,6 +98,10 @@ vi.mock("@/lib/supabase", () => {
         return builder;
       },
       eq(column: string, value: unknown) {
+        call.filters.push([column, value]);
+        return builder;
+      },
+      is(column: string, value: unknown) {
         call.filters.push([column, value]);
         return builder;
       },
@@ -195,7 +200,7 @@ describe("changeProposalTrackerStage — success only after confirmed persistenc
     expect(writes()).toHaveLength(1);
     expect(writes()[0].table).toBe("commercial_tickets");
     expect(writes()[0].payload).toEqual({ internal_stage: "discovery" });
-    expect(writes()[0].filters).toEqual([["id", TICKET_ID]]);
+    expect(writes()[0].filters).toEqual([["id", TICKET_ID], ["internal_stage", "qualified"]]);
     expect(writes()[0].projection).toBe("id,internal_stage");
     // The stored row moved, and ONLY that column moved.
     expect(db.rows.get(TICKET_ID)!.internal_stage).toBe("discovery");
@@ -255,10 +260,38 @@ describe("changeProposalTrackerStage — success only after confirmed persistenc
 
     expect(result.ok).toBe(false);
     expect(result.persistedValue).toBeNull();
-    expect(result.message).toMatch(/updated no row/i);
-    expect(result.message).toMatch(/NOT saved/);
+    expect(result.message).toMatch(/changed after you loaded/i);
     expect(inserts()).toHaveLength(0);
     expect(db.rows.get(TICKET_ID)!.internal_stage).toBe("qualified");
+  });
+
+  it("does not write or audit when the requested stage is already current", async () => {
+    const result = await changeProposalTrackerStage({
+      ticketId: TICKET_ID,
+      column: "internal_stage",
+      oldValue: "qualified",
+      newValue: "qualified",
+      userName: "QA Runner",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(writes()).toHaveLength(0);
+    expect(inserts()).toHaveLength(0);
+  });
+
+  it("rejects a stale tracker write and preserves the newer stored stage", async () => {
+    db.rows.get(TICKET_ID)!.internal_stage = "solution_design";
+    const result = await changeProposalTrackerStage({
+      ticketId: TICKET_ID,
+      column: "internal_stage",
+      oldValue: "qualified",
+      newValue: "discovery",
+      userName: "QA Runner",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(db.rows.get(TICKET_ID)!.internal_stage).toBe("solution_design");
+    expect(inserts()).toHaveLength(0);
   });
 
   it("reports FAILURE when the stored value is not the value that was asked for", async () => {

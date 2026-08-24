@@ -7,13 +7,16 @@ import type {
   ProposalFinalContractTerms,
   ProposalSignedContractReference,
 } from "../proposal-workspace-state";
+import { DocumentReferenceSelect, type SupportingDocument } from "../SupportingDocumentsPanel";
 
 export function SignedContractReferenceTab({
   data,
   onChange,
+  documents = [],
 }: {
   data: ProposalSignedContractReference;
   onChange: (d: ProposalSignedContractReference) => void;
+  documents?: SupportingDocument[];
 }) {
   const update = (field: keyof ProposalSignedContractReference, value: string) => onChange({ ...data, [field]: value });
 
@@ -47,7 +50,7 @@ export function SignedContractReferenceTab({
           </FieldRow>
         </div>
         <FieldRow label="Document Ref">
-          <FieldInput value={data.contractDocumentRef} onChange={v => update("contractDocumentRef", v)} placeholder="Document name, link, or register reference" />
+          <DocumentReferenceSelect value={data.contractDocumentRef} onChange={v => update("contractDocumentRef", v)} documents={documents} />
         </FieldRow>
         <FieldRow label="Notes">
           <FieldTextarea value={data.notes} onChange={v => update("notes", v)} placeholder="Signed-contract reference notes" rows={4} />

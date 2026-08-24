@@ -52,7 +52,9 @@ function documentRow(id: string, workspaceId: string) {
     generated_at: "2026-07-13T00:00:00.000Z",
     generated_by_name: "QA Runner",
     version_number: 1,
+    status: "generated",
     notes: `HALA_PROPOSAL_DOCUMENT_META:${JSON.stringify({
+      displayName: `Named ${id}`,
       linkedStage: "qualified",
       linkedTab: "supporting_docs",
       usedInPricing: false,
@@ -88,9 +90,20 @@ describe("fetchProposalStageDocuments", () => {
     const result = await fetchProposalStageDocuments(IDENTITY, IDENTITY.proposalId);
 
     expect(result.documents).toHaveLength(1);
-    expect(result.documents[0].fileName).toBe("doc-1.pdf");
+    expect(result.documents[0].fileName).toBe("Named doc-1");
     expect(result.documents[0].proposalId).toBe(IDENTITY.proposalId);
     expect(result.truncated).toBe(false);
+  });
+
+  it("excludes archived documents from the Proposal evidence set", async () => {
+    runtime.pages.set(IDENTITY.proposalId, {
+      rows: [{ ...documentRow("doc-live", IDENTITY.proposalId) }, { ...documentRow("doc-archived", IDENTITY.proposalId), status: "archived" }],
+      limit: 200,
+      truncated: false,
+    });
+
+    const result = await fetchProposalStageDocuments(IDENTITY, IDENTITY.proposalId);
+    expect(result.documents.map(document => document.id)).toEqual(["doc-live"]);
   });
 
   it("propagates truncation declared for ANY scope, with the server's cap", async () => {

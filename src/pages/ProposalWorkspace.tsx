@@ -88,7 +88,7 @@ import {
   readProposalTrackerStages,
 } from "@/lib/proposal-workspace-persistence";
 import {
-  createDefaultWorkspaceData, type ProposalWorkspaceData, logProposalAudit,
+  createDefaultWorkspaceData, type ProposalWorkspaceData,
   calcQualificationReadiness, calcDiscoveryCompleteness, calcSolutionReadiness, calcPricingConfidence,
   // SC-01 W04 (T08-B correction pass): honest-render decisions live in the
   // state module so they can be asserted by test — there is no jsdom here.
@@ -263,6 +263,7 @@ export default function WorkspaceDetail() {
     message: string | null;
   }>({ state: "loading", message: null });
   const [trackerReloadKey, setTrackerReloadKey] = useState(0);
+  const [trackerSaving, setTrackerSaving] = useState<"crm" | "internal" | null>(null);
   // Whether `crm_pipeline_stage` is actually recorded on the ticket. The
   // workspace mapper turns a NULL column into "prospecting", which would read
   // as a real CRM position; this keeps the difference visible.
@@ -400,6 +401,7 @@ export default function WorkspaceDetail() {
         return;
       }
       setCrmStageRecorded(stages.crmPipelineStage !== null);
+      if (stages.crmPipelineStage) setCrmPipelineStage(stages.crmPipelineStage as import("@/lib/store").CRMStage);
       if (stages.internalStage) {
         setProposalStage(stages.internalStage);
         setTrackerHydration({ state: "persisted", message: null });
@@ -499,6 +501,7 @@ export default function WorkspaceDetail() {
   //    state and success are reported only after the confirmed write. ──
   const handleCrmStageChange = async (newStage: import("@/lib/store").CRMStage) => {
     const oldStage = crmPipelineStage;
+    if (trackerSaving || newStage === oldStage) return;
     const ticketId = ws.crmDealId;
     if (!ticketId) {
       toast.error("CRM stage not saved", { description: "No commercial ticket is linked to this workspace." });
@@ -506,6 +509,7 @@ export default function WorkspaceDetail() {
     }
     // Confirmed write: the displayed stage, the audit entry and the success
     // message all wait for the value the database returned.
+    setTrackerSaving("crm");
     const saved = await changeProposalTrackerStage({
       ticketId,
       column: "crm_pipeline_stage",
@@ -513,22 +517,13 @@ export default function WorkspaceDetail() {
       newValue: newStage,
       userName: getCurrentUser().name,
     });
+    setTrackerSaving(null);
     if (!saved.ok) {
       toast.error("CRM stage NOT saved", { description: saved.message });
       return;
     }
     setCrmPipelineStage(newStage);
     setCrmStageRecorded(true);
-    logProposalAudit({
-      workspaceId: ws.id,
-      action: "crm_stage_change",
-      stage: newStage,
-      tab: "crm_pipeline",
-      field: "pipeline_stage",
-      oldValue: oldStage,
-      newValue: newStage,
-      details: `CRM Pipeline stage moved: ${getCrmStageLabel(oldStage as any)} → ${getCrmStageLabel(newStage)}`,
-    });
     toast.success(`CRM Pipeline → ${getCrmStageLabel(newStage)}`, { description: saved.message });
   };
 
@@ -536,11 +531,13 @@ export default function WorkspaceDetail() {
   //    pipeline). Persists FIRST; state changes only after confirmed write. ──
   const handleProposalStageChange = async (newStage: string) => {
     const oldStage = proposalStage;
+    if (trackerSaving || newStage === oldStage || trackerHydration.state === "loading" || trackerHydration.state === "error") return;
     const ticketId = ws.crmDealId;
     if (!ticketId) {
       toast.error("Internal stage not saved", { description: "No commercial ticket is linked to this workspace." });
       return;
     }
+    setTrackerSaving("internal");
     const saved = await changeProposalTrackerStage({
       ticketId,
       column: "internal_stage",
@@ -548,22 +545,13 @@ export default function WorkspaceDetail() {
       newValue: newStage,
       userName: getCurrentUser().name,
     });
+    setTrackerSaving(null);
     if (!saved.ok) {
       toast.error("Internal stage NOT saved", { description: saved.message });
       return;
     }
     setProposalStage(newStage);
     setTrackerHydration({ state: "persisted", message: null });
-    logProposalAudit({
-      workspaceId: ws.id,
-      action: "proposal_stage_change",
-      stage: newStage,
-      tab: "internal_tracker",
-      field: "stage",
-      oldValue: oldStage,
-      newValue: newStage,
-      details: `Internal Proposal stage moved: ${getProposalStageLabel(oldStage)} → ${getProposalStageLabel(newStage)}`,
-    });
     toast.success(`Internal stage → ${getProposalStageLabel(newStage)}`, { description: saved.message });
   };
   // ── Customer master record ──
@@ -602,7 +590,7 @@ export default function WorkspaceDetail() {
   const isStrictMode = getStrictMode();
 
   // SLA Integrity Guard computed values
-  const pricingLocked = isPricingLocked(ws);
+  const pricingLocked = !isCommercial && isPricingLocked(ws);
   const pricingLockReason = getPricingLockReason(ws);
   const currentUserRole = getCurrentUser().role as import("@/lib/store").UserRole;
   const isAdminUser = currentUserRole === "admin";
@@ -989,6 +977,7 @@ export default function WorkspaceDetail() {
             activeCrmStage={crmPipelineStage}
             crmDealId={ws.crmDealId}
             onCrmStageChange={handleCrmStageChange}
+            saving={trackerSaving === "crm"}
           />
 
           {/* ═══ SECOND TRACKER: INTERNAL PROPOSAL TRACKER (11 stages) ═══ */}
@@ -997,6 +986,7 @@ export default function WorkspaceDetail() {
             onStageChange={handleProposalStageChange}
             hydration={trackerHydration}
             onRetryHydration={() => setTrackerReloadKey(key => key + 1)}
+            saving={trackerSaving === "internal"}
           />
           </>
         ) : (
@@ -1023,6 +1013,7 @@ export default function WorkspaceDetail() {
             customerName={ws.customerName}
             wsData={proposalWsData}
             onWsDataChange={updateProposalWsData}
+            onNavigateToComposer={() => navigate(cleanHref(`/proposals/${activeProposalIdentity?.proposalId ?? id}/final-pack`))}
           />
         )}
 
@@ -1940,12 +1931,8 @@ export default function WorkspaceDetail() {
               <div className="mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-xs font-semibold text-amber-800">Required Approvals Missing</p>
-                  <p className="text-xs text-amber-700 mt-0.5">Some required approvals are pending or not started. Stage advance may be blocked.</p>
-                  <Button size="sm" variant="outline" className="text-xs h-6 mt-2 border-amber-300 text-amber-700 hover:bg-amber-100"
-                    onClick={() => toast.info("Approval request sent to required approvers")}>
-                    Request Approval
-                  </Button>
+                  <p className="text-xs font-semibold text-amber-800">Approval records are incomplete</p>
+                  <p className="text-xs text-amber-700 mt-0.5">Some approval records are pending or not started. This is information only and does not stop manual work.</p>
                 </div>
               </div>
             )}

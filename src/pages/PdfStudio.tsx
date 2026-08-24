@@ -80,7 +80,8 @@ export function classifyFinalPackTenderSources(rows: FinalPackTenderSource[]) {
 }
 
 export default function FinalPackStudio() {
-  const { tenderId } = useParams<{ tenderId: string }>();
+  const { tenderId, proposalId } = useParams<{ tenderId?: string; proposalId?: string }>();
+  const sourceTicketId = tenderId ?? proposalId;
   const { appUser } = useAuth();
   const [mode, setMode] = useState<StudioMode>("select");
   const [activeInstance, setActiveInstance] = useState<FinalPackInstance | null>(null);
@@ -256,7 +257,7 @@ export default function FinalPackStudio() {
     checking: driftChecking,
     recheck: recheckDrift,
     error: driftError,
-  } = useSourceDrift(tenderId, activeInstance?.source_snapshot?._hash || null);
+  } = useSourceDrift(sourceTicketId, activeInstance?.source_snapshot?._hash || null);
 
   // FPS-008: discover Bot Builder microbots for the active document ONCE
   // (filtered per-block client-side). Read-only; never blocks editing/export.
@@ -281,6 +282,15 @@ export default function FinalPackStudio() {
   useEffect(() => {
     const blocks = activeInstance?.blocks || [];
     let cancelled = false;
+    setResolvedBlocks(current => blocks.map(block => {
+      const previous = current.find(item => item.id === block.id);
+      const nextHero = block.content?.cover_config?.hero_url;
+      const previousHero = previous?.content?.cover_config?.hero_url;
+      if (block.render_key === "cover_hero" && isStoragePath(nextHero) && previousHero && !isStoragePath(previousHero)) {
+        return { ...block, content: { ...block.content, cover_config: { ...block.content.cover_config, hero_url: previousHero } } };
+      }
+      return block;
+    }));
     (async () => {
       try {
         const out = await Promise.all(
@@ -453,18 +463,18 @@ export default function FinalPackStudio() {
     <div className={`flex flex-col ${mode === "compose" ? "h-screen" : "min-h-screen"}`}>
       {/* ── Top Bar ── */}
       <header className="flex items-center gap-3 px-6 py-3 border-b border-border bg-card">
-        {/* CLEAN APP: the "Back to Tender" control below was a raw <a> (full page
+        {/* CLEAN APP: the source-workspace control below was a raw <a> (full page
             reload) that bypassed wouter client-side routing. Converted to <Link>.
             The app is root-mounted (SC-01.6) — cleanHref normalizes any historical
             /clean-prefixed href to the root-based /tenders/:id route. */}
         {mode === "select" ? (
-          tenderId ? (
+          sourceTicketId ? (
             <Link
-              href={cleanHref(`/tenders/${tenderId}`)}
+              href={cleanHref(proposalId ? `/proposals/${proposalId}` : `/tenders/${tenderId}`)}
               className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
               <ArrowLeft className="h-4 w-4" />
-              Back to Tender
+              {proposalId ? "Back to Proposal" : "Back to Tender"}
             </Link>
           ) : (
             <span className="text-sm text-muted-foreground">Document Studio</span>
@@ -594,14 +604,15 @@ export default function FinalPackStudio() {
 
       {/* ── Content ── */}
       {/* Standalone entry (no tenderId): real StartScreen + standalone paths */}
-      {mode === "select" && !tenderId && (
+      {mode === "select" && !sourceTicketId && (
         <StandaloneEntry onInstanceReady={handleInstanceReady} />
       )}
 
       {/* Connected entry (tenderId present): unchanged PackSelector flow */}
-      {mode === "select" && tenderId && (
+      {mode === "select" && sourceTicketId && (
         <PackSelector
-          tenderId={tenderId}
+          tenderId={sourceTicketId}
+          sourceKind={proposalId ? "proposal" : "tender"}
           onInstanceReady={handleInstanceReady}
         />
       )}

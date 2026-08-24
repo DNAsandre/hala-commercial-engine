@@ -119,9 +119,11 @@ export function PnlCalculatorTab({
 
   const toggleApproved = () => {
     if (!active) return;
-    const next = versions.map(v =>
-      v.id === active.id ? { ...v, isApproved: !v.isApproved } : v
-    );
+    const nextApproved = !active.isApproved;
+    const next = versions.map(v => ({
+      ...v,
+      isApproved: v.id === active.id ? nextApproved : nextApproved ? false : v.isApproved,
+    }));
     onVersionsChange(next);
     const updated = next.find(v => v.id === active.id);
     if (updated?.isApproved) onSave?.(updated);

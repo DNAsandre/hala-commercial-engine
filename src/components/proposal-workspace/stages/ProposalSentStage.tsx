@@ -10,6 +10,7 @@ import type {
   ProposalSentAuditNote,
   ProposalSentVersion,
 } from "../proposal-workspace-state";
+import { DocumentReferenceSelect, type SupportingDocument } from "../SupportingDocumentsPanel";
 
 const SENT_STATUS_OPTIONS = [
   { value: "prepared", label: "Prepared" },
@@ -52,9 +53,11 @@ const CRM_SYNC_STATUS_OPTIONS = [
 export function SentVersionTab({
   data,
   onChange,
+  documents = [],
 }: {
   data: ProposalSentVersion;
   onChange: (d: ProposalSentVersion) => void;
+  documents?: SupportingDocument[];
 }) {
   const update = (field: keyof ProposalSentVersion, value: string) => onChange({ ...data, [field]: value });
 
@@ -79,7 +82,7 @@ export function SentVersionTab({
           <FieldSelect value={data.sentStatus} onChange={v => update("sentStatus", v)} options={SENT_STATUS_OPTIONS} placeholder="Select status" />
         </FieldRow>
         <FieldRow label="Document Ref">
-          <FieldInput value={data.sentDocumentRef} onChange={v => update("sentDocumentRef", v)} placeholder="Document name, link, or reference" />
+          <DocumentReferenceSelect value={data.sentDocumentRef} onChange={v => update("sentDocumentRef", v)} documents={documents} />
         </FieldRow>
         <FieldRow label="Notes">
           <FieldTextarea value={data.notes} onChange={v => update("notes", v)} placeholder="What exactly was included in this sent version?" rows={4} />
@@ -186,9 +189,11 @@ export function RecipientContactLogTab({
 export function AttachmentsRegisterTab({
   data,
   onChange,
+  documents = [],
 }: {
   data: ProposalSentAttachment[];
   onChange: (d: ProposalSentAttachment[]) => void;
+  documents?: SupportingDocument[];
 }) {
   const add = () => onChange([
     ...data,
@@ -219,7 +224,7 @@ export function AttachmentsRegisterTab({
                 <FieldInput value={attachment.documentName} onChange={v => update(index, { documentName: v })} placeholder="Document name" />
                 <FieldSelect value={attachment.category} onChange={v => update(index, { category: v })} options={ATTACHMENT_CATEGORY_OPTIONS} placeholder="Category" />
                 <FieldInput value={attachment.versionLabel} onChange={v => update(index, { versionLabel: v })} placeholder="Version" />
-                <FieldInput value={attachment.documentRef} onChange={v => update(index, { documentRef: v })} placeholder="Reference or link" />
+                <DocumentReferenceSelect value={attachment.documentRef} onChange={v => update(index, { documentRef: v })} documents={documents} />
                 <label className="flex h-9 items-center gap-2 rounded-md border border-border px-2 text-[11px] text-muted-foreground">
                   <input type="checkbox" checked={attachment.included} onChange={e => update(index, { included: e.target.checked })} />
                   Included
@@ -301,7 +306,7 @@ export function ProposalSentAuditTrailTab({
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <History className="h-4 w-4 text-[#075eea]" />
-          <span className="text-sm font-semibold">Proposal Sent Audit Trail</span>
+          <span className="text-sm font-semibold">Delivery Notes Register</span>
           <Badge variant="outline" className="text-[9px]">{data.length} notes</Badge>
         </div>
         <Button type="button" variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={add}><Plus className="h-3 w-3" />Add Note</Button>

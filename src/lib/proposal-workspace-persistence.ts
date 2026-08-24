@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { getCurrentUser } from "./auth-state";
 import type {
   AssumptionsDependencies,
   CommercialTerms,
@@ -172,6 +173,7 @@ export type ProposalGoLiveStageData = Pick<
 
 interface ProposalTicketRow {
   id: string;
+  updated_at?: string | null;
   ticket_title: string | null;
   customer_name: string | null;
   company: string | null;
@@ -192,6 +194,7 @@ export interface ProposalQualifiedLoadResult {
   baselineData: Partial<ProposalQualifiedStageData>;
   savedData: Partial<ProposalQualifiedStageData> | null;
   savedAt: string | null;
+  revision: string | null;
   source: "commercial_tickets";
 }
 
@@ -574,7 +577,7 @@ function sanitizePnlLines(value: unknown): PnlLine[] | undefined {
       label: text(source.label),
       amount: numberValue(source.amount),
     };
-  }).filter(line => line.amount !== 0);
+  }).filter(line => line.label || line.amount !== 0);
 }
 
 function sanitizePnlVersions(value: unknown): PnlVersion[] | undefined {
@@ -2524,10 +2527,94 @@ function readSavedProposalGoLiveData(details: Record<string, unknown>): {
   };
 }
 
+export interface ProposalWorkspaceSnapshot {
+  ticketFound: boolean;
+  revision: string | null;
+  qualified: ProposalQualifiedLoadResult;
+  discovery: ProposalDiscoveryLoadResult;
+  solutionDesign: ProposalSolutionDesignLoadResult;
+  pnlPricing: ProposalPnlPricingLoadResult;
+  quote: ProposalQuoteLoadResult;
+  proposalDrafting: ProposalDraftingLoadResult;
+  proposalSent: ProposalSentLoadResult;
+  negotiation: ProposalNegotiationLoadResult;
+  commercialApproval: ProposalCommercialApprovalLoadResult;
+  contractSigned: ProposalContractSignedLoadResult;
+  goLive: ProposalGoLiveLoadResult;
+}
+
+/**
+ * Read every Proposal stage from one commercial_tickets snapshot. The UI uses
+ * this instead of combining eleven independently timed reads of the same JSON
+ * row, which could otherwise produce a workspace assembled from mixed
+ * revisions.
+ */
+export async function loadProposalWorkspaceSnapshot(proposalId: string): Promise<ProposalWorkspaceSnapshot> {
+  const { data, error } = await supabase
+    .from("commercial_tickets")
+    .select("id,ticket_title,customer_name,company,region,industry,estimated_value,probability_percent,target_date,notes,source_type,source_reference,legacy_opportunity_id,type_details,updated_at")
+    .eq("id", proposalId)
+    .eq("ticket_type", "proposal")
+    .eq("active", true)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  const source = "commercial_tickets" as const;
+  if (!data) {
+    const empty = { ticketFound: false, baselineData: {}, savedData: null, savedAt: null, source };
+    return {
+      ticketFound: false,
+      revision: null,
+      qualified: { ...empty, revision: null },
+      discovery: empty,
+      solutionDesign: empty,
+      pnlPricing: empty,
+      quote: empty,
+      proposalDrafting: empty,
+      proposalSent: empty,
+      negotiation: empty,
+      commercialApproval: empty,
+      contractSigned: empty,
+      goLive: empty,
+    };
+  }
+
+  const row = data as ProposalTicketRow;
+  const details = asRecord(row.type_details);
+  const revision = text(row.updated_at) || null;
+  const qualified = readSavedQualifiedData(details);
+  const discovery = readSavedDiscoveryData(details);
+  const solutionDesign = readSavedSolutionDesignData(details);
+  const pnlPricing = readSavedPnlPricingData(details);
+  const quote = readSavedQuoteData(details);
+  const proposalDrafting = readSavedProposalDraftingData(details);
+  const proposalSent = readSavedProposalSentData(details);
+  const negotiation = readSavedProposalNegotiationData(details);
+  const commercialApproval = readSavedProposalCommercialApprovalData(details);
+  const contractSigned = readSavedProposalContractSignedData(details);
+  const goLive = readSavedProposalGoLiveData(details);
+
+  return {
+    ticketFound: true,
+    revision,
+    qualified: { ticketFound: true, baselineData: buildBaselineFromTicket(row), savedData: qualified.data, savedAt: qualified.savedAt, revision, source },
+    discovery: { ticketFound: true, baselineData: buildDiscoveryBaselineFromTicket(row), savedData: discovery.data, savedAt: discovery.savedAt, source },
+    solutionDesign: { ticketFound: true, baselineData: buildSolutionDesignBaselineFromTicket(row), savedData: solutionDesign.data, savedAt: solutionDesign.savedAt, source },
+    pnlPricing: { ticketFound: true, baselineData: buildPnlPricingBaselineFromTicket(row), savedData: pnlPricing.data, savedAt: pnlPricing.savedAt, source },
+    quote: { ticketFound: true, baselineData: buildQuoteBaselineFromTicket(row), savedData: quote.data, savedAt: quote.savedAt, source },
+    proposalDrafting: { ticketFound: true, baselineData: {}, savedData: proposalDrafting.data, savedAt: proposalDrafting.savedAt, source },
+    proposalSent: { ticketFound: true, baselineData: {}, savedData: proposalSent.data, savedAt: proposalSent.savedAt, source },
+    negotiation: { ticketFound: true, baselineData: {}, savedData: negotiation.data, savedAt: negotiation.savedAt, source },
+    commercialApproval: { ticketFound: true, baselineData: {}, savedData: commercialApproval.data, savedAt: commercialApproval.savedAt, source },
+    contractSigned: { ticketFound: true, baselineData: {}, savedData: contractSigned.data, savedAt: contractSigned.savedAt, source },
+    goLive: { ticketFound: true, baselineData: {}, savedData: goLive.data, savedAt: goLive.savedAt, source },
+  };
+}
+
 export async function loadProposalQualifiedStageData(proposalId: string): Promise<ProposalQualifiedLoadResult> {
   const { data, error } = await supabase
     .from("commercial_tickets")
-    .select("id,ticket_title,customer_name,company,region,industry,estimated_value,probability_percent,target_date,notes,source_type,source_reference,legacy_opportunity_id,type_details")
+    .select("id,ticket_title,customer_name,company,region,industry,estimated_value,probability_percent,target_date,notes,source_type,source_reference,legacy_opportunity_id,type_details,updated_at")
     .eq("id", proposalId)
     .eq("ticket_type", "proposal")
     .eq("active", true)
@@ -2540,6 +2627,7 @@ export async function loadProposalQualifiedStageData(proposalId: string): Promis
       baselineData: {},
       savedData: null,
       savedAt: null,
+      revision: null,
       source: "commercial_tickets",
     };
   }
@@ -2553,6 +2641,7 @@ export async function loadProposalQualifiedStageData(proposalId: string): Promis
     baselineData: buildBaselineFromTicket(row),
     savedData: saved.data,
     savedAt: saved.savedAt,
+    revision: text(row.updated_at) || null,
     source: "commercial_tickets",
   };
 }
@@ -2887,14 +2976,43 @@ export async function loadProposalGoLiveStageData(proposalId: string): Promise<P
   };
 }
 
-export async function saveProposalQualifiedStageData(
+export interface ProposalStageSaveOptions {
+  /** The commercial_tickets.updated_at value the workspace last read. */
+  expectedRevision?: string | null;
+  /** The signed-in human recorded in commercial_ticket_audit. */
+  actorName?: string;
+}
+
+export interface ProposalStageSaveResult {
+  savedAt: string;
+  revision: string;
+  auditWritten: boolean;
+  auditWarning?: string;
+}
+
+interface ProposalStagePersistenceDefinition<T extends object> {
+  key: string;
+  source: string;
+  sanitize: (value: Partial<T>) => Partial<T>;
+  readSaved: (details: Record<string, unknown>) => {
+    data: Partial<T> | null;
+    savedAt: string | null;
+  };
+}
+
+async function saveProposalStageData<T extends object>(
   proposalId: string,
-  data: ProposalQualifiedStageData,
-): Promise<{ savedAt: string }> {
+  data: T,
+  definition: ProposalStagePersistenceDefinition<T>,
+  options: ProposalStageSaveOptions = {},
+): Promise<ProposalStageSaveResult> {
+  const id = text(proposalId);
+  if (!id) throw new Error("A proposal ticket id is required.");
+
   const { data: existing, error: readError } = await supabase
     .from("commercial_tickets")
-    .select("id,type_details")
-    .eq("id", proposalId)
+    .select("id,type_details,updated_at")
+    .eq("id", id)
     .eq("ticket_type", "proposal")
     .eq("active", true)
     .maybeSingle();
@@ -2902,519 +3020,242 @@ export async function saveProposalQualifiedStageData(
   if (readError) throw new Error(readError.message);
   if (!existing) throw new Error("Active proposal ticket was not found.");
 
-  const currentDetails = asRecord((existing as { type_details?: unknown }).type_details);
+  const existingRow = existing as { id: string; type_details?: unknown; updated_at?: string | null };
+  const currentRevision = text(existingRow.updated_at) || null;
+  if (options.expectedRevision && currentRevision !== options.expectedRevision) {
+    throw new Error("This proposal changed after the workspace loaded. Reload before saving so another person's work is not overwritten.");
+  }
+
+  const currentDetails = asRecord(existingRow.type_details);
   const currentWorkspace = asRecord(currentDetails.proposal_workspace);
+  const previousStage = definition.readSaved(currentDetails);
+  const sanitized = definition.sanitize(data);
   const savedAt = new Date().toISOString();
   const nextDetails = {
     ...currentDetails,
     proposal_workspace: {
       ...currentWorkspace,
-      qualified: {
+      [definition.key]: {
         version: 1,
         savedAt,
-        source: "proposal_qualified_stage",
-        data: sanitizeQualifiedStageData(data),
+        source: definition.source,
+        data: sanitized,
       },
     },
   };
 
-  const { data: updated, error: writeError } = await supabase
+  let updateQuery = supabase
     .from("commercial_tickets")
     .update({
       type_details: nextDetails,
       updated_at: savedAt,
     })
-    .eq("id", proposalId)
+    .eq("id", id)
     .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .select("id")
+    .eq("active", true);
+
+  if (currentRevision) updateQuery = updateQuery.eq("updated_at", currentRevision);
+
+  const { data: updated, error: writeError } = await updateQuery
+    .select("id,type_details,updated_at")
     .maybeSingle();
 
   if (writeError) throw new Error(writeError.message);
-  if (!updated) throw new Error("Qualified stage save did not update an active proposal ticket.");
-  return { savedAt };
+  if (!updated) {
+    const { data: current, error: currentError } = await supabase
+      .from("commercial_tickets")
+      .select("id,updated_at")
+      .eq("id", id)
+      .eq("ticket_type", "proposal")
+      .eq("active", true)
+      .maybeSingle();
+    if (currentError) throw new Error(currentError.message);
+    if (current) {
+      throw new Error("This proposal changed while it was being saved. Reload before trying again; no data was overwritten.");
+    }
+    throw new Error("The active proposal ticket was not found, so nothing was saved.");
+  }
+
+  const updatedRow = updated as { id: string; type_details?: unknown; updated_at?: string | null };
+  const storedDetails = asRecord(updatedRow.type_details);
+  const storedWorkspace = asRecord(storedDetails.proposal_workspace);
+  const storedEnvelope = asRecord(storedWorkspace[definition.key]);
+  const storedData = asRecord(storedEnvelope.data);
+  if (JSON.stringify(storedData) !== JSON.stringify(sanitized)) {
+    throw new Error("The proposal row was updated, but the saved stage did not match the submitted data. Reload before continuing.");
+  }
+
+  const actorName = options.actorName?.trim() || getCurrentUser().name;
+  const { data: auditRow, error: auditError } = await supabase
+    .from("commercial_ticket_audit")
+    .insert({
+      ticket_id: id,
+      action: "updated",
+      field_changed: `type_details.proposal_workspace.${definition.key}`,
+      old_value: previousStage.savedAt,
+      new_value: text(storedEnvelope.savedAt) || savedAt,
+      user_name: actorName,
+      notes: `${definition.key} stage data saved and read back`,
+    })
+    .select("id")
+    .maybeSingle();
+
+  const revision = text(updatedRow.updated_at) || savedAt;
+  if (auditError || !auditRow) {
+    const auditWarning = auditError?.message || "the audit insert returned no stored row";
+    return {
+      savedAt,
+      revision,
+      auditWritten: false,
+      auditWarning,
+    };
+  }
+
+  return { savedAt, revision, auditWritten: true };
+}
+
+export async function saveProposalQualifiedStageData(
+  proposalId: string,
+  data: ProposalQualifiedStageData,
+  options?: ProposalStageSaveOptions,
+): Promise<ProposalStageSaveResult> {
+  return saveProposalStageData(proposalId, data, {
+    key: "qualified",
+    source: "proposal_qualified_stage",
+    sanitize: sanitizeQualifiedStageData,
+    readSaved: readSavedQualifiedData,
+  }, options);
 }
 
 export async function saveProposalDiscoveryStageData(
   proposalId: string,
   data: ProposalDiscoveryStageData,
-): Promise<{ savedAt: string }> {
-  const { data: existing, error: readError } = await supabase
-    .from("commercial_tickets")
-    .select("id,type_details")
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .maybeSingle();
-
-  if (readError) throw new Error(readError.message);
-  if (!existing) throw new Error("Active proposal ticket was not found.");
-
-  const currentDetails = asRecord((existing as { type_details?: unknown }).type_details);
-  const currentWorkspace = asRecord(currentDetails.proposal_workspace);
-  const savedAt = new Date().toISOString();
-  const nextDetails = {
-    ...currentDetails,
-    proposal_workspace: {
-      ...currentWorkspace,
-      discovery: {
-        version: 1,
-        savedAt,
-        source: "proposal_discovery_stage",
-        data: sanitizeDiscoveryStageData(data),
-      },
-    },
-  };
-
-  const { data: updated, error: writeError } = await supabase
-    .from("commercial_tickets")
-    .update({
-      type_details: nextDetails,
-      updated_at: savedAt,
-    })
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .select("id")
-    .maybeSingle();
-
-  if (writeError) throw new Error(writeError.message);
-  if (!updated) throw new Error("Discovery stage save did not update an active proposal ticket.");
-  return { savedAt };
+  options?: ProposalStageSaveOptions,
+): Promise<ProposalStageSaveResult> {
+  return saveProposalStageData(proposalId, data, {
+    key: "discovery",
+    source: "proposal_discovery_stage",
+    sanitize: sanitizeDiscoveryStageData,
+    readSaved: readSavedDiscoveryData,
+  }, options);
 }
 
 export async function saveProposalSolutionDesignStageData(
   proposalId: string,
   data: ProposalSolutionDesignStageData,
-): Promise<{ savedAt: string }> {
-  const { data: existing, error: readError } = await supabase
-    .from("commercial_tickets")
-    .select("id,type_details")
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .maybeSingle();
-
-  if (readError) throw new Error(readError.message);
-  if (!existing) throw new Error("Active proposal ticket was not found.");
-
-  const currentDetails = asRecord((existing as { type_details?: unknown }).type_details);
-  const currentWorkspace = asRecord(currentDetails.proposal_workspace);
-  const savedAt = new Date().toISOString();
-  const nextDetails = {
-    ...currentDetails,
-    proposal_workspace: {
-      ...currentWorkspace,
-      solution_design: {
-        version: 1,
-        savedAt,
-        source: "proposal_solution_design_stage",
-        data: sanitizeSolutionDesignStageData(data),
-      },
-    },
-  };
-
-  const { data: updated, error: writeError } = await supabase
-    .from("commercial_tickets")
-    .update({
-      type_details: nextDetails,
-      updated_at: savedAt,
-    })
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .select("id")
-    .maybeSingle();
-
-  if (writeError) throw new Error(writeError.message);
-  if (!updated) throw new Error("Solution Design stage save did not update an active proposal ticket.");
-  return { savedAt };
+  options?: ProposalStageSaveOptions,
+): Promise<ProposalStageSaveResult> {
+  return saveProposalStageData(proposalId, data, {
+    key: "solution_design",
+    source: "proposal_solution_design_stage",
+    sanitize: sanitizeSolutionDesignStageData,
+    readSaved: readSavedSolutionDesignData,
+  }, options);
 }
 
 export async function saveProposalPnlPricingStageData(
   proposalId: string,
   data: ProposalPnlPricingStageData,
-): Promise<{ savedAt: string }> {
-  const { data: existing, error: readError } = await supabase
-    .from("commercial_tickets")
-    .select("id,type_details")
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .maybeSingle();
-
-  if (readError) throw new Error(readError.message);
-  if (!existing) throw new Error("Active proposal ticket was not found.");
-
-  const currentDetails = asRecord((existing as { type_details?: unknown }).type_details);
-  const currentWorkspace = asRecord(currentDetails.proposal_workspace);
-  const savedAt = new Date().toISOString();
-  const nextDetails = {
-    ...currentDetails,
-    proposal_workspace: {
-      ...currentWorkspace,
-      pnl_pricing: {
-        version: 1,
-        savedAt,
-        source: "proposal_pnl_pricing_stage",
-        data: sanitizePnlPricingStageData(data),
-      },
-    },
-  };
-
-  const { data: updated, error: writeError } = await supabase
-    .from("commercial_tickets")
-    .update({
-      type_details: nextDetails,
-      updated_at: savedAt,
-    })
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .select("id")
-    .maybeSingle();
-
-  if (writeError) throw new Error(writeError.message);
-  if (!updated) throw new Error("P&L / Pricing stage save did not update an active proposal ticket.");
-  return { savedAt };
+  options?: ProposalStageSaveOptions,
+): Promise<ProposalStageSaveResult> {
+  return saveProposalStageData(proposalId, data, {
+    key: "pnl_pricing",
+    source: "proposal_pnl_pricing_stage",
+    sanitize: sanitizePnlPricingStageData,
+    readSaved: readSavedPnlPricingData,
+  }, options);
 }
 
 export async function saveProposalQuoteStageData(
   proposalId: string,
   data: ProposalQuoteStageData,
-): Promise<{ savedAt: string }> {
-  const { data: existing, error: readError } = await supabase
-    .from("commercial_tickets")
-    .select("id,type_details")
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .maybeSingle();
-
-  if (readError) throw new Error(readError.message);
-  if (!existing) throw new Error("Active proposal ticket was not found.");
-
-  const currentDetails = asRecord((existing as { type_details?: unknown }).type_details);
-  const currentWorkspace = asRecord(currentDetails.proposal_workspace);
-  const savedAt = new Date().toISOString();
-  const nextDetails = {
-    ...currentDetails,
-    proposal_workspace: {
-      ...currentWorkspace,
-      quote: {
-        version: 1,
-        savedAt,
-        source: "proposal_quote_stage",
-        data: sanitizeQuoteStageData(data),
-      },
-    },
-  };
-
-  const { data: updated, error: writeError } = await supabase
-    .from("commercial_tickets")
-    .update({
-      type_details: nextDetails,
-      updated_at: savedAt,
-    })
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .select("id")
-    .maybeSingle();
-
-  if (writeError) throw new Error(writeError.message);
-  if (!updated) throw new Error("Quote stage save did not update an active proposal ticket.");
-  return { savedAt };
+  options?: ProposalStageSaveOptions,
+): Promise<ProposalStageSaveResult> {
+  return saveProposalStageData(proposalId, data, {
+    key: "quote",
+    source: "proposal_quote_stage",
+    sanitize: sanitizeQuoteStageData,
+    readSaved: readSavedQuoteData,
+  }, options);
 }
 
 export async function saveProposalDraftingStageData(
   proposalId: string,
   data: ProposalDraftingStageData,
-): Promise<{ savedAt: string }> {
-  const { data: existing, error: readError } = await supabase
-    .from("commercial_tickets")
-    .select("id,type_details")
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .maybeSingle();
-
-  if (readError) throw new Error(readError.message);
-  if (!existing) throw new Error("Active proposal ticket was not found.");
-
-  const currentDetails = asRecord((existing as { type_details?: unknown }).type_details);
-  const currentWorkspace = asRecord(currentDetails.proposal_workspace);
-  const savedAt = new Date().toISOString();
-  const nextDetails = {
-    ...currentDetails,
-    proposal_workspace: {
-      ...currentWorkspace,
-      proposal_drafting: {
-        version: 1,
-        savedAt,
-        source: "proposal_drafting_stage",
-        data: sanitizeProposalDraftingStageData(data),
-      },
-    },
-  };
-
-  const { data: updated, error: writeError } = await supabase
-    .from("commercial_tickets")
-    .update({
-      type_details: nextDetails,
-      updated_at: savedAt,
-    })
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .select("id")
-    .maybeSingle();
-
-  if (writeError) throw new Error(writeError.message);
-  if (!updated) throw new Error("Proposal Drafting stage save did not update an active proposal ticket.");
-  return { savedAt };
+  options?: ProposalStageSaveOptions,
+): Promise<ProposalStageSaveResult> {
+  return saveProposalStageData(proposalId, data, {
+    key: "proposal_drafting",
+    source: "proposal_drafting_stage",
+    sanitize: sanitizeProposalDraftingStageData,
+    readSaved: readSavedProposalDraftingData,
+  }, options);
 }
 
 export async function saveProposalSentStageData(
   proposalId: string,
   data: ProposalSentStageData,
-): Promise<{ savedAt: string }> {
-  const { data: existing, error: readError } = await supabase
-    .from("commercial_tickets")
-    .select("id,type_details")
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .maybeSingle();
-
-  if (readError) throw new Error(readError.message);
-  if (!existing) throw new Error("Active proposal ticket was not found.");
-
-  const currentDetails = asRecord((existing as { type_details?: unknown }).type_details);
-  const currentWorkspace = asRecord(currentDetails.proposal_workspace);
-  const savedAt = new Date().toISOString();
-  const nextDetails = {
-    ...currentDetails,
-    proposal_workspace: {
-      ...currentWorkspace,
-      proposal_sent: {
-        version: 1,
-        savedAt,
-        source: "proposal_sent_stage",
-        data: sanitizeProposalSentStageData(data),
-      },
-    },
-  };
-
-  const { data: updated, error: writeError } = await supabase
-    .from("commercial_tickets")
-    .update({
-      type_details: nextDetails,
-      updated_at: savedAt,
-    })
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .select("id")
-    .maybeSingle();
-
-  if (writeError) throw new Error(writeError.message);
-  if (!updated) throw new Error("Proposal Sent stage save did not update an active proposal ticket.");
-  return { savedAt };
+  options?: ProposalStageSaveOptions,
+): Promise<ProposalStageSaveResult> {
+  return saveProposalStageData(proposalId, data, {
+    key: "proposal_sent",
+    source: "proposal_sent_stage",
+    sanitize: sanitizeProposalSentStageData,
+    readSaved: readSavedProposalSentData,
+  }, options);
 }
 
 export async function saveProposalNegotiationStageData(
   proposalId: string,
   data: ProposalNegotiationStageData,
-): Promise<{ savedAt: string }> {
-  const { data: existing, error: readError } = await supabase
-    .from("commercial_tickets")
-    .select("id,type_details")
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .maybeSingle();
-
-  if (readError) throw new Error(readError.message);
-  if (!existing) throw new Error("Active proposal ticket was not found.");
-
-  const currentDetails = asRecord((existing as { type_details?: unknown }).type_details);
-  const currentWorkspace = asRecord(currentDetails.proposal_workspace);
-  const savedAt = new Date().toISOString();
-  const nextDetails = {
-    ...currentDetails,
-    proposal_workspace: {
-      ...currentWorkspace,
-      negotiation: {
-        version: 1,
-        savedAt,
-        source: "proposal_negotiation_stage",
-        data: sanitizeProposalNegotiationStageData(data),
-      },
-    },
-  };
-
-  const { data: updated, error: writeError } = await supabase
-    .from("commercial_tickets")
-    .update({
-      type_details: nextDetails,
-      updated_at: savedAt,
-    })
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .select("id")
-    .maybeSingle();
-
-  if (writeError) throw new Error(writeError.message);
-  if (!updated) throw new Error("Negotiation stage save did not update an active proposal ticket.");
-  return { savedAt };
+  options?: ProposalStageSaveOptions,
+): Promise<ProposalStageSaveResult> {
+  return saveProposalStageData(proposalId, data, {
+    key: "negotiation",
+    source: "proposal_negotiation_stage",
+    sanitize: sanitizeProposalNegotiationStageData,
+    readSaved: readSavedProposalNegotiationData,
+  }, options);
 }
 
 export async function saveProposalCommercialApprovalStageData(
   proposalId: string,
   data: ProposalCommercialApprovalStageData,
-): Promise<{ savedAt: string }> {
-  const { data: existing, error: readError } = await supabase
-    .from("commercial_tickets")
-    .select("id,type_details")
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .maybeSingle();
-
-  if (readError) throw new Error(readError.message);
-  if (!existing) throw new Error("Active proposal ticket was not found.");
-
-  const currentDetails = asRecord((existing as { type_details?: unknown }).type_details);
-  const currentWorkspace = asRecord(currentDetails.proposal_workspace);
-  const savedAt = new Date().toISOString();
-  const nextDetails = {
-    ...currentDetails,
-    proposal_workspace: {
-      ...currentWorkspace,
-      commercial_approval: {
-        version: 1,
-        savedAt,
-        source: "proposal_commercial_approval_stage",
-        data: sanitizeProposalCommercialApprovalStageData(data),
-      },
-    },
-  };
-
-  const { data: updated, error: writeError } = await supabase
-    .from("commercial_tickets")
-    .update({
-      type_details: nextDetails,
-      updated_at: savedAt,
-    })
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .select("id")
-    .maybeSingle();
-
-  if (writeError) throw new Error(writeError.message);
-  if (!updated) throw new Error("Commercial Approval stage save did not update an active proposal ticket.");
-  return { savedAt };
+  options?: ProposalStageSaveOptions,
+): Promise<ProposalStageSaveResult> {
+  return saveProposalStageData(proposalId, data, {
+    key: "commercial_approval",
+    source: "proposal_commercial_approval_stage",
+    sanitize: sanitizeProposalCommercialApprovalStageData,
+    readSaved: readSavedProposalCommercialApprovalData,
+  }, options);
 }
 
 export async function saveProposalContractSignedStageData(
   proposalId: string,
   data: ProposalContractSignedStageData,
-): Promise<{ savedAt: string }> {
-  const { data: existing, error: readError } = await supabase
-    .from("commercial_tickets")
-    .select("id,type_details")
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .maybeSingle();
-
-  if (readError) throw new Error(readError.message);
-  if (!existing) throw new Error("Active proposal ticket was not found.");
-
-  const currentDetails = asRecord((existing as { type_details?: unknown }).type_details);
-  const currentWorkspace = asRecord(currentDetails.proposal_workspace);
-  const savedAt = new Date().toISOString();
-  const nextDetails = {
-    ...currentDetails,
-    proposal_workspace: {
-      ...currentWorkspace,
-      contract_signed: {
-        version: 1,
-        savedAt,
-        source: "proposal_contract_signed_stage",
-        data: sanitizeProposalContractSignedStageData(data),
-      },
-    },
-  };
-
-  const { data: updated, error: writeError } = await supabase
-    .from("commercial_tickets")
-    .update({
-      type_details: nextDetails,
-      updated_at: savedAt,
-    })
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .select("id")
-    .maybeSingle();
-
-  if (writeError) throw new Error(writeError.message);
-  if (!updated) throw new Error("Contract Signed stage save did not update an active proposal ticket.");
-  return { savedAt };
+  options?: ProposalStageSaveOptions,
+): Promise<ProposalStageSaveResult> {
+  return saveProposalStageData(proposalId, data, {
+    key: "contract_signed",
+    source: "proposal_contract_signed_stage",
+    sanitize: sanitizeProposalContractSignedStageData,
+    readSaved: readSavedProposalContractSignedData,
+  }, options);
 }
 
 export async function saveProposalGoLiveStageData(
   proposalId: string,
   data: ProposalGoLiveStageData,
-): Promise<{ savedAt: string }> {
-  const { data: existing, error: readError } = await supabase
-    .from("commercial_tickets")
-    .select("id,type_details")
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .maybeSingle();
-
-  if (readError) throw new Error(readError.message);
-  if (!existing) throw new Error("Active proposal ticket was not found.");
-
-  const currentDetails = asRecord((existing as { type_details?: unknown }).type_details);
-  const currentWorkspace = asRecord(currentDetails.proposal_workspace);
-  const savedAt = new Date().toISOString();
-  const nextDetails = {
-    ...currentDetails,
-    proposal_workspace: {
-      ...currentWorkspace,
-      go_live: {
-        version: 1,
-        savedAt,
-        source: "proposal_go_live_stage",
-        data: sanitizeProposalGoLiveStageData(data),
-      },
-    },
-  };
-
-  const { data: updated, error: writeError } = await supabase
-    .from("commercial_tickets")
-    .update({
-      type_details: nextDetails,
-      updated_at: savedAt,
-    })
-    .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
-    .select("id")
-    .maybeSingle();
-
-  if (writeError) throw new Error(writeError.message);
-  if (!updated) throw new Error("Go-Live stage save did not update an active proposal ticket.");
-  return { savedAt };
+  options?: ProposalStageSaveOptions,
+): Promise<ProposalStageSaveResult> {
+  return saveProposalStageData(proposalId, data, {
+    key: "go_live",
+    source: "proposal_go_live_stage",
+    sanitize: sanitizeProposalGoLiveStageData,
+    readSaved: readSavedProposalGoLiveData,
+  }, options);
 }
-
 // ═══════════════════════════════════════════════════════════════════════════
 // PROPOSAL TRACKER STAGES (SC-01 Wave 04, T08-B)
 //
@@ -3532,11 +3373,24 @@ export async function changeProposalTrackerStage(input: {
   if (!newValue) {
     return { ok: false, persistedValue: null, auditWritten: false, message: "No stage was supplied." };
   }
+  const oldValue = text(input.oldValue) || null;
+  if (oldValue === newValue) {
+    return {
+      ok: true,
+      persistedValue: oldValue,
+      auditWritten: true,
+      message: "The tracker is already at this stage. No database change was needed.",
+    };
+  }
 
-  const { data: updated, error: writeError } = await supabase
+  let updateQuery = supabase
     .from("commercial_tickets")
     .update({ [input.column]: newValue })
-    .eq("id", ticketId)
+    .eq("id", ticketId);
+  updateQuery = oldValue === null
+    ? updateQuery.is(input.column, null)
+    : updateQuery.eq(input.column, oldValue);
+  const { data: updated, error: writeError } = await updateQuery
     .select("id," + input.column)
     .maybeSingle();
 
@@ -3548,7 +3402,7 @@ export async function changeProposalTrackerStage(input: {
       ok: false,
       persistedValue: null,
       auditWritten: false,
-      message: "The database accepted the request but updated no row, so the stage was NOT saved. The displayed stage is unchanged.",
+      message: "This tracker changed after you loaded it. Reloaded truth must be used before trying again.",
     };
   }
 
@@ -3569,7 +3423,7 @@ export async function changeProposalTrackerStage(input: {
       ticket_id: ticketId,
       action: "stage_changed",
       field_changed: input.column,
-      old_value: text(input.oldValue) || null,
+      old_value: oldValue,
       new_value: newValue,
       user_name: input.userName,
       notes: null,
