@@ -15,6 +15,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
+import { getCurrentUser } from "@/lib/auth-state";
 
 // ═══════════════════════════════════════════════════════════
 // Types
@@ -136,6 +137,14 @@ export function useTemplates(): UseTemplatesReturn {
     setError(message);
   }, []);
   const getLastOperationError = useCallback(() => lastOperationErrorRef.current, []);
+  const currentActor = () => {
+    try {
+      const user = getCurrentUser();
+      return user.name || user.id || "Unauthenticated";
+    } catch {
+      return "Unauthenticated";
+    }
+  };
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -209,8 +218,8 @@ export function useTemplates(): UseTemplatesReturn {
           description: input.description ?? "",
           template_class: input.template_class || "customer_facing",
           scope: input.scope || "workspace",
-          created_by: input.created_by || "User",
-          updated_by: input.created_by || "User",
+          created_by: input.created_by || currentActor(),
+          updated_by: input.created_by || currentActor(),
         };
         const { error: tErr } = await supabase.from("doc_templates").insert(templateRow);
         if (tErr) {
@@ -225,7 +234,7 @@ export function useTemplates(): UseTemplatesReturn {
           recipe: input.recipe ?? [],
           layout: input.layout ?? {},
           published_at: input.status === "published" ? nowIso : null,
-          created_by: input.created_by || "User",
+          created_by: input.created_by || currentActor(),
         };
         const { error: vErr } = await supabase.from("doc_template_versions").insert(versionRow);
         if (vErr) {
@@ -289,7 +298,7 @@ export function useTemplates(): UseTemplatesReturn {
           recipe,
           layout: layout ?? versions[0]?.layout ?? {},
           published_at: null,
-          created_by: "User",
+          created_by: currentActor(),
         };
         const { error: vErr } = await supabase.from("doc_template_versions").insert(versionRow);
         if (vErr) {
@@ -298,7 +307,7 @@ export function useTemplates(): UseTemplatesReturn {
         }
         await supabase
           .from("doc_templates")
-          .update({ updated_at: nowIso, updated_by: "User" })
+          .update({ updated_at: nowIso, updated_by: currentActor() })
           .eq("id", templateId);
         await refresh();
         return {
@@ -322,7 +331,7 @@ export function useTemplates(): UseTemplatesReturn {
     async (templateId: string, status: TemplateStatus, updatedBy?: string): Promise<boolean> => {
       const { error: sErr } = await supabase
         .from("doc_templates")
-        .update({ status, updated_at: new Date().toISOString(), updated_by: updatedBy || "User" })
+        .update({ status, updated_at: new Date().toISOString(), updated_by: updatedBy || currentActor() })
         .eq("id", templateId);
       if (sErr) {
         setError(sErr.message);

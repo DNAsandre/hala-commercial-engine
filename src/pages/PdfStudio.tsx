@@ -51,13 +51,14 @@ import { useFinalPackInstance, type FinalPackInstance } from "@/hooks/useFinalPa
 import { useFinalPackBlocks } from "@/hooks/useFinalPackBlocks";
 import { useSourceDrift } from "@/hooks/useSourceDrift";
 import { useBrandingProfiles } from "@/hooks/useBrandingProfiles";
-import { useInstanceVersions } from "@/hooks/useInstanceVersions";
+import { useInstanceVersions, type InstanceVersion } from "@/hooks/useInstanceVersions";
 import { usePresence } from "@/hooks/usePresence";
 import { useBlockAIBots } from "@/hooks/useBlockAIBots";
 import VersionHistoryPanel from "@/components/final-pack/VersionHistoryPanel";
 import { History, Users, AlertTriangle } from "lucide-react";
 import { loadTenderPack, type OutputBlock, type BlockContent } from "@/lib/final-pack-loader";
 import { filterAllowedTenderTickets } from "@/lib/process-isolation";
+import { buildVersionRestorePatch } from "@/lib/final-pack-versioning";
 
 type StudioMode = "select" | "compose";
 
@@ -351,6 +352,7 @@ export default function FinalPackStudio() {
         activeInstance.tender_id,
         activeInstance.pack_type,
         activeInstance.source_snapshot?.pricing_scenario_id ?? undefined,
+        activeInstance.source_snapshot?.source_kind === "proposal_engine" ? "proposal" : "tender",
       );
       if (snapshot.error) {
         setSaveError(`Rebuild from source failed: ${snapshot.error}`);
@@ -489,16 +491,51 @@ export default function FinalPackStudio() {
 
   // FPS-007: restore a previous version (explicit user action; never automatic).
   const handleRestoreVersion = useCallback(
-    (blocks: OutputBlock[], fromVersion: number) => {
+    async (version: InstanceVersion) => {
       const current = activeInstance;
       if (!current) return;
-      setActiveInstance((prev) => (prev ? { ...prev, blocks } : prev));
-      appendVersionRef.current(blocks, sourceSnapshotRef.current, meNameRef.current, `Restored from v${fromVersion}`);
-      lastVersionAtRef.current = Date.now(); // avoid double version from the save below
-      saveBlocks(current.id, blocks);
+      const newUpdatedAt = new Date().toISOString();
+      const restorePatch = buildVersionRestorePatch(version, newUpdatedAt);
+      let query = supabase
+        .from("doc_instances")
+        .update(restorePatch)
+        .eq("id", current.id);
+      if (lastUpdatedAtRef.current) query = query.eq("updated_at", lastUpdatedAtRef.current);
+      const { data, error } = await query
+        .select("id,blocks,source_snapshot,branding_profile_id,updated_at")
+        .maybeSingle();
+      if (error) {
+        setSaveError(`Version ${version.version_number} was not restored: ${error.message}`);
+        return;
+      }
+      if (!data) {
+        setConflict(true);
+        setSaveError(`Version ${version.version_number} was not restored because the document changed in another session.`);
+        return;
+      }
+
+      const confirmedBlocks = Array.isArray(data.blocks) ? data.blocks as OutputBlock[] : restorePatch.blocks;
+      const confirmedSnapshot = (data.source_snapshot || restorePatch.source_snapshot) as FinalPackInstance["source_snapshot"];
+      lastUpdatedAtRef.current = data.updated_at || newUpdatedAt;
+      lastVersionAtRef.current = Date.now();
+      setSaveError(null);
+      setSelectedVolumeKey(null);
+      setActiveInstance((prev) => prev ? {
+        ...prev,
+        blocks: confirmedBlocks,
+        source_snapshot: confirmedSnapshot,
+        branding_profile_id: data.branding_profile_id ?? confirmedSnapshot.branding_profile_id ?? null,
+        updated_at: data.updated_at || newUpdatedAt,
+      } : prev);
+      await appendVersionRef.current(
+        confirmedBlocks,
+        confirmedSnapshot as unknown as Record<string, unknown>,
+        meNameRef.current,
+        `Restored complete document state from v${version.version_number}`,
+      );
       setShowHistory(false);
     },
-    [activeInstance, saveBlocks],
+    [activeInstance],
   );
 
   // FPS-007-08 conflict recovery — both are explicit, neither traps the user.

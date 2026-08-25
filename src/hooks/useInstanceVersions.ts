@@ -105,7 +105,7 @@ export function useInstanceVersions(instanceId: string | null): UseInstanceVersi
           version_number: next,
           blocks,
           source_snapshot: sourceSnapshot ?? {},
-          created_by: createdBy ?? "User",
+          created_by: createdBy ?? "Unauthenticated",
           change_reason: changeReason ?? null,
         });
         if (error) {

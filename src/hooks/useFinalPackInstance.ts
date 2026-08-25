@@ -252,9 +252,21 @@ export function useFinalPackInstance(): UseFinalPackInstanceReturn {
             20000,
           ),
         );
-        const { error: insertErr } = (await Promise.race([insertPromise, timeout])) as {
+        let { error: insertErr } = (await Promise.race([insertPromise, timeout])) as {
           error: { message: string } | null;
         };
+
+        // A timed-out request may still have landed. The id was minted before
+        // the insert, so read that exact row before inviting a retry that would
+        // create a second document.
+        if (insertErr?.message.startsWith("Insert timed out")) {
+          const { data: landed } = await supabase
+            .from("doc_instances")
+            .select("id")
+            .eq("id", instanceId)
+            .maybeSingle();
+          if (landed?.id === instanceId) insertErr = null;
+        }
 
         if (insertErr) {
           console.error("[FPS] createInstance insert failed:", insertErr.message);

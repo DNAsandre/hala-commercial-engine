@@ -755,7 +755,19 @@ export async function loadTenderPack(
     return errorSnapshot(tenderId, packType, templateId, `Supabase error: ${tenderErr.message}`);
   }
   if (!tender) {
-    return errorSnapshot(tenderId, packType, templateId, `Tender ${tenderId} not found in commercial_tickets`);
+    return errorSnapshot(tenderId, packType, templateId, `Commercial record ${tenderId} was not found`);
+  }
+
+  if (
+    (tender.ticket_type === "tender" || tender.ticket_type === "proposal")
+    && tender.ticket_type !== expectedSourceKind
+  ) {
+    return errorSnapshot(
+      tenderId,
+      packType,
+      templateId,
+      `This ${tender.ticket_type} record does not match the requested ${expectedSourceKind} route.`,
+    );
   }
 
   const recordedSourceKind: ConnectedRecordKind = tender.ticket_type === "proposal"

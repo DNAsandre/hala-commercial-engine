@@ -16,7 +16,7 @@ import { useModalDialog } from "@/hooks/useModalDialog";
 
 interface VersionHistoryPanelProps {
   instanceId: string;
-  onRestore: (blocks: OutputBlock[], fromVersion: number) => void;
+  onRestore: (version: InstanceVersion) => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -125,7 +125,7 @@ export default function VersionHistoryPanel({ instanceId, onRestore, onClose }: 
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-amber-600">Replace current blocks with v{selected.version_number}?</span>
                       <button
-                        onClick={() => onRestore(selected.blocks, selected.version_number)}
+                        onClick={() => { void onRestore(selected); }}
                         className="px-2.5 py-1 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90"
                       >
                         Confirm restore

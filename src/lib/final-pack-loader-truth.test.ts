@@ -514,3 +514,16 @@ describe("PDS-23 / PDS-59 — active documents and exact drift scope", () => {
     expect(serialized).not.toContain("estimated_value");
   });
 });
+
+describe("connected route identity", () => {
+  it("refuses a proposal record on a Tender route instead of silently relabeling it", async () => {
+    const row = JSON.parse(JSON.stringify(TENDER_ROW));
+    row.ticket_type = "proposal";
+    db.responses.set("commercial_tickets", { data: row, error: null });
+
+    const snapshot = await loadTenderPack(row.id, "combined_proposal");
+
+    expect(snapshot.error).toMatch(/does not match the requested tender route/i);
+    expect(snapshot.blocks).toEqual([]);
+  });
+});
