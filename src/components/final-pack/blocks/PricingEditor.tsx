@@ -16,6 +16,7 @@
  */
 
 import { useCallback } from "react";
+import { Plus, Trash2 } from "lucide-react";
 import type { OutputBlock, BlockContent, PricingOutputRow } from "@/lib/final-pack-loader";
 
 interface PricingEditorProps {
@@ -50,12 +51,39 @@ export default function PricingEditor({ block, onContentChange }: PricingEditorP
     [rows, onContentChange],
   );
 
+  const addRow = useCallback(() => {
+    const next: PricingOutputRow = {
+      id: crypto.randomUUID(),
+      scenario_name: "New option",
+      scenario_type: "Manual",
+      revenue: "",
+      cost: "",
+      gp_percent: "",
+      recommended: "",
+      notes: "",
+    };
+    onContentChange({ pricing_rows: [...rows, next], source_status: "populated" });
+  }, [rows, onContentChange]);
+
+  const removeRow = useCallback((rowIndex: number) => {
+    onContentChange({
+      pricing_rows: rows.filter((_, index) => index !== rowIndex),
+      source_status: "populated",
+    });
+  }, [rows, onContentChange]);
+
   return (
     <div className="space-y-3">
       {/* Source-copy label — PERMANENT, NOT DISMISSIBLE */}
       <div className="fps-source-label">
         <span>📋</span>
         <span>Output copy — source pricing is managed in Hala Pricing stage</span>
+      </div>
+
+      <div className="flex justify-end">
+        <button type="button" onClick={addRow} className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-accent">
+          <Plus className="h-3.5 w-3.5" /> Add pricing row
+        </button>
       </div>
 
       {rows.length === 0 ? (
@@ -72,6 +100,7 @@ export default function PricingEditor({ block, onContentChange }: PricingEditorP
                 {/* PADW T06a (PDS-01 seam): the output copy is customer-facing —
                     internal Cost / GP % / Recommended / Notes columns removed. */}
                 <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground">Revenue</th>
+                <th className="w-10"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -85,6 +114,11 @@ export default function PricingEditor({ block, onContentChange }: PricingEditorP
                   </td>
                   <td className="px-1 py-1">
                     <EditableCell value={row.revenue} onChange={(v) => handleCellChange(i, "revenue", v)} align="right" />
+                  </td>
+                  <td className="px-1 py-1 text-right">
+                    <button type="button" onClick={() => removeRow(i)} className="rounded p-1 text-muted-foreground hover:bg-red-50 hover:text-red-600" aria-label={`Remove pricing row ${i + 1}`}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -148,7 +182,9 @@ function EditableCell({
       type="text"
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={`w-full px-2 py-1 text-sm border-0 bg-transparent text-foreground focus:outline-none focus:bg-accent/30 rounded transition-colors text-${align}`}
+      className={`w-full px-2 py-1 text-sm border-0 bg-transparent text-foreground focus:outline-none focus:bg-accent/30 rounded transition-colors ${
+        align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left"
+      }`}
     />
   );
 }

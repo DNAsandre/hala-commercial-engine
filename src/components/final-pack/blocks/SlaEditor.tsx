@@ -11,6 +11,7 @@
  */
 
 import { useCallback } from "react";
+import { Plus, Trash2 } from "lucide-react";
 import type { OutputBlock, BlockContent, SlaOutputRow } from "@/lib/final-pack-loader";
 
 interface SlaEditorProps {
@@ -31,12 +32,27 @@ export default function SlaEditor({ block, onContentChange }: SlaEditorProps) {
     [rows, onContentChange],
   );
 
+  const addRow = useCallback(() => {
+    const next: SlaOutputRow = { kpi: "New KPI", target: "", measurement: "", penalty: "" };
+    onContentChange({ sla_rows: [...rows, next], source_status: "populated" });
+  }, [rows, onContentChange]);
+
+  const removeRow = useCallback((rowIndex: number) => {
+    onContentChange({ sla_rows: rows.filter((_, index) => index !== rowIndex), source_status: "populated" });
+  }, [rows, onContentChange]);
+
   return (
     <div className="space-y-3">
       {/* Source-copy label — PERMANENT, NOT DISMISSIBLE */}
       <div className="fps-source-label">
         <span>📋</span>
         <span>Output copy — source SLA is managed in Hala Solution Design</span>
+      </div>
+
+      <div className="flex justify-end">
+        <button type="button" onClick={addRow} className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-accent">
+          <Plus className="h-3.5 w-3.5" /> Add SLA row
+        </button>
       </div>
 
       {rows.length === 0 ? (
@@ -52,6 +68,7 @@ export default function SlaEditor({ block, onContentChange }: SlaEditorProps) {
                 <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Target</th>
                 <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Measurement</th>
                 <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Penalty</th>
+                <th className="w-10"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -88,6 +105,11 @@ export default function SlaEditor({ block, onContentChange }: SlaEditorProps) {
                       onChange={(e) => handleCellChange(i, "penalty", e.target.value)}
                       className="w-full px-2 py-1 text-sm border-0 bg-transparent text-foreground focus:outline-none focus:bg-accent/30 rounded transition-colors"
                     />
+                  </td>
+                  <td className="px-1 py-1 text-right">
+                    <button type="button" onClick={() => removeRow(i)} className="rounded p-1 text-muted-foreground hover:bg-red-50 hover:text-red-600" aria-label={`Remove SLA row ${i + 1}`}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </td>
                 </tr>
               ))}

@@ -61,6 +61,7 @@ export default function BlockAISparkleMenu({
         <span className="flex-1 text-xs font-medium text-foreground">AI assistants</span>
         <button
           onClick={onClose}
+          aria-label="Close AI assistant menu"
           className="rounded p-0.5 text-muted-foreground hover:bg-accent"
           title="Close"
         >

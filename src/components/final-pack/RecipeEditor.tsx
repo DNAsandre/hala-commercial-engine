@@ -16,6 +16,7 @@ import {
   type RecipeEntry,
   type TemplateVersion,
 } from "@/hooks/useTemplates";
+import { useModalDialog } from "@/hooks/useModalDialog";
 
 interface RecipeEditorProps {
   templateId: string;
@@ -38,7 +39,7 @@ export default function RecipeEditor({
   onClose,
   onSaved,
 }: RecipeEditorProps) {
-  const { saveRecipeVersion, error: templatesError } = useTemplates();
+  const { saveRecipeVersion, getLastOperationError } = useTemplates();
   // W04-C4: a failed version insert used to end the interaction silently — the
   // spinner stopped, the dialog stayed open, and nothing said the recipe was
   // not stored.
@@ -50,6 +51,7 @@ export default function RecipeEditor({
   const [picking, setPicking] = useState(false);
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
+  const dialogRef = useModalDialog(onClose);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,8 +104,8 @@ export default function RecipeEditor({
       return;
     }
     setSaveError(
-      templatesError
-        ? `This recipe version was not stored — ${templatesError}`
+      getLastOperationError()
+        ? `This recipe version was not stored — ${getLastOperationError()}`
         : "This recipe version was not stored. Nothing was saved; your edits are still in this dialog.",
     );
   };
@@ -113,7 +115,7 @@ export default function RecipeEditor({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl rounded-lg border border-border bg-card shadow-lg max-h-[85vh] flex flex-col">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={`Edit recipe for ${templateName}`} tabIndex={-1} className="w-full max-w-2xl rounded-lg border border-border bg-card shadow-lg max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Edit recipe — {templateName}</h2>
@@ -121,7 +123,7 @@ export default function RecipeEditor({
               Saving creates a new version. Existing versions and documents are untouched.
             </p>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-accent transition-colors">
+          <button onClick={onClose} aria-label="Close recipe editor" className="p-1 rounded hover:bg-accent transition-colors">
             <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
@@ -143,15 +145,15 @@ export default function RecipeEditor({
               </span>
               <span className="text-[10px] text-muted-foreground">{entry.block_key}</span>
               <button onClick={() => move(i, -1)} disabled={i === 0}
-                className="p-1 rounded hover:bg-accent disabled:opacity-30">
+                aria-label={`Move ${displayName(entry.block_key)} up`} className="p-1 rounded hover:bg-accent disabled:opacity-30">
                 <ArrowUp className="h-3.5 w-3.5" />
               </button>
               <button onClick={() => move(i, 1)} disabled={i === recipe.length - 1}
-                className="p-1 rounded hover:bg-accent disabled:opacity-30">
+                aria-label={`Move ${displayName(entry.block_key)} down`} className="p-1 rounded hover:bg-accent disabled:opacity-30">
                 <ArrowDown className="h-3.5 w-3.5" />
               </button>
               <button onClick={() => remove(i)}
-                className="p-1 rounded hover:bg-accent text-destructive">
+                aria-label={`Remove ${displayName(entry.block_key)}`} className="p-1 rounded hover:bg-accent text-destructive">
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
             </div>

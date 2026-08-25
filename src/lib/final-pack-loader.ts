@@ -869,7 +869,7 @@ export async function loadTenderPack(
       id: uniqueBlockId(`${entry.block_key}-${entry.order}`, usedIds),
       block_key: entry.block_key,
       render_key: def.render_key,
-      display_name: def.display_name,
+      display_name: entry.block_key === "facility.gallery" ? "Facility Details" : def.display_name,
       family: def.family,
       editor_mode: def.editor_mode,
       visible: true,
@@ -1155,13 +1155,13 @@ function resolveCover(
   const tenderMeta = safeObject(td.tender);
   const title = tender.ticket_title || safeString(tenderMeta.title) || "Not available";
   const customerName = tender.customer_name || safeString(tenderMeta.customerName) || "Not available";
-  const tenderRef = safeString(tenderMeta.tenderRef) || (tender.id ? String(tender.id).slice(0, 8) : "—");
-  const date = tender.target_date || safeString(tenderMeta.submissionDeadline) || new Date().toLocaleDateString("en-GB");
+  const tenderRef = safeString(tenderMeta.tenderRef);
+  const date = tender.target_date || safeString(tenderMeta.submissionDeadline);
 
   return {
     variables: {
       title,
-      subtitle: `Ref: ${tenderRef}`,
+      subtitle: tenderRef ? `Ref: ${tenderRef}` : "",
       customer_name: customerName,
       ref_number: tenderRef,
       date,
@@ -1347,17 +1347,12 @@ function resolveScopeTable(td: Record<string, any>): BlockContent {
 }
 
 function resolveFacilityGallery(
-  td: Record<string, any>,
-  tender: Record<string, any>,
+  _td: Record<string, any>,
+  _tender: Record<string, any>,
 ): BlockContent {
-  const customerName = tender.customer_name || safeString(td.tender?.customerName) || "Not available";
   return {
-    variables: {
-      facility_name: "Hala Supply Chain Services",
-      location: "Kingdom of Saudi Arabia",
-      customer_name: customerName,
-    },
-    source_status: "default",
+    variables: {},
+    source_status: "not_captured",
   };
 }
 

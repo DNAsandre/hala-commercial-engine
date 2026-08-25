@@ -1,17 +1,17 @@
 /**
- * WorkspaceDocumentSection — PDF generation + download for Quotes and Proposals
- * Sprint 6: Server-generated PDFs, stored in Supabase, fully audited.
+ * WorkspaceDocumentSection — stored document records for Quotes and Proposals.
+ * Final customer PDF composition/export belongs to Final Pack Studio.
  */
 import { useState, useEffect, useCallback } from "react";
+import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { FileText, Download, RefreshCw, Clock, User, FileCheck, Loader2, AlertTriangle } from "lucide-react";
+import { FileText, Download, Clock, User, FileCheck, AlertTriangle, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import {
   downloadDocumentToUser,
   formatDocumentFileSize,
-  generateDocumentPdf,
   listWorkspaceDocuments,
   type DocumentRecord,
 } from "@/lib/document-runtime";
@@ -29,11 +29,10 @@ interface Props {
   proposals?: any[];
 }
 
-export default function WorkspaceDocumentSection({ workspaceId, quotes = [], proposals = [] }: Props) {
+export default function WorkspaceDocumentSection({ workspaceId }: Props) {
   const [docs, setDocs] = useState<DocumentRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [generating, setGenerating] = useState<string | null>(null);
 
   // SC-01 W03-4: the clean server is the only document backend. A failed load
   // is shown as a failure — it is never presented as "no documents".
@@ -51,23 +50,6 @@ export default function WorkspaceDocumentSection({ workspaceId, quotes = [], pro
 
   useEffect(() => { fetchDocs(); }, [fetchDocs]);
 
-  const handleGenerate = async (docType: GeneratedDocumentType, sourceId: string, sourceVersion?: number) => {
-    const key = `${docType}-${sourceId}`;
-    const label = docType.charAt(0).toUpperCase() + docType.slice(1);
-    setGenerating(key);
-    try {
-      const result = await generateDocumentPdf({ workspace_id: workspaceId, document_type: docType, source_id: sourceId, source_version: sourceVersion });
-      // Success is claimed only for what the server actually confirmed.
-      if (result.fileGenerated) {
-        toast.success(`${label} PDF generated`);
-      } else {
-        toast.warning(result.notice || `${label} document record created — the server did not report a generated PDF file.`);
-      }
-      fetchDocs();
-    } catch (e: any) { toast.error(e?.message || "Generation failed"); }
-    finally { setGenerating(null); }
-  };
-
   const handleDownload = async (docId: string) => {
     try {
       // Delivers the real file: the stored bytes, or the server's signed URL.
@@ -75,14 +57,6 @@ export default function WorkspaceDocumentSection({ workspaceId, quotes = [], pro
     } catch (e: any) { toast.error(e?.message || "Download failed"); }
   };
 
-  // Build generation sources
-  const sources: Array<{ type: GeneratedDocumentType; id: string; version?: number; label: string; status: string }> = [];
-  for (const q of quotes.filter(q => q.status !== "superseded")) {
-    sources.push({ type: "quote", id: q.id, version: q.version_number || q.version, label: q.quote_number || `Q-V${q.version_number}`, status: q.status });
-  }
-  for (const p of proposals.filter(p => p.status !== "superseded")) {
-    sources.push({ type: "proposal", id: p.id, version: p.version_number || p.version, label: p.proposal_number || `P-V${p.version_number}`, status: p.status });
-  }
   const latestDocs = docs.filter(d => d.status === "generated" && (d.document_type === "quote" || d.document_type === "proposal"));
   const supersededDocs = docs.filter(d => d.status === "superseded" && (d.document_type === "quote" || d.document_type === "proposal"));
 
@@ -90,34 +64,19 @@ export default function WorkspaceDocumentSection({ workspaceId, quotes = [], pro
     <Card className="border shadow-sm">
       <CardHeader className="pb-3 border-b">
         <CardTitle className="text-sm font-serif flex items-center gap-2">
-          <FileText className="w-4 h-4" /> Generated Documents
+          <FileText className="w-4 h-4" /> Stored Document Records
           {latestDocs.length > 0 && <Badge variant="outline" className="text-[10px]">{latestDocs.length}</Badge>}
-          <Badge variant="outline" className="text-[10px] border-blue-300 bg-blue-50">Server PDF</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-4 space-y-4">
-        {/* Generate actions */}
-        {sources.length > 0 && (
-          <div>
-            <p className="text-xs font-medium text-muted-foreground mb-2">Generate Final PDF</p>
-            <div className="flex flex-wrap gap-2">
-              {sources.map(s => {
-                const cfg = typeCfg[s.type];
-                const Icon = cfg.icon;
-                const isGen = generating === `${s.type}-${s.id}`;
-                return (
-                  <Button key={s.id} variant="outline" size="sm"
-                    onClick={() => handleGenerate(s.type, s.id, s.version)}
-                    disabled={!!generating} className="text-xs h-7 gap-1">
-                    {isGen ? <Loader2 className="w-3 h-3 animate-spin" /> : <Icon className="w-3 h-3" />}
-                    {s.label}
-                    <Badge variant="outline" className={`text-[9px] ml-1 ${cfg.color}`}>{s.status}</Badge>
-                  </Button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/20 p-3">
+          <p className="text-xs text-muted-foreground">
+            Create, review, and export the customer-facing PDF in Final Pack Studio.
+          </p>
+          <Link href="/pdf-studio" className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary hover:underline">
+            Open Studio <ExternalLink className="h-3 w-3" />
+          </Link>
+        </div>
 
         {/* Generated documents list */}
         {loading ? <p className="text-xs text-muted-foreground py-4 text-center">Loading...</p>
@@ -158,7 +117,6 @@ export default function WorkspaceDocumentSection({ workspaceId, quotes = [], pro
                   </div>
                   <div className="flex gap-1.5">
                     <Button variant="outline" size="sm" onClick={() => handleDownload(d.id)} className="text-xs h-6"><Download className="w-3 h-3 mr-0.5" />Download</Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleGenerate(docType, d.source_id, d.source_version)} disabled={!!generating} className="text-xs h-6"><RefreshCw className="w-3 h-3" /></Button>
                   </div>
                 </div>
               );

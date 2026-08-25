@@ -19,13 +19,22 @@ interface BrandingSelectorProps {
 }
 
 export default function BrandingSelector({ selectedId, onSelect }: BrandingSelectorProps) {
-  const { profiles, loading } = useBrandingProfiles();
+  const { profiles, loading, error } = useBrandingProfiles();
 
   if (loading) {
     return (
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <Palette className="h-3.5 w-3.5" />
         <span>Loading…</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center gap-1.5 text-xs text-amber-700" title={error}>
+        <Palette className="h-3.5 w-3.5" />
+        <span>Branding unavailable</span>
       </div>
     );
   }

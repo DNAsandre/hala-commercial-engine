@@ -7,7 +7,7 @@
  * Do not add undo/redo for export actions.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Undo2, Redo2, RotateCcw, ChevronDown } from "lucide-react";
 
 interface UndoRedoToolbarProps {
@@ -34,6 +34,17 @@ export default function UndoRedoToolbar({
 }: UndoRedoToolbarProps) {
   const [resetOpen, setResetOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<"all" | null>(null);
+  const confirmRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!confirmAction) return;
+    confirmRef.current?.focus();
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setConfirmAction(null);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [confirmAction]);
 
   const handleResetAll = () => {
     setConfirmAction("all");
@@ -50,6 +61,8 @@ export default function UndoRedoToolbar({
       {/* Undo */}
       <button
         onClick={onUndo}
+        disabled={!canUndo}
+        aria-label="Undo document change"
         className={`p-1.5 rounded transition-colors ${
           canUndo
             ? "text-foreground hover:bg-accent"
@@ -63,6 +76,8 @@ export default function UndoRedoToolbar({
       {/* Redo */}
       <button
         onClick={onRedo}
+        disabled={!canRedo}
+        aria-label="Redo document change"
         className={`p-1.5 rounded transition-colors ${
           canRedo
             ? "text-foreground hover:bg-accent"
@@ -79,6 +94,7 @@ export default function UndoRedoToolbar({
           onClick={() => setResetOpen(!resetOpen)}
           className="inline-flex items-center gap-0.5 p-1.5 rounded text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
           title="Reset from source"
+          aria-label="Open reset menu"
         >
           <RotateCcw className="h-3.5 w-3.5" />
           <ChevronDown className="h-2.5 w-2.5" />
@@ -108,7 +124,7 @@ export default function UndoRedoToolbar({
       {confirmAction && (
         <>
           <div className="fixed inset-0 z-50 bg-black/20" onClick={() => setConfirmAction(null)} />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-80 rounded-lg border border-border bg-card shadow-xl p-4">
+          <div ref={confirmRef} role="dialog" aria-modal="true" aria-label="Reset full pack from source" tabIndex={-1} className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-80 rounded-lg border border-border bg-card shadow-xl p-4">
             <p className="text-sm font-medium text-foreground mb-2">
               Reset full pack from source?
             </p>

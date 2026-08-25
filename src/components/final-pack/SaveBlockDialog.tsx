@@ -15,6 +15,7 @@ import {
   type CustomBlockScope,
   type CustomBlockStatus,
 } from "@/hooks/useCustomBlocks";
+import { useModalDialog } from "@/hooks/useModalDialog";
 
 interface SaveBlockDialogProps {
   block: OutputBlock;
@@ -61,6 +62,7 @@ export default function SaveBlockDialog({ block, createdBy, onClose }: SaveBlock
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const dialogRef = useModalDialog(onClose);
 
   const handleSave = async () => {
     setSaving(true);
@@ -92,14 +94,14 @@ export default function SaveBlockDialog({ block, createdBy, onClose }: SaveBlock
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-lg border border-border bg-card shadow-lg">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Save reusable block" tabIndex={-1} className="w-full max-w-lg rounded-lg border border-border bg-card shadow-lg">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
           <div className="flex items-center gap-2">
             <Library className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-semibold text-foreground">Save as reusable block</h2>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-accent transition-colors">
+          <button onClick={onClose} aria-label="Close reusable block dialog" className="p-1 rounded hover:bg-accent transition-colors">
             <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>

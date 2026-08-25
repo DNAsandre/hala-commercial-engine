@@ -13,7 +13,7 @@
  * are generated locally.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 
 // ═══════════════════════════════════════════════════════════
@@ -81,6 +81,8 @@ export interface UseTemplatesReturn {
   templates: TemplateSummary[];
   loading: boolean;
   error: string | null;
+  /** Exact result of the most recently completed write; avoids stale React state in callers. */
+  getLastOperationError: () => string | null;
   refresh: () => Promise<void>;
   getVersions: (templateId: string) => Promise<TemplateVersion[]>;
   createTemplate: (input: CreateTemplateInput) => Promise<TemplateSummary | null>;
@@ -128,6 +130,12 @@ export function useTemplates(): UseTemplatesReturn {
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const lastOperationErrorRef = useRef<string | null>(null);
+  const recordOperationError = useCallback((message: string | null) => {
+    lastOperationErrorRef.current = message;
+    setError(message);
+  }, []);
+  const getLastOperationError = useCallback(() => lastOperationErrorRef.current, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -187,6 +195,7 @@ export function useTemplates(): UseTemplatesReturn {
 
   const createTemplate = useCallback(
     async (input: CreateTemplateInput): Promise<TemplateSummary | null> => {
+      recordOperationError(null);
       try {
         const id = newTemplateId();
         const nowIso = new Date().toISOString();
@@ -205,7 +214,7 @@ export function useTemplates(): UseTemplatesReturn {
         };
         const { error: tErr } = await supabase.from("doc_templates").insert(templateRow);
         if (tErr) {
-          setError(tErr.message);
+          recordOperationError(tErr.message);
           return null;
         }
         // First version (v1).
@@ -224,7 +233,7 @@ export function useTemplates(): UseTemplatesReturn {
           // through and return a summary, so the caller reported "Saved" while
           // the recipe was gone — a success message with no stored truth behind
           // it. A failed version insert is now a failed save.
-          setError(
+          recordOperationError(
             `Template "${templateRow.name}" was created, but its v1 recipe was NOT stored: ${vErr.message}. ` +
               `The block layout has not been saved — nothing can be built from this template until it is saved again.`,
           );
@@ -234,11 +243,11 @@ export function useTemplates(): UseTemplatesReturn {
         setTemplates((prev) => [summary, ...prev]);
         return summary;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to create template");
+        recordOperationError(err instanceof Error ? err.message : "Failed to create template");
         return null;
       }
     },
-    [],
+    [recordOperationError],
   );
 
   const cloneTemplate = useCallback(
@@ -268,6 +277,7 @@ export function useTemplates(): UseTemplatesReturn {
       recipe: RecipeEntry[],
       layout?: Record<string, unknown>,
     ): Promise<TemplateVersion | null> => {
+      recordOperationError(null);
       try {
         const versions = await getVersions(templateId);
         const nextNumber = (versions[0]?.version_number ?? 0) + 1;
@@ -283,7 +293,7 @@ export function useTemplates(): UseTemplatesReturn {
         };
         const { error: vErr } = await supabase.from("doc_template_versions").insert(versionRow);
         if (vErr) {
-          setError(vErr.message);
+          recordOperationError(vErr.message);
           return null;
         }
         await supabase
@@ -301,11 +311,11 @@ export function useTemplates(): UseTemplatesReturn {
           created_at: nowIso,
         };
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to save version");
+        recordOperationError(err instanceof Error ? err.message : "Failed to save version");
         return null;
       }
     },
-    [getVersions, refresh],
+    [getVersions, refresh, recordOperationError],
   );
 
   const setStatus = useCallback(
@@ -330,6 +340,7 @@ export function useTemplates(): UseTemplatesReturn {
     templates,
     loading,
     error,
+    getLastOperationError,
     refresh,
     getVersions,
     createTemplate,

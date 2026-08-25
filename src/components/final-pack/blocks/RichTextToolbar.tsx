@@ -16,6 +16,7 @@
  */
 
 import type { Editor } from "@tiptap/react";
+import { useState } from "react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
 import TextAlign from "@tiptap/extension-text-align";
@@ -72,19 +73,25 @@ function Btn({
 const Sep = () => <div className="mx-1 h-5 w-px bg-border" />;
 
 export function RichTextToolbar({ editor }: { editor: Editor }) {
-  const setLink = () => {
-    const prev = editor.getAttributes("link").href as string | undefined;
-    const url = window.prompt("Link URL (leave empty to remove):", prev || "");
-    if (url === null) return; // cancelled
-    if (url === "") {
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const openLinkEditor = () => {
+    setLinkUrl((editor.getAttributes("link").href as string | undefined) || "");
+    setLinkOpen(true);
+  };
+  const applyLink = (nextValue = linkUrl) => {
+    const url = nextValue.trim();
+    if (!url) {
       editor.chain().focus().extendMarkRange("link").unsetLink().run();
-      return;
+    } else {
+      editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
     }
-    editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+    setLinkOpen(false);
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-0.5 border-b border-border pb-2">
+    <div className="space-y-2 border-b border-border pb-2">
+      <div className="flex flex-wrap items-center gap-0.5">
       {/* Block type */}
       <Btn active={editor.isActive("paragraph")} onClick={() => editor.chain().focus().setParagraph().run()} title="Paragraph">
         <Pilcrow className="h-4 w-4" />
@@ -150,7 +157,7 @@ export function RichTextToolbar({ editor }: { editor: Editor }) {
       <Sep />
 
       {/* Insert + clear */}
-      <Btn active={editor.isActive("link")} onClick={setLink} title="Link">
+      <Btn active={editor.isActive("link")} onClick={openLinkEditor} title="Link">
         <LinkIcon className="h-4 w-4" />
       </Btn>
       <Btn onClick={() => editor.chain().focus().setHorizontalRule().run()} title="Horizontal rule">
@@ -169,6 +176,16 @@ export function RichTextToolbar({ editor }: { editor: Editor }) {
       <Btn onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()} title="Redo">
         <Redo className="h-4 w-4" />
       </Btn>
+      </div>
+      {linkOpen && (
+        <form className="flex flex-wrap items-center gap-2 rounded border border-border bg-muted/20 p-2" onSubmit={(event) => { event.preventDefault(); applyLink(); }}>
+          <label className="sr-only" htmlFor="fps-link-url">Link URL</label>
+          <input id="fps-link-url" type="url" value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="https://example.com" autoFocus className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-xs" />
+          <button type="submit" className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground">Apply</button>
+          <button type="button" onClick={() => applyLink("")} className="rounded border border-border px-2 py-1 text-xs">Remove</button>
+          <button type="button" onClick={() => setLinkOpen(false)} className="rounded px-2 py-1 text-xs text-muted-foreground">Cancel</button>
+        </form>
+      )}
     </div>
   );
 }

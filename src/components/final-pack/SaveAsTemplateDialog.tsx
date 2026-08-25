@@ -20,6 +20,7 @@ import {
   type TemplateClass,
   type TemplateScope,
 } from "@/hooks/useTemplates";
+import { useModalDialog } from "@/hooks/useModalDialog";
 
 interface SaveAsTemplateDialogProps {
   blocks: OutputBlock[];
@@ -69,7 +70,7 @@ const SCOPES: TemplateScope[] = ["workspace", "personal", "hala_global"];
 export default function SaveAsTemplateDialog({
   blocks, packType, defaultName, customerName, refNumber, brandingProfileId, layout, createdBy, onClose,
 }: SaveAsTemplateDialogProps) {
-  const { createTemplate, error: templatesError } = useTemplates();
+  const { createTemplate, getLastOperationError } = useTemplates();
 
   const [name, setName] = useState(defaultName || "New Template");
   const [docType, setDocType] = useState<TemplateDocType>(() => packTypeToDocType(packType));
@@ -79,6 +80,7 @@ export default function SaveAsTemplateDialog({
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useModalDialog(onClose);
 
   // Whether customer-specific values still appear literally (advisory).
   const leakRisk = useMemo(() => {
@@ -122,8 +124,8 @@ export default function SaveAsTemplateDialog({
         // NOT stored") instead of a generic message that hides which half of
         // the write landed.
         setError(
-          templatesError
-            ? `Couldn’t save the template — ${templatesError} Your document is unaffected — keep working.`
+          getLastOperationError()
+            ? `Couldn’t save the template — ${getLastOperationError()} Your document is unaffected — keep working.`
             : "Couldn’t save the template. Your document is unaffected — keep working.",
         );
         return;
@@ -139,13 +141,13 @@ export default function SaveAsTemplateDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-lg border border-border bg-card shadow-lg">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Save document as template" tabIndex={-1} className="w-full max-w-md rounded-lg border border-border bg-card shadow-lg">
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
           <div className="flex items-center gap-2">
             <FileStack className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-semibold text-foreground">Save as template</h2>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-accent"><X className="h-4 w-4 text-muted-foreground" /></button>
+          <button onClick={onClose} aria-label="Close save as template dialog" className="p-1 rounded hover:bg-accent"><X className="h-4 w-4 text-muted-foreground" /></button>
         </div>
 
         <div className="px-5 py-4 space-y-3">

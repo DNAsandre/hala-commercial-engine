@@ -118,7 +118,7 @@ export default function BlockAIPreviewCard({
               <AlertTriangle className="h-3 w-3" /> advisory
             </span>
           )}
-          <button onClick={onDiscard} className="rounded p-0.5 text-muted-foreground hover:bg-accent" title="Dismiss preview">
+          <button onClick={onDiscard} aria-label="Dismiss AI preview" className="rounded p-0.5 text-muted-foreground hover:bg-accent" title="Dismiss preview">
             <X className="h-3.5 w-3.5" />
           </button>
         </span>

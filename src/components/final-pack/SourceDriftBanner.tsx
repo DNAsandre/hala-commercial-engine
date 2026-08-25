@@ -62,7 +62,7 @@ export default function SourceDriftBanner({
         <AlertTriangle className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />
         <div className="flex-1">
           <span className="text-xs">
-            Could not check the tender source for changes — {error} Your document is unaffected.
+            Could not check the linked source record for changes — {error} Your document is unaffected.
           </span>
         </div>
         <button
@@ -83,7 +83,7 @@ export default function SourceDriftBanner({
       <Info className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
       <div className="flex-1">
         <span className="text-xs">
-          Tender source has changed since this pack was created.
+          The linked source record has changed since this pack was created.
         </span>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">

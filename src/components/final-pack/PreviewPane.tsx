@@ -42,7 +42,9 @@ export default function PreviewPane({
   volumeBlockKeys,
 }: PreviewPaneProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
+  const [previewScale, setPreviewScale] = useState(0.75);
   // FPS-010 Ticket 3 — paginated visual mode (page gutters at breaks). Screen
   // aid only; final pagination follows the print/PDF engine. Persisted.
   const [paginated, setPaginated] = useState<boolean>(() => {
@@ -104,6 +106,22 @@ export default function PreviewPane({
     }
   }, [previewHtml]);
 
+  // Keep the A4 canvas at its true 595px layout width and scale the whole
+  // sheet to fit the available pane. Flexbox must never squeeze the iframe,
+  // because squeezing changes line wrapping and breaks WYSIWYG trust.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => {
+      const available = Math.max(240, el.clientWidth - 32);
+      setPreviewScale(Math.min(0.75, available / 595));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [expanded]);
+
   // The counter must equal what the pane actually renders (volume filter and
   // the cover_page layout flag included) — same function the renderer uses.
   const visibleCount = selectRenderedBlocks(blocks, { volumeBlockKeys, layout }).length;
@@ -136,6 +154,7 @@ export default function PreviewPane({
                 ? "Showing page boundaries at page breaks. Final pagination follows the print/PDF engine. Click for continuous view."
                 : "Continuous view. Click to show page boundaries at page breaks."
             }
+            aria-label={paginated ? "Use continuous preview" : "Show page boundaries"}
           >
             {paginated ? (
               <Files className="h-3.5 w-3.5" />
@@ -148,6 +167,7 @@ export default function PreviewPane({
             onClick={() => setExpanded(!expanded)}
             className="p-1 rounded hover:bg-accent transition-colors"
             title={expanded ? "Collapse preview" : "Expand preview"}
+            aria-label={expanded ? "Collapse preview" : "Expand preview"}
           >
             {expanded ? (
               <Minimize2 className="h-3.5 w-3.5 text-muted-foreground" />
@@ -159,13 +179,18 @@ export default function PreviewPane({
       </div>
 
       {/* A4 preview iframe */}
-      <div className="fps-preview-container">
-        <iframe
-          ref={iframeRef}
-          title="Final Pack Preview"
-          className="fps-preview-iframe"
-          sandbox="allow-same-origin"
-        />
+      <div ref={containerRef} className="fps-preview-container">
+        <div
+          className="fps-preview-sheet"
+          style={{ ["--fps-preview-scale" as string]: String(previewScale) }}
+        >
+          <iframe
+            ref={iframeRef}
+            title="Final Pack Preview"
+            className="fps-preview-iframe"
+            sandbox="allow-same-origin"
+          />
+        </div>
       </div>
     </div>
   );

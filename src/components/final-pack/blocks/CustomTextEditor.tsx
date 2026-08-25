@@ -5,7 +5,7 @@
  * FPS-008 hardening (Part D) — deep toolbar: Paragraph, H1–H4, Bold, Italic,
  * Underline, lists, Quote, indent/outdent, alignment, link, HR, clear, undo/redo.
  *
- * Label: "Custom block — not linked to tender source"
+ * Label: "Custom block — not linked to a source record"
  * Source-truth safety: Writes to output copy only (content.html, unchanged model).
  */
 
@@ -69,7 +69,7 @@ export default function CustomTextEditor({ block, onContentChange }: CustomTextE
       {/* Custom block label */}
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <span>✏️</span>
-        <span>Custom block — not linked to tender source</span>
+        <span>Custom block — not linked to a source record</span>
       </div>
 
       <RichTextToolbar editor={editor} />

@@ -26,9 +26,11 @@ export default function VolumeSelector({ volumes, selectedKey, onSelect, blocks 
     const allowed = new Set(v.block_keys);
     return blocks.filter((b) => b.visible && allowed.has(b.block_key)).length;
   };
+  const assignedKeys = new Set(volumes.flatMap((volume) => volume.block_keys));
+  const unassignedCount = blocks.filter((block) => block.visible && !assignedKeys.has(block.block_key)).length;
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-1.5">
       <Layers className="h-3.5 w-3.5 text-muted-foreground" />
       <select
         value={selectedKey ?? "__all__"}
@@ -43,6 +45,11 @@ export default function VolumeSelector({ volumes, selectedKey, onSelect, blocks 
           </option>
         ))}
       </select>
+      {unassignedCount > 0 && (
+        <span className="text-[10px] text-amber-700" title="These blocks remain in the full document but are not part of any configured volume.">
+          {unassignedCount} full-document-only
+        </span>
+      )}
     </div>
   );
 }

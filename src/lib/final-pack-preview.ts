@@ -252,8 +252,9 @@ function renderBlock(block: OutputBlock, branding: BrandingProfile, ctx?: Render
   // SLA
   if (key === "annexure_sla") return renderSla(block);
 
-  // Facility gallery
-  if (key === "facility_gallery") return renderVariableBlock(block, "Facilities");
+  // Facility details. The current data contract contains text fields only;
+  // do not present it as an image gallery.
+  if (key === "facility_gallery") return renderVariableBlock(block, "Facility Details");
 
   // Party details
   if (key === "party_details") return renderVariableBlock(block, "Parties");
@@ -618,7 +619,10 @@ function getPreviewCSS(b: BrandingProfile): string {
       background: #fff;
       padding: 40px 48px;
       position: relative;
+      overflow-wrap: anywhere;
     }
+
+    table, td, th { overflow-wrap: anywhere; }
 
     h1, h2, h3, h4 {
       font-family: '${b.font_heading}', '${b.font_family}', serif;

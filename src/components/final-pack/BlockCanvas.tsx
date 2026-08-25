@@ -67,6 +67,7 @@ export default function BlockCanvas({
               className="rounded border border-border p-1 text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-30"
               disabled={index === 0}
               title="Move block up"
+              aria-label={`Move ${block.display_name} up`}
               onClick={() => onMoveBlock(index, index - 1)}
             >
               <ArrowUp className="h-3.5 w-3.5" />
@@ -76,6 +77,7 @@ export default function BlockCanvas({
               className="rounded border border-border p-1 text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-30"
               disabled={index === blocks.length - 1}
               title="Move block down"
+              aria-label={`Move ${block.display_name} down`}
               onClick={() => onMoveBlock(index, index + 1)}
             >
               <ArrowDown className="h-3.5 w-3.5" />

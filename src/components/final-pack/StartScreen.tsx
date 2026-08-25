@@ -10,9 +10,7 @@
  * No gates, no locks. Every option leads to an editable, exportable document.
  */
 
-import {
-  Link2, FilePlus, LayoutTemplate, FolderOpen, Copy, LibraryBig,
-} from "lucide-react";
+import { Link2, FilePlus, LayoutTemplate, FolderOpen, LibraryBig } from "lucide-react";
 
 export type EntryChoice = "connected" | "blank" | "template" | "resume" | "authoring";
 
@@ -21,19 +19,17 @@ interface StartScreenProps {
 }
 
 interface EntryOption {
-  choice: EntryChoice | "duplicate";
+  choice: EntryChoice;
   label: string;
   description: string;
   icon: typeof Link2;
-  disabled?: boolean;
-  note?: string;
 }
 
 const OPTIONS: EntryOption[] = [
   {
     choice: "connected",
-    label: "Open Connected Source",
-    description: "Build a document from a live tender / commercial ticket.",
+    label: "Open Connected Tender",
+    description: "Build from a live tender. For proposals, open Final Pack Studio from the proposal workspace.",
     icon: Link2,
   },
   {
@@ -60,14 +56,6 @@ const OPTIONS: EntryOption[] = [
     description: "Create, clone, edit, version, publish, and retire templates.",
     icon: LibraryBig,
   },
-  {
-    choice: "duplicate",
-    label: "Duplicate Existing Document",
-    description: "Copy an existing document into a new standalone document.",
-    icon: Copy,
-    disabled: true,
-    note: "Coming soon",
-  },
 ];
 
 export default function StartScreen({ onChoose }: StartScreenProps) {
@@ -89,9 +77,8 @@ export default function StartScreen({ onChoose }: StartScreenProps) {
             return (
               <button
                 key={opt.choice}
-                onClick={() => !opt.disabled && onChoose(opt.choice as EntryChoice)}
-                disabled={opt.disabled}
-                className="flex items-start gap-3 px-5 py-4 rounded-lg border border-border bg-card text-left transition-all hover:border-primary/40 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:shadow-none"
+                onClick={() => onChoose(opt.choice)}
+                className="flex items-start gap-3 px-5 py-4 rounded-lg border border-border bg-card text-left transition-all hover:border-primary/40 hover:shadow-sm"
               >
                 <div className="p-2 rounded-md bg-accent/60">
                   <Icon className="h-5 w-5 text-primary" />
@@ -101,11 +88,6 @@ export default function StartScreen({ onChoose }: StartScreenProps) {
                     <span className="text-sm font-semibold text-foreground">
                       {opt.label}
                     </span>
-                    {opt.note && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-muted-foreground">
-                        {opt.note}
-                      </span>
-                    )}
                   </div>
                   <p className="text-xs text-muted-foreground leading-relaxed">
                     {opt.description}

@@ -121,8 +121,9 @@ export default function PackSelector({ tenderId, sourceKind = "tender", onInstan
       // Fetch tender metadata (READ ONLY)
       const { data: tender, error: tenderErr } = await supabase
         .from("commercial_tickets")
-        .select("ticket_title, customer_name, type_details")
+        .select("ticket_title, customer_name, type_details, ticket_type")
         .eq("id", tenderId)
+        .eq("ticket_type", sourceKind)
         .maybeSingle();
 
       if (cancelled) return;
@@ -234,7 +235,7 @@ export default function PackSelector({ tenderId, sourceKind = "tender", onInstan
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="text-center space-y-3">
           <Loader2 className="h-8 w-8 text-muted-foreground mx-auto animate-spin" />
-          <p className="text-sm text-muted-foreground">Loading tender data…</p>
+          <p className="text-sm text-muted-foreground">Loading {sourceKind} data…</p>
         </div>
       </div>
     );
@@ -247,7 +248,7 @@ export default function PackSelector({ tenderId, sourceKind = "tender", onInstan
         <div className="max-w-md text-center space-y-3">
           <AlertTriangle className="h-8 w-8 text-amber-500 mx-auto" />
           <h2 className="text-base font-semibold text-foreground">
-            Could not load this tender
+            Could not load this {sourceKind}
           </h2>
           <p className="text-sm text-muted-foreground">
             The source record could not be read, so no document can be built from it yet.

@@ -68,29 +68,9 @@
   border-color: var(--fps-block-hover);
 }
 
-.fps-block-card[data-dragging="true"] {
-  opacity: 0.5;
-  border-color: var(--fps-drag-active);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-}
-
 .fps-block-card[data-hidden="true"] {
   opacity: 0.45;
   border-style: dashed;
-}
-
-/* ── Drag handle ────────────────────────────────────────── */
-.fps-drag-handle {
-  cursor: grab;
-  color: var(--fps-drag-handle);
-  padding: 4px;
-  display: flex;
-  align-items: center;
-}
-
-.fps-drag-handle:active {
-  cursor: grabbing;
-  color: var(--fps-drag-active);
 }
 
 /* ── Source-copy label (permanent, non-dismissible) ─────── */
@@ -164,17 +144,28 @@
   justify-content: center;
   padding: 1rem;
   background: oklch(0.96 0.003 80);
+  min-width: 0;
+}
+
+.fps-preview-sheet {
+  position: relative;
+  flex: 0 0 auto;
+  width: calc(var(--fps-a4-width) * var(--fps-preview-scale));
+  min-height: calc(var(--fps-a4-height) * var(--fps-preview-scale));
 }
 
 .fps-preview-iframe {
+  position: absolute;
+  inset: 0 auto auto 0;
   width: var(--fps-a4-width);
   min-height: var(--fps-a4-height);
   background: white;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
   border-radius: 2px;
   border: none;
+  flex-shrink: 0;
   transform: scale(var(--fps-preview-scale));
-  transform-origin: top center;
+  transform-origin: top left;
 }
 
 .fps-preview-page {
@@ -232,6 +223,66 @@
 body.fps-resizing { cursor: col-resize; user-select: none; }
 body.fps-resizing iframe { pointer-events: none; }
 
+/* The studio occupies CleanLayout's content slot; the app shell owns the
+   viewport. Keeping the document root bounded avoids a second page scrollbar. */
+.fps-studio-root { min-height: 0; }
+.fps-studio-header { flex: 0 0 auto; min-width: 0; }
+.fps-studio-header-main,
+.fps-studio-header-actions { min-width: 0; }
+
+@media (max-width: 900px) {
+  .fps-studio-root {
+    height: auto !important;
+    min-height: 100%;
+  }
+
+  .fps-studio-header {
+    flex-wrap: wrap;
+    padding: 0.75rem;
+  }
+
+  .fps-studio-header-actions {
+    width: 100%;
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+
+  .fps-composer {
+    flex-direction: column;
+    overflow: visible;
+  }
+
+  .fps-composer-left {
+    overflow: visible;
+  }
+
+  .fps-resizer {
+    display: none;
+  }
+
+  .fps-preview-pane,
+  .fps-preview-pane.fps-preview-expanded {
+    position: relative;
+    inset: auto;
+    width: 100% !important;
+    min-width: 0;
+    height: min(70vh, 760px);
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    box-shadow: none;
+  }
+
+  .fps-studio-root button,
+  .fps-studio-root select,
+  .fps-studio-root input:not([type="checkbox"]):not([type="radio"]):not([type="file"]) {
+    min-height: 40px;
+  }
+
+  .fps-block-card > div:first-child {
+    flex-wrap: wrap;
+  }
+}
+
 /* ── Export toolbar ──────────────────────────────────────── */
 .fps-export-toolbar {
   display: flex;
@@ -271,4 +322,3 @@ body.fps-resizing iframe { pointer-events: none; }
   letter-spacing: 0.1em;
   z-index: 1000;
 }
-

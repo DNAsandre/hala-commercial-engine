@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { X, History, RotateCcw, Loader2, FileText } from "lucide-react";
 import { useInstanceVersions, type InstanceVersion } from "@/hooks/useInstanceVersions";
 import type { OutputBlock } from "@/lib/final-pack-loader";
+import { useModalDialog } from "@/hooks/useModalDialog";
 
 interface VersionHistoryPanelProps {
   instanceId: string;
@@ -39,18 +40,19 @@ export default function VersionHistoryPanel({ instanceId, onRestore, onClose }: 
   const { versions, loading, error, refresh } = useInstanceVersions(instanceId);
   const [selected, setSelected] = useState<InstanceVersion | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const dialogRef = useModalDialog(onClose);
 
   useEffect(() => { refresh(); }, [refresh]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl rounded-lg border border-border bg-card shadow-lg max-h-[85vh] flex flex-col">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Document version history" tabIndex={-1} className="w-full max-w-2xl rounded-lg border border-border bg-card shadow-lg max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
           <div className="flex items-center gap-2">
             <History className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-semibold text-foreground">Version history</h2>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-accent"><X className="h-4 w-4 text-muted-foreground" /></button>
+          <button onClick={onClose} aria-label="Close version history" className="p-1 rounded hover:bg-accent"><X className="h-4 w-4 text-muted-foreground" /></button>
         </div>
 
         <div className="grid grid-cols-[1fr_1.1fr] gap-0 flex-1 overflow-hidden">

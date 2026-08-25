@@ -91,7 +91,10 @@ export default function FinalPackStudio() {
   // failure is now held in state and shown until a save actually succeeds.
   const [saveError, setSaveError] = useState<string | null>(null);
   const [branding, setBranding] = useState<BrandingProfile>(DEFAULT_BRANDING);
-  const { profiles: brandingProfiles } = useBrandingProfiles();
+  const {
+    profiles: brandingProfiles,
+    error: brandingProfilesError,
+  } = useBrandingProfiles();
   // Block being saved to the reusable library (FPS-003); null = dialog closed.
   const [reusableSaveBlock, setReusableSaveBlock] = useState<OutputBlock | null>(null);
   // Save-as-template dialog (FPS-005); true = open.
@@ -149,6 +152,37 @@ export default function FinalPackStudio() {
   useEffect(() => endResize, [endResize]);
 
   const resetSplit = useCallback(() => setPreviewWidth(null), []);
+
+  // A split stored on a large monitor must not crush either pane when the
+  // same document is reopened in a smaller window.
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const clamp = () => {
+      const max = Math.max(320, el.clientWidth - 360);
+      setPreviewWidth((current) => current == null ? current : Math.min(Math.max(current, 320), max));
+    };
+    clamp();
+    const observer = new ResizeObserver(clamp);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [mode]);
+
+  const resizeFromKeyboard = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!composerRef.current) return;
+    if (event.key === "Home") {
+      event.preventDefault();
+      resetSplit();
+      return;
+    }
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const rect = composerRef.current.getBoundingClientRect();
+    const current = previewWidth ?? rect.width * 0.45;
+    const delta = event.key === "ArrowLeft" ? 24 : -24;
+    const max = Math.max(320, rect.width - 360);
+    setPreviewWidth(Math.min(Math.max(current + delta, 320), max));
+  }, [previewWidth, resetSplit]);
 
   const meId = appUser?.id || appUser?.email || "anon";
   // TCW integration (P4): never the fabricated literal "User" — signed-out is
@@ -268,6 +302,26 @@ export default function FinalPackStudio() {
     },
   );
 
+  // Document-level undo/redo. TipTap keeps its own text-editor history while
+  // focus is inside an editor; outside editable controls, Ctrl/Cmd+Z operates
+  // on the block/document stack.
+  useEffect(() => {
+    if (mode !== "compose") return;
+    const handleKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      event.preventDefault();
+      if (event.shiftKey) {
+        if (canRedo) redo();
+      } else if (canUndo) {
+        undo();
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [mode, canUndo, canRedo, undo, redo]);
+
   // Source drift detection — READ ONLY check against commercial_tickets.
   // PADW T06c (PDS-19): keyed to the INSTANCE's own linked ticket id, not the
   // route param — a connected document resumed from /pdf-studio has no route
@@ -359,11 +413,27 @@ export default function FinalPackStudio() {
   // for RENDER only (preview + export). The editor keeps the raw stored paths.
   // Falls back to the raw branding/blocks while resolving — never blocks render.
   const [resolvedBranding, setResolvedBranding] = useState<BrandingProfile>(branding);
+  const [assetWarning, setAssetWarning] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     resolveBrandingAssets(branding)
-      .then((b) => { if (!cancelled) setResolvedBranding(b); })
-      .catch(() => { if (!cancelled) setResolvedBranding(branding); });
+      .then((b) => {
+        if (cancelled) return;
+        setResolvedBranding(b);
+        const requested = [branding.logo_url, branding.watermark_url, ...(branding.cover_hero_urls ?? [])]
+          .filter((value) => typeof value === "string" && value.trim()).length;
+        const resolved = [b.logo_url, b.watermark_url, ...(b.cover_hero_urls ?? [])]
+          .filter((value) => typeof value === "string" && value.trim()).length;
+        setAssetWarning(requested > resolved
+          ? `${requested - resolved} branding image${requested - resolved === 1 ? "" : "s"} could not be loaded and will not appear in preview or export.`
+          : null);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setResolvedBranding(branding);
+          setAssetWarning(err instanceof Error ? err.message : "Branding images could not be resolved.");
+        }
+      });
     return () => { cancelled = true; };
   }, [branding]);
 
@@ -528,6 +598,9 @@ export default function FinalPackStudio() {
     (b) => b.render_key === "cover_hero",
   );
   const coverVars = coverBlock?.content.variables || {};
+  const sourceData = activeInstance?.source_snapshot?.source_data ?? {};
+  const documentRefNumber = coverVars.ref_number ||
+    (typeof sourceData.ref_number === "string" ? sourceData.ref_number : "");
 
   // FPS-006: configured volumes (empty if none) + the currently selected one.
   const volumes = normalizeFinalPackVolumes(activeInstance?.source_snapshot?.volumes);
@@ -546,7 +619,7 @@ export default function FinalPackStudio() {
         branding={resolvedBranding}
         title={coverVars.title || activeInstance.display_title}
         customerName={coverVars.customer_name || activeInstance.customer_name || ""}
-        refNumber={coverVars.ref_number || ""}
+        refNumber={documentRefNumber}
         date={coverVars.date || ""}
         compiledBy={appUser?.email || appUser?.id || "unknown"}
         sourceMode={activeInstance.source_snapshot.source_mode}
@@ -565,9 +638,9 @@ export default function FinalPackStudio() {
   };
 
   return (
-    <div className={`flex flex-col ${mode === "compose" ? "h-screen" : "min-h-screen"}`}>
+    <div className={`fps-studio-root flex flex-col ${mode === "compose" ? "h-full" : "min-h-full"}`}>
       {/* ── Top Bar ── */}
-      <header className="flex items-center gap-3 px-6 py-3 border-b border-border bg-card">
+      <header className="fps-studio-header flex items-center gap-3 px-6 py-3 border-b border-border bg-card">
         {/* CLEAN APP: the source-workspace control below was a raw <a> (full page
             reload) that bypassed wouter client-side routing. Converted to <Link>.
             The app is root-mounted (SC-01.6) — cleanHref normalizes any historical
@@ -594,7 +667,7 @@ export default function FinalPackStudio() {
           </button>
         )}
         <div className="h-5 w-px bg-border" />
-        <div className="flex items-center gap-2">
+        <div className="fps-studio-header-main flex items-center gap-2">
           <FileText className="h-5 w-5 text-primary" />
           <h1 className="text-lg font-semibold">Final Pack Studio</h1>
         </div>
@@ -628,7 +701,7 @@ export default function FinalPackStudio() {
               </>
             )}
 
-            <div className="ml-auto flex items-center gap-2">
+            <div className="fps-studio-header-actions ml-auto flex items-center gap-2">
               {/* Undo/Redo toolbar — in compose mode */}
               {mode === "compose" && (
                 <UndoRedoToolbar
@@ -760,6 +833,18 @@ export default function FinalPackStudio() {
                     </button>
                   </div>
                 )}
+                {brandingProfilesError && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-500/40 bg-amber-500/5 text-amber-700 text-xs">
+                    <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+                    <span>Branding profiles could not be loaded — {brandingProfilesError}. The current document uses its existing branding.</span>
+                  </div>
+                )}
+                {assetWarning && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-500/40 bg-amber-500/5 text-amber-700 text-xs">
+                    <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+                    <span>{assetWarning}</span>
+                  </div>
+                )}
                 {/* W04-C4: when a volume is selected, these notes describe THAT
                     volume — they used to count the whole document. */}
                 <WarningBanner
@@ -817,8 +902,13 @@ export default function FinalPackStudio() {
               className="fps-resizer"
               role="separator"
               aria-orientation="vertical"
+              aria-label="Resize editor and preview panes"
+              aria-valuemin={320}
+              aria-valuenow={previewWidth ?? undefined}
+              tabIndex={0}
               title="Drag to resize · double-click to reset"
               onPointerDown={startResize}
+              onKeyDown={resizeFromKeyboard}
               onDoubleClick={resetSplit}
               data-active={resizingRef.current ? "true" : undefined}
             />
@@ -829,7 +919,7 @@ export default function FinalPackStudio() {
               branding={resolvedBranding}
               exportMode="draft"
               customerName={coverVars.customer_name || activeInstance.customer_name || ""}
-              refNumber={coverVars.ref_number || ""}
+              refNumber={documentRefNumber}
               date={coverVars.date || ""}
               layout={activeInstance.source_snapshot.layout}
               volumeBlockKeys={selectedVolume?.block_keys ?? null}
@@ -856,7 +946,7 @@ export default function FinalPackStudio() {
               packType={activeInstance.pack_type}
               defaultName={coverVars.title || activeInstance.display_title}
               customerName={coverVars.customer_name || activeInstance.customer_name || ""}
-              refNumber={coverVars.ref_number || ""}
+              refNumber={documentRefNumber}
               brandingProfileId={branding.id}
               layout={activeInstance.source_snapshot.layout}
               createdBy={appUser?.email || appUser?.id || "Unauthenticated"}

@@ -22,6 +22,7 @@ import {
   type TemplateScope,
   type TemplateDocType,
 } from "@/hooks/useTemplates";
+import { useModalDialog } from "@/hooks/useModalDialog";
 import RecipeEditor from "./RecipeEditor";
 
 interface TemplateBuilderProps {
@@ -44,7 +45,7 @@ function statusBadge(status: string) {
 export default function TemplateBuilder({ onBack, createdBy }: TemplateBuilderProps) {
   const {
     templates, loading, error, refresh,
-    createTemplate, cloneTemplate, setStatus, getVersions,
+    createTemplate, cloneTemplate, setStatus, getVersions, getLastOperationError,
   } = useTemplates();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -197,8 +198,13 @@ export default function TemplateBuilder({ onBack, createdBy }: TemplateBuilderPr
           onClose={() => setShowCreate(false)}
           onCreate={async (input) => {
             const t = await createTemplate(input);
-            setShowCreate(false);
-            if (t) { setSelectedId(t.id); refresh(); }
+            if (t) {
+              setShowCreate(false);
+              setSelectedId(t.id);
+              refresh();
+              return { ok: true as const };
+            }
+            return { ok: false as const, error: getLastOperationError() || "The template was not created." };
           }}
         />
       )}
@@ -229,7 +235,7 @@ function CreateTemplateForm({
   onCreate: (input: {
     name: string; doc_type: TemplateDocType; description: string;
     template_class: TemplateClass; scope: TemplateScope; created_by?: string;
-  }) => void;
+  }) => Promise<{ ok: true } | { ok: false; error: string }>;
 }) {
   const [name, setName] = useState("");
   const [docType, setDocType] = useState<TemplateDocType>("proposal");
@@ -237,12 +243,14 @@ function CreateTemplateForm({
   const [scope, setScope] = useState<TemplateScope>("workspace");
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const dialogRef = useModalDialog(onClose);
 
   const input = "w-full px-2.5 py-1.5 rounded-md border border-border bg-card text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-lg border border-border bg-card shadow-lg">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Create template" tabIndex={-1} className="w-full max-w-md rounded-lg border border-border bg-card shadow-lg">
         <div className="px-5 py-3 border-b border-border">
           <h2 className="text-sm font-semibold text-foreground">New template</h2>
         </div>
@@ -275,12 +283,19 @@ function CreateTemplateForm({
             <span className="text-xs font-medium">Description — optional</span>
             <input className={input} value={description} onChange={(e) => setDescription(e.target.value)} />
           </label>
+          {createError && <p className="text-xs text-destructive">{createError}</p>}
         </div>
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border">
           <button onClick={onClose} className="px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:text-foreground">Cancel</button>
           <button
             disabled={busy}
-            onClick={async () => { setBusy(true); await onCreate({ name, doc_type: docType, description, template_class: cls, scope, created_by: createdBy }); setBusy(false); }}
+            onClick={async () => {
+              setBusy(true);
+              setCreateError(null);
+              const result = await onCreate({ name, doc_type: docType, description, template_class: cls, scope, created_by: createdBy });
+              if (!result.ok) setCreateError(result.error);
+              setBusy(false);
+            }}
             className="inline-flex items-center gap-2 px-4 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-60"
           >
             {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Create

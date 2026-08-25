@@ -96,7 +96,7 @@ export default function CoverEditor({
   }, [block.id, updateCfg]);
 
   // FPS-013 — cover mode (native | image | imported_pdf) + imported PDF upload.
-  const coverMode = cfg.cover_mode || "native";
+  const coverMode = cfg.cover_mode === "imported_pdf" ? "imported_pdf" : "native";
   const [pdfUploading, setPdfUploading] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
 
@@ -153,8 +153,7 @@ export default function CoverEditor({
             <label className="text-[11px] font-medium text-muted-foreground">Cover mode</label>
             <div className="flex gap-1">
               {([
-                ["native", "Native cover"],
-                ["image", "Image cover"],
+                ["native", "Designed cover"],
                 ["imported_pdf", "Imported PDF"],
               ] as const).map(([val, label]) => (
                 <button

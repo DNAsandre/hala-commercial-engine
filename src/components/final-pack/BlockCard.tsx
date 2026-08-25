@@ -9,7 +9,7 @@
 
 import { forwardRef, useState } from "react";
 import {
-  GripVertical, Eye, EyeOff, ChevronDown, ChevronRight,
+  Eye, EyeOff, ChevronDown, ChevronRight,
   FileText, Table, Scale, Pen, BookOpen, Image, Lock, Type, Library, Sparkles, X, Copy, Trash2, Check,
   RotateCcw,
 } from "lucide-react";
@@ -63,10 +63,6 @@ interface BlockCardProps {
   onResetFromSource?: () => void;
   /** Render function for the expanded editor */
   renderEditor?: (block: OutputBlock, onContentChange: (c: Partial<OutputBlock["content"]>) => void) => React.ReactNode;
-  /** Drag handle attributes from @dnd-kit */
-  dragHandleProps?: Record<string, any>;
-  /** Drag active styling */
-  isDragging?: boolean;
   /**
    * Discovered Bot Builder microbots for the whole document (FPS-008). The card
    * narrows them to THIS block's render_key. AI is preview-only and runtime is
@@ -114,7 +110,7 @@ function getFamilyColor(family: string): string {
 
 const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
   function BlockCard(
-    { block, onToggleVisibility, onContentChange, onSaveReusable, onDuplicate, onRemove, onResetFromSource, renderEditor, dragHandleProps, isDragging, aiBots, aiBotsLoading, onSelectBot, docContext },
+    { block, onToggleVisibility, onContentChange, onSaveReusable, onDuplicate, onRemove, onResetFromSource, renderEditor, aiBots, aiBotsLoading, onSelectBot, docContext },
     ref,
   ) {
     const [expanded, setExpanded] = useState(false);
@@ -228,15 +224,12 @@ const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
       <div
         ref={ref}
         className="fps-block-card"
-        data-dragging={isDragging ? "true" : undefined}
         data-hidden={!block.visible ? "true" : undefined}
       >
         {/* ── Header row ── */}
         <div className="flex items-center gap-2 px-3 py-2.5">
-          {/* Drag handle */}
-          <div className="fps-drag-handle" {...(dragHandleProps || {})}>
-            <GripVertical className="h-4 w-4" />
-          </div>
+          {/* Reordering uses the working up/down controls beside the card.
+              A grab handle is intentionally absent until DnD is real. */}
 
           {/* Type icon */}
           <div className="flex-shrink-0">
@@ -287,6 +280,7 @@ const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
                 onClick={() => setAiMenuOpen((o) => !o)}
                 className="p-1 rounded hover:bg-accent transition-colors"
                 title="AI assistants for this block"
+                aria-label={`AI assistants for ${block.display_name}`}
                 data-ai-sparkle="true"
                 aria-expanded={aiMenuOpen}
               >
@@ -312,6 +306,7 @@ const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
                   onClick={() => { onResetFromSource(); setConfirmReset(false); }}
                   className="p-1 rounded hover:bg-amber-500/10 transition-colors"
                   title={`Confirm reset "${block.display_name}" to its source snapshot`}
+                  aria-label={`Confirm reset ${block.display_name} to its source snapshot`}
                   data-reset-confirm="true"
                 >
                   <Check className="h-3.5 w-3.5 text-amber-600" />
@@ -320,6 +315,7 @@ const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
                   onClick={() => setConfirmReset(false)}
                   className="p-1 rounded hover:bg-accent transition-colors"
                   title="Cancel"
+                  aria-label="Cancel block reset"
                 >
                   <X className="h-3.5 w-3.5 text-muted-foreground" />
                 </button>
@@ -329,6 +325,7 @@ const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
                 onClick={() => setConfirmReset(true)}
                 className="p-1 rounded hover:bg-accent transition-colors flex-shrink-0"
                 title="Reset this block to its source snapshot (undoable)"
+                aria-label={`Reset ${block.display_name} to its source snapshot`}
                 data-reset-block="true"
               >
                 <RotateCcw className="h-3.5 w-3.5 text-muted-foreground" />
@@ -341,6 +338,7 @@ const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
               onClick={onDuplicate}
               className="p-1 rounded hover:bg-accent transition-colors flex-shrink-0"
               title="Duplicate block"
+              aria-label={`Duplicate ${block.display_name}`}
               data-duplicate-block="true"
             >
               <Copy className="h-3.5 w-3.5 text-muted-foreground" />
@@ -355,6 +353,7 @@ const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
                   onClick={() => { onRemove(); setConfirmRemove(false); }}
                   className="p-1 rounded hover:bg-red-500/10 transition-colors"
                   title="Confirm remove"
+                  aria-label={`Confirm remove ${block.display_name}`}
                   data-remove-confirm="true"
                 >
                   <Check className="h-3.5 w-3.5 text-red-500" />
@@ -363,6 +362,7 @@ const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
                   onClick={() => setConfirmRemove(false)}
                   className="p-1 rounded hover:bg-accent transition-colors"
                   title="Cancel"
+                  aria-label="Cancel block removal"
                 >
                   <X className="h-3.5 w-3.5 text-muted-foreground" />
                 </button>
@@ -372,6 +372,7 @@ const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
                 onClick={() => setConfirmRemove(true)}
                 className="p-1 rounded hover:bg-accent transition-colors flex-shrink-0"
                 title="Remove block"
+                aria-label={`Remove ${block.display_name}`}
                 data-remove-block="true"
               >
                 <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
@@ -385,6 +386,7 @@ const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
               onClick={onSaveReusable}
               className="p-1 rounded hover:bg-accent transition-colors flex-shrink-0"
               title="Save as reusable block"
+              aria-label={`Save ${block.display_name} as reusable block`}
             >
               <Library className="h-3.5 w-3.5 text-muted-foreground" />
             </button>
@@ -395,6 +397,7 @@ const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
             onClick={onToggleVisibility}
             className="p-1 rounded hover:bg-accent transition-colors flex-shrink-0"
             title={block.visible ? "Hide block" : "Show block"}
+            aria-label={block.visible ? `Hide ${block.display_name}` : `Show ${block.display_name}`}
           >
             {block.visible ? (
               <Eye className="h-3.5 w-3.5 text-muted-foreground" />

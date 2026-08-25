@@ -319,7 +319,7 @@ export function useFinalPackInstance(): UseFinalPackInstanceReturn {
         status: data.status || "draft",
         blocks: Array.isArray(data.blocks) ? data.blocks : [],
         source_snapshot: ss as SourceSnapshotPayload,
-        display_title: `${data.customer_name || ""} — ${ss.template_name || data.doc_type || ""}`,
+        display_title: formatInstanceDisplayTitle(data.customer_name, ss, data.doc_type),
         customer_name: data.customer_name || "",
         branding_profile_id: data.branding_profile_id ?? ss.branding_profile_id ?? null,
         template_class: data.template_class ?? ss.template_class ?? "customer_facing",
@@ -554,11 +554,29 @@ function mapRowToInstance(row: any): FinalPackInstance {
     status: row.status || "draft",
     blocks: Array.isArray(row.blocks) ? row.blocks : [],
     source_snapshot: ss as SourceSnapshotPayload,
-    display_title: `${row.customer_name || ""} — ${ss.template_name || row.doc_type || ""}`,
+    display_title: formatInstanceDisplayTitle(row.customer_name, ss, row.doc_type),
     customer_name: row.customer_name || "",
     branding_profile_id: row.branding_profile_id ?? ss.branding_profile_id ?? null,
     template_class: row.template_class ?? ss.template_class ?? "customer_facing",
     created_at: row.created_at || "",
     updated_at: row.updated_at || "",
   };
+}
+
+export function formatInstanceDisplayTitle(
+  customerName: unknown,
+  sourceSnapshot: Record<string, unknown>,
+  docType: unknown,
+): string {
+  const subject = typeof customerName === "string" && customerName.trim()
+    ? customerName.trim()
+    : typeof sourceSnapshot.tender_title === "string" && sourceSnapshot.tender_title.trim()
+      ? sourceSnapshot.tender_title.trim()
+      : "Untitled document";
+  const template = typeof sourceSnapshot.template_name === "string" && sourceSnapshot.template_name.trim()
+    ? sourceSnapshot.template_name.trim()
+    : typeof docType === "string" && docType.trim()
+      ? docType.trim()
+      : "Document";
+  return `${subject} — ${template}`;
 }

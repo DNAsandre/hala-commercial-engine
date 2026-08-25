@@ -84,7 +84,9 @@ export function loadStandaloneBlankPack(source: DocumentSource): BlockSnapshot {
     source_hash: "",
     pricing_scenario_id: null,
     snapshot_at: nowIso,
-    source_data: {},
+    source_data: {
+      ref_number: (source.refNumber || "").trim(),
+    },
     warnings: [],
     // ── Snapshot Contract ──
     source_mode: "standalone",

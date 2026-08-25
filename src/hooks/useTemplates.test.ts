@@ -115,6 +115,7 @@ describe("createTemplate — a saved template means the recipe was stored", () =
     // The old behaviour returned a populated summary here and the dialog said
     // "Saved" while the recipe was gone.
     expect(summary).toBeNull();
+    expect(api.getLastOperationError()).toContain("v1 recipe was NOT stored");
 
     // The header row genuinely did land — the failure message must not deny that.
     expect(db.inserts.filter((i) => i.table === "doc_templates")).toHaveLength(1);
@@ -134,6 +135,7 @@ describe("createTemplate — a saved template means the recipe was stored", () =
     });
 
     expect(summary).toBeNull();
+    expect(api.getLastOperationError()).toContain("permission denied");
     expect(db.inserts.filter((i) => i.table === "doc_template_versions")).toHaveLength(0);
   });
 });
@@ -146,6 +148,7 @@ describe("saveRecipeVersion — a new version means a stored version row", () =>
     const version = await api.saveRecipeVersion("tpl-1", RECIPE);
 
     expect(version).toBeNull();
+    expect(api.getLastOperationError()).toBe("insert failed");
   });
 
   it("writes the recipe that was passed, on the next version number", async () => {
