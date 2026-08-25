@@ -12,7 +12,7 @@
  * House pattern: pure logic exported from the component, no DOM.
  */
 import { describe, expect, it } from "vitest";
-import { initialSowState, kpiSuggestionsFor } from "./ScopeOfWorkCapture";
+import { initialSowState, kpiSuggestionsFor, prepareSowState } from "./ScopeOfWorkCapture";
 
 describe("initialSowState — F7: no template KPI seeding", () => {
   it("GUARD: no stored facet → the KPI list starts EMPTY (no DEFAULT_KPI_NAMES rows)", () => {
@@ -62,5 +62,21 @@ describe("kpiSuggestionsFor — defaults are suggestions, not state", () => {
     expect(kpiSuggestionsFor([
       { name: "", target: "", measurement_tool: "", source: "", hala_response: "", notes: "" },
     ])).toHaveLength(8);
+  });
+});
+
+describe("prepareSowState — visible option truth", () => {
+  it("marks older option wording unsaved and prepares canonical selections", () => {
+    const prepared = prepareSowState({
+      service_lines: ["Dry warehousing"],
+      warehousing: { storage_types: ["Dry storage"] },
+      transport: { models: ["Full truckload distribution"], vehicle_types: ["10 Ton Reefer Dyna"] },
+    });
+
+    expect(prepared.changed).toBe(true);
+    expect(prepared.sow.service_lines).toEqual(["Warehousing"]);
+    expect(prepared.sow.warehousing.storage_types).toEqual(["Dry"]);
+    expect(prepared.sow.transport.models).toEqual(["Full Truck Load"]);
+    expect(prepared.sow.transport.vehicle_types).toEqual(["10 Ton"]);
   });
 });

@@ -12,6 +12,7 @@ import type {
   ProcessManifest,
   RowIdentitySpec,
 } from "./manifest-types";
+import { SOW_OPTIONS } from "../sow-option-contract";
 
 const T = "tender" as const;
 
@@ -35,6 +36,7 @@ interface GroupOptions {
   rowIdentity?: RowIdentitySpec;
   collectionLabel?: string;
   collectionType?: FieldType;
+  enumValues?: readonly string[];
   notes?: string;
   emitCollection?: boolean;
 }
@@ -72,6 +74,7 @@ function group(options: GroupOptions, leaves: readonly Spec[]): FieldDescriptor[
       tab: options.tab,
       label: options.collectionLabel ?? humanize(options.basePath.split(".").pop()!.replace("[]", "")),
       type: options.collectionType ?? "object",
+      ...(options.enumValues ? { enumValues: options.enumValues } : {}),
       nullBehavior: "omit",
       sanitizer,
       persistencePath: options.basePath,
@@ -120,28 +123,28 @@ const IDENTIFIED: FieldDescriptor[] = [
     s("scope_summary", { type: "richtext" }), s("assumptions", { type: "richtext" }),
     s("exclusions", { type: "richtext" }), s("internal_notes", { type: "richtext" }),
   ]),
-  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.service_lines[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Service line" }),
+  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.service_lines[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Service line", enumValues: SOW_OPTIONS.serviceLines }),
   ...group({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.warehousing" }, [
-    s("capacity_value", { type: "number" }), s("capacity_unit"), s("notes", { type: "richtext" }),
+    s("capacity_value", { type: "number" }), s("capacity_unit", { type: "enum", enumValues: SOW_OPTIONS.capacityUnits }), s("notes", { type: "richtext" }),
   ]),
-  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.warehousing.storage_types[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Storage type" }),
-  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.warehousing.activities[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Warehouse activity" }),
+  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.warehousing.storage_types[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Storage type", enumValues: SOW_OPTIONS.storageTypes }),
+  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.warehousing.activities[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Warehouse activity", enumValues: SOW_OPTIONS.warehouseActivities }),
   ...group({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.transport" }, [s("required", { type: "boolean" })]),
-  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.transport.models[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Transport model" }),
-  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.transport.vehicle_types[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Vehicle type" }),
+  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.transport.models[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Transport model", enumValues: SOW_OPTIONS.transportModels }),
+  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.transport.vehicle_types[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Vehicle type", enumValues: SOW_OPTIONS.vehicleTypes }),
   ...group({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.transport.lanes[]", rowIdentity: { fingerprintFields: ["origin", "destination", "frequency"] }, collectionLabel: "Transport lane" },
     ["origin", "destination", "frequency", "estimated_trips", "sla_requirement", "special_handling", "notes"].map(key => s(key))),
   ...group({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.technology" }, [s("integration_notes", { type: "richtext" })]),
-  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.technology.systems[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Technology system" }),
+  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.technology.systems[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Technology system", enumValues: SOW_OPTIONS.technologySystems }),
   ...group({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.sla_kpis[]", rowIdentity: { fingerprintFields: ["name"] }, collectionLabel: "SLA / KPI" },
-    ["name", "target", "measurement_tool", "source", "hala_response", "notes"].map(key => s(key))),
-  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.execution_regions[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Execution region" }),
+    [s("name"), s("target"), s("measurement_tool"), s("source"), s("hala_response", { type: "enum", enumValues: SOW_OPTIONS.halaResponses }), s("notes")]),
+  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.execution_regions[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Execution region", enumValues: SOW_OPTIONS.regions }),
   ...group({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.sites[]", rowIdentity: { fingerprintFields: ["site_name", "city", "address"] }, collectionLabel: "Site" },
-    ["region", "city", "site_name", "site_type", "address", "notes"].map(key => s(key))),
-  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.compliance.requirements[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Compliance requirement" }),
+    [s("region", { type: "enum", enumValues: SOW_OPTIONS.regions }), s("city"), s("site_name"), s("site_type", { type: "enum", enumValues: SOW_OPTIONS.siteTypes }), s("address"), s("notes")]),
+  ...primitiveCollection({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.compliance.requirements[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Compliance requirement", enumValues: SOW_OPTIONS.complianceRequirements }),
   ...group({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.compliance" }, [s("notes", { type: "richtext" })]),
   ...group({ stage: "identified", tab: "Customer Snapshot", uiOwner: owner("ScopeOfWorkCapture.tsx"), basePath: "sow_data.clarifications[]", rowIdentity: { fingerprintFields: ["question", "source_reference"] }, collectionLabel: "SOW clarification" },
-    ["question", "source_reference", "status", "buyer_response"].map(key => s(key))),
+    [s("question"), s("source_reference"), s("status", { type: "enum", enumValues: SOW_OPTIONS.clarificationStatuses }), s("buyer_response")]),
   ...primitiveCollection({ stage: "identified", tab: "Intake & File Audit", uiOwner: owner("IntakeFileAuditTab.tsx"), basePath: "identified.intake_file_audit.received_files[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Received file" }),
   ...primitiveCollection({ stage: "identified", tab: "Intake & File Audit", uiOwner: owner("IntakeFileAuditTab.tsx"), basePath: "identified.intake_file_audit.missing_intake_items[]", rowIdentity: { fingerprintFields: ["value"] }, collectionLabel: "Missing intake item" }),
   ...group({ stage: "identified", tab: "Intake & File Audit", uiOwner: owner("IntakeFileAuditTab.tsx"), basePath: "identified.intake_file_audit" },

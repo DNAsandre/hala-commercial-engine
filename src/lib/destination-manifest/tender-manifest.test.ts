@@ -68,4 +68,16 @@ describe("Tender destination manifest", () => {
     expect(byPath.get("pricing.pnl_snapshot.snapshots[].summary.target_gp_percent")?.type).toBe("text");
     expect(byPath.get("pricing.pnl_snapshot.snapshots[].summary.variance_to_target")?.type).toBe("text");
   });
+
+  it("publishes the exact Scope of Work option vocabulary for configurable bots", () => {
+    const byPath = new Map(TENDER_MANIFEST.fields.map(field => [field.persistencePath, field]));
+    expect(byPath.get("sow_data.service_lines[]")?.enumValues).toContain("Warehousing");
+    expect(byPath.get("sow_data.warehousing.activities[]")?.enumValues).toContain("Full Inventory Audit");
+    expect(byPath.get("sow_data.transport.models[]")?.enumValues).toContain("Full Truck Load");
+    expect(byPath.get("sow_data.transport.vehicle_types[]")?.enumValues).toContain("10 Ton");
+    expect(byPath.get("sow_data.technology.systems[]")?.enumValues).toContain("WMS");
+    expect(byPath.get("sow_data.sla_kpis[].hala_response")?.enumValues).toContain("Compliant");
+    expect(byPath.get("sow_data.sites[].region")?.enumValues).toContain("Central");
+    expect(byPath.get("sow_data.clarifications[].status")?.enumValues).toEqual(["Draft", "Submitted", "Answered", "Closed"]);
+  });
 });

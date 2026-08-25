@@ -45,74 +45,23 @@ import { toast } from "sonner";
 import {
   Loader2, Save, Globe, ChevronDown, ChevronRight, Plus, X,
   FileText, Truck, Warehouse, Cpu, ShieldCheck, MapPin,
-  ClipboardList, NotebookPen, Info, ToggleLeft, ToggleRight,
+  ClipboardList, NotebookPen, Info, ToggleLeft, ToggleRight, AlertTriangle,
 } from "lucide-react";
+import {
+  SOW_OPTIONS,
+  normalizeSowSelections,
+  recognizedOptionCount,
+  unrecognizedOptions,
+} from "@/lib/sow-option-contract";
 
 // ═══════════════════════════════════════════════════════════
 // CONSTANTS — Generic reusable options. NOT tender facts.
 // ═══════════════════════════════════════════════════════════
 
-const SERVICE_LINE_OPTIONS = [
-  "Warehousing", "Transportation", "Inventory Management", "Order Fulfilment",
-  "Distribution", "Freight Forwarding", "Customs Clearance", "Value Added Services",
-  "Office Space", "Technology Integration", "Reporting / Dashboards", "HSE / Compliance",
-  "Stock Count", "Command Center / Control Tower", "Security / Risk Management", "Business Continuity",
-];
-
-const STORAGE_TYPE_OPTIONS = [
-  "Dry", "Ambient", "Temperature Controlled", "Chilled", "Frozen",
-  "Dangerous Goods", "Bonded", "Open Yard", "Secure / Fenced Area", "Crossdock",
-];
-
-const CAPACITY_UNIT_OPTIONS = ["SQM", "Pallets", "CBM", "Containers", "Other"];
-
-const WAREHOUSE_ACTIVITY_OPTIONS = [
-  "Receiving", "Inspection", "Quality Check", "Putaway", "Storage",
-  "Picking", "Packing", "Kitting", "Labelling", "Dispatch",
-  "Cycle Count", "Full Inventory Audit", "Damage Reporting", "Returns Processing",
-  "Palletization", "Re-palletization", "Stretch Wrapping", "Destuffing", "VAS",
-];
-
-const TRANSPORT_MODEL_OPTIONS = [
-  "Dedicated Fleet", "Shared Fleet", "Per Trip", "Per Month", "Linehaul",
-  "Last Mile", "Shuttle", "Express", "Ad-hoc", "Full Truck Load", "Multi-drop",
-];
-
-const VEHICLE_TYPE_OPTIONS = [
-  "Reefer", "Dry Truck", "1 Ton", "4 Ton", "5 Ton", "6 Ton", "10 Ton",
-  "40 FT Trailer", "Flatbed", "Curtain Side", "Dyna", "Other",
-];
-
-const TECHNOLOGY_OPTIONS = [
-  "WMS", "TMS", "GPS Tracking", "Electronic POD", "Barcode Scanning",
-  "RFID", "Customer Portal", "ERP Integration", "API Integration",
-  "Dashboard Reporting", "AWB Automation", "Photo Evidence", "Digital Signatures",
-];
-
 const DEFAULT_KPI_NAMES = [
   "On-time Delivery", "Order Accuracy", "Inventory Accuracy", "Warehouse Throughput",
   "Return Processing Time", "Damage / Loss Rate", "Pickup Window", "Complaint Resolution",
 ];
-
-const HALA_RESPONSE_OPTIONS = [
-  "Compliant", "Partially Compliant", "Not Compliant", "Clarification Required", "Not Applicable",
-];
-
-const REGION_OPTIONS = ["Central", "East", "West", "North", "South", "Nationwide"];
-
-const SITE_TYPE_OPTIONS = [
-  "Client Site", "Hala Warehouse", "Factory", "Crossdock", "Distribution Point",
-  "Port", "Airport", "Border", "Secure Yard", "Other",
-];
-
-const COMPLIANCE_OPTIONS = [
-  "Civil Defense", "NFPA", "ISO 9001", "ISO 45001", "SFDA", "DG Handling",
-  "CCTV / Security", "Fire Suppression", "Emergency Response", "Staff Training",
-  "Pest Control", "Hygiene Maintenance", "BCP / DRP", "Data Security",
-  "Supplier Code of Conduct", "Local Content / LCGPA",
-];
-
-const CLARIFICATION_STATUS_OPTIONS = ["Draft", "Submitted", "Answered", "Closed"];
 
 // ═══════════════════════════════════════════════════════════
 // HELPERS
@@ -166,6 +115,10 @@ export function initialSowState(saved: unknown): SowData {
   return emptySowData();
 }
 
+export function prepareSowState(saved: unknown): { sow: SowData; changed: boolean } {
+  return normalizeSowSelections(initialSowState(saved));
+}
+
 /**
  * TCW-T3 F7 — suggestion names not yet present in the captured rows. Clicking
  * one adds a row to LOCAL state only; nothing persists until the user saves.
@@ -183,23 +136,27 @@ export function kpiSuggestionsFor(rows: SowSlaKpi[]): string[] {
 function ChipMultiSelect({
   options, selected, onToggle, accentColor = "blue",
 }: {
-  options: string[]; selected: string[]; onToggle: (val: string) => void; accentColor?: string;
+  options: readonly string[]; selected: string[]; onToggle: (val: string) => void; accentColor?: string;
 }) {
+  const unknown = unrecognizedOptions(selected, options);
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {options.map(opt => {
-        const sel = selected.includes(opt);
-        return (
-          <button key={opt} type="button" onClick={() => onToggle(opt)}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-all cursor-pointer ${
-              sel
-                ? `bg-${accentColor}-100 text-${accentColor}-800 border-${accentColor}-300 ring-1 ring-${accentColor}-400/20`
-                : "bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50"
-            }`}>
-            {opt}
-          </button>
-        );
-      })}
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {options.map(opt => {
+          const sel = selected.includes(opt);
+          return (
+            <button key={opt} type="button" aria-pressed={sel} onClick={() => onToggle(opt)}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-all cursor-pointer ${
+                sel
+                  ? `bg-${accentColor}-100 text-${accentColor}-800 border-${accentColor}-300 ring-1 ring-${accentColor}-400/20`
+                  : "bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+              }`}>
+              {opt}
+            </button>
+          );
+        })}
+      </div>
+      {unknown.length > 0 && <UnknownSelectionNotice values={unknown} onRemove={onToggle} />}
     </div>
   );
 }
@@ -207,24 +164,53 @@ function ChipMultiSelect({
 function CheckboxGrid({
   options, selected, onToggle,
 }: {
-  options: string[]; selected: string[]; onToggle: (val: string) => void;
+  options: readonly string[]; selected: string[]; onToggle: (val: string) => void;
 }) {
+  const unknown = unrecognizedOptions(selected, options);
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1.5">
-      {options.map(opt => {
-        const sel = selected.includes(opt);
-        return (
-          <label key={opt}
-            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-xs cursor-pointer transition-all ${
-              sel ? "bg-[#075eea]/10 border-[#075eea]/20 text-[#064fc4]" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-            }`}>
-            <input type="checkbox" checked={sel} onChange={() => onToggle(opt)} className="accent-[#075eea] w-3.5 h-3.5" />
-            {opt}
-          </label>
-        );
-      })}
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1.5">
+        {options.map(opt => {
+          const sel = selected.includes(opt);
+          return (
+            <label key={opt}
+              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-xs cursor-pointer transition-all ${
+                sel ? "bg-[#075eea]/10 border-[#075eea]/20 text-[#064fc4]" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+              }`}>
+              <input type="checkbox" checked={sel} onChange={() => onToggle(opt)} className="accent-[#075eea] w-3.5 h-3.5" />
+              {opt}
+            </label>
+          );
+        })}
+      </div>
+      {unknown.length > 0 && <UnknownSelectionNotice values={unknown} onRemove={onToggle} />}
     </div>
   );
+}
+
+function UnknownSelectionNotice({ values, onRemove }: { values: string[]; onRemove: (value: string) => void }) {
+  return (
+    <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[10px] text-amber-900">
+      <div className="mb-1 flex items-center gap-1.5 font-semibold">
+        <AlertTriangle className="h-3.5 w-3.5" /> Unrecognized saved choices
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {values.map(value => (
+          <button key={value} type="button" onClick={() => onRemove(value)}
+            aria-label={`Remove unrecognized selection ${value}`}
+            className="inline-flex items-center gap-1 rounded border border-amber-300 bg-white px-2 py-1 text-amber-900 hover:bg-amber-100">
+            {value}<X className="h-3 w-3" />
+          </button>
+        ))}
+      </div>
+      <p className="mt-1">Remove or replace these choices, then save. They are shown here so no stored value is hidden.</p>
+    </div>
+  );
+}
+
+function UnknownSelectOption({ value, options }: { value: string; options: readonly string[] }) {
+  if (!value || options.includes(value)) return null;
+  return <option value={value}>Unrecognized saved value: {value}</option>;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -263,9 +249,11 @@ interface Props {
 export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfirmedSave }: Props) {
   // ── State ────────────────────────────────────────────────
   // F7: initialize from the stored facet only — no template KPI seeding.
-  const [sow, setSow] = useState<SowData>(() => initialSowState(ws.tender.sowData));
+  const [preparedInitial] = useState(() => prepareSowState(ws.tender.sowData));
+  const [sow, setSow] = useState<SowData>(() => preparedInitial.sow);
 
-  const [dirty, setDirty] = useState(false);
+  const [dirty, setDirty] = useState(preparedInitial.changed);
+  const [normalizationPending, setNormalizationPending] = useState(preparedInitial.changed);
   const [saving, setSaving] = useState(false);
   const staleRetryArmed = useRef(false);
 
@@ -313,6 +301,7 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
         labels: { saved: "Scope of Work saved successfully.", failed: "Failed to save Scope of Work" },
         onConfirmed: () => {
           setDirty(false);
+          setNormalizationPending(false);
           onConfirmedSave?.();
           reload?.();
         },
@@ -343,6 +332,16 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
       </CardHeader>
       <CardContent className="p-4 space-y-6">
 
+        {normalizationPending && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-semibold">Saved choices used older wording and were matched to the current options.</p>
+              <p className="mt-0.5">Review the highlighted selections and press Save Scope of Work to store the current wording.</p>
+            </div>
+          </div>
+        )}
+
         {/* ── 1. Scope Summary ─────────────────────────────── */}
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
@@ -364,11 +363,11 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
           <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
             <ClipboardList className="w-3 h-3" /> Service Lines Required
           </p>
-          {sow.service_lines.length > 0 && (
-            <Badge variant="outline" className="text-[9px] mb-2">{sow.service_lines.length} selected</Badge>
+          {recognizedOptionCount(sow.service_lines, SOW_OPTIONS.serviceLines) > 0 && (
+            <Badge variant="outline" className="text-[9px] mb-2">{recognizedOptionCount(sow.service_lines, SOW_OPTIONS.serviceLines)} selected</Badge>
           )}
           <ChipMultiSelect
-            options={SERVICE_LINE_OPTIONS}
+            options={SOW_OPTIONS.serviceLines}
             selected={sow.service_lines}
             onToggle={val => update(d => { d.service_lines = toggleArray(d.service_lines, val); })}
           />
@@ -382,7 +381,7 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
               title="Warehousing Scope"
               collapsed={warehouseCollapsed}
               onToggle={() => setWarehouseCollapsed(p => !p)}
-              badge={sow.warehousing.storage_types.length > 0 ? <Badge variant="outline" className="text-[9px] ml-2">{sow.warehousing.storage_types.length} types</Badge> : undefined}
+              badge={recognizedOptionCount(sow.warehousing.storage_types, SOW_OPTIONS.storageTypes) > 0 ? <Badge variant="outline" className="text-[9px] ml-2">{recognizedOptionCount(sow.warehousing.storage_types, SOW_OPTIONS.storageTypes)} types</Badge> : undefined}
             />
           </div>
           {!warehouseCollapsed && (
@@ -391,7 +390,7 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Storage Type</p>
                 <ChipMultiSelect
-                  options={STORAGE_TYPE_OPTIONS}
+                  options={SOW_OPTIONS.storageTypes}
                   selected={sow.warehousing.storage_types}
                   onToggle={val => update(d => { d.warehousing.storage_types = toggleArray(d.warehousing.storage_types, val); })}
                 />
@@ -415,7 +414,8 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
                     onChange={e => update(d => { d.warehousing.capacity_unit = e.target.value; })}
                     className="w-full h-8 px-2 rounded-md border border-slate-200 text-xs bg-white">
                     <option value="">Select unit...</option>
-                    {CAPACITY_UNIT_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
+                    <UnknownSelectOption value={sow.warehousing.capacity_unit} options={SOW_OPTIONS.capacityUnits} />
+                    {SOW_OPTIONS.capacityUnits.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </div>
               </div>
@@ -423,7 +423,7 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Warehouse Activities</p>
                 <CheckboxGrid
-                  options={WAREHOUSE_ACTIVITY_OPTIONS}
+                  options={SOW_OPTIONS.warehouseActivities}
                   selected={sow.warehousing.activities}
                   onToggle={val => update(d => { d.warehousing.activities = toggleArray(d.warehousing.activities, val); })}
                 />
@@ -473,7 +473,7 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Transport Model</p>
                     <ChipMultiSelect
-                      options={TRANSPORT_MODEL_OPTIONS}
+                      options={SOW_OPTIONS.transportModels}
                       selected={sow.transport.models}
                       onToggle={val => update(d => { d.transport.models = toggleArray(d.transport.models, val); })}
                     />
@@ -482,7 +482,7 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Vehicle Type</p>
                     <ChipMultiSelect
-                      options={VEHICLE_TYPE_OPTIONS}
+                      options={SOW_OPTIONS.vehicleTypes}
                       selected={sow.transport.vehicle_types}
                       onToggle={val => update(d => { d.transport.vehicle_types = toggleArray(d.transport.vehicle_types, val); })}
                     />
@@ -510,6 +510,7 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
                               <input value={lane.notes} onChange={e => update(d => { d.transport.lanes[idx].notes = e.target.value; })}
                                 placeholder="Notes" className="h-7 px-1.5 rounded border border-slate-200 text-[10px] bg-white flex-1" />
                               <button type="button" onClick={() => update(d => { d.transport.lanes.splice(idx, 1); })}
+                                aria-label={`Remove transport lane ${idx + 1}`}
                                 className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors shrink-0">
                                 <X className="w-3 h-3" />
                               </button>
@@ -537,13 +538,13 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
               title="Technology / Systems Scope"
               collapsed={technologyCollapsed}
               onToggle={() => setTechnologyCollapsed(p => !p)}
-              badge={sow.technology.systems.length > 0 ? <Badge variant="outline" className="text-[9px] ml-2">{sow.technology.systems.length} selected</Badge> : undefined}
+              badge={recognizedOptionCount(sow.technology.systems, SOW_OPTIONS.technologySystems) > 0 ? <Badge variant="outline" className="text-[9px] ml-2">{recognizedOptionCount(sow.technology.systems, SOW_OPTIONS.technologySystems)} selected</Badge> : undefined}
             />
           </div>
           {!technologyCollapsed && (
             <div className="p-4 space-y-4">
               <CheckboxGrid
-                options={TECHNOLOGY_OPTIONS}
+                options={SOW_OPTIONS.technologySystems}
                 selected={sow.technology.systems}
                 onToggle={val => update(d => { d.technology.systems = toggleArray(d.technology.systems, val); })}
               />
@@ -614,7 +615,8 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
                           <select value={kpi.hala_response} onChange={e => update(d => { d.sla_kpis[idx].hala_response = e.target.value; })}
                             className="w-full h-7 px-1 rounded border border-slate-200 text-[10px] bg-white">
                             <option value="">Select...</option>
-                            {HALA_RESPONSE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                            <UnknownSelectOption value={kpi.hala_response} options={SOW_OPTIONS.halaResponses} />
+                            {SOW_OPTIONS.halaResponses.map(o => <option key={o} value={o}>{o}</option>)}
                           </select>
                         </td>
                         <td className="p-1.5">
@@ -623,6 +625,7 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
                         </td>
                         <td className="p-1.5">
                           <button type="button" onClick={() => update(d => { d.sla_kpis.splice(idx, 1); })}
+                            aria-label={`Remove KPI row ${idx + 1}`}
                             className="p-0.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors">
                             <X className="w-3 h-3" />
                           </button>
@@ -675,7 +678,7 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Execution Regions</p>
                 <ChipMultiSelect
-                  options={REGION_OPTIONS}
+                  options={SOW_OPTIONS.regions}
                   selected={sow.execution_regions}
                   onToggle={val => update(d => { d.execution_regions = toggleArray(d.execution_regions, val); })}
                 />
@@ -690,7 +693,8 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
                         <select value={site.region} onChange={e => update(d => { d.sites[idx].region = e.target.value; })}
                           className="h-7 px-1 rounded border border-slate-200 text-[10px] bg-white">
                           <option value="">Region...</option>
-                          {REGION_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+                          <UnknownSelectOption value={site.region} options={SOW_OPTIONS.regions} />
+                          {SOW_OPTIONS.regions.map(r => <option key={r} value={r}>{r}</option>)}
                         </select>
                         <input value={site.city} onChange={e => update(d => { d.sites[idx].city = e.target.value; })}
                           placeholder="City" className="h-7 px-1.5 rounded border border-slate-200 text-[10px] bg-white" />
@@ -699,7 +703,8 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
                         <select value={site.site_type} onChange={e => update(d => { d.sites[idx].site_type = e.target.value; })}
                           className="h-7 px-1 rounded border border-slate-200 text-[10px] bg-white">
                           <option value="">Type...</option>
-                          {SITE_TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                          <UnknownSelectOption value={site.site_type} options={SOW_OPTIONS.siteTypes} />
+                          {SOW_OPTIONS.siteTypes.map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                         <input value={site.address} onChange={e => update(d => { d.sites[idx].address = e.target.value; })}
                           placeholder="Address / Map Link" className="h-7 px-1.5 rounded border border-slate-200 text-[10px] bg-white" />
@@ -707,6 +712,7 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
                           <input value={site.notes} onChange={e => update(d => { d.sites[idx].notes = e.target.value; })}
                             placeholder="Notes" className="h-7 px-1.5 rounded border border-slate-200 text-[10px] bg-white flex-1" />
                           <button type="button" onClick={() => update(d => { d.sites.splice(idx, 1); })}
+                            aria-label={`Remove site ${idx + 1}`}
                             className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors shrink-0">
                             <X className="w-3 h-3" />
                           </button>
@@ -732,13 +738,13 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
               title="Compliance / HSE Requirements"
               collapsed={complianceCollapsed}
               onToggle={() => setComplianceCollapsed(p => !p)}
-              badge={sow.compliance.requirements.length > 0 ? <Badge variant="outline" className="text-[9px] ml-2">{sow.compliance.requirements.length} selected</Badge> : undefined}
+              badge={recognizedOptionCount(sow.compliance.requirements, SOW_OPTIONS.complianceRequirements) > 0 ? <Badge variant="outline" className="text-[9px] ml-2">{recognizedOptionCount(sow.compliance.requirements, SOW_OPTIONS.complianceRequirements)} selected</Badge> : undefined}
             />
           </div>
           {!complianceCollapsed && (
             <div className="p-4 space-y-4">
               <CheckboxGrid
-                options={COMPLIANCE_OPTIONS}
+                options={SOW_OPTIONS.complianceRequirements}
                 selected={sow.compliance.requirements}
                 onToggle={val => update(d => { d.compliance.requirements = toggleArray(d.compliance.requirements, val); })}
               />
@@ -800,12 +806,14 @@ export default function ScopeOfWorkCapture({ ws, reload, onDirtyChange, onConfir
                           placeholder="Source Reference" className="h-7 px-1.5 rounded border border-slate-200 text-[10px] bg-white" />
                         <select value={cl.status} onChange={e => update(d => { d.clarifications[idx].status = e.target.value; })}
                           className="h-7 px-1 rounded border border-slate-200 text-[10px] bg-white">
-                          {CLARIFICATION_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                          <UnknownSelectOption value={cl.status} options={SOW_OPTIONS.clarificationStatuses} />
+                          {SOW_OPTIONS.clarificationStatuses.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                         <div className="flex gap-1">
                           <input value={cl.buyer_response} onChange={e => update(d => { d.clarifications[idx].buyer_response = e.target.value; })}
                             placeholder="Buyer Response" className="h-7 px-1.5 rounded border border-slate-200 text-[10px] bg-white flex-1" />
                           <button type="button" onClick={() => update(d => { d.clarifications.splice(idx, 1); })}
+                            aria-label={`Remove clarification ${idx + 1}`}
                             className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors shrink-0">
                             <X className="w-3 h-3" />
                           </button>
