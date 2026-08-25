@@ -128,6 +128,8 @@ interface ResolvedPatch {
   descriptor: FieldDescriptor;
   segments: PathSegment[];
   fingerprints: readonly string[];
+  /** Identity contract for each "[]" level, outermost first. */
+  levelSpecs: readonly RowIdentitySpec[];
   /** Index (among fingerprints) of the deepest "[]" segment; -1 when the path has none. */
   lastFingerprintIndex: number;
 }
@@ -183,10 +185,37 @@ function resolvePatches(
     if (fingerprints.some((fingerprint) => typeof fingerprint !== 'string' || !fingerprint.trim())) {
       return { error: `Field "${patch.fieldId}" was given an empty row fingerprint. No patch was applied.` };
     }
-    if (segments[segments.length - 1].isArray && !isObject(patch.value)) {
+    const levelSpecs: RowIdentitySpec[] = [];
+    let walked = '';
+    let arrayIndex = 0;
+    for (const segment of segments) {
+      walked = walked ? `${walked}.${segment.key}${segment.isArray ? '[]' : ''}` : `${segment.key}${segment.isArray ? '[]' : ''}`;
+      if (!segment.isArray) continue;
+      const collectionDescriptor = manifest.fields.find(
+        (field) => field.persistencePath === walked && field.rowIdentity,
+      );
+      const isDeepest = arrayIndex === arrayCount - 1;
+      const spec = collectionDescriptor?.rowIdentity ?? (isDeepest ? descriptor.rowIdentity : undefined);
+      if (!spec) {
+        return { error: `Field "${patch.fieldId}" has no row identity for repeated level "${walked}". No patch was applied.` };
+      }
+      levelSpecs.push(spec);
+      arrayIndex += 1;
+    }
+    const endsWithArray = segments[segments.length - 1].isArray;
+    const primitiveCollection = descriptor.type === 'array'
+      && descriptor.rowIdentity?.fingerprintFields.includes('value');
+    if (endsWithArray && !isObject(patch.value) && !primitiveCollection) {
       return { error: `Field "${patch.fieldId}" addresses a whole repeated row, so its value must be an object. No patch was applied.` };
     }
-    resolved.push({ patch, descriptor, segments, fingerprints, lastFingerprintIndex: arrayCount - 1 });
+    resolved.push({
+      patch,
+      descriptor,
+      segments,
+      fingerprints,
+      levelSpecs,
+      lastFingerprintIndex: arrayCount - 1,
+    });
   }
   return { resolved };
 }
@@ -199,19 +228,18 @@ function matchRowIndex(
   rows: readonly unknown[],
   fingerprint: string,
   spec: RowIdentitySpec | undefined,
-  useComputedFallback: boolean,
   compute: ComputeRowFingerprint,
 ): number {
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     if (isObject(row) && row[ROW_SOURCE_FINGERPRINT_KEY] === fingerprint) return i;
   }
-  if (useComputedFallback && spec) {
+  if (spec) {
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      if (!isObject(row)) continue;
       try {
-        if (compute(row, spec) === fingerprint) return i;
+        const fingerprintRow = isObject(row) ? row : { value: row };
+        if (compute(fingerprintRow, spec) === fingerprint) return i;
       } catch {
         // A row the fingerprint function cannot process simply does not match.
       }
@@ -220,9 +248,11 @@ function matchRowIndex(
   return -1;
 }
 
-/** The value a whole-row patch stores (and read-back expects): the row carrying its fingerprint. */
-function wholeRowValue(value: unknown, fingerprint: string): JsonObject {
-  return { ...objectOrEmpty(value), [ROW_SOURCE_FINGERPRINT_KEY]: fingerprint };
+/** Object rows carry a stored fingerprint; primitive collection values remain primitive. */
+function wholeRowValue(value: unknown, fingerprint: string): unknown {
+  return isObject(value)
+    ? { ...value, [ROW_SOURCE_FINGERPRINT_KEY]: fingerprint }
+    : value;
 }
 
 /**
@@ -247,8 +277,12 @@ function setAddressedLeaf(
   }
   const currentRows = Array.isArray(base[segment.key]) ? (base[segment.key] as unknown[]) : [];
   const fingerprint = resolved.fingerprints[fingerprintIndex];
-  const useComputedFallback = fingerprintIndex === resolved.lastFingerprintIndex;
-  const index = matchRowIndex(currentRows, fingerprint, resolved.descriptor.rowIdentity, useComputedFallback, compute);
+  const index = matchRowIndex(
+    currentRows,
+    fingerprint,
+    resolved.levelSpecs[fingerprintIndex],
+    compute,
+  );
   const rows = [...currentRows];
   if (rest.length === 0) {
     const row = wholeRowValue(resolved.patch.value, fingerprint);
@@ -282,8 +316,12 @@ function readAddressedLeaf(
   const rows = container[segment.key];
   if (!Array.isArray(rows)) return { found: false };
   const fingerprint = resolved.fingerprints[fingerprintIndex];
-  const useComputedFallback = fingerprintIndex === resolved.lastFingerprintIndex;
-  const index = matchRowIndex(rows, fingerprint, resolved.descriptor.rowIdentity, useComputedFallback, compute);
+  const index = matchRowIndex(
+    rows,
+    fingerprint,
+    resolved.levelSpecs[fingerprintIndex],
+    compute,
+  );
   if (index < 0) return { found: false };
   if (rest.length === 0) return { found: true, value: rows[index] };
   return readAddressedLeaf(rows[index], rest, resolved, fingerprintIndex + 1, compute);

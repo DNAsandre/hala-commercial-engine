@@ -17,6 +17,8 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ProcessManifest, RowIdentitySpec } from './destination-manifest/manifest-types';
+import { TENDER_MANIFEST } from './destination-manifest/tender-manifest';
+import { computeRowFingerprint as computeStableRowFingerprint } from './row-fingerprint';
 import {
   applyTenderFieldPatch,
   ROW_SOURCE_FINGERPRINT_KEY,
@@ -382,6 +384,97 @@ describe('applyTenderFieldPatch — repeated-row replay', () => {
     expect((details(fake.row).solution_design_data as any).sla_kpi.governance)
       .toEqual({ review_frequency: 'Monthly' });
     expect((details(fake.row).solution_design_data as any).hop).toEqual({ model: 'untouched' });
+  });
+});
+
+describe('applyTenderFieldPatch — real Tender primitive collections', () => {
+  it('preserves a primitive service-line value and replays without duplication', async () => {
+    const fake = makeStore();
+    (details(fake.row).sow_data as JsonObject).service_lines = ['Warehousing'];
+    const spec = TENDER_MANIFEST.fields.find(
+      (field) => field.id === 't:sow_data.service_lines[]',
+    )!.rowIdentity!;
+    const fingerprint = computeStableRowFingerprint({ value: 'Warehousing' }, spec);
+    const deps: TenderFieldPatchDeps = {
+      store: fake.store,
+      computeRowFingerprint: computeStableRowFingerprint,
+    };
+
+    const first = await applyTenderFieldPatch(TENDER_MANIFEST, deps, {
+      ticketId: 'tender-1',
+      expectedRevision: 'rev-1',
+      actor: ACTOR,
+      patches: [{
+        fieldId: 't:sow_data.service_lines[]',
+        value: 'Warehousing',
+        rowFingerprints: [fingerprint],
+      }],
+    });
+    const second = await applyTenderFieldPatch(TENDER_MANIFEST, deps, {
+      ticketId: 'tender-1',
+      expectedRevision: first.newRevision!,
+      actor: ACTOR,
+      patches: [{
+        fieldId: 't:sow_data.service_lines[]',
+        value: '  Warehousing  ',
+        rowFingerprints: [fingerprint],
+      }],
+    });
+
+    expect(first.status).toBe('saved');
+    expect(second.status).toBe('saved');
+    expect((details(fake.row).sow_data as JsonObject).service_lines)
+      .toEqual(['  Warehousing  ']);
+  });
+
+  it('matches an existing document at the outer level and appends one primitive stage label', async () => {
+    const fake = makeStore();
+    const document = {
+      document_name: 'RFQ.pdf',
+      storage_path: 'tenders/tender-1/RFQ.pdf',
+      version: '1',
+      notes: 'keep this human note',
+      stage_relevance: ['identified'],
+    };
+    details(fake.row).documents = [document];
+    const outerDescriptor = TENDER_MANIFEST.fields.find(
+      (field) => field.id === 't:documents[]',
+    )!;
+    const innerDescriptor = TENDER_MANIFEST.fields.find(
+      (field) => field.id === 't:documents[].stage_relevance[]',
+    )!;
+    const outerFingerprint = computeStableRowFingerprint(document, outerDescriptor.rowIdentity!);
+    const innerFingerprint = computeStableRowFingerprint(
+      { value: 'qualification' },
+      innerDescriptor.rowIdentity!,
+    );
+    const deps: TenderFieldPatchDeps = {
+      store: fake.store,
+      computeRowFingerprint: computeStableRowFingerprint,
+    };
+
+    const first = await applyTenderFieldPatch(TENDER_MANIFEST, deps, {
+      ticketId: 'tender-1', expectedRevision: 'rev-1', actor: ACTOR,
+      patches: [{
+        fieldId: 't:documents[].stage_relevance[]',
+        value: 'qualification',
+        rowFingerprints: [outerFingerprint, innerFingerprint],
+      }],
+    });
+    const second = await applyTenderFieldPatch(TENDER_MANIFEST, deps, {
+      ticketId: 'tender-1', expectedRevision: first.newRevision!, actor: ACTOR,
+      patches: [{
+        fieldId: 't:documents[].stage_relevance[]',
+        value: 'qualification',
+        rowFingerprints: [outerFingerprint, innerFingerprint],
+      }],
+    });
+
+    expect(second.status).toBe('saved');
+    expect(details(fake.row).documents).toEqual([{
+      ...document,
+      stage_relevance: ['identified', 'qualification'],
+    }]);
   });
 });
 
