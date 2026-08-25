@@ -246,6 +246,12 @@ export interface TenderDocument {
   source_channel: string;
   buyer_reference_number: string;
   notes: string;
+  /**
+   * PADW T06d (PDS-26, additive): the category this document had BEFORE it
+   * was archived, so restore recovers the original classification instead of
+   * losing it. Absent on never-archived rows and on legacy archives.
+   */
+  archived_from_category?: TenderDocumentCategory;
   // ── Additive Tender Knowledge Base metadata (all optional; persisted in the
   //    existing documents JSONB list, no schema change). ──
   /** Orchestration source role (e.g. "RFQ", "SOW", "commercial_proposal"). */

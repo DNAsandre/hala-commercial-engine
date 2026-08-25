@@ -425,7 +425,12 @@ documentRoutes.post("/documents/generate-pdf", async (req, res, next) => {
           source_version: actualVersion,
           workspace_id: body.workspace_id,
         },
-        use_instead: "Export the document from FinalStudio; the client persists it via the documents vault.",
+        // PADW T06d (PDS-25): the previous text claimed the client persists
+        // exports via the documents vault — it does not (exports go to the
+        // browser's Downloads only). Say what is actually true.
+        use_instead:
+          "Export the document from Final Pack Studio; the file is saved by the browser (Downloads). " +
+          "Exports are not yet recorded in the documents vault.",
       },
     );
   } catch (err) {

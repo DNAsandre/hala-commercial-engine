@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
-import { uploadDocument, downloadDocument, type UnifiedDocument, type DocumentCategory } from "@/lib/document-vault";
+import { uploadDocument, downloadDocument, getStoredDocumentPath, type UnifiedDocument, type DocumentCategory } from "@/lib/document-vault";
 import { resolveDocumentListState, type DocumentListLoadState } from "@/lib/document-runtime";
 
 // ── Document categories ──
@@ -112,6 +112,12 @@ export interface SupportingDocument {
   usedInProposal: boolean;
   confidenceLevel: "high" | "medium" | "low";
   expiryDate?: string;
+  /**
+   * PADW T06d (PDS-15): the real Supabase Storage path, carried through from
+   * upload so Download works. Absent on legacy rows — resolved by exact id
+   * from the document register at download time.
+   */
+  storagePath?: string | null;
 }
 
 export function DocumentReferenceSelect({
@@ -276,6 +282,8 @@ export default function SupportingDocumentsPanel({
         usedInPricing: uploadUsedPricing,
         usedInProposal: uploadUsedProposal,
         confidenceLevel: doc.permissionLevel === "restricted" ? "low" : doc.permissionLevel === "internal" ? "medium" : "high",
+        // PDS-15: carry the real stored path so Download works after upload.
+        storagePath: doc.filePath ?? null,
       };
 
       if (onUpload) {
@@ -300,6 +308,23 @@ export default function SupportingDocumentsPanel({
 
   const handleDownload = async (doc: SupportingDocument) => {
     try {
+      // PADW T06d (PDS-15): resolve the REAL stored file path — from the row
+      // itself when the upload carried it, otherwise by exact id from the
+      // document register. No path = an honest error, never a silent no-op.
+      let storagePath = doc.storagePath ?? null;
+      let storedFileName: string | null = null;
+      if (!storagePath) {
+        const stored = await getStoredDocumentPath(doc.id);
+        storagePath = stored?.storagePath ?? null;
+        storedFileName = stored?.fileName ?? null;
+      }
+      if (!storagePath) {
+        toast.error(
+          `No stored file is recorded for "${doc.fileName}" — it cannot be downloaded from here.`,
+        );
+        return;
+      }
+
       // Reconstruct a minimal UnifiedDocument for downloadDocument
       const unifiedDoc: UnifiedDocument = {
         id: doc.id,
@@ -321,11 +346,11 @@ export default function SupportingDocumentsPanel({
         status: "Draft",
         notes: doc.notes,
         tags: [],
-        fileName: doc.fileName,
+        fileName: storedFileName ?? doc.fileName,
         fileSize: "0",
         fileType: doc.fileName.split(".").pop()?.toUpperCase() ?? "FILE",
         mimeType: "application/octet-stream",
-        filePath: null,
+        filePath: storagePath,
         permissionLevel: "internal",
         createdBy: doc.owner,
         createdAt: doc.dateUploaded,

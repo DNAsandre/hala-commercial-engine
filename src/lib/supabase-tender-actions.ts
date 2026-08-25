@@ -1278,8 +1278,17 @@ export async function archiveTenderDocument(
     const existing = documents.find(doc => doc.id === documentId);
     if (!existing) return null;
     documentName = existing.document_name;
+    // PADW T06d (PDS-26): archiving used to OVERWRITE document_category with
+    // "Archived", destroying the original classification (restore could not
+    // recover it). The original category is now preserved additively.
     return documents.map(doc => doc.id === documentId
-      ? { ...doc, document_category: 'Archived' as const }
+      ? {
+          ...doc,
+          document_category: 'Archived' as const,
+          archived_from_category: doc.document_category !== 'Archived'
+            ? doc.document_category
+            : doc.archived_from_category,
+        }
       : doc);
   });
   if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
@@ -1290,6 +1299,45 @@ export async function archiveTenderDocument(
     oldValue: 'active',
     newValue: 'Archived',
     notes: `Document archived | ${documentName || documentId}`,
+  }));
+}
+
+/**
+ * PADW T06d (PDS-26): register-side restore for an archived document — the
+ * counterpart archiveTenderDocument never had. Restores the ORIGINAL
+ * category preserved in `archived_from_category`; a legacy row archived
+ * before that field existed restores to 'Supporting' with the fallback
+ * recorded in the audit note.
+ */
+export async function restoreArchivedTenderDocument(
+  tenderId: string,
+  documentId: string,
+): Promise<ActionResult> {
+  let documentName = '';
+  let restoredCategory = '';
+  let usedFallback = false;
+  const canonical = await updateTenderDocumentList(tenderId, documents => {
+    const existing = documents.find(doc => doc.id === documentId);
+    if (!existing) return null;
+    if (existing.document_category !== 'Archived') return null;
+    documentName = existing.document_name;
+    const preserved = existing.archived_from_category;
+    usedFallback = !preserved;
+    restoredCategory = preserved || 'Supporting';
+    return documents.map(doc => {
+      if (doc.id !== documentId) return doc;
+      const { archived_from_category: _dropped, ...rest } = doc;
+      return { ...rest, document_category: restoredCategory as TenderDocument['document_category'] };
+    });
+  });
+  if (canonical.error) return { success: false, status: canonical.status, error: canonical.error };
+
+  return savedWithAuditOutcome(await appendConfirmedTenderAudit({
+    tenderId,
+    fieldChanged: 'documents.category',
+    oldValue: 'Archived',
+    newValue: restoredCategory,
+    notes: `Document restored | ${documentName || documentId}${usedFallback ? ' | original category not recorded — restored as Supporting' : ''}`,
   }));
 }
 

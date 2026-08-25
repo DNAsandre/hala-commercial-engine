@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Archive, Download, Edit, FileText, FolderOpen, Loader2, Search, Upload } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Archive, Download, Edit, FileText, FolderOpen, Link2, Loader2, Search, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,6 +8,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { getSignedDownloadUrl } from "@/lib/document-vault";
 import { archiveTenderDocumentRecords } from "@/lib/tender-document-archive";
+import { addTenderDocument } from "@/lib/supabase-tender-actions";
+import {
+  buildRelinkRegisterEntry,
+  listVaultOnlyTenderDocuments,
+  type VaultOnlyDocument,
+} from "@/lib/vault-register-reconciliation";
 import {
   displayTenderDocumentStageRelevance,
   getTenderDocumentStatusColor,
@@ -75,6 +81,48 @@ export default function TenderDocumentsLibrary({ ws, tenderId, reload, initialCa
   const [archivingDocId, setArchivingDocId] = useState<string | null>(null);
 
   const docs = ws.documents ?? [];
+
+  // ── PADW T06d (PDS-14): stored-but-unlinked vault documents ──
+  // A step-3 (register link) failure used to strand the uploaded customer
+  // file invisibly. The library now diffs the vault against the register by
+  // exact ids and offers an exact-id relink.
+  const [vaultOnly, setVaultOnly] = useState<VaultOnlyDocument[]>([]);
+  const [vaultCheckError, setVaultCheckError] = useState<string | null>(null);
+  const [relinkingId, setRelinkingId] = useState<string | null>(null);
+  const registerIdsKey = docs.map(doc => doc.id).sort().join("|");
+  useEffect(() => {
+    let cancelled = false;
+    listVaultOnlyTenderDocuments(tenderId, registerIdsKey ? registerIdsKey.split("|") : [])
+      .then(result => {
+        if (cancelled) return;
+        setVaultOnly(result.documents);
+        setVaultCheckError(result.error);
+      })
+      .catch(err => {
+        if (cancelled) return;
+        setVaultOnly([]);
+        setVaultCheckError(err instanceof Error ? err.message : "Vault check failed.");
+      });
+    return () => { cancelled = true; };
+  }, [tenderId, registerIdsKey]);
+
+  const relinkVaultDocument = async (vaultDoc: VaultOnlyDocument) => {
+    setRelinkingId(vaultDoc.id);
+    try {
+      const result = await addTenderDocument(tenderId, buildRelinkRegisterEntry(tenderId, vaultDoc));
+      if (!result.success) {
+        throw new Error(result.error || "The register did not confirm the relink.");
+      }
+      toast.success(`"${vaultDoc.fileName}" relinked to this Tender's register.`);
+      await Promise.resolve(reload());
+    } catch (error) {
+      toast.error("Relink failed.", {
+        description: error instanceof Error ? error.message : "The stored records did not confirm the change.",
+      });
+    } finally {
+      setRelinkingId(null);
+    }
+  };
   const documentTypes = useMemo(() => Array.from(new Set(docs.map(doc => doc.document_type).filter(Boolean))).sort(), [docs]);
   const missingExpired = docs.filter(doc => doc.status === "Missing" || doc.status === "Expired" || isTenderDocumentExpired(doc)).length;
 
@@ -143,6 +191,44 @@ export default function TenderDocumentsLibrary({ ws, tenderId, reload, initialCa
           </CardContent>
         </Card>
       </div>
+
+      {/* PADW T06d (PDS-14): stored-but-unlinked vault files (exact-id relink) */}
+      {vaultCheckError && (
+        <p className="text-xs text-amber-600">
+          Could not check the document vault for unlinked files — {vaultCheckError}
+        </p>
+      )}
+      {vaultOnly.length > 0 && (
+        <Card className="shadow-none border-amber-300 bg-amber-50/40">
+          <CardContent className="p-3 space-y-2">
+            <p className="text-xs font-semibold text-amber-800">
+              {vaultOnly.length} stored {vaultOnly.length === 1 ? "file is" : "files are"} in the
+              document vault but not linked to this Tender&apos;s register
+            </p>
+            {vaultOnly.map(vaultDoc => (
+              <div key={vaultDoc.id} className="flex items-center justify-between gap-2 text-xs">
+                <span className="truncate">
+                  <FileText className="inline h-3 w-3 mr-1 text-muted-foreground" />
+                  {vaultDoc.fileName}
+                  <span className="text-muted-foreground"> · {vaultDoc.documentType}</span>
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1 h-7"
+                  disabled={relinkingId === vaultDoc.id}
+                  onClick={() => relinkVaultDocument(vaultDoc)}
+                >
+                  {relinkingId === vaultDoc.id
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <Link2 className="h-3 w-3" />}
+                  Relink
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-2 md:grid-cols-5">
         <div className="relative md:col-span-2">

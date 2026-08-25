@@ -75,7 +75,10 @@ export function describeUploadLinkFailure(uploadedVaultId: string, reason: strin
   return (
     `The file WAS uploaded to storage and recorded in the document vault (record ${uploadedVaultId}), ` +
     `but adding it to this tender's document list failed: ${reason ?? "no reason was returned"}. ` +
-    `Do not upload the file again — that would store a duplicate copy. Reload and check the library first.`
+    // PADW T06d (PDS-14): this instruction is now real — the library shows
+    // stored-but-unlinked vault files with an exact-id Relink action.
+    `Do not upload the file again — that would store a duplicate copy. ` +
+    `Open the Documents library: the file appears under "stored but not linked" with a Relink action.`
   );
 }
 

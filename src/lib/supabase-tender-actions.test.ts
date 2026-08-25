@@ -230,7 +230,7 @@ describe('archiveTenderDocument — canonical document truth', () => {
     expect(sb.inserts).toHaveLength(0);
   });
 
-  it('archives the exact document and preserves its other metadata', async () => {
+  it('archives the exact document, preserves its other metadata AND its original category (PDS-26)', async () => {
     const document = {
       id: 'doc-1',
       tender_id: TENDER_ID,
@@ -245,7 +245,52 @@ describe('archiveTenderDocument — canonical document truth', () => {
     expect(result.success).toBe(true);
     const update = sb.updateCalls.find(call => call.table === 'commercial_tickets');
     expect(update?.patch.type_details.documents).toEqual([
-      { ...document, document_category: 'Archived' },
+      { ...document, document_category: 'Archived', archived_from_category: 'Source' },
+    ]);
+  });
+
+  it('restoreArchivedTenderDocument restores the preserved original category (PDS-26)', async () => {
+    const document = {
+      id: 'doc-1',
+      tender_id: TENDER_ID,
+      document_name: 'Scope.pdf',
+      document_category: 'Archived',
+      archived_from_category: 'Source',
+      status: 'Reviewed',
+    };
+    sb.row = storedRow({ type_details: { documents: [document] } });
+
+    const result = await actions.restoreArchivedTenderDocument(TENDER_ID, 'doc-1');
+
+    expect(result.success).toBe(true);
+    const update = sb.updateCalls.find(call => call.table === 'commercial_tickets');
+    expect(update?.patch.type_details.documents).toEqual([
+      {
+        id: 'doc-1',
+        tender_id: TENDER_ID,
+        document_name: 'Scope.pdf',
+        document_category: 'Source',
+        status: 'Reviewed',
+      },
+    ]);
+  });
+
+  it('restoreArchivedTenderDocument falls back honestly for legacy rows without the preserved category', async () => {
+    const document = {
+      id: 'doc-1',
+      tender_id: TENDER_ID,
+      document_name: 'Scope.pdf',
+      document_category: 'Archived',
+      status: 'Reviewed',
+    };
+    sb.row = storedRow({ type_details: { documents: [document] } });
+
+    const result = await actions.restoreArchivedTenderDocument(TENDER_ID, 'doc-1');
+
+    expect(result.success).toBe(true);
+    const update = sb.updateCalls.find(call => call.table === 'commercial_tickets');
+    expect(update?.patch.type_details.documents).toEqual([
+      { ...document, document_category: 'Supporting' },
     ]);
   });
 });

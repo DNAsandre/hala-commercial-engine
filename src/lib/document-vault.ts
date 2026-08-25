@@ -627,22 +627,53 @@ export function getCategoryIcon(category: DocumentCategory): string {
 
 // ─── DOWNLOAD ────────────────────────────────────────────────
 
-/** Download a document file from Supabase Storage via a signed URL */
+/**
+ * PADW T06d (PDS-15): exact-id storage-path lookup against the document
+ * register. Callers that hold only a lightweight reference (e.g. proposal
+ * supporting-document rows) use this to resolve the real stored file.
+ */
+export async function getStoredDocumentPath(
+  docId: string,
+): Promise<{ storagePath: string | null; fileName: string | null } | null> {
+  const { data, error } = await supabase
+    .from(DOCUMENT_TABLE)
+    .select("id, name, storage_path")
+    .eq("id", docId);
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as Array<{ id?: string; name?: string; storage_path?: string | null }>;
+  if (rows.length === 0) return null;
+  if (rows.length !== 1 || rows[0]?.id !== docId) {
+    throw new Error("The stored document record could not be identified uniquely.");
+  }
+  return { storagePath: rows[0]?.storage_path ?? null, fileName: rows[0]?.name ?? null };
+}
+
+/**
+ * Download a document file from Supabase Storage via a signed URL.
+ *
+ * PADW T06d (PDS-15/PDS-61): a missing path or failed URL now THROWS an
+ * honest error (callers toast it) — previously this silently no-oped to the
+ * console, so "Click to download" did nothing visible, forever.
+ */
 export async function downloadDocument(doc: UnifiedDocument, versionNumber?: number): Promise<void> {
   const ver = versionNumber
     ? doc.versions.find(v => v.versionNumber === versionNumber)
     : doc.versions.find(v => v.versionNumber === doc.currentVersion);
 
-  if (!ver?.filePath) {
-    console.warn("No file available for download");
-    return;
+  // Fall back to the document-level storage path when no version row carries
+  // one (lightweight callers reconstruct documents without version arrays).
+  const filePath = ver?.filePath ?? doc.filePath ?? null;
+  if (!filePath) {
+    throw new Error("No stored file path is recorded for this document, so it cannot be downloaded.");
   }
 
-  const signedUrl = await getSignedDownloadUrl(ver.filePath);
-  if (!signedUrl) { console.warn("Could not generate download URL"); return; }
+  const signedUrl = await getSignedDownloadUrl(filePath);
+  if (!signedUrl) {
+    throw new Error("A download link could not be generated for the stored file.");
+  }
   const a = document.createElement("a");
   a.href = signedUrl;
-  a.download = ver.fileName;
+  a.download = ver?.fileName ?? doc.fileName;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
