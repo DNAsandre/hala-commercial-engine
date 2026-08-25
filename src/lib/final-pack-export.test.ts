@@ -18,14 +18,26 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { executeExport, type ExportRequest } from "@/lib/final-pack-export";
+import {
+  buildFilename,
+  embedRemoteImagesInHtml,
+  executeExport,
+  hideImportedCoverPlaceholder,
+  markImportedCoverUnavailable,
+  type ExportRequest,
+} from "@/lib/final-pack-export";
 import { DEFAULT_BRANDING } from "@/lib/final-pack-preview";
 import type { OutputBlock } from "@/lib/final-pack-loader";
 
 const pdfEngine = vi.hoisted(() => ({ bodyBytes: new Uint8Array([1, 2, 3]) as Uint8Array | null }));
 vi.mock("@/lib/final-pack-pdf", () => ({
   htmlToBodyPdfBytes: vi.fn(async () => pdfEngine.bodyBytes),
+  htmlToBodyPdf: vi.fn(async () => pdfEngine.bodyBytes
+    ? { bytes: pdfEngine.bodyBytes, renderer: "html2canvas" }
+    : null),
   mergeCoverAndBody: vi.fn(async (_cover: Uint8Array, body: Uint8Array) => body),
+  decoratePdfPages: vi.fn(async (bytes: Uint8Array) => bytes),
+  waitForDocumentAssets: vi.fn(async () => {}),
 }));
 
 // DOMPurify's default export is the un-instantiated factory outside a DOM;
@@ -45,6 +57,7 @@ vi.mock("dompurify", () => ({
 
 const db = vi.hoisted(() => ({
   inserts: [] as Array<{ table: string; row: any; select?: string }>,
+  updates: [] as Array<{ table: string; row: any }>,
   insertError: null as { message: string } | null,
 }));
 
@@ -61,9 +74,15 @@ vi.mock("@/lib/supabase", () => ({
   supabase: {
     from(table: string) {
       let select: string | undefined;
+      let updated: any = null;
       const builder: any = {
         select(cols?: string) { select = cols; return builder; },
         eq() { return builder; },
+        update(row: unknown) {
+          updated = row;
+          db.updates.push({ table, row });
+          return builder;
+        },
         insert(row: unknown) {
           db.inserts.push({ table, row, select });
           return Promise.resolve(
@@ -72,7 +91,11 @@ vi.mock("@/lib/supabase", () => ({
               : { data: project({ id: (row as any)?.id }, select), error: null },
           );
         },
-        then: (res: any, rej: any) => Promise.resolve({ data: null, error: null }).then(res, rej),
+        then: (res: any, rej: any) => Promise.resolve(
+          updated
+            ? { data: [{ id: "inst-1", status: updated.status }], error: null }
+            : { data: null, error: null },
+        ).then(res, rej),
       };
       return builder;
     },
@@ -148,6 +171,7 @@ const auditRow = () => db.inserts.find((i) => i.table === "doc_compiled_outputs"
 
 beforeEach(() => {
   db.inserts.length = 0;
+  db.updates.length = 0;
   db.insertError = null;
   purify.failNext = false;
   pdfEngine.bodyBytes = new Uint8Array([1, 2, 3]);
@@ -288,5 +312,82 @@ describe("export audit counts match the exported set", () => {
     const row = auditRow();
     expect(row.metadata.exported_block_keys).toEqual(["a"]);
     expect(row.metadata.exported_block_count).toBe(1);
+  });
+});
+
+describe("PADW export fidelity", () => {
+  it("makes an imported-cover print fallback truthful inside the artifact", () => {
+    const html = '<p class="fps-cover-pdf-title">Imported PDF cover</p>' +
+      '<p class="fps-cover-pdf-note">Used as static page 1 in PDF export.</p>';
+    const result = markImportedCoverUnavailable(html);
+    expect(result).toContain("Imported PDF cover not included");
+    expect(result).toContain("is not part of this artifact");
+    expect(result).not.toContain("Used as static page 1");
+  });
+
+  it("hides the UI placeholder when the real imported PDF page is merged", () => {
+    const html = '<html><head></head><body><div class="fps-cover fps-cover--imported-pdf">placeholder</div></body></html>';
+    const result = hideImportedCoverPlaceholder(html);
+    expect(result).toContain(".fps-cover--imported-pdf{display:none!important}");
+    expect(result.indexOf("display:none")).toBeLessThan(result.indexOf("</head>"));
+  });
+
+  it("builds collision-resistant Unicode filenames with customer and reference", () => {
+    const name = buildFilename(
+      request({
+        customerName: "شركة هلا",
+        title: "عرض النقل / الرياض",
+        refNumber: "RFQ:2026/41",
+        exportMode: "final",
+      }),
+      "pdf",
+      new Date("2026-08-25T12:34:56.789Z"),
+    );
+    expect(name).toContain("شركة_هلا");
+    expect(name).toContain("Ref-RFQ_2026_41");
+    expect(name).toContain("FINAL");
+    expect(name).toContain("20260825T123456789Z");
+    expect(name).toMatch(/\.pdf$/);
+  });
+
+  it("embeds remote images in standalone HTML instead of leaving expiring URLs", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      blob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+    })));
+    const result = await embedRemoteImagesInHtml(
+      '<html><body><img src="https://storage.test/signed.png?token=abc&amp;x=1"></body></html>',
+    );
+    expect(result.unresolved).toEqual([]);
+    expect(result.html).toContain("data:image/png;base64,AQID");
+    expect(result.html).not.toContain("storage.test");
+  });
+
+  it("requests exported only when a final file is handed to the browser, without mutating the editor token", async () => {
+    stubDownload();
+    const result = await executeExport(request({ action: "pdf", exportMode: "final" }));
+    expect(result.delivered).toBe("file_downloaded");
+    expect(result.instanceStatus).toBe("exported");
+    expect(result.instanceStatusPersisted).toBeUndefined();
+    expect(db.updates).toEqual([]);
+  });
+
+  it("requests compiled, not exported, when final mode only opens the print dialog", async () => {
+    const printState = stubPrintWindow();
+    const result = await executeExport(request({ action: "print", exportMode: "final" }));
+    expect(printState.opened).toBe(true);
+    expect(result.delivered).toBe("print_dialog_opened");
+    expect(result.instanceStatus).toBe("compiled");
+    expect(result.instanceStatusPersisted).toBeUndefined();
+    expect(db.updates).toEqual([]);
+  });
+
+  it("reports popup blocking as a failed print instead of fabricated success", async () => {
+    vi.stubGlobal("window", { open: () => null });
+    const result = await executeExport(request({ action: "print", exportMode: "draft" }));
+    expect(result.success).toBe(false);
+    expect(result.delivered).toBeUndefined();
+    expect(result.error).toContain("allow pop-ups");
   });
 });

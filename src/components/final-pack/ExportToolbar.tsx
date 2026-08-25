@@ -47,9 +47,16 @@ interface ExportToolbarProps {
   volumeTitle?: string | null;
   volumeBlockKeys?: string[] | null;
   allVolumes?: VolumeForExport[];
+  /** One visible mode drives preview, Print, HTML and All Volumes consistently. */
+  previewMode: ExportMode;
+  onPreviewModeChange: (mode: ExportMode) => void;
+  onPersistInstanceStatus?: (
+    instanceId: string,
+    status: "compiled" | "exported",
+  ) => Promise<{ persisted: boolean; error?: string; updatedAt?: string }>;
 }
 
-type ActionState = "idle" | "loading" | "success" | "error";
+export type ActionState = "idle" | "loading" | "success" | "opened" | "error";
 
 interface ActionStatus {
   state: ActionState;
@@ -69,6 +76,8 @@ export function describeExportOutcome(result: ExportResult): string {
     file_downloaded: "File handed to the browser for download.",
     print_dialog_opened:
       "Print pipeline invoked — choose “Save as PDF” in the print dialog to write the file. This page cannot confirm the file was saved.",
+    print_window_opened:
+      "Printable document opened, but the browser print dialog could not be invoked. Use Ctrl+P in that window. This page cannot confirm a file was saved.",
     server_file_opened: "Server-rendered file opened in a new tab.",
   };
   const parts: string[] = [];
@@ -76,12 +85,25 @@ export function describeExportOutcome(result: ExportResult): string {
   // PADW T06e (PDS-12): a text-only fallback render is a real fidelity
   // downgrade — it is named here, never hidden behind the same tick.
   if (result.rendererNote) parts.push(result.rendererNote);
+  if (result.advisoryNotes?.length) parts.push(...result.advisoryNotes);
   if (result.auditPersisted === false) {
     parts.push(
       `Export audit row was NOT confirmed stored${result.auditError ? ` — ${result.auditError}` : ""}.`,
     );
   }
+  if (result.instanceStatusPersisted === false) {
+    parts.push(
+      `Document lifecycle status was NOT confirmed stored${result.instanceStatusError ? ` — ${result.instanceStatusError}` : ""}.`,
+    );
+  }
   return parts.join(" ");
+}
+
+export function actionStateForExportResult(result: ExportResult): ActionState {
+  if (!result.success) return "error";
+  return result.delivered === "print_dialog_opened" || result.delivered === "print_window_opened"
+    ? "opened"
+    : "success";
 }
 
 export default function ExportToolbar({
@@ -105,6 +127,9 @@ export default function ExportToolbar({
   volumeTitle,
   volumeBlockKeys,
   allVolumes,
+  previewMode,
+  onPreviewModeChange,
+  onPersistInstanceStatus,
 }: ExportToolbarProps) {
   const [status, setStatus] = useState<Record<string, ActionStatus>>({});
   // W04-C4: the precise outcome of the last export, shown in the toolbar.
@@ -139,12 +164,38 @@ export default function ExportToolbar({
     };
 
     const result = await executeExport(req);
+    let effectiveResult = result;
+    if (result.success && result.instanceStatus) {
+      try {
+        const persisted = onPersistInstanceStatus
+          ? await onPersistInstanceStatus(instanceId, result.instanceStatus)
+          : { persisted: false, error: "No editor-owned status persistence path was available." };
+        effectiveResult = {
+          ...result,
+          instanceStatusPersisted: persisted.persisted,
+          instanceStatusError: persisted.error,
+        };
+      } catch (error) {
+        effectiveResult = {
+          ...result,
+          instanceStatusPersisted: false,
+          instanceStatusError: error instanceof Error ? error.message : "Unknown lifecycle persistence error",
+        };
+      }
+    }
 
-    if (result.success) {
-      setStatus((prev) => ({ ...prev, [key]: { state: "success" } }));
+    if (effectiveResult.success) {
+      const actionState = actionStateForExportResult(effectiveResult);
+      const opened = actionState === "opened";
+      setStatus((prev) => ({ ...prev, [key]: { state: actionState } }));
       setOutcome({
-        text: describeExportOutcome(result),
-        advisory: result.auditPersisted === false || Boolean(result.rendererNote),
+        text: describeExportOutcome(effectiveResult),
+        advisory:
+          opened ||
+          effectiveResult.auditPersisted === false ||
+          effectiveResult.instanceStatusPersisted === false ||
+          Boolean(effectiveResult.rendererNote) ||
+          Boolean(effectiveResult.advisoryNotes?.length),
       });
       // Reset to idle after 3s
       setTimeout(() => {
@@ -153,9 +204,9 @@ export default function ExportToolbar({
     } else {
       setStatus((prev) => ({
         ...prev,
-        [key]: { state: "error", error: result.error },
+        [key]: { state: "error", error: effectiveResult.error },
       }));
-      setOutcome({ text: `Export failed — ${result.error ?? "unknown error"}`, advisory: true });
+      setOutcome({ text: `Export failed — ${effectiveResult.error ?? "unknown error"}`, advisory: true });
       // Reset to idle after 5s
       setTimeout(() => {
         setStatus((prev) => ({ ...prev, [key]: { state: "idle" } }));
@@ -169,13 +220,31 @@ export default function ExportToolbar({
     setAllStatus({ state: "loading" });
     const base = {
       instanceId, templateId, blocks, branding,
-      exportMode: "final" as ExportMode,
+      exportMode: previewMode,
       customerName, title, refNumber, date, compiledBy,
       sourceMode, sourceKind, creationMethod, templateVersionId, templateClass, instanceLastEditedAt, layout,
     };
     const { results } = await exportAllVolumes(base, allVolumes);
     const failed = results.filter((r) => !r.success);
     const unaudited = results.filter((r) => r.success && r.auditPersisted === false);
+    let statusResult: { persisted: boolean; error?: string } | null = null;
+    // A partial All-Volumes run is not a completed final export. Preserve the
+    // existing lifecycle rather than marking the whole document exported.
+    const requestedStatus = failed.length === 0
+      ? results.find((r) => r.success && r.instanceStatus)?.instanceStatus
+      : undefined;
+    if (requestedStatus) {
+      try {
+        statusResult = onPersistInstanceStatus
+          ? await onPersistInstanceStatus(instanceId, requestedStatus)
+          : { persisted: false, error: "No editor-owned status persistence path was available." };
+      } catch (error) {
+        statusResult = {
+          persisted: false,
+          error: error instanceof Error ? error.message : "Unknown lifecycle persistence error",
+        };
+      }
+    }
     const ok = failed.length === 0;
     setAllStatus({
       state: ok ? "success" : "error",
@@ -188,8 +257,11 @@ export default function ExportToolbar({
         unaudited.length > 0
           ? `${unaudited.length} export audit row(s) were NOT confirmed stored.`
           : "",
+        statusResult?.persisted === false
+          ? `The document lifecycle status was NOT confirmed stored${statusResult.error ? ` — ${statusResult.error}` : ""}.`
+          : "",
       ].filter(Boolean).join(" "),
-      advisory: failed.length > 0 || unaudited.length > 0,
+      advisory: failed.length > 0 || unaudited.length > 0 || statusResult?.persisted === false,
     });
     setTimeout(() => setAllStatus({ state: "idle" }), 4000);
   };
@@ -197,6 +269,24 @@ export default function ExportToolbar({
   return (
     <div className="fps-export-toolbar">
       <span className="text-xs font-medium text-muted-foreground mr-2">Export:</span>
+
+      <div className="inline-flex rounded-md border border-border bg-card p-0.5" aria-label="Preview and export mode">
+        {(["draft", "test", "final"] as ExportMode[]).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => onPreviewModeChange(mode)}
+            aria-pressed={previewMode === mode}
+            className={`px-2 py-1 rounded text-[11px] font-medium capitalize transition-colors ${
+              previewMode === mode
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+            }`}
+          >
+            {mode}
+          </button>
+        ))}
+      </div>
 
       {/* Draft PDF */}
       <ExportButton
@@ -226,18 +316,18 @@ export default function ExportToolbar({
 
       {/* Print Preview */}
       <ExportButton
-        label="Print"
+        label={`Print ${previewMode}`}
         icon={<Printer className="h-3.5 w-3.5" />}
-        status={status["print-draft"]}
-        onClick={() => handleExport("print", "draft")}
+        status={status[`print-${previewMode}`]}
+        onClick={() => handleExport("print", previewMode)}
       />
 
       {/* HTML Download */}
       <ExportButton
-        label="HTML"
+        label={`${previewMode} HTML`}
         icon={<FileDown className="h-3.5 w-3.5" />}
-        status={status["html-draft"]}
-        onClick={() => handleExport("html", "draft")}
+        status={status[`html-${previewMode}`]}
+        onClick={() => handleExport("html", previewMode)}
       />
 
       {/* All Volumes — separate file per volume (FPS-006-08). Never disables full export. */}
@@ -245,7 +335,7 @@ export default function ExportToolbar({
         <>
           <div className="h-5 w-px bg-border mx-1" />
           <ExportButton
-            label={`All Volumes (${allVolumes.length})`}
+            label={`All Volumes (${allVolumes.length}) · ${previewMode}`}
             icon={<Layers className="h-3.5 w-3.5" />}
             status={allStatus}
             onClick={handleAllVolumes}
@@ -295,6 +385,8 @@ function ExportButton({
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
       ) : state === "success" ? (
         <Check className="h-3.5 w-3.5 text-emerald-500" />
+      ) : state === "opened" ? (
+        <Printer className="h-3.5 w-3.5 text-amber-500" />
       ) : state === "error" ? (
         <AlertCircle className="h-3.5 w-3.5 text-red-500" />
       ) : (

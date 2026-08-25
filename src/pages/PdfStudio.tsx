@@ -40,6 +40,7 @@ import WarningBanner from "@/components/final-pack/WarningBanner";
 import MetadataWarningBanner from "@/components/final-pack/MetadataWarningBanner";
 import SaveBlockDialog from "@/components/final-pack/SaveBlockDialog";
 import ExportToolbar from "@/components/final-pack/ExportToolbar";
+import type { ExportMode } from "@/lib/final-pack-export";
 import UndoRedoToolbar from "@/components/final-pack/UndoRedoToolbar";
 import SourceDriftBanner from "@/components/final-pack/SourceDriftBanner";
 import { useAuth } from "@/contexts/AuthContext";
@@ -91,6 +92,8 @@ export default function FinalPackStudio() {
   // failure is now held in state and shown until a save actually succeeds.
   const [saveError, setSaveError] = useState<string | null>(null);
   const [branding, setBranding] = useState<BrandingProfile>(DEFAULT_BRANDING);
+  // One explicit mode drives the live preview and every export path.
+  const [previewMode, setPreviewMode] = useState<ExportMode>("draft");
   const {
     profiles: brandingProfiles,
     error: brandingProfilesError,
@@ -606,6 +609,61 @@ export default function FinalPackStudio() {
   const volumes = normalizeFinalPackVolumes(activeInstance?.source_snapshot?.volumes);
   const selectedVolume = volumes.find((v) => v.volume_key === selectedVolumeKey) ?? null;
 
+  // PDS-42/PDS-13 seam: lifecycle writes belong to the editor because this is
+  // where the optimistic-concurrency token lives. A confirmed status update
+  // advances both the token and active instance before the next edit can save.
+  const persistExportStatus = useCallback(async (
+    expectedInstanceId: string,
+    status: "compiled" | "exported",
+  ): Promise<{ persisted: boolean; error?: string; updatedAt?: string }> => {
+    const current = activeInstance;
+    if (!current || current.id !== expectedInstanceId) {
+      return { persisted: false, error: "The open document changed before its export status could be stored." };
+    }
+
+    const expectedRevision = lastUpdatedAtRef.current || current.updated_at;
+    if (!expectedRevision) {
+      return { persisted: false, error: "The open document has no confirmed revision token." };
+    }
+    const nextUpdatedAt = new Date().toISOString();
+    try {
+      const { data, error } = await supabase
+        .from("doc_instances")
+        .update({ status, updated_at: nextUpdatedAt, last_edited_at: nextUpdatedAt })
+        .eq("id", expectedInstanceId)
+        .eq("updated_at", expectedRevision)
+        .select("id,status,updated_at");
+      if (error) return { persisted: false, error: error.message };
+      const rows = Array.isArray(data) ? data : data ? [data] : [];
+      if (rows.length !== 1) {
+        return {
+          persisted: false,
+          error: "The document changed in another session before the export status was stored.",
+        };
+      }
+      const confirmed = rows[0];
+      if (
+        confirmed.id !== expectedInstanceId ||
+        confirmed.status !== status ||
+        typeof confirmed.updated_at !== "string" ||
+        !confirmed.updated_at
+      ) {
+        return { persisted: false, error: "The export status read-back did not match the requested update." };
+      }
+
+      lastUpdatedAtRef.current = confirmed.updated_at;
+      setActiveInstance((prev) => prev?.id === expectedInstanceId
+        ? { ...prev, status, updated_at: confirmed.updated_at }
+        : prev);
+      return { persisted: true, updatedAt: confirmed.updated_at };
+    } catch (error) {
+      return {
+        persisted: false,
+        error: error instanceof Error ? error.message : "Unknown lifecycle persistence error",
+      };
+    }
+  }, [activeInstance]);
+
   // FPS-010 Ticket 2 — one ExportToolbar definition, rendered both in the sticky
   // top bar and the bottom bar. Each instance owns its own button state; there
   // is no shared side effect, so a click in one triggers exactly one export.
@@ -633,6 +691,9 @@ export default function FinalPackStudio() {
         volumeTitle={selectedVolume?.volume_title ?? null}
         volumeBlockKeys={selectedVolume?.block_keys ?? null}
         allVolumes={volumes}
+        previewMode={previewMode}
+        onPreviewModeChange={setPreviewMode}
+        onPersistInstanceStatus={persistExportStatus}
       />
     );
   };
@@ -917,10 +978,11 @@ export default function FinalPackStudio() {
             <PreviewPane
               blocks={resolvedBlocks}
               branding={resolvedBranding}
-              exportMode="draft"
+              exportMode={previewMode}
               customerName={coverVars.customer_name || activeInstance.customer_name || ""}
               refNumber={documentRefNumber}
               date={coverVars.date || ""}
+              compiledBy={appUser?.email || appUser?.id || "unknown"}
               layout={activeInstance.source_snapshot.layout}
               volumeBlockKeys={selectedVolume?.block_keys ?? null}
             />

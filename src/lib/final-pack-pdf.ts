@@ -16,7 +16,7 @@
  * path on any failure. No gate, no lock, no prison.
  */
 
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
 
 /**
  * Merge an imported PDF cover (one page) in front of a body PDF.
@@ -54,6 +54,18 @@ export interface BodyPdfOptions {
   title?: string;
   /** When false, return null instead of degrading to the text-only renderer. */
   allowTextFallback?: boolean;
+  /**
+   * Presentation stamped onto every generated page. `false` returns an
+   * undecorated body so a caller can merge a real cover first and stamp the
+   * completed document exactly once.
+   */
+  presentation?: PdfPresentation | false;
+}
+
+export interface PdfPresentation {
+  watermark?: string;
+  footerText?: string;
+  showPageNumbers?: boolean;
 }
 
 /**
@@ -89,16 +101,16 @@ export async function htmlToBodyPdf(
   html: string,
   opts: BodyPdfOptions = {},
 ): Promise<{ bytes: Uint8Array; renderer: BodyPdfRenderer } | null> {
-  const hi = await tryHtml2Pdf(html);
+  const hi = await tryHtml2Pdf(html, opts);
   if (hi && hi.length > 0) return { bytes: hi, renderer: "html2canvas" };
   if (opts.allowTextFallback === false) return null;
   // Fallback: always-works text body (no html2canvas dependency).
-  const text = await textBodyPdfBytes(html);
+  const text = await textBodyPdfBytes(html, opts.presentation);
   return text && text.length > 0 ? { bytes: text, renderer: "text_fallback" } : null;
 }
 
 /** High-fidelity rasterized body via html2pdf.js. Returns null on any failure. */
-async function tryHtml2Pdf(html: string): Promise<Uint8Array | null> {
+async function tryHtml2Pdf(html: string, opts: BodyPdfOptions): Promise<Uint8Array | null> {
   let host: HTMLIFrameElement | null = null;
   try {
     const mod = await import("html2pdf.js");
@@ -113,7 +125,14 @@ async function tryHtml2Pdf(html: string): Promise<Uint8Array | null> {
     idoc.open();
     idoc.write(html);
     idoc.close();
-    await new Promise((r) => setTimeout(r, 250));
+    await waitForDocumentAssets(idoc);
+
+    const presentation = opts.presentation === undefined
+      ? presentationFromDocument(idoc)
+      : opts.presentation;
+    // html2canvas turns fixed overlays into first-page-only pixels. Remove them
+    // from the raster source and stamp them with pdf-lib on every page instead.
+    idoc.querySelectorAll(".fps-watermark, .fps-footer").forEach((node) => node.remove());
 
     const worker = (html2pdf as () => {
       set: (o: unknown) => { from: (el: unknown) => { outputPdf: (t: string) => Promise<ArrayBuffer> } };
@@ -130,7 +149,8 @@ async function tryHtml2Pdf(html: string): Promise<Uint8Array | null> {
       .outputPdf("arraybuffer");
 
     const bytes = new Uint8Array(arrayBuffer);
-    return bytes.length > 0 ? bytes : null;
+    if (bytes.length === 0) return null;
+    return presentation === false ? bytes : decoratePdfPages(bytes, presentation);
   } catch {
     return null;
   } finally {
@@ -144,7 +164,10 @@ async function tryHtml2Pdf(html: string): Promise<Uint8Array | null> {
  * cover placeholder (the real cover is prepended separately). Stamps the
  * Draft/Test watermark label if present. Returns null only on hard failure.
  */
-export async function textBodyPdfBytes(html: string): Promise<Uint8Array | null> {
+export async function textBodyPdfBytes(
+  html: string,
+  requestedPresentation?: PdfPresentation | false,
+): Promise<Uint8Array | null> {
   try {
     const { jsPDF } = await import("jspdf");
     const pdf = new jsPDF({ unit: "pt", format: "a4", orientation: "portrait" });
@@ -156,20 +179,11 @@ export async function textBodyPdfBytes(html: string): Promise<Uint8Array | null>
 
     const doc = new DOMParser().parseFromString(html, "text/html");
     const root = doc.querySelector(".fps-doc") || doc.body;
-    const watermark = (doc.querySelector(".fps-watermark")?.textContent || "").trim();
+    const presentation = requestedPresentation === undefined
+      ? presentationFromDocument(doc)
+      : requestedPresentation;
 
-    const stamp = () => {
-      if (!watermark) return;
-      pdf.saveGraphicsState?.();
-      pdf.setTextColor(200, 200, 200);
-      pdf.setFontSize(60);
-      pdf.text(watermark, pageW / 2, pageH / 2, { align: "center", angle: 45 });
-      pdf.setTextColor(20, 20, 20);
-      pdf.setFontSize(11);
-      pdf.restoreGraphicsState?.();
-    };
-    const newPage = () => { pdf.addPage(); y = margin; stamp(); };
-    stamp();
+    const newPage = () => { pdf.addPage(); y = margin; };
 
     const children = Array.from((root as HTMLElement).children) as HTMLElement[];
     for (const el of children) {
@@ -188,8 +202,114 @@ export async function textBodyPdfBytes(html: string): Promise<Uint8Array | null>
       y += 10;
     }
 
-    return new Uint8Array(pdf.output("arraybuffer"));
+    const bytes = new Uint8Array(pdf.output("arraybuffer"));
+    return presentation === false ? bytes : decoratePdfPages(bytes, presentation);
   } catch {
     return null;
   }
+}
+
+/**
+ * Wait for the exact document being captured: fonts first, then every image.
+ * A bounded timeout keeps export available when a remote asset is genuinely
+ * unreachable, while removing the old fixed-delay race.
+ */
+export async function waitForDocumentAssets(doc: Document, timeoutMs = 10_000): Promise<void> {
+  const waits: Promise<unknown>[] = [];
+  if (doc.fonts?.ready) waits.push(Promise.resolve(doc.fonts.ready));
+
+  for (const image of Array.from(doc.images ?? [])) {
+    if (image.complete && image.naturalWidth > 0) continue;
+    if (typeof image.decode === "function") {
+      waits.push(image.decode().catch(() => undefined));
+      continue;
+    }
+    waits.push(new Promise<void>((resolve) => {
+      image.addEventListener("load", () => resolve(), { once: true });
+      image.addEventListener("error", () => resolve(), { once: true });
+    }));
+  }
+
+  if (waits.length === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.allSettled(waits),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** Stamp watermark/footer/page count on every page of a generated PDF. */
+export async function decoratePdfPages(
+  bytes: Uint8Array,
+  presentation: PdfPresentation = {},
+): Promise<Uint8Array> {
+  const pdf = await PDFDocument.load(bytes);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const pages = pdf.getPages();
+  const watermark = asciiForPdf(presentation.watermark);
+  const footer = asciiForPdf(presentation.footerText);
+
+  pages.forEach((page, index) => {
+    const { width, height } = page.getSize();
+    if (watermark) {
+      const size = Math.min(72, Math.max(44, width / 8));
+      const textWidth = font.widthOfTextAtSize(watermark, size);
+      page.drawText(watermark, {
+        x: Math.max(24, (width - textWidth) / 2),
+        y: height / 2,
+        size,
+        font,
+        color: rgb(0.55, 0.55, 0.55),
+        opacity: 0.16,
+        rotate: degrees(45),
+      });
+    }
+
+    const pageLabel = presentation.showPageNumbers
+      ? `Page ${index + 1} of ${pages.length}`
+      : "";
+    if (footer) {
+      page.drawText(footer.slice(0, 110), {
+        x: 36,
+        y: 20,
+        size: 8,
+        font,
+        color: rgb(0.4, 0.4, 0.4),
+      });
+    }
+    if (pageLabel) {
+      const labelWidth = font.widthOfTextAtSize(pageLabel, 8);
+      page.drawText(pageLabel, {
+        x: Math.max(36, width - 36 - labelWidth),
+        y: 20,
+        size: 8,
+        font,
+        color: rgb(0.4, 0.4, 0.4),
+      });
+    }
+  });
+
+  return pdf.save();
+}
+
+function presentationFromDocument(doc: Document): PdfPresentation {
+  const footer = doc.querySelector(".fps-footer");
+  return {
+    watermark: (doc.querySelector(".fps-watermark")?.textContent || "").trim(),
+    footerText: (footer?.querySelector("span")?.textContent || "").trim(),
+    showPageNumbers: Boolean(footer?.querySelector(".fps-footer-page-number")),
+  };
+}
+
+function asciiForPdf(value?: string): string {
+  if (!value) return "";
+  return value
+    .normalize("NFKD")
+    .replace(/[^\x20-\x7E]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }

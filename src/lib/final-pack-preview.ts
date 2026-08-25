@@ -49,6 +49,8 @@ export interface PreviewOptions {
   customerName: string;
   refNumber: string;
   date: string;
+  /** Human/session identity shown only when the branding footer requests it. */
+  compiledBy?: string;
   /** Template layout config (FPS-004). Missing/invalid → safe defaults. */
   layout?: Record<string, unknown> | null;
   /**
@@ -148,7 +150,7 @@ export function selectRenderedBlocks(
  * Returns a sanitized, self-contained HTML string.
  */
 export function buildPreviewHTML(options: PreviewOptions): string {
-  const { blocks, branding, exportMode, customerName, refNumber, date } = options;
+  const { blocks, branding, exportMode, customerName, refNumber, date, compiledBy } = options;
 
   // ── FPS-004: normalize layout (never throws; missing/bad → defaults) ──
   const layout = normalizeFinalPackLayout(options.layout);
@@ -197,6 +199,12 @@ export function buildPreviewHTML(options: PreviewOptions): string {
   if (branding.footer_format.show_date && date) {
     footerParts.push(escHtml(date));
   }
+  if (branding.footer_format.show_completed_by && compiledBy) {
+    footerParts.push(`Prepared by: ${escHtml(compiledBy)}`);
+  }
+  const pageNumber = branding.footer_format.show_page_numbers
+    ? `<span class="fps-footer-page-number" aria-label="Page number"></span>`
+    : "";
 
   // Assemble full document — CSS and structure are controlled by us, not user input
   return `<!DOCTYPE html>
@@ -214,6 +222,7 @@ export function buildPreviewHTML(options: PreviewOptions): string {
   </div>
   <footer class="fps-footer">
     <span>${footerParts.join(" · ")}</span>
+    ${pageNumber}
   </footer>
 </body>
 </html>`;
@@ -830,6 +839,8 @@ function getPreviewCSS(b: BrandingProfile): string {
       background: #fff;
       text-align: center;
     }
+    .fps-footer-page-number { margin-left: 12px; }
+    .fps-footer-page-number::after { content: "Page " counter(page); }
   `;
 }
 

@@ -27,6 +27,7 @@ interface PreviewPaneProps {
   customerName: string;
   refNumber: string;
   date: string;
+  compiledBy?: string;
   layout?: Record<string, unknown> | null;
   volumeBlockKeys?: string[] | null;
 }
@@ -38,6 +39,7 @@ export default function PreviewPane({
   customerName,
   refNumber,
   date,
+  compiledBy,
   layout,
   volumeBlockKeys,
 }: PreviewPaneProps) {
@@ -66,11 +68,12 @@ export default function PreviewPane({
       customerName,
       refNumber,
       date,
+      compiledBy,
       layout,
       volumeBlockKeys,
       paginated,
     }),
-    [blocks, branding, exportMode, customerName, refNumber, date, layout, volumeBlockKeys, paginated],
+    [blocks, branding, exportMode, customerName, refNumber, date, compiledBy, layout, volumeBlockKeys, paginated],
   );
 
   useEffect(() => {
