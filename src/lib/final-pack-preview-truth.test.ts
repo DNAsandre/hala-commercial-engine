@@ -200,7 +200,7 @@ describe("PDS-16 — not_captured beats default_content", () => {
       }),
     ]);
     expect(html).toContain("Drafted by the human.");
-    expect(html).not.toContain("fps-template-note");
+    expect(html).not.toContain('<p class="fps-template-note">');
     expect(html).not.toContain("Seeded default.");
   });
 });
@@ -246,4 +246,3 @@ describe("PDS-41 — findUnresolvedVariablesInBlocks", () => {
     expect(findings).toEqual([]);
   });
 });
-

@@ -236,6 +236,19 @@ describe("document order", () => {
     const stored = JSON.parse(JSON.stringify(snap.blocks)) as OutputBlock[];
     expect(stored.map((b) => b.id)).toEqual(snap.blocks.map((b) => b.id));
 
+    // This test proves persisted block order, not template-fallback behavior.
+    // Give the two narrative blocks explicit authored content so PDS-16's
+    // honest `not_captured` handling cannot hide the order markers.
+    for (const block of stored) {
+      if (block.default_content) {
+        block.content = {
+          ...block.content,
+          html: block.default_content,
+          source_status: "populated",
+        };
+      }
+    }
+
     // Simulate a user reorder (what useFinalPackBlocks.moveBlock produces).
     const moved = [stored[2], stored[0], stored[1]].map((b, i) => ({ ...b, order: i + 1 }));
     const reloaded = JSON.parse(JSON.stringify(moved)) as OutputBlock[];
