@@ -10,7 +10,7 @@
  * - Uses upsert to prevent duplicate rows on rapid saves
  */
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth-state";
 import type { BlockSnapshot, OutputBlock, PackType } from "@/lib/final-pack-loader";
@@ -77,8 +77,6 @@ export interface UseFinalPackInstanceReturn {
   loading: boolean;
   /** Error message */
   error: string | null;
-  /** True when auto-save is pending */
-  saving: boolean;
   /**
    * Create a new instance from a loader/adapter snapshot.
    * `linkedEntityId` is the connected source id (tender) or null for standalone.
@@ -91,14 +89,6 @@ export interface UseFinalPackInstanceReturn {
   ) => Promise<FinalPackInstance | null>;
   /** Load an existing instance by ID */
   loadInstance: (instanceId: string) => Promise<void>;
-  /** Save current instance state */
-  saveInstance: () => Promise<void>;
-  /** Update blocks (triggers auto-save) */
-  updateBlocks: (blocks: OutputBlock[]) => void;
-  /** Update status */
-  updateStatus: (status: FinalPackInstance["status"]) => void;
-  /** Persist the selected branding profile id on the instance (FPS-002) */
-  updateBranding: (brandingProfileId: string) => Promise<void>;
   /** List existing FPS instances for one connected Tender or Proposal source. */
   listInstances: (
     linkedEntityId: string,
@@ -123,8 +113,6 @@ export interface InstanceListResult {
 // Constants
 // ═══════════════════════════════════════════════════════════
 
-const AUTO_SAVE_DEBOUNCE_MS = 2000;
-
 // ═══════════════════════════════════════════════════════════
 // Hook
 // ═══════════════════════════════════════════════════════════
@@ -133,24 +121,6 @@ export function useFinalPackInstance(): UseFinalPackInstanceReturn {
   const [instance, setInstance] = useState<FinalPackInstance | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const instanceRef = useRef<FinalPackInstance | null>(null);
-
-  // Keep ref in sync
-  useEffect(() => {
-    instanceRef.current = instance;
-  }, [instance]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
-    };
-  }, []);
 
   // ── Create new instance ──────────────────────────────
   const createInstance = useCallback(
@@ -348,107 +318,6 @@ export function useFinalPackInstance(): UseFinalPackInstanceReturn {
     }
   }, []);
 
-  // ── Save instance (update by ID) ──────────────────────
-  // Only updates columns that exist in doc_instances schema:
-  // blocks, status, source_snapshot, customer_name, updated_at
-  const saveInstance = useCallback(async () => {
-    const current = instanceRef.current;
-    if (!current) return;
-
-    setSaving(true);
-    try {
-      const { error: saveErr } = await supabase
-        .from("doc_instances")
-        .update({
-          blocks: current.blocks,
-          status: current.status,
-          source_snapshot: current.source_snapshot,
-          customer_name: current.customer_name,
-          last_edited_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", current.id);
-
-      if (saveErr) {
-        console.error("[FPS] Save failed:", saveErr.message);
-      }
-    } catch (err) {
-      console.error("[FPS] Save error:", err);
-    } finally {
-      setSaving(false);
-    }
-  }, []);
-
-  // ── Debounced auto-save trigger ──────────────────────
-  const scheduleAutoSave = useCallback(() => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-    }
-    saveTimerRef.current = setTimeout(() => {
-      saveInstance();
-    }, AUTO_SAVE_DEBOUNCE_MS);
-  }, [saveInstance]);
-
-  // ── Update blocks (triggers auto-save) ───────────────
-  const updateBlocks = useCallback(
-    (blocks: OutputBlock[]) => {
-      setInstance((prev) => {
-        if (!prev) return prev;
-        return { ...prev, blocks };
-      });
-      scheduleAutoSave();
-    },
-    [scheduleAutoSave],
-  );
-
-  // ── Update status ────────────────────────────────────
-  const updateStatus = useCallback(
-    (status: FinalPackInstance["status"]) => {
-      setInstance((prev) => {
-        if (!prev) return prev;
-        return { ...prev, status };
-      });
-      scheduleAutoSave();
-    },
-    [scheduleAutoSave],
-  );
-
-  // ── Persist selected branding profile (FPS-002) ──
-  // branding_profile_id is the real column (source of truth); also mirrored
-  // into source_snapshot for portability. Branding never gates export.
-  const updateBranding = useCallback(
-    async (brandingProfileId: string) => {
-      const current = instanceRef.current;
-      if (!current) return;
-
-      const nextSnapshot: SourceSnapshotPayload = {
-        ...current.source_snapshot,
-        branding_profile_id: brandingProfileId,
-      };
-
-      setInstance((prev) =>
-        prev
-          ? { ...prev, branding_profile_id: brandingProfileId, source_snapshot: nextSnapshot }
-          : prev,
-      );
-
-      const { error: brandErr } = await supabase
-        .from("doc_instances")
-        .update({
-          branding_profile_id: brandingProfileId,
-          source_snapshot: nextSnapshot,
-          last_edited_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", current.id);
-
-      if (brandErr) {
-        console.error("[FPS] Failed to persist branding:", brandErr.message);
-      }
-    },
-    [],
-  );
-
   // ── List FPS instances for one connected source ──────
   const listInstances = useCallback(
     (
@@ -468,13 +337,8 @@ export function useFinalPackInstance(): UseFinalPackInstanceReturn {
     instance,
     loading,
     error,
-    saving,
     createInstance,
     loadInstance,
-    saveInstance,
-    updateBlocks,
-    updateStatus,
-    updateBranding,
     listInstances,
     listAllInstances,
   };
