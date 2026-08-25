@@ -15,7 +15,13 @@ interface UndoRedoToolbarProps {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
-  onResetBlock: () => void;
+  /**
+   * PADW T06c (PDS-10): REMOVED from the toolbar menu. The old item claimed
+   * "Reset selected block" but no selection mechanism existed — it always
+   * reset blocks[0] (the cover). Per-block reset now lives on each block
+   * card. Prop kept optional for compatibility; the menu never shows it.
+   */
+  onResetBlock?: () => void;
   onResetAll: () => void;
 }
 
@@ -24,16 +30,10 @@ export default function UndoRedoToolbar({
   canRedo,
   onUndo,
   onRedo,
-  onResetBlock,
   onResetAll,
 }: UndoRedoToolbarProps) {
   const [resetOpen, setResetOpen] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<"block" | "all" | null>(null);
-
-  const handleResetBlock = () => {
-    setConfirmAction("block");
-    setResetOpen(false);
-  };
+  const [confirmAction, setConfirmAction] = useState<"all" | null>(null);
 
   const handleResetAll = () => {
     setConfirmAction("all");
@@ -41,7 +41,6 @@ export default function UndoRedoToolbar({
   };
 
   const confirmReset = () => {
-    if (confirmAction === "block") onResetBlock();
     if (confirmAction === "all") onResetAll();
     setConfirmAction(null);
   };
@@ -92,12 +91,8 @@ export default function UndoRedoToolbar({
               onClick={() => setResetOpen(false)}
             />
             <div className="absolute right-0 top-full mt-1 z-50 w-56 rounded-md border border-border bg-card shadow-lg py-1">
-              <button
-                onClick={handleResetBlock}
-                className="w-full text-left px-3 py-2 text-xs hover:bg-accent transition-colors"
-              >
-                Reset selected block from source
-              </button>
+              {/* PDS-10: per-block reset moved to each block card, where the
+                  target is unambiguous. Only the whole-pack action lives here. */}
               <button
                 onClick={handleResetAll}
                 className="w-full text-left px-3 py-2 text-xs hover:bg-accent transition-colors"
@@ -115,14 +110,11 @@ export default function UndoRedoToolbar({
           <div className="fixed inset-0 z-50 bg-black/20" onClick={() => setConfirmAction(null)} />
           <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-80 rounded-lg border border-border bg-card shadow-xl p-4">
             <p className="text-sm font-medium text-foreground mb-2">
-              {confirmAction === "block"
-                ? "Reset this block from source?"
-                : "Reset full pack from source?"}
+              Reset full pack from source?
             </p>
             <p className="text-xs text-muted-foreground mb-4">
-              {confirmAction === "block"
-                ? "This will restore content from the original snapshot. Your edits on this block will be lost."
-                : "This will restore all source-bound blocks from the original snapshot. Custom blocks will be preserved. Your edits on source blocks will be lost."}
+              This will restore all source-bound blocks from the original snapshot.
+              Custom blocks will be preserved. Your edits on source blocks will be lost.
             </p>
             <div className="flex justify-end gap-2">
               <button

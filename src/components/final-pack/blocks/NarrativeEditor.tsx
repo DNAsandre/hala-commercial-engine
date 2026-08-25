@@ -29,6 +29,13 @@ export default function NarrativeEditor({ block, onContentChange }: NarrativeEdi
     onChangeRef.current = onContentChange;
   }, [onContentChange]);
 
+  // PADW T06c (PDS-11): the last HTML THIS editor emitted. When the block's
+  // stored html changes and it is NOT what we last emitted, the change came
+  // from outside (toolbar Undo, per-card reset, version Restore, "Reload
+  // latest") and the open editor must re-seed — otherwise the next keystroke
+  // silently re-saves the pre-undo text, reverting the external action.
+  const lastEmittedRef = useRef<string | null>(null);
+
   const editor = useEditor({
     extensions: richTextExtensions("Start writing…"),
     content: initialHtml,
@@ -39,12 +46,25 @@ export default function NarrativeEditor({ block, onContentChange }: NarrativeEdi
       },
     },
     onUpdate: ({ editor: e }) => {
+      const html = e.getHTML();
+      lastEmittedRef.current = html;
       onChangeRef.current({
-        html: e.getHTML(),
+        html,
         source_status: "populated",
       });
     },
   });
+
+  // PDS-11: re-seed on EXTERNAL content change only (never mid-typing).
+  useEffect(() => {
+    if (!editor) return;
+    const incoming = block.content.html ?? "";
+    if (incoming === lastEmittedRef.current) return;
+    if (incoming === editor.getHTML()) return;
+    editor.commands.setContent(incoming || initialHtml, { emitUpdate: false });
+    lastEmittedRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, block.content.html]);
 
   if (!editor) return null;
 

@@ -14,6 +14,11 @@ interface BlockCanvasProps {
   onDuplicate?: (block: OutputBlock) => void;
   /** Remove a non-required block (FPS-010) — e.g. a page break. Undoable. */
   onRemove?: (block: OutputBlock) => void;
+  /**
+   * PADW T06c (PDS-10): per-card reset-from-source — resets THIS block.
+   * (The old toolbar item claimed "selected block" but always reset blocks[0].)
+   */
+  onResetFromSource?: (block: OutputBlock) => void;
   renderEditor?: (block: OutputBlock, onContentChange: (c: Partial<BlockContent>) => void) => ReactNode;
   /** Discovered Bot Builder microbots for the document (FPS-008). */
   aiBots?: BotDiscoveryResult;
@@ -31,6 +36,7 @@ export default function BlockCanvas({
   onSaveReusable,
   onDuplicate,
   onRemove,
+  onResetFromSource,
   renderEditor,
   aiBots,
   aiBotsLoading,
@@ -48,6 +54,7 @@ export default function BlockCanvas({
             onSaveReusable={onSaveReusable ? () => onSaveReusable(block) : undefined}
             onDuplicate={onDuplicate ? () => onDuplicate(block) : undefined}
             onRemove={onRemove && !block.required ? () => onRemove(block) : undefined}
+            onResetFromSource={onResetFromSource ? () => onResetFromSource(block) : undefined}
             renderEditor={renderEditor}
             aiBots={aiBots}
             aiBotsLoading={aiBotsLoading}

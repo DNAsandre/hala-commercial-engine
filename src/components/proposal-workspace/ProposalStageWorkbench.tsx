@@ -2173,7 +2173,7 @@ export default function ProposalStageWorkbench({
     <div className="flex items-center gap-2">
     {onNavigateToComposer && (
       <Button type="button" variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => onNavigateToComposer("proposal")}>
-        Open PDF Studio
+        Open Final Pack Studio
       </Button>
     )}
     <Button

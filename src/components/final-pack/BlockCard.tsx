@@ -11,6 +11,7 @@ import { forwardRef, useState } from "react";
 import {
   GripVertical, Eye, EyeOff, ChevronDown, ChevronRight,
   FileText, Table, Scale, Pen, BookOpen, Image, Lock, Type, Library, Sparkles, X, Copy, Trash2, Check,
+  RotateCcw,
 } from "lucide-react";
 import type { OutputBlock } from "@/lib/final-pack-loader";
 import {
@@ -55,6 +56,11 @@ interface BlockCardProps {
   onDuplicate?: () => void;
   /** Remove this block (FPS-010) — non-required only; undoable. */
   onRemove?: () => void;
+  /**
+   * PADW T06c (PDS-10): reset THIS block's content to its creation-time
+   * source snapshot. Confirmed inline; undoable via the block undo stack.
+   */
+  onResetFromSource?: () => void;
   /** Render function for the expanded editor */
   renderEditor?: (block: OutputBlock, onContentChange: (c: Partial<OutputBlock["content"]>) => void) => React.ReactNode;
   /** Drag handle attributes from @dnd-kit */
@@ -108,11 +114,12 @@ function getFamilyColor(family: string): string {
 
 const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
   function BlockCard(
-    { block, onToggleVisibility, onContentChange, onSaveReusable, onDuplicate, onRemove, renderEditor, dragHandleProps, isDragging, aiBots, aiBotsLoading, onSelectBot, docContext },
+    { block, onToggleVisibility, onContentChange, onSaveReusable, onDuplicate, onRemove, onResetFromSource, renderEditor, dragHandleProps, isDragging, aiBots, aiBotsLoading, onSelectBot, docContext },
     ref,
   ) {
     const [expanded, setExpanded] = useState(false);
     const [confirmRemove, setConfirmRemove] = useState(false);
+    const [confirmReset, setConfirmReset] = useState(false);
     const [aiMenuOpen, setAiMenuOpen] = useState(false);
     const [aiRunning, setAiRunning] = useState(false);
     const [aiRegenerating, setAiRegenerating] = useState(false);
@@ -297,6 +304,38 @@ const BlockCard = forwardRef<HTMLDivElement, BlockCardProps>(
           )}
 
           {/* Duplicate block (FPS-008-13) — independent copy below the original */}
+          {/* PADW T06c (PDS-10): per-card reset-from-source with inline confirm */}
+          {onResetFromSource && (
+            confirmReset ? (
+              <span className="flex items-center gap-0.5 flex-shrink-0">
+                <button
+                  onClick={() => { onResetFromSource(); setConfirmReset(false); }}
+                  className="p-1 rounded hover:bg-amber-500/10 transition-colors"
+                  title={`Confirm reset "${block.display_name}" to its source snapshot`}
+                  data-reset-confirm="true"
+                >
+                  <Check className="h-3.5 w-3.5 text-amber-600" />
+                </button>
+                <button
+                  onClick={() => setConfirmReset(false)}
+                  className="p-1 rounded hover:bg-accent transition-colors"
+                  title="Cancel"
+                >
+                  <X className="h-3.5 w-3.5 text-muted-foreground" />
+                </button>
+              </span>
+            ) : (
+              <button
+                onClick={() => setConfirmReset(true)}
+                className="p-1 rounded hover:bg-accent transition-colors flex-shrink-0"
+                title="Reset this block to its source snapshot (undoable)"
+                data-reset-block="true"
+              >
+                <RotateCcw className="h-3.5 w-3.5 text-muted-foreground" />
+              </button>
+            )
+          )}
+
           {onDuplicate && (
             <button
               onClick={onDuplicate}

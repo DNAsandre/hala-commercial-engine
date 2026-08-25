@@ -16,7 +16,7 @@ import {
   FileText, FileStack, Scale, Briefcase, Globe,
   AlertTriangle, Loader2, ChevronRight,
 } from "lucide-react";
-import { loadTenderPack, type PackType, type BlockSnapshot } from "@/lib/final-pack-loader";
+import { loadTenderPack, normalizeCommercialTicketDetails, type PackType, type BlockSnapshot } from "@/lib/final-pack-loader";
 import { useFinalPackInstance, type FinalPackInstance } from "@/hooks/useFinalPackInstance";
 import { supabase } from "@/lib/supabase";
 
@@ -75,8 +75,12 @@ const PACK_TYPES: PackTypeOption[] = [
   },
   {
     key: "bilingual_quotation",
-    label: "Bilingual Quotation (EN/AR)",
-    description: "Bilingual quotation with VAT breakdown — English and Arabic",
+    // PADW T06c (PDS-08): the card previously promised "English and Arabic"
+    // while the renderer produces English-only, LTR, with no VAT columns. The
+    // label now states reality until AR/VAT rendering is actually built.
+    label: "Quotation (Bilingual layout — English only for now)",
+    description:
+      "Quotation pack. Arabic rendering and the VAT breakdown table are not built yet — output is English-only.",
     icon: Globe,
   },
 ];
@@ -133,8 +137,15 @@ export default function PackSelector({ tenderId, sourceKind = "tender", onInstan
         setTenderTitle(tender.ticket_title || "Not available");
         setCustomerName(tender.customer_name || "Not available");
 
-        // Extract pricing scenarios
-        const td = tender.type_details as Record<string, any> | null;
+        // Extract pricing scenarios.
+        // PADW T06c (PDS-20): normalize FIRST — proposal tickets store their
+        // P&L under type_details.proposal_workspace, so reading raw
+        // td.pricing showed "no scenarios" for proposals whose created pack
+        // then populated from the working P&L anyway (a dishonest empty
+        // state that also removed the human's scenario choice).
+        const td = normalizeCommercialTicketDetails(
+          (tender.type_details as Record<string, any> | null) ?? {},
+        );
         const pricingScenarios = (td?.pricing?.scenarios?.rows || []) as any[];
         const mapped: PricingScenarioOption[] = pricingScenarios.map((s: any) => ({
           id: s.id || "",

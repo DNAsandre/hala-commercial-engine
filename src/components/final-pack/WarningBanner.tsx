@@ -17,6 +17,7 @@
 import { useState, useMemo } from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, Info } from "lucide-react";
 import type { OutputBlock } from "@/lib/final-pack-loader";
+import { findUnresolvedVariablesInBlocks } from "@/lib/template-variables";
 
 interface WarningBannerProps {
   blocks: OutputBlock[];
@@ -163,7 +164,19 @@ export function computeWarnings(blocks: OutputBlock[]): Warning[] {
     });
   }
 
-  // 5. Default-only content (visible blocks with only default content)
+  // 5. PADW T06c (PDS-41): unresolved template variables — a literal
+  // "{{token}}" in a customer document is always worth a note. Advisory
+  // only; never blocks export.
+  const unresolved = findUnresolvedVariablesInBlocks(blocks);
+  for (const finding of unresolved) {
+    warnings.push({
+      id: `unresolved-vars-${finding.blockId}`,
+      icon: "attention",
+      message: `"${finding.blockName}" contains unresolved ${finding.variables.length === 1 ? "variable" : "variables"}: ${finding.variables.map((v) => `{{${v}}}`).join(", ")}`,
+    });
+  }
+
+  // 6. Default-only content (visible blocks with only default content)
   const defaultOnly = blocks.filter(
     (b) => b.visible && b.content.source_status === "default" && !b.content.html && !b.content.variables,
   );

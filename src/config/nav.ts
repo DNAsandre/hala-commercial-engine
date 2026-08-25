@@ -65,7 +65,8 @@ export const CLEAN_NAV: CleanNavGroup[] = [
   },
   {
     label: null,
-    items: [{ href: "/pdf-studio", label: "PDF Studio", icon: "pdfStudio" }],
+    // PADW T06c (P10 / PDS-68): one canonical name — "Final Pack Studio".
+    items: [{ href: "/pdf-studio", label: "Final Pack Studio", icon: "pdfStudio" }],
   },
   {
     label: "System",

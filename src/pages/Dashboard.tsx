@@ -29,7 +29,7 @@ const SURFACES: Surface[] = [
   { href: "/customers", label: "Customer Command Center", desc: "Portfolio grid across all customers", icon: Users },
   { href: "/workspaces/tenders", label: "Tender Portfolio Overview", desc: "All tenders and their 15-stage progress", icon: Briefcase },
   { href: "/workspaces/proposals", label: "Proposal Portfolio Overview", desc: "All proposals in the sell cycle", icon: FolderOpen },
-  { href: "/pdf-studio", label: "PDF Studio", desc: "FinalPack document composition and export", icon: FileOutput },
+  { href: "/pdf-studio", label: "Final Pack Studio", desc: "FinalPack document composition and export", icon: FileOutput },
 ];
 
 export default function CleanDashboard() {

@@ -55,7 +55,7 @@ import { usePresence } from "@/hooks/usePresence";
 import { useBlockAIBots } from "@/hooks/useBlockAIBots";
 import VersionHistoryPanel from "@/components/final-pack/VersionHistoryPanel";
 import { History, Users, AlertTriangle } from "lucide-react";
-import type { OutputBlock, BlockContent } from "@/lib/final-pack-loader";
+import { loadTenderPack, type OutputBlock, type BlockContent } from "@/lib/final-pack-loader";
 import { filterAllowedTenderTickets } from "@/lib/process-isolation";
 
 type StudioMode = "select" | "compose";
@@ -172,6 +172,23 @@ export default function FinalPackStudio() {
   useEffect(() => { sourceSnapshotRef.current = (activeInstance?.source_snapshot as unknown as Record<string, unknown>) ?? {}; }, [activeInstance?.source_snapshot]);
   useEffect(() => { meNameRef.current = meName; }, [meName]);
 
+  // PADW T06c (PDS-17): a URL param change to a DIFFERENT ticket must not
+  // carry the previous ticket's composer along — exports would run against
+  // ticket A under ticket B's URL, and drift would compare B's source to A's
+  // hash (fabricated drift). Mirrors the W04-T08-A guard in
+  // useTenderWorkspaceData. Runs only when the param actually changes.
+  const prevSourceTicketIdRef = useRef(sourceTicketId);
+  useEffect(() => {
+    if (prevSourceTicketIdRef.current === sourceTicketId) return;
+    prevSourceTicketIdRef.current = sourceTicketId;
+    setMode("select");
+    setActiveInstance(null);
+    setSaveError(null);
+    setConflict(false);
+    setSelectedVolumeKey(null);
+    lastUpdatedAtRef.current = null;
+  }, [sourceTicketId]);
+
   // Debounced save — writes blocks to doc_instances, with optimistic concurrency
   // (FPS-007-08) and throttled append-only version rows (FPS-007-06).
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -251,13 +268,85 @@ export default function FinalPackStudio() {
     },
   );
 
-  // Source drift detection — READ ONLY check against commercial_tickets
+  // Source drift detection — READ ONLY check against commercial_tickets.
+  // PADW T06c (PDS-19): keyed to the INSTANCE's own linked ticket id, not the
+  // route param — a connected document resumed from /pdf-studio has no route
+  // param, and keying to the route silently skipped the check.
   const {
     drifted,
     checking: driftChecking,
     recheck: recheckDrift,
     error: driftError,
-  } = useSourceDrift(sourceTicketId, activeInstance?.source_snapshot?._hash || null);
+  } = useSourceDrift(
+    activeInstance?.tender_id ?? sourceTicketId,
+    activeInstance?.source_snapshot?._hash || null,
+  );
+
+  // PADW T06c (PDS-05): the REAL "refresh from source" — re-runs the loader
+  // against the CURRENT record, rebuilds source-bound blocks + snapshot +
+  // hash in ONE guarded write, and keeps custom/duplicated blocks. The old
+  // button restored the frozen snapshot while claiming to refresh.
+  const handleRebuildFromSource = useCallback(async () => {
+    if (!activeInstance?.tender_id) return;
+    setSaving(true);
+    try {
+      const snapshot = await loadTenderPack(
+        activeInstance.tender_id,
+        activeInstance.pack_type,
+        activeInstance.source_snapshot?.pricing_scenario_id ?? undefined,
+      );
+      if (snapshot.error) {
+        setSaveError(`Rebuild from source failed: ${snapshot.error}`);
+        return;
+      }
+      // Fresh source-bound blocks use the same deterministic ids; anything
+      // not in the fresh snapshot is a custom/duplicated block — kept.
+      const freshIds = new Set(snapshot.blocks.map((b) => b.id));
+      const customBlocks = (activeInstance.blocks || []).filter((b) => !freshIds.has(b.id));
+      const rebuilt = [...snapshot.blocks, ...customBlocks].map((b, i) => ({ ...b, order: i + 1 }));
+      const newSnapshot = {
+        ...(activeInstance.source_snapshot as unknown as Record<string, unknown>),
+        _hash: snapshot.source_hash,
+        _original_blocks: snapshot.blocks,
+        snapshot_at: snapshot.snapshot_at,
+        source_data: snapshot.source_data,
+      };
+      const newUpdatedAt = new Date().toISOString();
+      let q = supabase
+        .from("doc_instances")
+        .update({
+          blocks: rebuilt,
+          source_snapshot: newSnapshot,
+          updated_at: newUpdatedAt,
+          last_edited_at: newUpdatedAt,
+        })
+        .eq("id", activeInstance.id);
+      if (lastUpdatedAtRef.current) q = q.eq("updated_at", lastUpdatedAtRef.current);
+      const { data, error } = await q.select("id");
+      if (error) {
+        setSaveError(`Rebuild from source failed: ${error.message}`);
+        return;
+      }
+      if (!data || data.length === 0) {
+        setConflict(true);
+        return;
+      }
+      lastUpdatedAtRef.current = newUpdatedAt;
+      setSaveError(null);
+      setActiveInstance((prev) =>
+        prev
+          ? {
+              ...prev,
+              blocks: rebuilt,
+              source_snapshot: newSnapshot as unknown as FinalPackInstance["source_snapshot"],
+            }
+          : prev,
+      );
+      recheckDrift();
+    } finally {
+      setSaving(false);
+    }
+  }, [activeInstance, recheckDrift]);
 
   // FPS-008: discover Bot Builder microbots for the active document ONCE
   // (filtered per-block client-side). Read-only; never blocks editing/export.
@@ -377,25 +466,41 @@ export default function FinalPackStudio() {
   }, [activeInstance?.id, activeInstance?.branding_profile_id, brandingProfiles]);
 
   // Persist branding selection on the instance (FPS-002). Never gates export.
+  // PADW T06c (PDS-13): this self-write bumps doc_instances.updated_at, so the
+  // concurrency token (lastUpdatedAtRef) MUST advance with it — otherwise the
+  // next autosave's token guard matches zero rows and fabricates a false
+  // "Another session saved changes" conflict against the user's own write.
   const handleSelectBranding = useCallback(
     (profile: BrandingProfile) => {
       setBranding(profile);
       setActiveInstance((prev) => {
         if (!prev) return prev;
         const nextSnapshot = { ...prev.source_snapshot, branding_profile_id: profile.id };
-        // Fire-and-forget persistence; export remains available regardless.
-        supabase
+        const newUpdatedAt = new Date().toISOString();
+        // Guarded persistence; export remains available regardless of outcome.
+        let q = supabase
           .from("doc_instances")
           .update({
             branding_profile_id: profile.id,
             source_snapshot: nextSnapshot,
-            last_edited_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
+            last_edited_at: newUpdatedAt,
+            updated_at: newUpdatedAt,
           })
-          .eq("id", prev.id)
-          .then(({ error }) => {
-            if (error) console.error("[FPS] Failed to persist branding:", error.message);
-          });
+          .eq("id", prev.id);
+        if (lastUpdatedAtRef.current) q = q.eq("updated_at", lastUpdatedAtRef.current);
+        q.select("id").then(({ data, error }) => {
+          if (error) {
+            console.error("[FPS] Failed to persist branding:", error.message);
+            return;
+          }
+          if (!data || data.length === 0) {
+            // A real concurrent write beat us — surface the standard advisory.
+            setConflict(true);
+            return;
+          }
+          // Token advances with our own write (the PDS-13 fix).
+          lastUpdatedAtRef.current = newUpdatedAt;
+        });
         return { ...prev, branding_profile_id: profile.id, source_snapshot: nextSnapshot };
       });
     },
@@ -477,7 +582,7 @@ export default function FinalPackStudio() {
               {proposalId ? "Back to Proposal" : "Back to Tender"}
             </Link>
           ) : (
-            <span className="text-sm text-muted-foreground">Document Studio</span>
+            <span className="text-sm text-muted-foreground">Final Pack Studio</span>
           )
         ) : (
           <button
@@ -531,13 +636,6 @@ export default function FinalPackStudio() {
                   canRedo={canRedo}
                   onUndo={undo}
                   onRedo={redo}
-                  onResetBlock={() => {
-                    // Reset first visible block as example — in practice, user selects
-                    const firstBlock = activeInstance.blocks[0];
-                    if (firstBlock && activeInstance.source_snapshot._original_blocks) {
-                      resetBlockFromSource(firstBlock.id, activeInstance.source_snapshot._original_blocks);
-                    }
-                  }}
                   onResetAll={() => {
                     resetAllFromSource(activeInstance.source_snapshot._original_blocks || []);
                   }}
@@ -641,6 +739,7 @@ export default function FinalPackStudio() {
                     onRefreshFromSource={() => {
                       resetAllFromSource(activeInstance.source_snapshot._original_blocks || []);
                     }}
+                    onRebuildFromSource={handleRebuildFromSource}
                     onRecheck={recheckDrift}
                   />
                 )}
@@ -687,6 +786,11 @@ export default function FinalPackStudio() {
                 onContentChange={updateBlockContent}
                 onDuplicate={(block) => duplicateBlock(block.id)}
                 onRemove={(block) => removeBlock(block.id)}
+                onResetFromSource={(block) => {
+                  // PDS-10: reset exactly THIS block (per-card confirm handled
+                  // in BlockCard); undoable via the block undo stack.
+                  resetBlockFromSource(block.id, activeInstance.source_snapshot._original_blocks || []);
+                }}
                 onSaveReusable={(block) => setReusableSaveBlock(block)}
                 renderEditor={renderEditor}
                 aiBots={aiBots}
