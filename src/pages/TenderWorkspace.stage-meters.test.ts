@@ -369,4 +369,28 @@ describe("stage-9 checklist meter — internal review derives from block statuse
     // blocks are Pending — the phantom facet carries no weight.
     expect(checklist?.percent).toBeLessThan(100);
   });
+
+  it("reads canonical bid and pricing destinations used by the full-field manifest", () => {
+    const ws = makeWs({
+      sowQualificationData: { coverage_matrix: [{ area: "A", status: "Clear" }] },
+      bidNoBidData: { decision_record: { formal: { decision: "Bid" } } },
+      solutionDesignData: { configuration: { deployment_type: "3PL" } },
+      pricingData: { scenarios: { rows: [{ id: "s1" }] } },
+      tenderDraftingData: { proposal_blocks: [reviewedBlock] },
+      typeDetails: { approval_matrix: { approvals: [{ id: "a1", decision: "approved" }] } },
+    });
+    const checklist = buildFinalApprovedTaskProgress("submission_readiness", ws)?.find(s => s.key === "stage_checklist");
+    expect(checklist?.percent).toBe(100);
+  });
+
+  it("keeps Final Pack readiness human-first when all blocks are approved", () => {
+    const ws = makeWs({ tenderDraftingData: { proposal_blocks: [
+      { id: "b1", approval_status: "Approved" },
+      { id: "b2", approval_status: "Approved" },
+    ] } });
+    const segments = buildFinalApprovedTaskProgress("final_pack", ws);
+    expect(segment(segments, "bot_check").percent).toBeNull();
+    expect(segment(segments, "assembly_readiness").percent).toBe(100);
+    expect(segment(segments, "block_register").percent).toBe(100);
+  });
 });

@@ -168,11 +168,11 @@ function buildCustomerSnapshotTaskProgress(ws: TenderWorkspace): StageTaskProgre
     sowData.scope_summary,
     Array.isArray(sowData.service_lines) && sowData.service_lines.length > 0 ? sowData.service_lines : null,
     sowData.warehousing,
-    Array.isArray(sowData.transport_lanes) && sowData.transport_lanes.length > 0 ? sowData.transport_lanes : null,
-    Array.isArray(sowData.technology) && sowData.technology.length > 0 ? sowData.technology : null,
+    Array.isArray(sowData.transport?.lanes) && sowData.transport.lanes.length > 0 ? sowData.transport.lanes : null,
+    sowData.technology,
     Array.isArray(sowData.sla_kpis) && sowData.sla_kpis.length > 0 ? sowData.sla_kpis : null,
     Array.isArray(sowData.sites) && sowData.sites.length > 0 ? sowData.sites : null,
-    Array.isArray(sowData.compliance) && sowData.compliance.length > 0 ? sowData.compliance : null,
+    sowData.compliance,
     Array.isArray(sowData.clarifications) && sowData.clarifications.length > 0 ? sowData.clarifications : null,
     sowData.internal_notes,
   ];
@@ -804,8 +804,8 @@ function buildPnlPricingTaskProgress(tabId: string, ws: TenderWorkspace): StageT
     const contextPct = pnlSnap?.linked_pnl_record_id || pnlSnap?.working_draft ? 100
       : (pnlSnap?.snapshot_status && pnlSnap.snapshot_status !== "No Snapshot") ? 50 : 0;
     const calcPct = pnlSnap?.working_draft?.calculator_state ? 100 : 0;
-    const actionsPct = pnlSnap?.working_draft ? 50 : 0;
     const snapshots = Array.isArray(pnlSnap?.snapshots) ? pnlSnap.snapshots : [];
+    const actionsPct = snapshots.length > 0 ? 100 : pnlSnap?.working_draft ? 50 : 0;
     const snapshotPct = snapshots.length > 0 ? 100 : (pnlSnap?.snapshot_status && pnlSnap.snapshot_status !== "No Snapshot") ? 50 : 0;
     const legacyPct: number | null = null;
     return [
@@ -1338,12 +1338,15 @@ export function buildFinalApprovedTaskProgress(tabId: string, ws: TenderWorkspac
   const checks = (() => {
     const hasQual = !!(t.sowQualificationData || t.technicalQualificationData || t.customerFitData);
     const bnd = t.bidNoBidData;
-    const decision = bnd?.decision?.decision || bnd?.decision;
+    const decision = bnd?.decision_record?.formal?.decision ?? bnd?.decision?.decision ?? bnd?.decision;
     const hasBid = !!decision && decision !== "Not Decided" && decision !== "not_decided";
     const sd = t.solutionDesignData;
     const hasSd = !!(sd && typeof sd === "object" && Object.keys(sd).length > 0);
     const pricing = t.pricingData;
-    const hasPricing = (Array.isArray(pricing?.scenarios) && pricing.scenarios.length > 0) || !!(pricing?.summary);
+    const hasPricing = (Array.isArray(pricing?.scenarios?.rows) && pricing.scenarios.rows.length > 0)
+      || (Array.isArray(pricing?.scenarios) && pricing.scenarios.length > 0)
+      || !!pricing?.pnl_snapshot?.working_draft
+      || !!pricing?.summary;
     const blocks = Array.isArray(td.proposal_blocks) ? td.proposal_blocks : [];
     // TCW-AUD fix (defect 1): `tender_drafting.departmental_reviews` is a
     // phantom facet no code path writes — deriving from it capped this meter
@@ -1370,14 +1373,12 @@ export function buildFinalApprovedTaskProgress(tabId: string, ws: TenderWorkspac
   }
 
   if (tabId === "final_pack") {
-    const botResult = td.final_approval_check;
-    const botReadyForAssembly = botResult?.status === "READY_FOR_SUBMISSION" || botResult?.ready_for_final_pack === true;
     const blocks = Array.isArray(td.proposal_blocks) ? td.proposal_blocks : [];
     const approvedBlocks = blocks.filter((b: any) => b.approval_status === "Approved" || b.approval_status === "Locked").length;
-    const assemblyReady = botReadyForAssembly && blocks.length > 0 && approvedBlocks > 0;
+    const assemblyReady = blocks.length > 0 && approvedBlocks === blocks.length;
     return [
-      { key: "bot_check", label: "Approval Check Bot", percent: botResult ? (botReadyForAssembly ? 100 : 50) : 0 },
-      { key: "assembly_readiness", label: "Assembly Readiness", percent: assemblyReady ? 100 : approvedBlocks > 0 ? 50 : 0 },
+      { key: "bot_check", label: "AI Review", percent: null, note: "Optional support — Final Pack readiness does not depend on AI" },
+      { key: "assembly_readiness", label: "Assembly Readiness", percent: assemblyReady ? 100 : approvedBlocks > 0 ? Math.round((approvedBlocks / blocks.length) * 100) : 0 },
       { key: "block_register", label: "Block Register", percent: blocks.length > 0 ? Math.round((approvedBlocks / blocks.length) * 100) : 0 },
     ];
   }

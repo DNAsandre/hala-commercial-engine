@@ -82,6 +82,19 @@ interface PnLWorkingDraft {
   updated_at: string;
 }
 
+export function isUsablePnLSnapshotRecord(value: unknown): value is PnLSnapshotRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.id === "string"
+    && record.id.trim().length > 0
+    && typeof record.status === "string"
+    && SNAPSHOT_STATUSES.includes(record.status as SnapshotStatus)
+    && Boolean(record.calculator_state)
+    && typeof record.calculator_state === "object"
+    && Boolean(record.summary)
+    && typeof record.summary === "object";
+}
+
 // ── Section tabs ─────────────────────────────────────────────────────
 type CalcSectionKey = "context" | "calculator" | "actions" | "snapshot" | "legacy_cost";
 
@@ -124,7 +137,9 @@ export default function TenderPnLCalculatorPanel({ ws, reload, onOpenDocuments, 
   // Target GP: from tender record, with manual override
   const tenderTargetGp = t.targetGpPercent ? String(t.targetGpPercent) : "";
   const savedDraft = pnlData?.working_draft as PnLWorkingDraft | undefined;
-  const savedSnapshots = Array.isArray(pnlData?.snapshots) ? pnlData.snapshots as PnLSnapshotRecord[] : [];
+  const rawSnapshots: unknown[] = Array.isArray(pnlData?.snapshots) ? pnlData.snapshots : [];
+  const savedSnapshots = rawSnapshots.filter(isUsablePnLSnapshotRecord);
+  const ignoredSnapshotCount = rawSnapshots.length - savedSnapshots.length;
   const latestSnapshot = savedSnapshots.length > 0 ? savedSnapshots[savedSnapshots.length - 1] : null;
 
   // Is there a legacy snapshot from old manual text fields?
@@ -405,6 +420,12 @@ export default function TenderPnLCalculatorPanel({ ws, reload, onOpenDocuments, 
           <SectionHeader title="Latest Snapshot Summary" icon={<CheckCircle2 className="w-3.5 h-3.5 text-[#075eea]" />} badge={latestSnapshot ? latestSnapshot.status : hasLegacySnapshot ? "Legacy" : "None"} />
         </CardHeader>
         <CardContent className="p-4">
+          {ignoredSnapshotCount > 0 && (
+            <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>{ignoredSnapshotCount} incomplete pricing snapshot {ignoredSnapshotCount === 1 ? "row was" : "rows were"} ignored. Create and save a new snapshot to replace it.</span>
+            </div>
+          )}
           {latestSnapshot ? (
             <div className="space-y-3">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2">

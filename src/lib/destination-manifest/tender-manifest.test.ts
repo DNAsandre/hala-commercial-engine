@@ -61,4 +61,11 @@ describe("Tender destination manifest", () => {
       ids.add(field.id);
     }
   });
+
+  it("matches the Tender calculator's descriptive snapshot fields", () => {
+    const byPath = new Map(TENDER_MANIFEST.fields.map(field => [field.persistencePath, field]));
+    expect(byPath.get("pricing.pnl_snapshot.snapshots[].summary.gp_percent")?.type).toBe("percent");
+    expect(byPath.get("pricing.pnl_snapshot.snapshots[].summary.target_gp_percent")?.type).toBe("text");
+    expect(byPath.get("pricing.pnl_snapshot.snapshots[].summary.variance_to_target")?.type).toBe("text");
+  });
 });
