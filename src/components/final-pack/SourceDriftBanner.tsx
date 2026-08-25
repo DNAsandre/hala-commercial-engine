@@ -20,7 +20,19 @@ import { RefreshCw, Info, Loader2, AlertTriangle } from "lucide-react";
 interface SourceDriftBannerProps {
   drifted: boolean;
   checking: boolean;
+  /**
+   * PADW T06b (PDS-05): this action RESTORES the frozen creation-time
+   * snapshot (discarding edits to source-bound blocks). It was previously
+   * labeled "Refresh from source", which it never was — the label now says
+   * what the button does.
+   */
   onRefreshFromSource: () => void;
+  /**
+   * PADW T06b (PDS-05): the REAL refresh — re-runs the source load against
+   * the CURRENT tender/proposal record and rebuilds the snapshot + hash.
+   * Optional until the studio callsite wires it (integration seam).
+   */
+  onRebuildFromSource?: () => void;
   onRecheck: () => void;
   /** Set when the check could not be performed at all (W04-T09). */
   error?: string | null;
@@ -30,6 +42,7 @@ export default function SourceDriftBanner({
   drifted,
   checking,
   onRefreshFromSource,
+  onRebuildFromSource,
   onRecheck,
   error,
 }: SourceDriftBannerProps) {
@@ -83,11 +96,21 @@ export default function SourceDriftBanner({
         </button>
         <button
           onClick={onRefreshFromSource}
-          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+          title="Restore this document's blocks to the snapshot taken when it was created. Does NOT read the current source; edits to source-bound blocks are discarded."
         >
-          <RefreshCw className="h-3 w-3" />
-          Refresh from source
+          Restore original snapshot
         </button>
+        {onRebuildFromSource && (
+          <button
+            onClick={onRebuildFromSource}
+            className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
+            title="Re-read the current record and rebuild source-bound blocks from it. Your custom blocks are kept."
+          >
+            <RefreshCw className="h-3 w-3" />
+            Rebuild from current source
+          </button>
+        )}
       </div>
     </div>
   );

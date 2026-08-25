@@ -152,6 +152,9 @@ export async function loadStandaloneTemplatePack(
   const variableValues: TemplateVariableValues = {
     customer_name: source.customerName,
     prepared_for: source.customerName,
+    // PADW T06b (PDS-03/PDS-41): recipient_name was missing from this map,
+    // so "{{recipient_name}}" printed literally in template-created documents.
+    recipient_name: source.customerName,
     reference_number: source.refNumber,
     quotation_number: source.refNumber,
     document_title: source.title,

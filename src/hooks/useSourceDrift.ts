@@ -92,7 +92,11 @@ export async function checkSourceDrift(
 }
 
 /**
- * @param tenderId - The tender to check source drift for
+ * @param tenderId - The commercial ticket the INSTANCE is linked to.
+ *   PADW T06b (PDS-19): callers must pass the instance's own
+ *   `linked_entity_id`, never a route URL param — a resumed connected
+ *   document on `/pdf-studio` has no URL param, and keying the check to the
+ *   route silently skipped it (indistinguishable from "checked, unchanged").
  * @param snapshotHash - The hash stored in doc_instances.source_snapshot._hash
  */
 export function useSourceDrift(

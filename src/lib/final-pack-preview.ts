@@ -12,6 +12,7 @@
 import DOMPurify from "dompurify";
 import type { OutputBlock } from "./final-pack-loader";
 import { normalizeFinalPackLayout } from "./final-pack-layout";
+import { resolveTemplateVariables } from "./template-variables";
 
 // ═══════════════════════════════════════════════════════════
 // Types
@@ -175,8 +176,8 @@ export function buildPreviewHTML(options: PreviewOptions): string {
 
   // Sanitize only the user-generated block HTML (not our structural HTML)
   const sanitizedBody = DOMPurify.sanitize(bodyHtml, {
-    ADD_TAGS: ["table", "thead", "tbody", "tr", "th", "td", "footer"],
-    ADD_ATTR: ["class", "style", "colspan", "rowspan"],
+    ADD_TAGS: ["table", "thead", "tbody", "tr", "th", "td", "footer", "section"],
+    ADD_ATTR: ["class", "style", "colspan", "rowspan", "dir", "lang"],
   });
 
   const watermark = exportMode !== "final"
@@ -257,9 +258,22 @@ function renderBlock(block: OutputBlock, branding: BrandingProfile, ctx?: Render
   // Party details
   if (key === "party_details") return renderVariableBlock(block, "Parties");
 
-  // Narrative / WYSIWYG / Clause — all HTML-based
+  // Clause-bearing blocks (terms / legal) — PDS-02: render the actual
+  // clause-library content whenever the loader resolved clauses for this
+  // block (populated OR honestly empty), never the seeded meta-boilerplate.
+  // Human-authored html on the block wins over the clause auto-render.
+  if (
+    !block.content.html &&
+    (block.content.clauses !== undefined ||
+      key === "legal_clauses" ||
+      key === "terms_standard")
+  ) {
+    return renderClausesBlock(block);
+  }
+
+  // Narrative / WYSIWYG — all HTML-based
   // narrative, scope_list, closing, confidentiality, terms,
-  // legal_clauses, annexure_config, annexure_comms, scope_table, custom_text
+  // annexure_config, annexure_comms, scope_table, custom_text
   return renderHtmlBlock(block);
 }
 
@@ -358,14 +372,71 @@ function renderCover(block: OutputBlock, branding: BrandingProfile, ctx?: Render
 // ── HTML block (narrative, scope, terms, etc.) ─────────
 
 function renderHtmlBlock(block: OutputBlock): string {
-  const html = block.content.html || block.default_content || "";
+  // PADW T06b (PDS-16, pin P7): `source_status === "not_captured"` short-
+  // circuits BEFORE any default_content fallback. Previously the seeded
+  // default prose made the honest "Content not captured yet." branch
+  // unreachable for every seeded block, so marketing boilerplate rendered
+  // unmarked as customer content.
+  const authored = block.content.html;
   const status = block.content.source_status;
-  if (!html && status === "not_captured") {
+  if (!authored && status === "not_captured") {
     return `<div class="fps-section">
       <p class="fps-empty">Content not captured yet.</p>
     </div>`;
   }
-  return `<div class="fps-section">${html}</div>`;
+
+  const usingDefault = !authored;
+  const raw = authored || block.default_content || "";
+  if (!raw) {
+    return `<div class="fps-section">
+      <p class="fps-empty">Content not captured yet.</p>
+    </div>`;
+  }
+
+  // PADW T06b (PDS-03): resolve the block's own variables into its HTML —
+  // "{{recipient_name}}" must never print literally in a customer document.
+  // Unknown variables are LEFT VISIBLE (never invented, never stripped).
+  const html = resolveTemplateVariables(raw, block.content.variables ?? {});
+
+  // Pin P7: template prose that still renders is visibly labeled as template
+  // text — in preview AND export — never presented as captured customer truth.
+  const templateNote = usingDefault
+    ? `<p class="fps-template-note">Template text — not captured from this record. Replace with customer-specific content.</p>`
+    : "";
+  return `<div class="fps-section">${templateNote}${html}</div>`;
+}
+
+// ── Clause block (PDS-02) ──────────────────────────────
+
+/**
+ * PADW T06b (PDS-02): published Clause Library content was loaded into
+ * `content.clauses` and never rendered — the terms/legal block shipped its
+ * seeded meta-boilerplate instead. Clause-bearing blocks now render the
+ * actual clause text (EN, with AR alongside where present), and an empty
+ * clause library is an honest empty state.
+ */
+function renderClausesBlock(block: OutputBlock): string {
+  const clauses = block.content.clauses ?? [];
+  if (clauses.length === 0) {
+    return `<div class="fps-section">
+      <h2>${escHtml(block.display_name)}</h2>
+      <p class="fps-empty">No published clauses in the Clause Library yet.</p>
+    </div>`;
+  }
+  const sections = clauses.map((clause) => {
+    const arabic = clause.content_ar
+      ? `<div class="fps-clause-ar" dir="rtl" lang="ar">${clause.content_ar}</div>`
+      : "";
+    return `<section class="fps-clause">
+      <h3>${escHtml(clause.name)}</h3>
+      <div class="fps-clause-en">${clause.content_en || ""}</div>
+      ${arabic}
+    </section>`;
+  }).join("\n");
+  return `<div class="fps-section">
+    <h2>${escHtml(block.display_name)}</h2>
+    ${sections}
+  </div>`;
 }
 
 // ── Variable-based blocks (facility, party details) ────
@@ -632,6 +703,18 @@ function getPreviewCSS(b: BrandingProfile): string {
     /* ── Sections ── */
     .fps-section { margin-bottom: 24px; }
     .fps-empty { color: #9ca3af; font-style: italic; font-size: 10pt; }
+
+    /* ── PADW T06b: honest template-text label (PDS-16, pin P7) ── */
+    .fps-template-note {
+      color: #92400e; background: #fffbeb; border: 1px solid #fcd34d;
+      border-radius: 4px; padding: 4px 8px; font-size: 8.5pt;
+      font-style: italic; margin: 0 0 8px 0;
+    }
+
+    /* ── PADW T06b: clause-library rendering (PDS-02) ── */
+    .fps-clause { margin: 0 0 14px 0; }
+    .fps-clause h3 { font-size: 11pt; margin: 0 0 4px 0; }
+    .fps-clause-ar { margin-top: 6px; }
 
     /* ── Section spacing (FPS-004 layout flag) ── */
     .fps-spacing-compact .fps-section { margin-bottom: 12px; }

@@ -51,3 +51,38 @@ export function findUnresolvedVariables(content: string): string[] {
   }
   return Array.from(found);
 }
+
+/** Structural block shape the unresolved-variable scan needs (no loader import). */
+export interface VariableScannableBlock {
+  id: string;
+  display_name?: string;
+  visible?: boolean;
+  content: { html?: string; variables?: Record<string, string>; source_status?: string };
+  default_content?: string;
+}
+
+/**
+ * PADW T06b (PDS-41) — advisory scan consumed by WarningBanner: which visible
+ * blocks would still render a literal "{{variable}}" after the block's own
+ * variables are applied. Never blocks anything; purely informational.
+ */
+export function findUnresolvedVariablesInBlocks(
+  blocks: readonly VariableScannableBlock[],
+): Array<{ blockId: string; blockName: string; variables: string[] }> {
+  const results: Array<{ blockId: string; blockName: string; variables: string[] }> = [];
+  for (const block of blocks) {
+    if (block.visible === false) continue;
+    const raw = block.content.html || block.default_content || "";
+    if (!raw) continue;
+    const resolved = resolveTemplateVariables(raw, block.content.variables ?? {});
+    const unresolved = findUnresolvedVariables(resolved);
+    if (unresolved.length > 0) {
+      results.push({
+        blockId: block.id,
+        blockName: block.display_name || block.id,
+        variables: unresolved,
+      });
+    }
+  }
+  return results;
+}
