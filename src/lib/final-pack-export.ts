@@ -26,7 +26,7 @@ import {
 } from "./final-pack-preview";
 import type { OutputBlock } from "./final-pack-loader";
 import { tryServerFinalPdf } from "./server-pdf";
-import { htmlToBodyPdfBytes, mergeCoverAndBody } from "./final-pack-pdf";
+import { htmlToBodyPdf, htmlToBodyPdfBytes, mergeCoverAndBody, type BodyPdfRenderer } from "./final-pack-pdf";
 import { fetchAssetBytes } from "./cover-asset-storage";
 
 // ═══════════════════════════════════════════════════════════
@@ -89,6 +89,12 @@ export interface ExportResult {
    */
   auditPersisted?: boolean;
   auditError?: string;
+  /**
+   * PADW T06e (PDS-12): set when the produced file came from the text-only
+   * fallback renderer (branding, colors, images and table layout are absent).
+   * The UI shows this note; the audit row records the distinct renderer.
+   */
+  rendererNote?: string;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -126,8 +132,15 @@ export async function executeExport(req: ExportRequest): Promise<ExportResult> {
     // and PDF falls back to it when the browser renderer cannot return bytes.
     // FPS-007: Final PDF first attempts a server render (feature-flagged OFF by
     // default); it ALWAYS falls back to the client path, so export never gates.
-    let renderer: "client" | "server" | "client-pdf" | "client-pdf-merge" = "client";
+    let renderer:
+      | "client"
+      | "server"
+      | "client-pdf"
+      | "client-pdf-merge"
+      | "client-pdf-merge-text-fallback" = "client";
     let delivered: ExportDelivery = "print_dialog_opened";
+    // PDS-12: set when the text-only fallback produced the file.
+    let rendererNote: string | undefined;
 
     // FPS-013: when this document has an imported PDF cover, a PDF export tries
     // the programmatic merge path (pdf-lib prepends the cover as static page 1).
@@ -140,7 +153,16 @@ export async function executeExport(req: ExportRequest): Promise<ExportResult> {
     } else if (importedCover) {
       const merged = await tryImportedPdfExport(html, req, importedCover);
       if (merged) {
-        renderer = "client-pdf-merge";
+        // PDS-12: the text-only body is a REAL fidelity downgrade — record it
+        // distinctly and tell the user, never report it as the high-fidelity
+        // render.
+        if (merged === "text_fallback") {
+          renderer = "client-pdf-merge-text-fallback";
+          rendererNote =
+            "The high-fidelity renderer was unavailable, so the body of this file was produced by the text-only fallback: branding, colors, images and table layout are not included. Use Print → Save as PDF for a full-fidelity copy.";
+        } else {
+          renderer = "client-pdf-merge";
+        }
         delivered = "file_downloaded";
       } else {
         // Fallback: browser-print of the body (with the placeholder cover page).
@@ -198,6 +220,7 @@ export async function executeExport(req: ExportRequest): Promise<ExportResult> {
       delivered,
       auditPersisted: audit.persisted,
       auditError: audit.error,
+      rendererNote,
     };
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "Unknown export error";
@@ -314,18 +337,20 @@ async function tryImportedPdfExport(
   html: string,
   req: ExportRequest,
   cover: ImportedPdfCover,
-): Promise<boolean> {
+): Promise<BodyPdfRenderer | null> {
   try {
-    const bodyBytes = await htmlToBodyPdfBytes(html, { title: req.title });
-    if (!bodyBytes || bodyBytes.length === 0) return false;
+    // PDS-12: the tier that produced the body is reported to the caller so a
+    // text-only downgrade is never recorded as the high-fidelity render.
+    const body = await htmlToBodyPdf(html, { title: req.title });
+    if (!body || body.bytes.length === 0) return null;
     const coverBytes = await fetchAssetBytes(cover.path);
-    if (!coverBytes || coverBytes.length === 0) return false;
-    const merged = await mergeCoverAndBody(coverBytes, bodyBytes, cover.page);
-    if (!merged || merged.length === 0) return false;
+    if (!coverBytes || coverBytes.length === 0) return null;
+    const merged = await mergeCoverAndBody(coverBytes, body.bytes, cover.page);
+    if (!merged || merged.length === 0) return null;
     downloadPdfBytes(merged, buildFilename(req, "pdf"));
-    return true;
+    return body.renderer;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -396,7 +421,7 @@ async function writeAuditRow(
   req: ExportRequest,
   status: "success" | "failed",
   errorText: string | undefined,
-  renderer: "client" | "server" | "client-pdf" | "client-pdf-merge",
+  renderer: "client" | "server" | "client-pdf" | "client-pdf-merge" | "client-pdf-merge-text-fallback",
   exportedBlocks: OutputBlock[],
 ): Promise<{ persisted: boolean; error?: string }> {
   const watermarkMap: Record<ExportMode, string> = {

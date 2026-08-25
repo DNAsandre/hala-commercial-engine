@@ -73,6 +73,9 @@ export function describeExportOutcome(result: ExportResult): string {
   };
   const parts: string[] = [];
   if (result.delivered) parts.push(delivery[result.delivered]);
+  // PADW T06e (PDS-12): a text-only fallback render is a real fidelity
+  // downgrade — it is named here, never hidden behind the same tick.
+  if (result.rendererNote) parts.push(result.rendererNote);
   if (result.auditPersisted === false) {
     parts.push(
       `Export audit row was NOT confirmed stored${result.auditError ? ` — ${result.auditError}` : ""}.`,
@@ -139,7 +142,10 @@ export default function ExportToolbar({
 
     if (result.success) {
       setStatus((prev) => ({ ...prev, [key]: { state: "success" } }));
-      setOutcome({ text: describeExportOutcome(result), advisory: result.auditPersisted === false });
+      setOutcome({
+        text: describeExportOutcome(result),
+        advisory: result.auditPersisted === false || Boolean(result.rendererNote),
+      });
       // Reset to idle after 3s
       setTimeout(() => {
         setStatus((prev) => ({ ...prev, [key]: { state: "idle" } }));

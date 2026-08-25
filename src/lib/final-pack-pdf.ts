@@ -72,11 +72,29 @@ export async function htmlToBodyPdfBytes(
   html: string,
   opts: BodyPdfOptions = {},
 ): Promise<Uint8Array | null> {
+  const result = await htmlToBodyPdf(html, opts);
+  return result?.bytes ?? null;
+}
+
+/** Which tier actually produced the body PDF (PDS-12). */
+export type BodyPdfRenderer = "html2canvas" | "text_fallback";
+
+/**
+ * PADW T06e (PDS-12): tier-reporting variant. Callers that record or display
+ * the renderer MUST use this — the silent degradation to the text-only body
+ * (branding, colors, images, table structure gone) was previously reported
+ * identically to the high-fidelity render, in the UI and in the audit row.
+ */
+export async function htmlToBodyPdf(
+  html: string,
+  opts: BodyPdfOptions = {},
+): Promise<{ bytes: Uint8Array; renderer: BodyPdfRenderer } | null> {
   const hi = await tryHtml2Pdf(html);
-  if (hi && hi.length > 0) return hi;
+  if (hi && hi.length > 0) return { bytes: hi, renderer: "html2canvas" };
   if (opts.allowTextFallback === false) return null;
   // Fallback: always-works text body (no html2canvas dependency).
-  return textBodyPdfBytes(html);
+  const text = await textBodyPdfBytes(html);
+  return text && text.length > 0 ? { bytes: text, renderer: "text_fallback" } : null;
 }
 
 /** High-fidelity rasterized body via html2pdf.js. Returns null on any failure. */
