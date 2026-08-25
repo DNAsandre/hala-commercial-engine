@@ -23,6 +23,8 @@ export type BlockFallback = "honest_empty" | "labeled_default" | "not_source_bou
 export interface BlockSourceBinding {
   /** Canonical destination field ids (pin P1) this block consumes. */
   sourceFields: string[];
+  /** Real commercial_tickets columns used as document headers, not tracker destinations. */
+  sourceColumns?: string[];
   fallback: BlockFallback;
   /** The honest text shown when the source is absent. */
   emptyState: string;
@@ -31,15 +33,11 @@ export interface BlockSourceBinding {
 
 export const PDF_BLOCK_SOURCE_MAP: Record<string, BlockSourceBinding> = {
   cover_hero: {
-    sourceFields: [
-      "t:column:ticket_title",
-      "t:column:customer_name",
-      "t:column:target_date",
-      "t:tender.tenderRef",
-    ],
+    sourceFields: [],
+    sourceColumns: ["ticket_title", "customer_name", "target_date"],
     fallback: "honest_empty",
     emptyState: "Cover details not captured yet.",
-    notes: "Legacy type_details.tender.* aliases feed title/customer when columns are empty (PDS-60: UUID-prefix ref + today-date fallbacks are recorded cover clutter).",
+    notes: "Header columns are intentionally outside the tracker destination manifests. Legacy type_details.tender aliases may supply a recorded reference, but no reference or date is invented.",
   },
   toc_auto: {
     sourceFields: [],
@@ -54,7 +52,8 @@ export const PDF_BLOCK_SOURCE_MAP: Record<string, BlockSourceBinding> = {
   },
   narrative: {
     sourceFields: [
-      "t:tender_drafting.proposal_blocks[].content_html",
+      "t:tender_drafting.proposal_blocks[].draft_content",
+      "t:tender_drafting.proposal_blocks[].editor_content",
       "t:tender_drafting.proposal_blocks[].block_type",
       "t:tender_drafting.proposal_blocks[].document_assembly_target",
       "p:proposal_drafting.proposalDraftBlocks[].content",
@@ -65,7 +64,8 @@ export const PDF_BLOCK_SOURCE_MAP: Record<string, BlockSourceBinding> = {
   },
   scope_list: {
     sourceFields: [
-      "t:tender_drafting.proposal_blocks[].content_html",
+      "t:tender_drafting.proposal_blocks[].draft_content",
+      "t:tender_drafting.proposal_blocks[].editor_content",
       "p:proposal_drafting.proposalDraftBlocks[].content",
     ],
     fallback: "labeled_default",
@@ -73,8 +73,7 @@ export const PDF_BLOCK_SOURCE_MAP: Record<string, BlockSourceBinding> = {
   },
   scope_table: {
     sourceFields: [
-      "t:sow_data.service_lines[].name",
-      "t:sow_data.service_lines[].description",
+      "t:sow_data.service_lines[]",
     ],
     fallback: "honest_empty",
     emptyState: "Content not captured yet.",
@@ -82,14 +81,16 @@ export const PDF_BLOCK_SOURCE_MAP: Record<string, BlockSourceBinding> = {
   },
   closing: {
     sourceFields: [
-      "t:tender_drafting.proposal_blocks[].content_html",
+      "t:tender_drafting.proposal_blocks[].draft_content",
+      "t:tender_drafting.proposal_blocks[].editor_content",
       "p:proposal_drafting.proposalDraftBlocks[].content",
     ],
     fallback: "labeled_default",
     emptyState: "Content not captured yet.",
   },
   confidentiality: {
-    sourceFields: ["t:column:customer_name"],
+    sourceFields: [],
+    sourceColumns: ["customer_name"],
     fallback: "labeled_default",
     emptyState: "Content not captured yet.",
     notes: "PDS-03: recipient_name variable resolves to the customer name; unresolved variables stay visible and are flagged by WarningBanner.",
@@ -100,6 +101,12 @@ export const PDF_BLOCK_SOURCE_MAP: Record<string, BlockSourceBinding> = {
     emptyState: "No published clauses in the Clause Library yet.",
     notes: "PDS-02: clause-bearing terms render clause_library published rows (a system table, not a per-ticket destination — hence no canonical ticket field).",
   },
+  terms_standard: {
+    sourceFields: [],
+    fallback: "labeled_default",
+    emptyState: "No published clauses in the Clause Library yet.",
+    notes: "Alias used by existing library rows; clause_library is a system table rather than a per-ticket destination.",
+  },
   legal_clauses: {
     sourceFields: [],
     fallback: "honest_empty",
@@ -107,12 +114,18 @@ export const PDF_BLOCK_SOURCE_MAP: Record<string, BlockSourceBinding> = {
     notes: "PDS-02: renders clause_library published rows (EN + AR where present).",
   },
   annexure_config: {
-    sourceFields: ["t:tender_drafting.proposal_blocks[].content_html"],
+    sourceFields: [
+      "t:tender_drafting.proposal_blocks[].draft_content",
+      "t:tender_drafting.proposal_blocks[].editor_content",
+    ],
     fallback: "labeled_default",
     emptyState: "Content not captured yet.",
   },
   annexure_comms: {
-    sourceFields: ["t:tender_drafting.proposal_blocks[].content_html"],
+    sourceFields: [
+      "t:tender_drafting.proposal_blocks[].draft_content",
+      "t:tender_drafting.proposal_blocks[].editor_content",
+    ],
     fallback: "labeled_default",
     emptyState: "Content not captured yet.",
   },
@@ -129,7 +142,7 @@ export const PDF_BLOCK_SOURCE_MAP: Record<string, BlockSourceBinding> = {
       "t:pricing.scenarios.rows[].revenue",
       "t:pricing.scenarios.selected_scenario.selected_scenario_id",
       "p:pnl_pricing.pnlVersions[].name",
-      "p:pnl_pricing.pnlVersions[].revenue",
+      "p:pnl_pricing.pnlVersions[].revenue[].amount",
       "p:pnl_pricing.activePnlVersion",
     ],
     fallback: "honest_empty",
@@ -183,18 +196,21 @@ export const PDF_BLOCK_SOURCE_MAP: Record<string, BlockSourceBinding> = {
     notes: "PDS-04: real writer field names; include_in_proposal honored; penalty sourced honestly from governance linkage.",
   },
   facility_gallery: {
-    sourceFields: ["t:column:customer_name"],
+    sourceFields: [],
+    sourceColumns: ["customer_name"],
     fallback: "labeled_default",
     emptyState: "Not captured yet.",
     notes: "PDS-47: company-default variables; renders as default-status content (WarningBanner counts it).",
   },
   party_details: {
-    sourceFields: ["t:column:customer_name"],
+    sourceFields: [],
+    sourceColumns: ["customer_name"],
     fallback: "honest_empty",
     emptyState: "Not captured yet.",
   },
   signature_dual: {
-    sourceFields: ["t:column:customer_name"],
+    sourceFields: [],
+    sourceColumns: ["customer_name"],
     fallback: "honest_empty",
     emptyState: "Not captured yet.",
     notes: "Signatory names are intentionally blank for manual completion.",
