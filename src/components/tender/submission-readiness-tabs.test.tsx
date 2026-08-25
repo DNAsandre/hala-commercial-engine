@@ -461,13 +461,14 @@ describe("linked documents — exact-id matching, never fuzzy", () => {
   it("a stored linked_document_id resolves to the FULL document name by exact id", () => {
     expect(linkedDocumentDisplay("doc-2", documents)).toEqual({
       linked: true,
+      activeEvidence: true,
       label: "Commercial Proposal — Volume 1",
     });
   });
 
   it("an empty link renders as not linked", () => {
-    expect(linkedDocumentDisplay("", documents)).toEqual({ linked: false, label: "Not linked" });
-    expect(linkedDocumentDisplay(undefined, documents)).toEqual({ linked: false, label: "Not linked" });
+    expect(linkedDocumentDisplay("", documents)).toEqual({ linked: false, activeEvidence: false, label: "Not linked" });
+    expect(linkedDocumentDisplay(undefined, documents)).toEqual({ linked: false, activeEvidence: false, label: "Not linked" });
   });
 
   it("a set-but-unresolvable id is reported honestly — no first-word fallback onto a similarly named document", () => {
@@ -479,6 +480,26 @@ describe("linked documents — exact-id matching, never fuzzy", () => {
     expect(display.label).toContain("doc-404");
     expect(display.label).not.toContain("Commercial Registration");
     expect(display.label).not.toContain("Volume 1");
+    expect(display.activeEvidence).toBe(false);
+  });
+
+  it("an archived file is neither selectable nor counted as active evidence (PDS-28)", () => {
+    const archived = {
+      id: "doc-archived",
+      document_name: "Old Commercial Registration",
+      document_category: "Archived",
+      status: "Reviewed",
+    } as TenderDocument;
+
+    expect(documentLinkOptions([...documents, archived])).toEqual([
+      { id: "doc-1", name: "Commercial Registration Certificate 2026" },
+      { id: "doc-2", name: "Commercial Proposal — Volume 1" },
+    ]);
+    expect(linkedDocumentDisplay("doc-archived", [...documents, archived])).toEqual({
+      linked: true,
+      activeEvidence: false,
+      label: "Old Commercial Registration (archived — not active evidence)",
+    });
   });
 });
 

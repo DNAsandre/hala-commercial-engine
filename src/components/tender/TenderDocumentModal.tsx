@@ -229,14 +229,20 @@ export default function TenderDocumentModal({
           toast.success("Document metadata updated.", { description: "Confirmed against the stored tender record." });
         }
       } else if (file) {
+        if (!customerId.trim()) {
+          toast.error("Document upload was not started.", {
+            description: "This Tender has no recorded customer identity, so a truthful storage path cannot be created.",
+          });
+          return;
+        }
         const report = await performDocumentUploadChain({
           // Steps 1–2: storage object + generated_documents row (throws on either failure).
           upload: () =>
             uploadDocument({
               name: form.document_name.trim(),
               category: vaultCategoryForTenderCategory(form.document_category),
-              customerId: customerId || "unknown",
-              customerName: customerName || "Unknown Customer",
+              customerId,
+              customerName: customerName || "Customer name not recorded",
               tenderId,
               tenderName,
               file,

@@ -371,6 +371,44 @@ interface UploadDocumentInput {
   permissionLevel?: "public" | "internal" | "restricted";
 }
 
+export interface DocumentStoragePathInput {
+  customerId: string;
+  workspaceId?: string | null;
+  tenderId?: string | null;
+  category: DocumentCategory;
+  name: string;
+  extension: string;
+  date?: string;
+  suffix?: string;
+}
+
+function storagePathSegment(value: string, label: string): string {
+  const normalized = value.trim().replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!normalized) throw new Error(`${label} is required before a document can be uploaded.`);
+  return normalized;
+}
+
+/**
+ * PDS-63: build a storage path that carries the real owning identity.
+ * Tender files are namespaced by customer AND tender; proposal/workspace files
+ * are namespaced by customer AND workspace. There is no "unknown" or
+ * "unassigned" success path.
+ */
+export function buildDocumentStoragePath(input: DocumentStoragePathInput): string {
+  const customerId = storagePathSegment(input.customerId, "Customer identity");
+  const ownerPath = input.tenderId
+    ? `tenders/${storagePathSegment(input.tenderId, "Tender identity")}`
+    : input.workspaceId
+      ? `workspaces/${storagePathSegment(input.workspaceId, "Workspace identity")}`
+      : "customer-documents";
+  const category = storagePathSegment(input.category, "Document category");
+  const name = storagePathSegment(input.name, "Document name").slice(0, 40);
+  const extension = storagePathSegment(input.extension || "bin", "File extension").toLowerCase();
+  const date = input.date ?? new Date().toISOString().split("T")[0];
+  const suffix = input.suffix ?? crypto.randomUUID().slice(0, 8);
+  return `customers/${customerId}/${ownerPath}/${category}/${date}-${name}-${suffix}.${extension}`;
+}
+
 /**
  * Upload a real file to Supabase Storage and create the document record in
  * generated_documents (same field mapping as the established upload path).
@@ -385,9 +423,14 @@ export async function uploadDocument(input: UploadDocumentInput): Promise<Unifie
   const fileSize = formatFileSize(input.file.size);
   const uploadedBy = input.uploadedBy ?? getCurrentUser().name;
 
-  const date = new Date().toISOString().split("T")[0];
-  const safeName = input.name.replace(/[^a-zA-Z0-9]/g, "_").substring(0, 40);
-  const storagePath = `customers/${input.customerId}/workspaces/${input.workspaceId || "unassigned"}/${input.category}/${date}-${safeName}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+  const storagePath = buildDocumentStoragePath({
+    customerId: input.customerId,
+    workspaceId: input.workspaceId,
+    tenderId: input.tenderId,
+    category: input.category,
+    name: input.name,
+    extension: ext || "bin",
+  });
 
   // 1. Upload file directly from browser to Supabase Storage
   const { error: uploadErr } = await supabase.storage
@@ -547,41 +590,79 @@ export async function restoreDocument(
   return doc;
 }
 
-export function updateDocumentMetadata(
+export interface PersistedDocumentMetadataUpdate {
+  name?: string;
+  category?: DocumentCategory;
+  /** generated_documents can represent only generated (Draft) or superseded here. */
+  status?: "Draft" | "Superseded";
+  notes?: string;
+}
+
+/**
+ * PDS-27: generated_documents is the metadata master for vault rows. Only
+ * columns that really exist are accepted, and the in-memory view changes only
+ * after an exact-id update is read back and confirmed.
+ */
+export async function updateDocumentMetadata(
   docId: string,
-  updates: Partial<Pick<UnifiedDocument, "name" | "category" | "status" | "notes" | "workspaceId" | "workspaceName" | "tenderId" | "tenderName" | "opportunityId" | "opportunityName" | "permissionLevel" | "tags">>,
-): UnifiedDocument | null {
+  updates: PersistedDocumentMetadataUpdate,
+): Promise<UnifiedDocument | null> {
   const doc = documentVault.find(d => d.id === docId);
   if (!doc) return null;
+  if (doc.tenderId) {
+    throw new Error(
+      "Tender document metadata is owned by the Tender document register. Edit it from the Tender Documents library.",
+    );
+  }
 
-  const changes: string[] = [];
-  for (const [key, value] of Object.entries(updates)) {
-    if (value !== undefined && (doc as any)[key] !== value) {
-      changes.push(`${key}: "${(doc as any)[key]}" → "${value}"`);
-      (doc as any)[key] = value;
+  const row: Record<string, string> = {};
+  if (updates.name !== undefined) {
+    const name = updates.name.trim();
+    if (!name) throw new Error("Document name cannot be empty.");
+    if (name !== doc.name) row.file_name = name;
+  }
+  if (updates.category !== undefined && updates.category !== doc.category) row.document_type = updates.category;
+  if (updates.notes !== undefined && updates.notes !== doc.notes) row.notes = updates.notes;
+  if (updates.status !== undefined && updates.status !== doc.status) {
+    row.status = updates.status === "Superseded" ? "superseded" : "generated";
+  }
+
+  if (Object.keys(row).length === 0) return doc;
+
+  const { data, error } = await supabase
+    .from(DOCUMENT_TABLE)
+    .update(row)
+    .eq("id", docId)
+    .select("id, file_name, document_type, status, notes");
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as Array<{
+    id?: string;
+    file_name?: string;
+    document_type?: string;
+    status?: string;
+    notes?: string;
+  }>;
+  if (rows.length !== 1 || rows[0]?.id !== docId) {
+    throw new Error("The document metadata update was not confirmed against one exact stored row.");
+  }
+  const stored = rows[0];
+  for (const [key, value] of Object.entries(row)) {
+    if (stored[key as keyof typeof stored] !== value) {
+      throw new Error(`The stored document did not confirm the updated ${key}.`);
     }
   }
 
-  if (changes.length > 0) {
-    doc.updatedAt = new Date().toISOString().slice(0, 10);
-
-    // Persist the fields that have generated_documents columns.
-    const row: Record<string, any> = {};
-    if (updates.category !== undefined) row.document_type = updates.category;
-    if (updates.notes !== undefined) row.notes = updates.notes;
-    if (updates.status === "Archived") row.status = "archived";
-    else if (updates.status === "Superseded") row.status = "superseded";
-    else if (updates.status !== undefined) row.status = "generated";
-    if (Object.keys(row).length > 0) {
-      void supabase
-        .from(DOCUMENT_TABLE)
-        .update(row)
-        .eq("id", docId)
-        .then(({ error }) => {
-          if (error) handleSupabaseError("documentVaultMetadataUpdate", error, { silent: true });
-        });
-    }
+  if (row.file_name !== undefined) {
+    doc.name = row.file_name;
+    doc.fileName = row.file_name;
+    const current = doc.versions.find(version => version.versionNumber === doc.currentVersion);
+    if (current) current.fileName = row.file_name;
   }
+  if (row.document_type !== undefined) doc.category = row.document_type as DocumentCategory;
+  if (row.notes !== undefined) doc.notes = row.notes;
+  if (row.status !== undefined) doc.status = mapVaultRowStatus(row.status);
+  doc.updatedAt = new Date().toISOString().slice(0, 10);
   return doc;
 }
 
@@ -637,15 +718,15 @@ export async function getStoredDocumentPath(
 ): Promise<{ storagePath: string | null; fileName: string | null } | null> {
   const { data, error } = await supabase
     .from(DOCUMENT_TABLE)
-    .select("id, name, storage_path")
+    .select("id, file_name, storage_path")
     .eq("id", docId);
   if (error) throw new Error(error.message);
-  const rows = (data ?? []) as Array<{ id?: string; name?: string; storage_path?: string | null }>;
+  const rows = (data ?? []) as Array<{ id?: string; file_name?: string; storage_path?: string | null }>;
   if (rows.length === 0) return null;
   if (rows.length !== 1 || rows[0]?.id !== docId) {
     throw new Error("The stored document record could not be identified uniquely.");
   }
-  return { storagePath: rows[0]?.storage_path ?? null, fileName: rows[0]?.name ?? null };
+  return { storagePath: rows[0]?.storage_path ?? null, fileName: rows[0]?.file_name ?? null };
 }
 
 /**

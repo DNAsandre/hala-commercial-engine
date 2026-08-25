@@ -55,7 +55,7 @@ export interface LinkedDocumentOption {
 /** Uploaded tender documents a requirement can link to (exact stored ids). */
 export function documentLinkOptions(documents: TenderDocument[] | undefined): LinkedDocumentOption[] {
   return (documents ?? [])
-    .filter((d) => typeof d.id === "string" && d.id.trim())
+    .filter((d) => typeof d.id === "string" && d.id.trim() && d.document_category !== "Archived" && String(d.status).toLowerCase() !== "archived")
     .map((d) => ({ id: d.id, name: d.document_name || d.id }));
 }
 
@@ -67,13 +67,21 @@ export function documentLinkOptions(documents: TenderDocument[] | undefined): Li
 export function linkedDocumentDisplay(
   linkedDocumentId: unknown,
   documents: TenderDocument[] | undefined,
-): { linked: boolean; label: string } {
+): { linked: boolean; activeEvidence: boolean; label: string } {
   const id = typeof linkedDocumentId === "string" ? linkedDocumentId.trim() : "";
-  if (!id) return { linked: false, label: "Not linked" };
+  if (!id) return { linked: false, activeEvidence: false, label: "Not linked" };
   const match = (documents ?? []).find((d) => d.id === id);
-  return match
-    ? { linked: true, label: match.document_name || id }
-    : { linked: true, label: `Linked document not found in this tender (id ${id})` };
+  if (!match) {
+    return { linked: true, activeEvidence: false, label: `Linked document not found in this tender (id ${id})` };
+  }
+  if (match.document_category === "Archived" || String(match.status).toLowerCase() === "archived") {
+    return {
+      linked: true,
+      activeEvidence: false,
+      label: `${match.document_name || id} (archived — not active evidence)`,
+    };
+  }
+  return { linked: true, activeEvidence: true, label: match.document_name || id };
 }
 
 /** Per-item required-document status change — exact id, revision-guarded. */
@@ -426,8 +434,8 @@ export default function TenderRequiredDocumentsTab({
                     </td>
                     <td className="max-w-[220px] px-3 py-2">
                       {link.linked ? (
-                        <span className="flex items-center gap-1 text-[11px]">
-                          <Link2 className="h-3 w-3 shrink-0 text-[#075eea]" />
+                        <span className={`flex items-center gap-1 text-[11px] ${link.activeEvidence ? "" : "text-amber-700"}`}>
+                          <Link2 className={`h-3 w-3 shrink-0 ${link.activeEvidence ? "text-[#075eea]" : "text-amber-600"}`} />
                           <span className="truncate" title={link.label}>{link.label}</span>
                         </span>
                       ) : (

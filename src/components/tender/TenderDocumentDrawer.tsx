@@ -25,6 +25,25 @@ interface TenderDocumentDrawerProps {
   defaultStage?: TenderStageRelevance;
 }
 
+export function isArchivedTenderDocument(doc: TenderDocument): boolean {
+  return doc.document_category === "Archived" || String(doc.status).toLowerCase() === "archived";
+}
+
+export function buildTenderDocumentBuckets(documents: readonly TenderDocument[]) {
+  const active = documents.filter(doc => !isArchivedTenderDocument(doc));
+  return {
+    active,
+    archived: documents.filter(isArchivedTenderDocument),
+    sourceDocs: active.filter(doc => doc.document_category === "Source"),
+    supportingDocs: active.filter(doc => doc.document_category === "Supporting"),
+    missingRequired: active.filter(doc => doc.required_for_submission && doc.status === "Missing"),
+    expiringExpired: active.filter(doc => doc.status === "Expired" || isTenderDocumentExpired(doc)),
+    recentlyAdded: [...active]
+      .sort((a, b) => new Date(b.uploaded_at || 0).getTime() - new Date(a.uploaded_at || 0).getTime())
+      .slice(0, 5),
+  };
+}
+
 async function openDocument(doc: TenderDocument) {
   try {
     if (!doc.storage_path && !doc.file_url) {
@@ -91,31 +110,11 @@ function DrawerSection({ title, docs, emptyLabel = "No documents uploaded yet." 
 export default function TenderDocumentDrawer({ open, onOpenChange, ws, tenderId, reload, defaultStage }: TenderDocumentDrawerProps) {
   const [uploadOpen, setUploadOpen] = useState(false);
   const docs = ws.documents ?? [];
+  const documentBuckets = useMemo(() => buildTenderDocumentBuckets(docs), [docs]);
   const stageDocs = useMemo(
-    () => defaultStage ? documentsForTenderStage(docs, defaultStage) : [],
-    [defaultStage, docs],
+    () => defaultStage ? documentsForTenderStage(documentBuckets.active, defaultStage) : [],
+    [defaultStage, documentBuckets.active],
   );
-  const documentBuckets = useMemo(() => {
-    const sourceDocs: TenderDocument[] = [];
-    const supportingDocs: TenderDocument[] = [];
-    const missingRequired: TenderDocument[] = [];
-    const expiringExpired: TenderDocument[] = [];
-
-    for (const doc of docs) {
-      if (doc.document_category === "Source") sourceDocs.push(doc);
-      if (doc.document_category === "Supporting") supportingDocs.push(doc);
-      if (doc.required_for_submission && doc.status === "Missing") missingRequired.push(doc);
-      if (doc.status === "Expired" || isTenderDocumentExpired(doc)) expiringExpired.push(doc);
-    }
-
-    return {
-      sourceDocs,
-      supportingDocs,
-      missingRequired,
-      expiringExpired,
-      recentlyAdded: [...docs].sort((a, b) => new Date(b.uploaded_at || 0).getTime() - new Date(a.uploaded_at || 0).getTime()).slice(0, 5),
-    };
-  }, [docs]);
 
   return (
     <>
@@ -151,6 +150,11 @@ export default function TenderDocumentDrawer({ open, onOpenChange, ws, tenderId,
             <DrawerSection title="Recently Added" docs={documentBuckets.recentlyAdded} />
             <DrawerSection title="Missing Required" docs={documentBuckets.missingRequired} />
             <DrawerSection title="Expiring / Expired" docs={documentBuckets.expiringExpired} />
+            <DrawerSection
+              title="Archived History"
+              docs={documentBuckets.archived}
+              emptyLabel="No archived documents."
+            />
           </div>
         </SheetContent>
       </Sheet>

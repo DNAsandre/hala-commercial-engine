@@ -29,7 +29,6 @@ import {
   restoreDocument,
   updateDocumentMetadata,
   DOCUMENT_CATEGORIES,
-  DOCUMENT_STATUSES,
 } from "@/lib/document-vault";
 import { useAuditLog } from "@/hooks/useSupabase";
 import { toast } from "sonner";
@@ -180,9 +179,21 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
     }
   }, [doc, onClose, onDocumentChanged]);
 
+  const handleDownload = useCallback(async () => {
+    if (!doc) return;
+    try {
+      await downloadDocument(doc, activeVersion || undefined);
+    } catch (error) {
+      toast.error("Document download failed.", {
+        description: error instanceof Error ? error.message : "The stored file could not be reached.",
+      });
+    }
+  }, [activeVersion, doc]);
+
   if (!doc) return null;
 
   const isArchived = doc.status === "Archived";
+  const metadataManagedByTender = Boolean(doc.tenderId);
   const mimeCategory = getMimeCategory(doc.mimeType);
   const currentVersionData = doc.versions.find(v => v.versionNumber === activeVersion) || doc.versions[doc.versions.length - 1];
   const fileUrl = preview.url;
@@ -241,7 +252,7 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      downloadDocument(doc, activeVersion || undefined);
+                      void handleDownload();
                     }}
                     className="gap-1.5"
                   >
@@ -249,7 +260,7 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
                     Download
                   </Button>
                 )}
-                {!isArchived && (
+                {!isArchived && !metadataManagedByTender && (
                   <>
                     <Button
                       size="sm"
@@ -271,7 +282,7 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
                     </Button>
                   </>
                 )}
-                {isArchived && (
+                {isArchived && !metadataManagedByTender && (
                   <Button
                     size="sm"
                     variant="outline"
@@ -281,6 +292,11 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
                     <RotateCcw className="h-3.5 w-3.5" />
                     Restore
                   </Button>
+                )}
+                {metadataManagedByTender && (
+                  <Badge variant="outline" className="max-w-44 whitespace-normal text-center text-[10px] leading-tight">
+                    Manage metadata and archive status in Tender Documents
+                  </Badge>
                 )}
                 <Button size="sm" variant="ghost" onClick={onClose}>
                   <X className="h-4 w-4" />
@@ -305,8 +321,8 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
                       <AlertTriangle className="h-16 w-16 text-amber-500 mb-4" />
                       <p className="text-lg font-medium mb-2">Preview unavailable</p>
                       <p className="text-sm text-muted-foreground/70 max-w-md mb-4">
-                        This document has a stored file, but a preview link could not be
-                        prepared. This is a problem reaching the file, not a missing file.
+                        A preview link could not be prepared. The stored object may be
+                        missing or temporarily inaccessible; try the download for a precise result.
                       </p>
                       {isDownloadable && (
                         <Button
@@ -315,7 +331,7 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
                           className="gap-1.5"
                           onClick={(e) => {
                             e.preventDefault();
-                            downloadDocument(doc, activeVersion || undefined);
+                            void handleDownload();
                           }}
                         >
                           <Download className="h-3.5 w-3.5" />
@@ -351,7 +367,7 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
                     <Button
                       onClick={(e) => {
                         e.preventDefault();
-                        downloadDocument(doc, activeVersion || undefined);
+                        void handleDownload();
                       }}
                       className="gap-2"
                     >
@@ -396,7 +412,7 @@ export function DocumentViewer({ document: doc, open, onClose, onDocumentChanged
                   <Button
                     onClick={(e) => {
                       e.preventDefault();
-                      downloadDocument(doc, activeVersion || undefined);
+                      void handleDownload();
                     }}
                     className="gap-2"
                   >
@@ -677,7 +693,7 @@ function EditMetadataDialog({
   const [category, setCategory] = useState<DocumentCategory>(doc.category);
   const [status, setStatus] = useState<DocumentStatus>(doc.status);
   const [notes, setNotes] = useState(doc.notes);
-  const [tagsInput, setTagsInput] = useState(doc.tags.join(", "));
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -685,17 +701,32 @@ function EditMetadataDialog({
       setCategory(doc.category);
       setStatus(doc.status);
       setNotes(doc.notes);
-      setTagsInput(doc.tags.join(", "));
+      setSaving(false);
     }
   }, [open, doc]);
 
-  const handleSave = () => {
-    const tags = tagsInput.split(",").map(t => t.trim()).filter(Boolean);
-    updateDocumentMetadata(doc.id, { name, category, status, notes, tags });
-    onSave();
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const stored = await updateDocumentMetadata(doc.id, { name, category, status, notes });
+      if (!stored) throw new Error("The document no longer exists in the loaded vault.");
+      toast.success("Document metadata updated.", {
+        description: "The stored document row confirmed the change.",
+      });
+      onSave();
+    } catch (error) {
+      toast.error("Document metadata was not saved.", {
+        description: error instanceof Error ? error.message : "The stored row did not confirm the change.",
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const editableStatuses = DOCUMENT_STATUSES.filter(s => s !== "Archived");
+  // PDS-27: generated_documents stores generated/superseded/archived only.
+  // Final and Signed would be session-only fiction here, so they are not
+  // offered by this vault-row metadata editor.
+  const editableStatuses: DocumentStatus[] = ["Draft", "Superseded"];
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
@@ -746,18 +777,14 @@ function EditMetadataDialog({
               className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
             />
           </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Tags <span className="text-muted-foreground font-normal">(comma-separated)</span></label>
-            <input
-              type="text"
-              value={tagsInput}
-              onChange={e => setTagsInput(e.target.value)}
-              className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            />
-          </div>
+          <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            Only fields stored by the document vault are editable here. Tags are not offered because the current document table has no tags column.
+          </p>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onClose}>Cancel</Button>
-            <Button onClick={handleSave}>Save Changes</Button>
+            <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button onClick={() => void handleSave()} disabled={saving || !name.trim()}>
+              {saving ? "Saving…" : "Save Changes"}
+            </Button>
           </div>
         </div>
       </DialogContent>

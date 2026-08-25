@@ -13,12 +13,25 @@
  * file" and "could not reach the stored file" are different answers.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getFileUrl, getPersistedDocumentStatus, hasRealFile, resolveVersionFilePath, restoreDocument, softDeleteDocument } from "./document-vault";
+import {
+  buildDocumentStoragePath,
+  downloadDocument,
+  getDocumentsByWorkspace,
+  getFileUrl,
+  getPersistedDocumentStatus,
+  hasRealFile,
+  initializeDocumentVault,
+  resolveVersionFilePath,
+  restoreDocument,
+  softDeleteDocument,
+  updateDocumentMetadata,
+} from "./document-vault";
 
 const db = vi.hoisted(() => ({
   updates: [] as Array<{ table: string; row: Record<string, unknown>; id?: string }>,
   error: null as { message: string } | null,
-  readRows: [{ id: "doc-1", status: "generated" }] as Array<{ id: string; status: string }>,
+  readRows: [{ id: "doc-1", status: "generated" }] as Array<Record<string, any>>,
+  signedUrl: null as string | null,
 }));
 
 vi.mock("./supabase", () => ({
@@ -30,18 +43,19 @@ vi.mock("./supabase", () => ({
         update(row: Record<string, unknown>) { mode = "update"; call.row = row; db.updates.push(call); return builder; },
         eq(_column: string, value: string) { call.id = value; return builder; },
         select() { return builder; },
+        order() { return builder; },
         then(resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) {
           const result = db.error
             ? { data: null, error: db.error }
             : mode === "update"
-              ? { data: [{ id: call.id, status: call.row.status }], error: null }
+              ? { data: [{ id: call.id, ...call.row }], error: null }
               : { data: db.readRows.filter(row => !call.id || row.id === call.id), error: null };
           return Promise.resolve(result).then(resolve, reject);
         },
       };
       return builder;
     },
-    storage: { from: () => ({ createSignedUrl: vi.fn() }) },
+    storage: { from: () => ({ createSignedUrl: vi.fn(async () => ({ data: { signedUrl: db.signedUrl }, error: null })) }) },
   },
 }));
 
@@ -49,6 +63,7 @@ beforeEach(() => {
   db.updates.length = 0;
   db.error = null;
   db.readRows = [{ id: "doc-1", status: "generated" }];
+  db.signedUrl = null;
 });
 
 const version = (n: number, filePath: string | null) =>
@@ -110,5 +125,140 @@ describe("document archive persistence", () => {
   it("throws an honest error when the stored status update fails", async () => {
     db.error = { message: "permission denied" };
     await expect(softDeleteDocument("doc-1")).rejects.toThrow("permission denied");
+  });
+});
+
+describe("document storage lineage (PDS-63)", () => {
+  it("places Tender uploads under the exact customer and Tender identities", () => {
+    expect(buildDocumentStoragePath({
+      customerId: "customer-7",
+      tenderId: "tender-9",
+      category: "Tenders",
+      name: "Scope Pack",
+      extension: "PDF",
+      date: "2026-08-25",
+      suffix: "abc12345",
+    })).toBe("customers/customer-7/tenders/tender-9/Tenders/2026-08-25-Scope_Pack-abc12345.pdf");
+  });
+
+  it("places proposal/workspace uploads under the exact workspace identity", () => {
+    const path = buildDocumentStoragePath({
+      customerId: "customer-7",
+      workspaceId: "proposal-3",
+      category: "Supporting",
+      name: "Customer brief",
+      extension: "docx",
+      date: "2026-08-25",
+      suffix: "abc12345",
+    });
+    expect(path).toContain("customers/customer-7/workspaces/proposal-3/");
+    expect(path).not.toContain("unknown");
+    expect(path).not.toContain("unassigned");
+  });
+
+  it("refuses to fabricate a customer identity", () => {
+    expect(() => buildDocumentStoragePath({
+      customerId: " ", tenderId: "tender-9", category: "Tenders", name: "Scope", extension: "pdf",
+    })).toThrow("Customer identity is required");
+  });
+});
+
+describe("vault metadata truth (PDS-27)", () => {
+  async function loadDocument() {
+    db.readRows = [{
+      id: "doc-1",
+      workspace_id: "ws-1",
+      file_name: "old-name.pdf",
+      document_type: "Supporting",
+      status: "generated",
+      notes: "Old notes",
+      storage_path: "customers/c/workspaces/ws-1/Supporting/old-name.pdf",
+      mime_type: "application/pdf",
+      version_number: 1,
+    }];
+    initializeDocumentVault();
+    await vi.waitFor(() => expect(getDocumentsByWorkspace("ws-1")[0]?.name).toBe("old-name.pdf"));
+    return getDocumentsByWorkspace("ws-1")[0];
+  }
+
+  it("persists only real columns and mutates the loaded view after confirmed read-back", async () => {
+    const before = await loadDocument();
+    expect(before.name).toBe("old-name.pdf");
+
+    const updated = await updateDocumentMetadata("doc-1", {
+      name: "Customer Brief.pdf",
+      category: "Proposals",
+      status: "Superseded",
+      notes: "Reviewed",
+    });
+
+    expect(db.updates.at(-1)).toEqual({
+      table: "generated_documents",
+      id: "doc-1",
+      row: {
+        file_name: "Customer Brief.pdf",
+        document_type: "Proposals",
+        status: "superseded",
+        notes: "Reviewed",
+      },
+    });
+    expect(updated).toMatchObject({
+      name: "Customer Brief.pdf",
+      fileName: "Customer Brief.pdf",
+      category: "Proposals",
+      status: "Superseded",
+      notes: "Reviewed",
+    });
+  });
+
+  it("does not change the loaded view when persistence fails", async () => {
+    const before = await loadDocument();
+    db.error = { message: "write refused" };
+
+    await expect(updateDocumentMetadata("doc-1", { name: "Not saved.pdf" })).rejects.toThrow("write refused");
+    expect(before.name).toBe("old-name.pdf");
+  });
+
+  it("keeps Tender register metadata under one owner instead of writing the vault copy", async () => {
+    db.readRows = [{
+      id: "tender-doc-1",
+      source_type: "tender",
+      source_id: "tender-1",
+      workspace_id: "tender-1",
+      file_name: "scope.pdf",
+      document_type: "Tenders",
+      status: "generated",
+      notes: "",
+      storage_path: "customers/c/tenders/tender-1/Tenders/scope.pdf",
+      mime_type: "application/pdf",
+      version_number: 1,
+    }];
+    initializeDocumentVault();
+    await vi.waitFor(() => expect(getDocumentsByWorkspace("ws-1")).toHaveLength(0));
+    db.updates.length = 0;
+
+    await expect(updateDocumentMetadata("tender-doc-1", { name: "renamed.pdf" }))
+      .rejects.toThrow("owned by the Tender document register");
+    expect(db.updates).toHaveLength(0);
+  });
+});
+
+describe("missing-file honesty (PDS-61)", () => {
+  it("rejects a download with no recorded path instead of silently doing nothing", async () => {
+    await expect(downloadDocument({
+      currentVersion: 1,
+      versions: [],
+      filePath: null,
+      fileName: "missing.pdf",
+    } as any)).rejects.toThrow("No stored file path");
+  });
+
+  it("rejects a path whose signed link cannot be created", async () => {
+    await expect(downloadDocument({
+      currentVersion: 1,
+      versions: [version(1, "missing/object.pdf")],
+      filePath: "missing/object.pdf",
+      fileName: "missing.pdf",
+    } as any)).rejects.toThrow("download link could not be generated");
   });
 });
