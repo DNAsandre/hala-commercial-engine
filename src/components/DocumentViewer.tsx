@@ -689,9 +689,12 @@ function EditMetadataDialog({
   onClose: () => void;
   onSave: () => void;
 }) {
+  type EditableDocumentStatus = "Draft" | "Superseded";
+  const editableStatus = (value: DocumentStatus): EditableDocumentStatus =>
+    value === "Superseded" ? "Superseded" : "Draft";
   const [name, setName] = useState(doc.name);
   const [category, setCategory] = useState<DocumentCategory>(doc.category);
-  const [status, setStatus] = useState<DocumentStatus>(doc.status);
+  const [status, setStatus] = useState<EditableDocumentStatus>(editableStatus(doc.status));
   const [notes, setNotes] = useState(doc.notes);
   const [saving, setSaving] = useState(false);
 
@@ -699,7 +702,7 @@ function EditMetadataDialog({
     if (open) {
       setName(doc.name);
       setCategory(doc.category);
-      setStatus(doc.status);
+      setStatus(editableStatus(doc.status));
       setNotes(doc.notes);
       setSaving(false);
     }
@@ -726,7 +729,7 @@ function EditMetadataDialog({
   // PDS-27: generated_documents stores generated/superseded/archived only.
   // Final and Signed would be session-only fiction here, so they are not
   // offered by this vault-row metadata editor.
-  const editableStatuses: DocumentStatus[] = ["Draft", "Superseded"];
+  const editableStatuses: EditableDocumentStatus[] = ["Draft", "Superseded"];
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
@@ -760,7 +763,7 @@ function EditMetadataDialog({
             <label className="text-sm font-medium mb-1 block">Status</label>
             <select
               value={status}
-              onChange={e => setStatus(e.target.value as DocumentStatus)}
+              onChange={e => setStatus(e.target.value as EditableDocumentStatus)}
               className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             >
               {editableStatuses.map(s => (

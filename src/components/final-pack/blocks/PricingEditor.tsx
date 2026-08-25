@@ -57,10 +57,6 @@ export default function PricingEditor({ block, onContentChange }: PricingEditorP
       scenario_name: "New option",
       scenario_type: "Manual",
       revenue: "",
-      cost: "",
-      gp_percent: "",
-      recommended: "",
-      notes: "",
     };
     onContentChange({ pricing_rows: [...rows, next], source_status: "populated" });
   }, [rows, onContentChange]);
