@@ -14,7 +14,8 @@
  *           ingested as additional sections with warnings — never dropped;
  *   PDS-09  totals parse locale-formatted revenue; unparsable revenue is an
  *           honest state, never "SAR 1.00";
- *   PDS-21  scope.table maps the real captured sow_data.service_lines;
+ *   PDS-21  scope.table maps the real captured sow_data.service_lines string[];
+ *           cross-lane PDF source-map id: t:sow_data.service_lines[];
  *   PDS-22  the rate card block never renders the internal P&L summary.
  *
  * Mock contract: house standard — the Supabase double honours the select
@@ -71,13 +72,19 @@ vi.mock("dompurify", () => ({
   default: { sanitize: (html: string) => html },
 }));
 
-import { loadTenderPack, parseRecordedRevenue } from "./final-pack-loader";
+import {
+  buildTenderSourceData,
+  computeSourceHash,
+  loadTenderPack,
+  parseRecordedRevenue,
+} from "./final-pack-loader";
 import { buildPreviewHTML, DEFAULT_BRANDING } from "./final-pack-preview";
 
 // ─── fixtures ────────────────────────────────────────────────
 
 const TENDER_ROW = {
   id: "f5e10000-0000-4000-8000-0000000000t6",
+  ticket_type: "tender",
   ticket_title: "T06a Truth Tender",
   customer_name: "Truth Customer",
   estimated_value: 1_200_000,
@@ -122,9 +129,7 @@ const TENDER_ROW = {
       },
     },
     sow_data: {
-      service_lines: [
-        { id: "sl-1", name: "Warehousing", description: "Two DCs, ambient + cold" },
-      ],
+      service_lines: ["Warehousing", "Transport"],
     },
     tender_drafting: {
       proposal_blocks: [
@@ -358,12 +363,13 @@ describe("PDS-07 — commercial terms flagged for the proposal", () => {
 // ═════════════════════════════════════════════════════════════
 
 describe("PDS-21 — scope.table real mapping", () => {
-  it("renders sow_data.service_lines instead of the dead scope_items key", async () => {
+  it("renders the canonical string[] service lines without invented object fields", async () => {
     const snapshot = await loadTenderPack(TENDER_ROW.id, "combined_proposal");
     const scope = snapshot.blocks.find((b) => b.block_key === "scope.table");
     expect(scope?.content.source_status).toBe("populated");
-    expect(scope?.content.html).toContain("Warehousing");
-    expect(scope?.content.html).toContain("Two DCs, ambient + cold");
+    expect(scope?.content.html).toContain("<td>Warehousing</td><td></td><td></td>");
+    expect(scope?.content.html).toContain("<td>Transport</td><td></td><td></td>");
+    expect(scope?.content.html).not.toContain("Not captured yet");
   });
 });
 
@@ -379,5 +385,132 @@ describe("PDS-22 — rate card honesty", () => {
     expect(rateCard?.content.pricing_rows).toEqual([]);
     expect(snapshot.warnings.join(" ")).toContain("Rate card content is not captured");
     expect(JSON.stringify(rateCard)).not.toContain("980,000");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// PDS-18 / PDS-23 / PDS-24 — proposal identity + source parity
+// ═════════════════════════════════════════════════════════════
+
+describe("proposal source identity and source projections", () => {
+  it("labels proposal snapshots as proposals and projects scope, SLA and evidence", async () => {
+    const row = {
+      ...TENDER_ROW,
+      ticket_type: "proposal",
+      ticket_title: "Proposal Source Truth",
+      type_details: {
+        proposal_workspace: {
+          solution_design: {
+            data: {
+              solutionConfiguration: {
+                solutionOverview: "Integrated warehousing and transport",
+                operatingModel: "Dedicated control tower",
+              },
+              serviceScope: {
+                included: "Inbound, storage and outbound",
+                excluded: "Customs clearance",
+                customerResponsibilities: "Provide forecasts",
+                halaResponsibilities: "Operate the control tower",
+                kpiScope: "OTIF and inventory accuracy",
+              },
+              warehouseModel: { storageType: "Ambient", capacityEstimate: "5,000 pallets" },
+              transportModel: { laneStructure: "Riyadh to Jeddah", sla: "95% OTIF" },
+              vasHandling: {},
+            },
+          },
+          proposal_drafting: {
+            data: {
+              proposalEvidenceItems: [{
+                id: "ev-1",
+                evidenceTitle: "Customer requirements",
+                evidenceType: "RFP",
+                documentRef: "doc-proposal-1",
+              }],
+            },
+          },
+        },
+      },
+    };
+    db.responses.set("commercial_tickets", { data: row, error: null });
+
+    const snapshot = await loadTenderPack(row.id, "combined_proposal", undefined, "proposal");
+
+    expect(snapshot.source_kind).toBe("proposal_engine");
+    expect(snapshot.linked_entity_type).toBe("proposal");
+    expect(snapshot.linked_entity_id).toBe(row.id);
+    expect(snapshot.blocks.find((block) => block.block_key === "scope.table")?.content.html)
+      .toContain("Inbound, storage and outbound");
+    expect(snapshot.blocks.find((block) => block.block_key === "annexure.b.sla_matrix")?.content.sla_rows)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ kpi: "Recorded KPI scope", target: "OTIF and inventory accuracy" }),
+        expect.objectContaining({ kpi: "Recorded transport SLA", target: "95% OTIF" }),
+      ]));
+    const evidence = snapshot.blocks.find((block) => block.block_key === "source.documents.recorded");
+    expect(evidence?.content.html).toContain("Customer requirements");
+    expect(evidence?.content.html).toContain("doc-proposal-1");
+    expect(evidence?.provenance?.source_kind).toBe("proposal_engine");
+  });
+});
+
+describe("PDS-23 / PDS-59 — active documents and exact drift scope", () => {
+  function rowWithDocuments() {
+    const row = JSON.parse(JSON.stringify(TENDER_ROW));
+    row.type_details.documents = [
+      {
+        id: "doc-active",
+        document_name: "Current RFP",
+        document_category: "Source",
+        document_type: "RFP / RFQ",
+        version: "v2",
+        status: "Reviewed",
+        buyer_reference_number: "RFP-2026-11",
+      },
+      {
+        id: "doc-archived",
+        document_name: "Old RFP",
+        document_category: "Archived",
+        document_type: "RFP / RFQ",
+        version: "v1",
+        status: "Reviewed",
+      },
+    ];
+    return row;
+  }
+
+  it("renders active document evidence and excludes archived documents", async () => {
+    const row = rowWithDocuments();
+    db.responses.set("commercial_tickets", { data: row, error: null });
+    const snapshot = await loadTenderPack(row.id, "combined_proposal");
+    const evidence = snapshot.blocks.find((block) => block.block_key === "source.documents.recorded");
+    expect(evidence?.content.html).toContain("Current RFP");
+    expect(evidence?.content.html).toContain("RFP-2026-11");
+    expect(evidence?.content.html).not.toContain("Old RFP");
+  });
+
+  it("hashes only content the pack can reflect, including active document evidence", async () => {
+    const original = rowWithDocuments();
+    const originalProjection = buildTenderSourceData(original);
+    const originalHash = await computeSourceHash(originalProjection);
+
+    const internalOnly = rowWithDocuments();
+    internalOnly.estimated_value = 9_999_999;
+    internalOnly.target_gp_percent = 99;
+    internalOnly.type_details.pricing.scenarios.rows[0].cost = "1";
+    internalOnly.type_details.pricing.scenarios.rows[0].gp_percent = "99";
+    internalOnly.type_details.documents[1].document_name = "Changed archived name";
+    expect(await computeSourceHash(buildTenderSourceData(internalOnly))).toBe(originalHash);
+
+    const activeDocumentChanged = rowWithDocuments();
+    activeDocumentChanged.type_details.documents[0].document_name = "Current RFP revision 3";
+    expect(await computeSourceHash(buildTenderSourceData(activeDocumentChanged))).not.toBe(originalHash);
+
+    const renderedCoverChanged = rowWithDocuments();
+    renderedCoverChanged.target_date = "2026-12-15";
+    expect(await computeSourceHash(buildTenderSourceData(renderedCoverChanged))).not.toBe(originalHash);
+
+    const serialized = JSON.stringify(originalProjection);
+    expect(serialized).not.toContain("980,000");
+    expect(serialized).not.toContain("target_gp_percent");
+    expect(serialized).not.toContain("estimated_value");
   });
 });

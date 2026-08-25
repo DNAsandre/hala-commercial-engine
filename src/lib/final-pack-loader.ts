@@ -15,7 +15,11 @@
 
 import { supabase } from "./supabase";
 import { stableJsonStringify } from "./stable-json";
-import type { BlockProvenance } from "./document-source";
+import {
+  connectedSourceIdentity,
+  type BlockProvenance,
+  type ConnectedRecordKind,
+} from "./document-source";
 import { makeBlockProvenance } from "./final-pack-snapshot-contract";
 
 // ═══════════════════════════════════════════════════════════
@@ -203,7 +207,7 @@ export interface BlockSnapshot {
   source_kind?: string;
   /** How the instance was started */
   creation_method?: string;
-  /** What (if anything) the instance links to: tender | standalone | custom_document */
+  /** What (if anything) the instance links to: tender | proposal | standalone | custom_document */
   linked_entity_type?: string;
   /** Linked source id (null for standalone/blank) */
   linked_entity_id?: string | null;
@@ -251,7 +255,7 @@ interface BlockLibraryRow {
  * fabricated status, not a comparison.
  */
 export const TENDER_SOURCE_SELECT =
-  "id, ticket_title, customer_name, estimated_value, target_gp_percent, target_date, internal_stage, type_details, created_at, updated_at";
+  "id, ticket_type, ticket_title, customer_name, estimated_value, target_gp_percent, target_date, internal_stage, type_details, created_at, updated_at";
 
 /** Title resolution used by both the snapshot and the drift projection. */
 export function resolveTenderTitle(tender: Record<string, any>): string {
@@ -265,24 +269,333 @@ export function resolveTenderCustomer(tender: Record<string, any>): string {
   return tender?.customer_name || safeString(td.tender?.customerName) || "Not available";
 }
 
+export interface SourceDocumentReference {
+  id: string;
+  name: string;
+  category: string;
+  document_type: string;
+  version: string;
+  status: string;
+  reference: string;
+}
+
+function proposalStageData(
+  workspace: Record<string, any>,
+  snakeKey: string,
+  camelKey: string,
+): Record<string, any> {
+  const stage = safeObject(workspace[snakeKey] ?? workspace[camelKey]);
+  const data = safeObject(stage.data);
+  return Object.keys(data).length > 0 ? data : stage;
+}
+
+function describedFields(
+  source: Record<string, any>,
+  fields: Array<[string, string]>,
+): string {
+  return fields
+    .map(([key, label]) => {
+      const value = safeString(source[key]).trim();
+      return value ? `${label}: ${value}` : "";
+    })
+    .filter(Boolean)
+    .join("; ");
+}
+
+/** PDS-24: translate recorded proposal solution design into scope rows. */
+export function buildProposalScopeRows(solution: Record<string, any>): any[] {
+  const rows: any[] = [];
+  const add = (id: string, name: string, description: string, deliverable = "") => {
+    if (!description.trim() && !deliverable.trim()) return;
+    rows.push({ id, name, description, deliverable });
+  };
+
+  const configuration = safeObject(solution.solutionConfiguration);
+  const serviceScope = safeObject(solution.serviceScope);
+  const warehouse = safeObject(solution.warehouseModel);
+  const transport = safeObject(solution.transportModel);
+  const vas = safeObject(solution.vasHandling);
+
+  add(
+    "proposal-solution-overview",
+    "Solution overview",
+    describedFields(configuration, [
+      ["solutionOverview", "Overview"],
+      ["operatingModel", "Operating model"],
+      ["serviceMix", "Service mix"],
+      ["geographicCoverage", "Coverage"],
+      ["designRationale", "Design rationale"],
+    ]),
+  );
+  add(
+    "proposal-included-scope",
+    "Included services",
+    safeString(serviceScope.included),
+    safeString(serviceScope.halaResponsibilities),
+  );
+  add(
+    "proposal-excluded-scope",
+    "Excluded services",
+    safeString(serviceScope.excluded),
+    safeString(serviceScope.customerResponsibilities),
+  );
+  add(
+    "proposal-warehouse-model",
+    "Warehouse model",
+    describedFields(warehouse, [
+      ["storageType", "Storage"],
+      ["facilityType", "Facility"],
+      ["capacityEstimate", "Capacity"],
+      ["handlingAssumptions", "Handling"],
+      ["tempZones", "Temperature zones"],
+      ["laborAssumptions", "Labour"],
+    ]),
+  );
+  add(
+    "proposal-transport-model",
+    "Transport model",
+    describedFields(transport, [
+      ["laneStructure", "Lanes"],
+      ["vehicleTypes", "Vehicles"],
+      ["frequency", "Frequency"],
+      ["routeComplexity", "Route complexity"],
+      ["vendorRequirements", "Vendor requirements"],
+    ]),
+  );
+  add(
+    "proposal-vas-handling",
+    "Value-added services",
+    describedFields(vas, [
+      ["labeling", "Labelling"],
+      ["kitting", "Kitting"],
+      ["packaging", "Packaging"],
+      ["returns", "Returns"],
+      ["compliance", "Compliance"],
+      ["specializedHandling", "Special handling"],
+    ]),
+  );
+
+  return rows;
+}
+
+/** PDS-24: translate recorded proposal SLA/KPI text into the shared SLA shape. */
+export function buildProposalSlaRows(solution: Record<string, any>): any[] {
+  const serviceScope = safeObject(solution.serviceScope);
+  const transport = safeObject(solution.transportModel);
+  const rows: any[] = [];
+  const add = (id: string, kpiName: string, target: string) => {
+    if (!target.trim()) return;
+    rows.push({
+      id,
+      kpi_name: kpiName,
+      target,
+      measurement_method: "Not captured yet",
+      include_in_proposal: "Yes",
+    });
+  };
+  add("proposal-kpi-scope", "Recorded KPI scope", safeString(serviceScope.kpiScope));
+  add("proposal-transport-sla", "Recorded transport SLA", safeString(transport.sla));
+  return rows;
+}
+
+/** PDS-23: the proposal tracker stores real vault ids in its evidence registers. */
+export function collectProposalDocumentReferences(workspace: Record<string, any>): SourceDocumentReference[] {
+  const drafting = proposalStageData(workspace, "proposal_drafting", "proposalDrafting");
+  const sent = proposalStageData(workspace, "proposal_sent", "proposalSent");
+  const negotiation = proposalStageData(workspace, "negotiation", "negotiation");
+  const contract = proposalStageData(workspace, "contract_signed", "contractSigned");
+  const documents = new Map<string, SourceDocumentReference>();
+
+  const add = (
+    ref: unknown,
+    name: unknown,
+    category: unknown,
+    version: unknown,
+    status: unknown = "Recorded",
+  ) => {
+    const reference = safeString(ref).trim();
+    if (!reference || documents.has(reference)) return;
+    documents.set(reference, {
+      id: reference,
+      name: safeString(name).trim() || "Referenced document",
+      category: safeString(category).trim() || "Supporting",
+      document_type: safeString(category).trim() || "Supporting document",
+      version: safeString(version).trim(),
+      status: safeString(status).trim() || "Recorded",
+      reference,
+    });
+  };
+
+  for (const item of Array.isArray(drafting.proposalEvidenceItems) ? drafting.proposalEvidenceItems : []) {
+    add(item.documentRef, item.evidenceTitle, item.evidenceType, "", "Recorded evidence");
+  }
+  const sentVersion = safeObject(sent.proposalSentVersion);
+  add(
+    sentVersion.sentDocumentRef,
+    sentVersion.proposalTitle || "Sent proposal",
+    "Sent proposal",
+    sentVersion.sentVersionLabel,
+    sentVersion.sentStatus,
+  );
+  for (const item of Array.isArray(sent.proposalSentAttachments) ? sent.proposalSentAttachments : []) {
+    add(item.documentRef, item.documentName, item.category, item.versionLabel, item.included === false ? "Not included" : "Included");
+  }
+  for (const item of Array.isArray(negotiation.proposalRevisedVersions) ? negotiation.proposalRevisedVersions : []) {
+    add(item.documentRef, item.versionLabel || "Revised proposal", "Revised proposal", item.sourceVersion, item.status);
+  }
+  const signed = safeObject(contract.proposalSignedContractReference);
+  add(signed.contractDocumentRef, signed.contractTitle || "Signed contract", "Signed contract", signed.contractNumber, signed.signedDate ? "Signed" : "Recorded");
+
+  return Array.from(documents.values());
+}
+
+/** Normalize tender JSONB documents and exclude archived records. */
+export function collectActiveSourceDocuments(details: Record<string, any>): SourceDocumentReference[] {
+  const rows = Array.isArray(details.documents) ? details.documents : [];
+  const documents = new Map<string, SourceDocumentReference>();
+  for (const row of rows) {
+    const category = safeString(row?.document_category || row?.category).trim();
+    if (category.toLowerCase() === "archived") continue;
+    const id = safeString(row?.id || row?.documentRef || row?.reference).trim();
+    if (!id || documents.has(id)) continue;
+    documents.set(id, {
+      id,
+      name: safeString(row?.document_name || row?.documentName || row?.name).trim() || "Referenced document",
+      category: category || "Supporting",
+      document_type: safeString(row?.document_type || row?.documentType || category).trim() || "Supporting document",
+      version: safeString(row?.version || row?.versionLabel).trim(),
+      status: safeString(row?.status).trim() || "Recorded",
+      reference: safeString(row?.buyer_reference_number || row?.reference || row?.documentRef || id).trim() || id,
+    });
+  }
+  return Array.from(documents.values());
+}
+
+function projectPricingForPack(pricingValue: unknown): Record<string, unknown> | null {
+  const pricing = safeObject(pricingValue);
+  const scenarios = safeObject(pricing.scenarios);
+  const rows = Array.isArray(scenarios.rows) ? scenarios.rows : [];
+  const terms = safeObject(pricing.commercial_terms);
+  const scalar = safeObject(terms.payment_tax_validity);
+  const flagged = (value: unknown, fields: string[]) =>
+    (Array.isArray(value) ? value : [])
+      .filter((row: any) => safeString(row?.include_in_proposal) === "Yes")
+      .map((row: any) => Object.fromEntries(fields.map((field) => [field, row?.[field] ?? null])));
+
+  return {
+    scenarios: {
+      rows: rows.map((row: any) => ({
+        id: row?.id ?? null,
+        scenario_name: row?.scenario_name ?? null,
+        scenario_type: row?.scenario_type ?? null,
+        revenue: row?.revenue ?? null,
+      })),
+      selected_scenario_id: scenarios.selected_scenario?.selected_scenario_id ?? null,
+    },
+    commercial_terms: {
+      payment_tax_validity: {
+        payment_terms: scalar.payment_terms ?? null,
+        vat_treatment: scalar.vat_treatment ?? null,
+        vat_percent: scalar.vat_percent ?? null,
+        proposal_validity: scalar.proposal_validity ?? null,
+        contract_term: scalar.contract_term ?? null,
+        extension_option: scalar.extension_option ?? null,
+      },
+      surcharges: flagged(terms.surcharges, ["charge_type", "trigger", "rate_formula", "applies_to"]),
+      customer_responsibilities: flagged(terms.customer_responsibilities, ["responsibility", "applies_to"]),
+      exclusions: flagged(terms.exclusions, ["exclusion", "reason"]),
+      assumptions: flagged(terms.assumptions, ["assumption", "impact"]),
+    },
+  };
+}
+
+function projectDraftingForPack(value: unknown): Record<string, unknown> {
+  const drafting = safeObject(value);
+  const rows = Array.isArray(drafting.proposal_blocks) ? drafting.proposal_blocks : [];
+  const consumedFields = [
+    "id",
+    "block_key",
+    "section_key",
+    "title",
+    "block_type",
+    "document_assembly_target",
+    "intended_section",
+    "content_html",
+    "editor_content",
+    "draft_content",
+    "content_text",
+    "content",
+  ];
+  return {
+    proposal_blocks: rows.map((row: any) => Object.fromEntries(
+      consumedFields
+        .filter((field) => row?.[field] !== undefined)
+        .map((field) => [field, row[field]]),
+    )),
+  };
+}
+
+function projectSowForPack(value: unknown): Record<string, unknown> {
+  const sow = safeObject(value);
+  const rows = Array.isArray(sow.scope_items) && sow.scope_items.length > 0
+    ? sow.scope_items
+    : Array.isArray(sow.deliverables) && sow.deliverables.length > 0
+      ? sow.deliverables
+      : Array.isArray(sow.service_lines)
+        ? sow.service_lines
+        : [];
+  return {
+    rows: rows.map((row: any) => typeof row === "string"
+      ? { id: null, name: row, description: null, deliverable: null }
+      : {
+          id: row?.id ?? null,
+          name: row?.name ?? row?.item ?? null,
+          description: row?.description ?? null,
+          deliverable: row?.deliverable ?? row?.output ?? null,
+        }),
+  };
+}
+
+function projectSlaForPack(value: unknown): Record<string, unknown> {
+  const design = safeObject(value);
+  const sla = safeObject(design.sla_kpi);
+  const rows = Array.isArray(sla.rows) ? sla.rows : Array.isArray(sla.kpis) ? sla.kpis : [];
+  const governance = safeObject(sla.governance);
+  return {
+    rows: rows
+      .filter((row: any) => safeString(row?.include_in_proposal) !== "No")
+      .map((row: any) => ({
+        id: row?.id ?? null,
+        kpi_name: row?.kpi_name ?? row?.kpi ?? row?.name ?? null,
+        target: row?.target ?? null,
+        measurement_method: row?.measurement_method ?? row?.measurement ?? null,
+        penalty: row?.penalty ?? null,
+        include_in_proposal: row?.include_in_proposal ?? null,
+      })),
+    penalty_linkage: governance.penalty_linkage ?? null,
+  };
+}
+
 /**
- * Build the content-bearing projection of a commercial_tickets row that the
- * source hash is computed over. Pure — same row in, same object out.
+ * PDS-59: hash the exact ticket projection that can reach rendered blocks.
+ * Internal P&L, broad metadata and estimated-value changes no longer invent
+ * drift; active document evidence, scope and SLA changes do trigger it.
  */
 export function buildTenderSourceData(tender: Record<string, any>): Record<string, unknown> {
   const td = normalizeCommercialTicketDetails(safeObject(tender?.type_details));
+  const tenderMeta = safeObject(td.tender);
   return {
-    tender_id: tender?.id,
+    source_id: tender?.id ?? null,
+    source_type: tender?.ticket_type ?? null,
     tender_title: resolveTenderTitle(tender),
     customer_name: resolveTenderCustomer(tender),
-    estimated_value: tender?.estimated_value,
-    target_gp_percent: tender?.target_gp_percent,
-    target_date: tender?.target_date,
-    pricing: td.pricing ?? null,
-    tender_drafting: td.tender_drafting ?? null,
-    solution_design_data: td.solution_design_data ?? null,
-    sow_data: td.sow_data ?? null,
-    tender_metadata: td.tender ?? null,
+    reference_number: tenderMeta.tenderRef ?? null,
+    document_date: tender?.target_date ?? tenderMeta.submissionDeadline ?? null,
+    pricing: projectPricingForPack(td.pricing),
+    tender_drafting: projectDraftingForPack(td.tender_drafting),
+    solution_design: projectSlaForPack(td.solution_design_data),
+    scope: projectSowForPack(td.sow_data),
+    documents: collectActiveSourceDocuments(td),
   };
 }
 
@@ -293,8 +606,9 @@ export function buildTenderSourceData(tender: Record<string, any>): Record<strin
  */
 export function normalizeCommercialTicketDetails(details: Record<string, any>): Record<string, any> {
   const workspace = safeObject(details.proposal_workspace);
-  const draftingStage = safeObject(workspace.proposal_drafting ?? workspace.proposalDrafting);
-  const drafting = safeObject(Object.keys(safeObject(draftingStage.data)).length ? draftingStage.data : draftingStage);
+  if (Object.keys(workspace).length === 0) return details;
+
+  const drafting = proposalStageData(workspace, "proposal_drafting", "proposalDrafting");
   const toc = Array.isArray(drafting.proposalTocSections) ? drafting.proposalTocSections : [];
   const tocById = new Map(toc.map((section: any) => [safeString(section.id), safeString(section.sectionTitle)]));
   const proposalBlocks = Array.isArray(drafting.proposalDraftBlocks)
@@ -308,8 +622,7 @@ export function normalizeCommercialTicketDetails(details: Record<string, any>): 
       }))
     : [];
 
-  const pnlStage = safeObject(workspace.pnl_pricing ?? workspace.pnlPricing);
-  const pnl = safeObject(Object.keys(safeObject(pnlStage.data)).length ? pnlStage.data : pnlStage);
+  const pnl = proposalStageData(workspace, "pnl_pricing", "pnlPricing");
   const pnlVersions = Array.isArray(pnl.pnlVersions) ? pnl.pnlVersions : [];
   const pricingRows = pnlVersions.map((version: any) => {
     const revenue = Array.isArray(version.revenue) ? version.revenue.reduce((sum: number, line: any) => sum + Number(line.amount || 0), 0) : 0;
@@ -328,16 +641,44 @@ export function normalizeCommercialTicketDetails(details: Record<string, any>): 
     };
   });
 
-  if (proposalBlocks.length === 0 && pricingRows.length === 0) return details;
+  const solution = proposalStageData(workspace, "solution_design", "solutionDesign");
+  const proposalScopeRows = buildProposalScopeRows(solution);
+  const proposalSlaRows = buildProposalSlaRows(solution);
+  const existingSow = safeObject(details.sow_data);
+  const existingScopeRows = Array.isArray(existingSow.service_lines) ? existingSow.service_lines : [];
+  const existingDesign = safeObject(details.solution_design_data);
+  const existingSla = safeObject(existingDesign.sla_kpi);
+  const existingSlaRows = Array.isArray(existingSla.kpis)
+    ? existingSla.kpis
+    : Array.isArray(existingSla.rows)
+      ? existingSla.rows
+      : [];
+  const proposalDocuments = collectProposalDocumentReferences(workspace);
+  const existingDocuments = Array.isArray(details.documents) ? details.documents : [];
+
   return {
     ...details,
-    tender_drafting: {
-      ...safeObject(details.tender_drafting),
-      proposal_blocks: proposalBlocks,
-    },
+    tender_drafting: proposalBlocks.length > 0
+      ? { ...safeObject(details.tender_drafting), proposal_blocks: proposalBlocks }
+      : details.tender_drafting,
     pricing: pricingRows.length > 0
       ? { ...safeObject(details.pricing), scenarios: { rows: pricingRows, selected_scenario: { selected_scenario_id: safeString(pnl.activePnlVersion) } } }
       : details.pricing,
+    sow_data: proposalScopeRows.length > 0
+      ? { ...existingSow, service_lines: [...existingScopeRows, ...proposalScopeRows] }
+      : details.sow_data,
+    solution_design_data: proposalSlaRows.length > 0
+      ? {
+          ...existingDesign,
+          sla_kpi: {
+            ...existingSla,
+            kpis: [...existingSlaRows, ...proposalSlaRows],
+          },
+        }
+      : details.solution_design_data,
+    documents: proposalDocuments.length > 0
+      ? [...existingDocuments, ...proposalDocuments]
+      : details.documents,
   };
 }
 
@@ -398,6 +739,7 @@ export async function loadTenderPack(
   tenderId: string,
   packType: PackType,
   scenarioId?: string,
+  expectedSourceKind: ConnectedRecordKind = "tender",
 ): Promise<BlockSnapshot> {
   const warnings: string[] = [];
   const templateId = PACK_TEMPLATE_MAP[packType];
@@ -416,6 +758,12 @@ export async function loadTenderPack(
     return errorSnapshot(tenderId, packType, templateId, `Tender ${tenderId} not found in commercial_tickets`);
   }
 
+  const recordedSourceKind: ConnectedRecordKind = tender.ticket_type === "proposal"
+    ? "proposal"
+    : tender.ticket_type === "tender"
+      ? "tender"
+      : expectedSourceKind;
+  const sourceIdentity = connectedSourceIdentity(recordedSourceKind);
   const td = normalizeCommercialTicketDetails(safeObject(tender.type_details));
   const tenderTitle = resolveTenderTitle(tender);
   const customerName = resolveTenderCustomer(tender);
@@ -539,7 +887,7 @@ export async function loadTenderPack(
           block_library_id: def.id,
         },
         source_mode: "connected",
-        source_kind: "commercial_ticket",
+        source_kind: sourceIdentity.source_kind,
         creation_method: "connected_source",
       }),
     });
@@ -577,7 +925,7 @@ export async function loadTenderPack(
       provenance: makeBlockProvenance("commercial_ticket", {
         origin_ref: { source_id: tender.id, original_block_id: section.id },
         source_mode: "connected",
-        source_kind: "commercial_ticket",
+        source_kind: sourceIdentity.source_kind,
         creation_method: "connected_source",
       }),
     }));
@@ -616,7 +964,39 @@ export async function loadTenderPack(
       provenance: makeBlockProvenance("commercial_ticket", {
         origin_ref: { source_id: tender.id },
         source_mode: "connected",
-        source_kind: "commercial_ticket",
+        source_kind: sourceIdentity.source_kind,
+        creation_method: "connected_source",
+      }),
+    });
+    blocks.forEach((block, index) => { block.order = index + 1; });
+  }
+
+  // ── PDS-23: active source/supporting documents as pack evidence ──
+  // The pack records the documents it was built with as an editable evidence
+  // section. Archived tender rows are excluded; proposal references are
+  // projected from their real tracker registers by the normalizer above.
+  const sourceDocumentsHtml = buildSourceDocumentEvidenceHtml(td);
+  if (sourceDocumentsHtml) {
+    const signatureIndex = blocks.findIndex((b) => b.block_key === "signature.dual");
+    const insertDocumentsAt = signatureIndex >= 0 ? signatureIndex : blocks.length;
+    blocks.splice(insertDocumentsAt, 0, {
+      id: uniqueBlockId("source.documents.recorded", usedIds),
+      block_key: "source.documents.recorded",
+      render_key: "narrative",
+      display_name: "Source Documents",
+      family: "annexure",
+      editor_mode: "wysiwyg",
+      visible: true,
+      order: 0,
+      required: false,
+      content: { html: sourceDocumentsHtml, source_status: "populated" },
+      default_content: "",
+      schema_config: {},
+      permissions: {},
+      provenance: makeBlockProvenance("commercial_ticket", {
+        origin_ref: { source_id: tender.id },
+        source_mode: "connected",
+        source_kind: sourceIdentity.source_kind,
         creation_method: "connected_source",
       }),
     });
@@ -636,6 +1016,11 @@ export async function loadTenderPack(
     snapshot_at: new Date().toISOString(),
     source_data: sourceData,
     warnings,
+    source_mode: "connected",
+    source_kind: sourceIdentity.source_kind,
+    creation_method: "connected_source",
+    linked_entity_type: sourceIdentity.linked_entity_type,
+    linked_entity_id: tender.id,
     // FPS-002-03: store the ACTUAL template version id (not the template id).
     template_version_id: templateVersion.id,
     // FPS-004: carry the template layout config into the snapshot.
@@ -944,10 +1329,17 @@ function resolveScopeTable(td: Record<string, any>): BlockContent {
   // Build an HTML table from scope items
   let html = "<table><thead><tr><th>Item</th><th>Description</th><th>Deliverable</th></tr></thead><tbody>";
   for (const item of scopeItems) {
-    const name = safeString(item.name || item.item);
-    const desc = safeString(item.description);
-    const deliverable = safeString(item.deliverable || item.output);
-    html += `<tr><td>${name || "Not captured yet"}</td><td>${desc || "Not captured yet"}</td><td>${deliverable || "Not captured yet"}</td></tr>`;
+    // The canonical tender contract is string[] (SowData.service_lines).
+    // Proposal projection rows and historical data may be structured. Never
+    // dereference a string as an object or invent cells that were not stored.
+    const name = typeof item === "string"
+      ? item
+      : safeString(item?.name || item?.item);
+    const desc = typeof item === "string" ? "" : safeString(item?.description);
+    const deliverable = typeof item === "string"
+      ? ""
+      : safeString(item?.deliverable || item?.output);
+    html += `<tr><td>${name}</td><td>${desc}</td><td>${deliverable}</td></tr>`;
   }
   html += "</tbody></table>";
 
@@ -1243,6 +1635,25 @@ export function buildCommercialTermsSectionHtml(td: Record<string, any>): string
 
   if (parts.length === 0) return undefined;
   return `<h2>Commercial Terms</h2>${parts.join("")}`;
+}
+
+/** Render the exact active-document projection included in the source hash. */
+export function buildSourceDocumentEvidenceHtml(td: Record<string, any>): string | undefined {
+  const documents = collectActiveSourceDocuments(td);
+  if (documents.length === 0) return undefined;
+  const escape = (value: unknown): string =>
+    safeString(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  const rows = documents.map((document) =>
+    `<tr><td>${escape(document.name)}</td><td>${escape(document.document_type)}</td>` +
+    `<td>${escape(document.version || "Not recorded")}</td><td>${escape(document.status)}</td>` +
+    `<td>${escape(document.reference)}</td></tr>`,
+  );
+  return `<h2>Source Documents</h2><table><thead><tr><th>Document</th><th>Type</th>` +
+    `<th>Version</th><th>Status</th><th>Reference</th></tr></thead><tbody>${rows.join("")}</tbody></table>`;
 }
 
 /** Extract content from a proposal block using priority chain */

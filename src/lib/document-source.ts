@@ -60,7 +60,26 @@ export type DocumentIntent = PackType | "custom_pdf" | "custom_pack";
 // linked_entity_type — what (if anything) the instance is linked to
 // ═══════════════════════════════════════════════════════════
 
-export type LinkedEntityType = "tender" | "standalone" | "custom_document";
+export type ConnectedRecordKind = "tender" | "proposal";
+
+export type LinkedEntityType =
+  | ConnectedRecordKind
+  | "standalone"
+  | "custom_document";
+
+/**
+ * Translate the human workflow kind into the two persisted source labels.
+ * Kept as one pure function so creation, listing, snapshots and provenance
+ * cannot independently relabel proposal records as tenders.
+ */
+export function connectedSourceIdentity(kind: ConnectedRecordKind): {
+  source_kind: Extract<SourceKind, "commercial_ticket" | "proposal_engine">;
+  linked_entity_type: Extract<LinkedEntityType, "tender" | "proposal">;
+} {
+  return kind === "proposal"
+    ? { source_kind: "proposal_engine", linked_entity_type: "proposal" }
+    : { source_kind: "commercial_ticket", linked_entity_type: "tender" };
+}
 
 // ═══════════════════════════════════════════════════════════
 // DocumentSource — the request passed to loadDocumentPack()

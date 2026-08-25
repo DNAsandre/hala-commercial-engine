@@ -49,7 +49,7 @@ function safeErrorSnapshot(source: DocumentSource, error: string): BlockSnapshot
 export async function loadDocumentPack(source: DocumentSource): Promise<BlockSnapshot> {
   // Connected sources
   if (source.mode === "connected") {
-    if (source.kind === "commercial_ticket") {
+    if (source.kind === "commercial_ticket" || source.kind === "proposal_engine") {
       return loadCommercialTicketPack(source);
     }
     return safeErrorSnapshot(

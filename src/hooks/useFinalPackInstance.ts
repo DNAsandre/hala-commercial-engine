@@ -14,7 +14,11 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth-state";
 import type { BlockSnapshot, OutputBlock, PackType } from "@/lib/final-pack-loader";
-import { CONNECTED_TICKET_DEFAULTS } from "@/lib/document-source";
+import {
+  CONNECTED_TICKET_DEFAULTS,
+  connectedSourceIdentity,
+  type ConnectedRecordKind,
+} from "@/lib/document-source";
 import { DEFAULT_TEMPLATE_CLASS } from "@/lib/final-pack-snapshot-contract";
 
 // ═══════════════════════════════════════════════════════════
@@ -95,8 +99,11 @@ export interface UseFinalPackInstanceReturn {
   updateStatus: (status: FinalPackInstance["status"]) => void;
   /** Persist the selected branding profile id on the instance (FPS-002) */
   updateBranding: (brandingProfileId: string) => Promise<void>;
-  /** List existing FPS instances for a tender (connected picker) */
-  listInstances: (tenderId: string) => Promise<InstanceListResult>;
+  /** List existing FPS instances for one connected Tender or Proposal source. */
+  listInstances: (
+    linkedEntityId: string,
+    sourceKind?: ConnectedRecordKind,
+  ) => Promise<InstanceListResult>;
   /** List all FPS instances (connected + standalone) for Resume Existing */
   listAllInstances: () => Promise<InstanceListResult>;
 }
@@ -430,9 +437,12 @@ export function useFinalPackInstance(): UseFinalPackInstanceReturn {
     [],
   );
 
-  // ── List FPS instances for a tender ──────────────────
+  // ── List FPS instances for one connected source ──────
   const listInstances = useCallback(
-    (tenderId: string): Promise<InstanceListResult> => fetchTenderInstances(tenderId),
+    (
+      linkedEntityId: string,
+      sourceKind: ConnectedRecordKind = "tender",
+    ): Promise<InstanceListResult> => fetchLinkedInstances(linkedEntityId, sourceKind),
     [],
   );
 
@@ -468,11 +478,46 @@ export function useFinalPackInstance(): UseFinalPackInstanceReturn {
  * composer did not). Ordered newest-edited first by an explicit ORDER BY.
  */
 export async function fetchTenderInstances(tenderId: string): Promise<InstanceListResult> {
+  return fetchLinkedInstances(tenderId, "tender");
+}
+
+/**
+ * PDS-18: route-specific instance listing uses the same persisted identity as
+ * creation. Proposal rows therefore no longer live in or query the tender
+ * namespace.
+ */
+export async function fetchLinkedInstances(
+  linkedEntityId: string,
+  sourceKind: ConnectedRecordKind,
+): Promise<InstanceListResult> {
+  const identity = connectedSourceIdentity(sourceKind);
+  const canonical = await queryLinkedInstances(linkedEntityId, identity.linked_entity_type);
+  if (sourceKind !== "proposal") return canonical;
+
+  // Proposal packs created before PDS-18 were stored under the tender label.
+  // Keep those exact-id rows discoverable without rewriting history; all new
+  // rows use the canonical proposal label above.
+  const legacy = await queryLinkedInstances(linkedEntityId, "tender");
+  const merged = new Map<string, FinalPackInstance>();
+  [...canonical.instances, ...legacy.instances].forEach((instance) => merged.set(instance.id, instance));
+  const errors = [canonical.error, legacy.error].filter(Boolean);
+  return {
+    instances: Array.from(merged.values()).sort((a, b) =>
+      new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    ),
+    error: errors.length > 0 ? errors.join("; ") : null,
+  };
+}
+
+async function queryLinkedInstances(
+  linkedEntityId: string,
+  linkedEntityType: "tender" | "proposal",
+): Promise<InstanceListResult> {
   const { data, error } = await supabase
     .from("doc_instances")
     .select("*")
-    .eq("linked_entity_type", "tender")
-    .eq("linked_entity_id", tenderId)
+    .eq("linked_entity_type", linkedEntityType)
+    .eq("linked_entity_id", linkedEntityId)
     .not("pack_type", "is", null)
     .order("updated_at", { ascending: false });
 

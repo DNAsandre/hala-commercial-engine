@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   fetchAllFinalPackInstances,
+  fetchLinkedInstances,
   fetchTenderInstances,
 } from "@/hooks/useFinalPackInstance";
 import { checkSourceDrift } from "@/hooks/useSourceDrift";
@@ -131,6 +132,31 @@ describe("fetchTenderInstances", () => {
     const res = await fetchTenderInstances("a1200000-0000-4000-8000-000000000002");
     expect(res.instances).toEqual([]);
     expect(res.error).toBeNull();
+  });
+});
+
+describe("fetchLinkedInstances — proposal identity", () => {
+  it("queries the proposal namespace instead of the tender namespace", async () => {
+    db.responses.set("doc_instances", {
+      data: [{ ...INSTANCE_ROW, linked_entity_type: "proposal", linked_entity_id: "proposal-1" }],
+      error: null,
+    });
+    const res = await fetchLinkedInstances("proposal-1", "proposal");
+
+    const call = db.calls.find((entry) => entry.table === "doc_instances");
+    expect(call?.filters).toEqual([
+      ["linked_entity_type", "proposal"],
+      ["linked_entity_id", "proposal-1"],
+      ["pack_type", "is:null"],
+    ]);
+    expect(db.calls.filter((entry) => entry.table === "doc_instances").map((entry) => entry.filters[0]))
+      .toEqual([
+        ["linked_entity_type", "proposal"],
+        ["linked_entity_type", "tender"],
+      ]);
+    expect(res.error).toBeNull();
+    expect(res.instances).toHaveLength(1); // canonical + legacy query deduplicated by instance id
+    expect(res.instances[0].tender_id).toBe("proposal-1");
   });
 });
 

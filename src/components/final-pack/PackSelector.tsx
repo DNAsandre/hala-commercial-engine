@@ -154,7 +154,7 @@ export default function PackSelector({ tenderId, sourceKind = "tender", onInstan
       }
 
       // Fetch existing FPS instances
-      const existing = await listInstances(tenderId);
+      const existing = await listInstances(tenderId, sourceKind);
       if (!cancelled) {
         setExistingInstances(existing.instances);
         setListError(existing.error);
@@ -165,7 +165,7 @@ export default function PackSelector({ tenderId, sourceKind = "tender", onInstan
 
     loadTenderData();
     return () => { cancelled = true; };
-  }, [tenderId, listInstances]);
+  }, [tenderId, sourceKind, listInstances]);
 
   // ── When instance is ready, notify parent ────────────
   useEffect(() => {
@@ -185,6 +185,7 @@ export default function PackSelector({ tenderId, sourceKind = "tender", onInstan
           tenderId,
           packType,
           selectedScenarioId || undefined,
+          sourceKind,
         );
 
         if (snapshot.error) {
@@ -205,7 +206,7 @@ export default function PackSelector({ tenderId, sourceKind = "tender", onInstan
         setCreating(false);
       }
     },
-    [tenderId, selectedScenarioId, createInstance],
+    [tenderId, sourceKind, selectedScenarioId, createInstance],
   );
 
   // ── Resume existing instance ─────────────────────────
