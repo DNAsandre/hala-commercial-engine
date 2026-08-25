@@ -19,6 +19,15 @@ import {
 } from "./tender-field-patch";
 import { computeRowFingerprint } from "./row-fingerprint";
 import { createSupabaseTenderSourceRecordStore } from "./supabase-tender-source-record";
+import {
+  buildProvenanceKey,
+  createSupabaseProvenanceTicketStore,
+  readProvenance,
+  recordProvenance,
+  type ReadProvenanceResult,
+  type RecordProvenanceRequest,
+  type RecordProvenanceResult,
+} from "./provenance-sidecar";
 
 export const DESTINATION_MANIFESTS = {
   tender: TENDER_MANIFEST,
@@ -78,6 +87,11 @@ const tenderDeps = {
   computeRowFingerprint,
 };
 const proposalDeps = createProposalFieldPatchDeps(computeRowFingerprint);
+const provenanceDeps = {
+  store: createSupabaseProvenanceTicketStore(supabase),
+};
+
+export { buildProvenanceKey };
 
 export function applyTenderDestinationPatch(
   request: TenderFieldPatchRequest,
@@ -89,4 +103,17 @@ export function applyProposalDestinationPatch(
   request: ProposalFieldPatchRequest,
 ): Promise<ProposalFieldPatchOutcome> {
   return applyProposalFieldPatch(PROPOSAL_MANIFEST, proposalDeps, request);
+}
+
+export function recordDestinationProvenance(
+  request: RecordProvenanceRequest,
+): Promise<RecordProvenanceResult> {
+  return recordProvenance(provenanceDeps, request);
+}
+
+export function readDestinationProvenance(
+  ticketId: string,
+  processKind: "tender" | "proposal",
+): Promise<ReadProvenanceResult> {
+  return readProvenance(provenanceDeps, ticketId, processKind);
 }
