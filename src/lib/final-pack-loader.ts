@@ -132,15 +132,17 @@ export interface CoverConfig {
   imported_pdf_static?: boolean;
 }
 
+/**
+ * PADW T06a (PDS-01): pricing rows are a CUSTOMER-FACING projection.
+ * Internal P&L columns (cost, gp_percent, recommended, internal notes) are
+ * deliberately absent from this shape — they must never reach a customer
+ * document. Revenue is formatted at projection time (PDS-09 parse rules).
+ */
 export interface PricingOutputRow {
   id: string;
   scenario_name: string;
   scenario_type: string;
   revenue: string;
-  cost: string;
-  gp_percent: string;
-  recommended: string;
-  notes: string;
 }
 
 export interface SlaOutputRow {
@@ -543,6 +545,84 @@ export async function loadTenderPack(
     });
   }
 
+  // ── PDS-06: ingest drafted blocks no template slot consumed ──
+  // Every content-bearing drafted block that matched no narrative slot is
+  // appended as an additional section (never silently dropped), with a
+  // warning naming it so the human can reposition or hide it.
+  const extraSections = collectUnmatchedDraftedSections(td);
+  if (extraSections.length > 0) {
+    const narrativeKeys = new Set(["intro.narrative", "scope.list", "closing.note"]);
+    let insertAt = -1;
+    for (let i = 0; i < blocks.length; i++) {
+      if (narrativeKeys.has(blocks[i].block_key)) insertAt = i + 1;
+    }
+    if (insertAt < 0) {
+      const signatureIndex = blocks.findIndex((b) => b.block_key === "signature.dual");
+      insertAt = signatureIndex >= 0 ? signatureIndex : blocks.length;
+    }
+    const extraBlocks: OutputBlock[] = extraSections.map((section) => ({
+      id: uniqueBlockId(`drafted.extra.${section.id}`, usedIds),
+      block_key: `drafted.extra.${section.id}`,
+      render_key: "narrative",
+      display_name: section.title,
+      family: "commercial",
+      editor_mode: "wysiwyg",
+      visible: true,
+      order: 0, // re-numbered below
+      required: false,
+      content: { html: section.html, source_status: "populated" },
+      default_content: "",
+      schema_config: {},
+      permissions: {},
+      provenance: makeBlockProvenance("commercial_ticket", {
+        origin_ref: { source_id: tender.id, original_block_id: section.id },
+        source_mode: "connected",
+        source_kind: "commercial_ticket",
+        creation_method: "connected_source",
+      }),
+    }));
+    blocks.splice(insertAt, 0, ...extraBlocks);
+    blocks.forEach((block, index) => { block.order = index + 1; });
+    for (const section of extraSections) {
+      warnings.push(
+        `Drafted block "${section.title}" matched no template slot — added as an additional section.`,
+      );
+    }
+  }
+
+  // ── PDS-07: recorded commercial terms flagged for the proposal ──
+  // Payment/VAT/validity facts and every row explicitly marked
+  // include_in_proposal = "Yes" previously never reached ANY pack. They are
+  // rendered as a dedicated Commercial Terms section (strict opt-in — only
+  // "Yes" rows; "Not Assessed" stays internal).
+  const commercialTermsHtml = buildCommercialTermsSectionHtml(td);
+  if (commercialTermsHtml) {
+    const signatureIndex = blocks.findIndex((b) => b.block_key === "signature.dual");
+    const insertCtAt = signatureIndex >= 0 ? signatureIndex : blocks.length;
+    blocks.splice(insertCtAt, 0, {
+      id: uniqueBlockId("commercial.terms.recorded", usedIds),
+      block_key: "commercial.terms.recorded",
+      render_key: "narrative",
+      display_name: "Commercial Terms",
+      family: "commercial",
+      editor_mode: "wysiwyg",
+      visible: true,
+      order: 0, // re-numbered below
+      required: false,
+      content: { html: commercialTermsHtml, source_status: "populated" },
+      default_content: "",
+      schema_config: {},
+      permissions: {},
+      provenance: makeBlockProvenance("commercial_ticket", {
+        origin_ref: { source_id: tender.id },
+        source_mode: "connected",
+        source_kind: "commercial_ticket",
+        creation_method: "connected_source",
+      }),
+    });
+    blocks.forEach((block, index) => { block.order = index + 1; });
+  }
+
   return {
     blocks,
     tender_id: tender.id,
@@ -657,7 +737,14 @@ function resolveBlockContent(
 
     // ── Annexure C — rate card ──────────────────────────
     case "annexure.c.rate_card":
-      return resolvePricing(td, scenarioId, "rate_card", warnings);
+      // PDS-22: this block previously rendered the scenario P&L summary
+      // (including internal cost/GP — compounding PDS-01) under the label
+      // "Rate Card". No rate-card source exists in the tender record, so the
+      // honest state is "not captured" — never internal P&L in disguise.
+      warnings.push(
+        "Rate card content is not captured — pricing scenarios are an internal P&L view, not a rate card.",
+      );
+      return { pricing_rows: [], source_status: "not_captured" };
 
     // ── Annexure D — communication matrix ───────────────
     case "annexure.d.communication_matrix":
@@ -712,55 +799,118 @@ function resolveConfidentiality(
   };
 }
 
-function resolveNarrative(
-  td: Record<string, any>,
-  section: string,
-): BlockContent {
-  const drafting = safeObject(td.tender_drafting);
-  const proposalBlocks: any[] = Array.isArray(drafting.proposal_blocks)
-    ? drafting.proposal_blocks
-    : [];
+/**
+ * PADW T06a (PDS-06) — drafted-block → narrative-slot matching.
+ *
+ * Structured fields win: the Block Workbench records `block_type` and the
+ * drafter's `document_assembly_target` / `intended_section`, so those are
+ * matched FIRST. The historical block_key / title heuristics remain only as
+ * a fallback for blocks drafted before the structured fields existed.
+ */
+const NARRATIVE_SECTIONS = [
+  "introduction",
+  "scope",
+  "closing",
+  "annexure_config",
+  "communication_matrix",
+] as const;
+export type NarrativeSection = (typeof NARRATIVE_SECTIONS)[number];
 
-  // Match proposal blocks by section type using explicit block_key patterns
-  const sectionMatchers: Record<string, (block: any) => boolean> = {
-    introduction: (b) => {
-      const key = safeString(b.block_key || b.section_key).toLowerCase();
-      const title = safeString(b.title).toLowerCase();
-      return key === "introduction" || key === "intro" ||
-        title.includes("introduction") || title.includes("executive summary");
-    },
-    scope: (b) => {
-      const key = safeString(b.block_key || b.section_key).toLowerCase();
-      const title = safeString(b.title).toLowerCase();
-      return key === "scope" || key === "scope_of_services" ||
-        title.includes("scope of service") || title.includes("scope of work");
-    },
-    closing: (b) => {
-      const key = safeString(b.block_key || b.section_key).toLowerCase();
-      const title = safeString(b.title).toLowerCase();
-      return key === "closing" || key === "closing_note" || key === "conclusion" ||
-        title.includes("closing") || title.includes("next steps") || title.includes("conclusion");
-    },
-    annexure_config: (b) => {
-      const key = safeString(b.block_key || b.section_key).toLowerCase();
-      const title = safeString(b.title).toLowerCase();
-      return key.includes("annexure") || key.includes("config") ||
-        title.includes("service configuration") || title.includes("annexure a");
-    },
-    communication_matrix: (b) => {
-      const key = safeString(b.block_key || b.section_key).toLowerCase();
-      const title = safeString(b.title).toLowerCase();
-      return key.includes("communication") || key.includes("escalation") ||
-        title.includes("communication matrix") || title.includes("escalation");
-    },
-  };
+/** Exact `block_type` values that map unambiguously onto a narrative slot. */
+const BLOCK_TYPE_SLOTS: Record<NarrativeSection, string[]> = {
+  introduction: ["executive summary"],
+  scope: ["scope of work"],
+  closing: ["decision required"],
+  annexure_config: [],
+  communication_matrix: [],
+};
 
-  const matcher = sectionMatchers[section];
-  if (!matcher) {
-    return { html: undefined, source_status: "not_captured" };
+/** Assembly-target / intended-section phrases per slot (normalized includes). */
+const TARGET_PHRASES: Record<NarrativeSection, string[]> = {
+  introduction: ["introduction", "executive summary", "intro"],
+  scope: ["scope of service", "scope of work", "scope"],
+  closing: ["closing", "conclusion", "next steps"],
+  annexure_config: ["annexure a", "service configuration", "config"],
+  communication_matrix: ["communication", "escalation"],
+};
+
+function sectionMatchesBlock(section: NarrativeSection, b: any): boolean {
+  const blockType = safeString(b.block_type).trim().toLowerCase();
+  if (blockType && BLOCK_TYPE_SLOTS[section].includes(blockType)) return true;
+
+  const targets = [b.document_assembly_target, b.intended_section]
+    .map((v) => safeString(v).trim().toLowerCase())
+    .filter(Boolean);
+  if (targets.some((t) => TARGET_PHRASES[section].some((p) => t.includes(p)))) {
+    return true;
   }
 
-  const matched = proposalBlocks.find(matcher);
+  // Legacy fallback: block_key / title heuristics (pre-structured blocks).
+  const key = safeString(b.block_key || b.section_key).toLowerCase();
+  const title = safeString(b.title).toLowerCase();
+  switch (section) {
+    case "introduction":
+      return key === "introduction" || key === "intro" ||
+        title.includes("introduction") || title.includes("executive summary");
+    case "scope":
+      return key === "scope" || key === "scope_of_services" ||
+        title.includes("scope of service") || title.includes("scope of work");
+    case "closing":
+      return key === "closing" || key === "closing_note" || key === "conclusion" ||
+        title.includes("closing") || title.includes("next steps") || title.includes("conclusion");
+    case "annexure_config":
+      return key.includes("annexure") || key.includes("config") ||
+        title.includes("service configuration") || title.includes("annexure a");
+    case "communication_matrix":
+      return key.includes("communication") || key.includes("escalation") ||
+        title.includes("communication matrix") || title.includes("escalation");
+  }
+}
+
+function draftedProposalBlocks(td: Record<string, any>): any[] {
+  const drafting = safeObject(td.tender_drafting);
+  return Array.isArray(drafting.proposal_blocks) ? drafting.proposal_blocks : [];
+}
+
+/** The drafted block a narrative slot consumes (first structured/heuristic match). */
+export function matchDraftedBlock(td: Record<string, any>, section: NarrativeSection): any | undefined {
+  return draftedProposalBlocks(td).find((b) => sectionMatchesBlock(section, b));
+}
+
+/**
+ * PDS-06 — content-bearing drafted blocks that NO narrative slot consumes.
+ * These previously vanished from the pack silently (Operating Model,
+ * Implementation Plan, Manpower, Risk, …). The loader now ingests them as
+ * additional sections and says so in the warnings.
+ */
+export function collectUnmatchedDraftedSections(
+  td: Record<string, any>,
+): Array<{ id: string; title: string; html: string }> {
+  const blocks = draftedProposalBlocks(td);
+  const consumed = new Set<any>();
+  for (const section of NARRATIVE_SECTIONS) {
+    const matched = blocks.find((b) => sectionMatchesBlock(section, b));
+    if (matched) consumed.add(matched);
+  }
+  const extras: Array<{ id: string; title: string; html: string }> = [];
+  for (const block of blocks) {
+    if (consumed.has(block)) continue;
+    const html = extractProposalContent(block);
+    if (!html) continue;
+    extras.push({
+      id: safeString(block.id) || `drafted-${extras.length + 1}`,
+      title: safeString(block.title) || safeString(block.block_type) || "Drafted section",
+      html,
+    });
+  }
+  return extras;
+}
+
+function resolveNarrative(
+  td: Record<string, any>,
+  section: NarrativeSection,
+): BlockContent {
+  const matched = matchDraftedBlock(td, section);
   if (!matched) {
     return { html: undefined, source_status: "not_captured" };
   }
@@ -775,7 +925,17 @@ function resolveNarrative(
 
 function resolveScopeTable(td: Record<string, any>): BlockContent {
   const sowData = safeObject(td.sow_data);
-  const scopeItems = sowData.scope_items || sowData.deliverables || [];
+  // PDS-21: the old reader looked ONLY for `scope_items` / `deliverables`,
+  // which no writer produces — a dead mapping that kept this block empty
+  // forever. The real captured scope lives in `sow_data.service_lines`
+  // (SOW capture); the legacy keys are still honored first for any
+  // historical rows that carry them.
+  const legacyItems = sowData.scope_items || sowData.deliverables;
+  const scopeItems = Array.isArray(legacyItems) && legacyItems.length > 0
+    ? legacyItems
+    : Array.isArray(sowData.service_lines)
+      ? sowData.service_lines
+      : [];
 
   if (!Array.isArray(scopeItems) || scopeItems.length === 0) {
     return { html: undefined, source_status: "not_captured" };
@@ -812,7 +972,7 @@ function resolveFacilityGallery(
 function resolvePricing(
   td: Record<string, any>,
   scenarioId: string | undefined,
-  format: "single" | "multi" | "bilingual_vat" | "rate_card",
+  format: "single" | "multi" | "bilingual_vat",
   warnings: string[],
 ): BlockContent {
   const pricingData = safeObject(td.pricing);
@@ -839,19 +999,17 @@ function resolvePricing(
     const match = selectedId ? rows.find((r: any) => r.id === selectedId) : null;
     selectedRows = match ? [match] : rows.slice(0, 1);
   } else {
-    // Multi / bilingual / rate card — show all scenarios
+    // Multi / bilingual — show all scenarios
     selectedRows = rows;
   }
 
+  // PDS-01: customer-facing projection ONLY. Internal cost / GP% /
+  // recommendation / internal notes never leave this function.
   const pricingRows: PricingOutputRow[] = selectedRows.map((r: any) => ({
     id: safeString(r.id),
     scenario_name: safeString(r.scenario_name) || "Not captured yet",
     scenario_type: safeString(r.scenario_type) || "Not captured yet",
-    revenue: safeString(r.revenue) || "Not captured yet",
-    cost: safeString(r.cost) || "Not captured yet",
-    gp_percent: safeString(r.gp_percent) || "Not captured yet",
-    recommended: safeString(r.recommended) || "Not Assessed",
-    notes: safeString(r.notes) || "",
+    revenue: formatRecordedRevenue(safeString(r.revenue)),
   }));
 
   return { pricing_rows: pricingRows, source_status: "populated" };
@@ -885,8 +1043,25 @@ function resolveTotals(
     scenario = selectedId ? rows.find((r: any) => r.id === selectedId) || rows[0] : rows[0];
   }
 
+  // PDS-09: locale-tolerant parse. parseFloat("1,200,000") === 1 silently
+  // exported "SAR 1.00 / One Saudi Riyals" — a wrong number in a customer
+  // document. Unparsable recorded revenue is now an HONEST state, never a
+  // fabricated total.
   const revenue = safeString(scenario.revenue);
-  const amount = parseFloat(revenue) || 0;
+  const amount = parseRecordedRevenue(revenue);
+
+  if (amount === null) {
+    return {
+      variables: {
+        total_amount: revenue.trim()
+          ? `Recorded revenue "${revenue.trim()}" is not a clean number — review the pricing scenario`
+          : "Not captured yet",
+        total_in_words: "Not available",
+        currency: "SAR",
+      },
+      source_status: "not_captured",
+    };
+  }
 
   return {
     variables: {
@@ -953,16 +1128,39 @@ function resolveSlaMatrix(
       ? slaData.kpis
       : [];
 
-  if (kpis.length === 0) {
-    warnings.push("No SLA/KPI data found in tender solution design");
+  // PDS-04: the SLA writer (SLAKPIModelTab) records `kpi_name` and
+  // `measurement_method`, and rows carry `include_in_proposal`. The old
+  // reader looked for `kpi` / `measurement` / a per-row `penalty` that no
+  // writer produces — a dead data contract that rendered "Not captured yet"
+  // over fully captured KPIs. Read the REAL field names (legacy aliases kept),
+  // honor include_in_proposal, and source penalty honestly from the recorded
+  // governance penalty linkage instead of pretending a per-row field exists.
+  const included = kpis.filter(
+    (kpi: any) => safeString(kpi.include_in_proposal) !== "No",
+  );
+
+  if (included.length === 0) {
+    warnings.push(
+      kpis.length === 0
+        ? "No SLA/KPI data found in tender solution design"
+        : "All captured SLA KPIs are marked exclude-from-proposal",
+    );
     return { sla_rows: [], source_status: "not_captured" };
   }
 
-  const slaRows: SlaOutputRow[] = kpis.map((kpi: any) => ({
-    kpi: safeString(kpi.kpi || kpi.name) || "Not captured yet",
+  const governance = safeObject(slaData.governance);
+  const penaltyLinkage = safeString(governance.penalty_linkage);
+  const governancePenalty =
+    penaltyLinkage && penaltyLinkage !== "Not Assessed"
+      ? `Per governance penalty linkage: ${penaltyLinkage}`
+      : "Not captured yet";
+
+  const slaRows: SlaOutputRow[] = included.map((kpi: any) => ({
+    kpi: safeString(kpi.kpi_name || kpi.kpi || kpi.name) || "Not captured yet",
     target: safeString(kpi.target) || "Not captured yet",
-    measurement: safeString(kpi.measurement) || "Not captured yet",
-    penalty: safeString(kpi.penalty) || "Not captured yet",
+    measurement:
+      safeString(kpi.measurement_method || kpi.measurement) || "Not captured yet",
+    penalty: safeString(kpi.penalty) || governancePenalty,
   }));
 
   return { sla_rows: slaRows, source_status: "populated" };
@@ -971,6 +1169,81 @@ function resolveSlaMatrix(
 // ═══════════════════════════════════════════════════════════
 // Utilities
 // ═══════════════════════════════════════════════════════════
+
+/**
+ * PADW T06a (PDS-07) — render the recorded commercial terms that are flagged
+ * for the proposal into one HTML section. STRICT opt-in: repeated rows render
+ * only when include_in_proposal === "Yes". Scalar payment/VAT/validity facts
+ * render when captured. Returns undefined when nothing qualifies — the pack
+ * simply has no Commercial Terms section (honest absence, never boilerplate).
+ */
+export function buildCommercialTermsSectionHtml(td: Record<string, any>): string | undefined {
+  const terms = safeObject(safeObject(td.pricing).commercial_terms);
+  const esc = (v: unknown): string =>
+    safeString(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const parts: string[] = [];
+
+  const ptv = safeObject(terms.payment_tax_validity);
+  const scalarRows: Array<[string, string]> = [
+    ["Payment terms", safeString(ptv.payment_terms)],
+    ["VAT treatment", safeString(ptv.vat_treatment)],
+    ["VAT %", safeString(ptv.vat_percent)],
+    ["Proposal validity", safeString(ptv.proposal_validity)],
+    ["Contract term", safeString(ptv.contract_term)],
+    ["Extension option", safeString(ptv.extension_option)],
+  ].filter(([, value]) => value.trim() && value !== "Not Assessed") as Array<[string, string]>;
+  if (scalarRows.length > 0) {
+    parts.push(
+      `<table><tbody>${scalarRows
+        .map(([label, value]) => `<tr><td><strong>${esc(label)}</strong></td><td>${esc(value)}</td></tr>`)
+        .join("")}</tbody></table>`,
+    );
+  }
+
+  const flagged = (rows: unknown): any[] =>
+    (Array.isArray(rows) ? rows : []).filter(
+      (row: any) => safeString(row?.include_in_proposal) === "Yes",
+    );
+
+  const surcharges = flagged(terms.surcharges);
+  if (surcharges.length > 0) {
+    parts.push(
+      `<h3>Surcharges</h3><table><thead><tr><th>Charge</th><th>Trigger</th><th>Rate</th><th>Applies to</th></tr></thead><tbody>${surcharges
+        .map((r: any) => `<tr><td>${esc(r.charge_type)}</td><td>${esc(r.trigger)}</td><td>${esc(r.rate_formula)}</td><td>${esc(r.applies_to)}</td></tr>`)
+        .join("")}</tbody></table>`,
+    );
+  }
+
+  const responsibilities = flagged(terms.customer_responsibilities);
+  if (responsibilities.length > 0) {
+    parts.push(
+      `<h3>Customer Responsibilities</h3><ul>${responsibilities
+        .map((r: any) => `<li>${esc(r.responsibility)}${safeString(r.applies_to).trim() ? ` — ${esc(r.applies_to)}` : ""}</li>`)
+        .join("")}</ul>`,
+    );
+  }
+
+  const exclusions = flagged(terms.exclusions);
+  if (exclusions.length > 0) {
+    parts.push(
+      `<h3>Exclusions</h3><ul>${exclusions
+        .map((r: any) => `<li>${esc(r.exclusion)}${safeString(r.reason).trim() ? ` — ${esc(r.reason)}` : ""}</li>`)
+        .join("")}</ul>`,
+    );
+  }
+
+  const assumptions = flagged(terms.assumptions);
+  if (assumptions.length > 0) {
+    parts.push(
+      `<h3>Assumptions</h3><ul>${assumptions
+        .map((r: any) => `<li>${esc(r.assumption)}${safeString(r.impact).trim() ? ` — ${esc(r.impact)}` : ""}</li>`)
+        .join("")}</ul>`,
+    );
+  }
+
+  if (parts.length === 0) return undefined;
+  return `<h2>Commercial Terms</h2>${parts.join("")}`;
+}
 
 /** Extract content from a proposal block using priority chain */
 function extractProposalContent(block: any): string | undefined {
@@ -1006,6 +1279,29 @@ function safeString(value: unknown): string {
   if (typeof value === "string") return value;
   if (value == null) return "";
   return String(value);
+}
+
+/**
+ * PADW T06a (PDS-09) — locale-tolerant parse of a human-recorded revenue
+ * string. Accepts thousands separators, spaces, and a leading/trailing
+ * "SAR" token. Returns null (never a wrong number) when the remainder is
+ * not one clean number.
+ */
+export function parseRecordedRevenue(raw: string): number | null {
+  const cleaned = raw
+    .replace(/sar/gi, "")
+    .replace(/[,\s ٬]/g, "")
+    .trim();
+  if (!cleaned || !/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
+  const amount = Number(cleaned);
+  return Number.isFinite(amount) ? amount : null;
+}
+
+/** Customer-facing revenue cell: formatted when parseable, verbatim otherwise. */
+function formatRecordedRevenue(raw: string): string {
+  if (!raw.trim()) return "Not captured yet";
+  const amount = parseRecordedRevenue(raw);
+  return amount === null ? raw.trim() : formatSAR(amount);
 }
 
 /** Format number as SAR currency */

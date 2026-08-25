@@ -69,11 +69,9 @@ export default function PricingEditor({ block, onContentChange }: PricingEditorP
               <tr className="border-b border-border">
                 <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Scenario</th>
                 <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Type</th>
+                {/* PADW T06a (PDS-01 seam): the output copy is customer-facing —
+                    internal Cost / GP % / Recommended / Notes columns removed. */}
                 <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground">Revenue</th>
-                <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground">Cost</th>
-                <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground">GP %</th>
-                <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground">Recommended</th>
-                <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Notes</th>
               </tr>
             </thead>
             <tbody>
@@ -87,18 +85,6 @@ export default function PricingEditor({ block, onContentChange }: PricingEditorP
                   </td>
                   <td className="px-1 py-1">
                     <EditableCell value={row.revenue} onChange={(v) => handleCellChange(i, "revenue", v)} align="right" />
-                  </td>
-                  <td className="px-1 py-1">
-                    <EditableCell value={row.cost} onChange={(v) => handleCellChange(i, "cost", v)} align="right" />
-                  </td>
-                  <td className="px-1 py-1">
-                    <EditableCell value={row.gp_percent} onChange={(v) => handleCellChange(i, "gp_percent", v)} align="right" />
-                  </td>
-                  <td className="px-1 py-1">
-                    <EditableCell value={row.recommended} onChange={(v) => handleCellChange(i, "recommended", v)} align="center" />
-                  </td>
-                  <td className="px-1 py-1">
-                    <EditableCell value={row.notes} onChange={(v) => handleCellChange(i, "notes", v)} />
                   </td>
                 </tr>
               ))}

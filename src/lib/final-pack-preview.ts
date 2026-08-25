@@ -398,19 +398,16 @@ function renderPricingTable(block: OutputBlock): string {
       <p class="fps-empty">No pricing data captured yet.</p>
     </div>`;
   }
+  // PADW T06a (PDS-01, seam with the loader's customer-facing projection):
+  // customer documents show customer pricing only — internal Cost / GP % /
+  // Recommended / Notes columns are gone from the rendered table.
   const thead = `<tr>
     <th>Scenario</th><th>Type</th><th class="num">Revenue</th>
-    <th class="num">Cost</th><th class="num">GP %</th>
-    <th>Recommended</th><th>Notes</th>
   </tr>`;
   const tbody = rows.map((r) => `<tr>
     <td>${escHtml(r.scenario_name)}</td>
     <td>${escHtml(r.scenario_type)}</td>
     <td class="num">${escHtml(r.revenue)}</td>
-    <td class="num">${escHtml(r.cost)}</td>
-    <td class="num">${escHtml(r.gp_percent)}</td>
-    <td>${escHtml(r.recommended)}</td>
-    <td>${escHtml(r.notes)}</td>
   </tr>`).join("");
   return `<div class="fps-section">
     <h2>${escHtml(block.display_name)}</h2>
