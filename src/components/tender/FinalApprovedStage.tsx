@@ -3,7 +3,7 @@
  *
  * 4 Tabs (each with Qualification-pattern section tabs):
  *  1. Submission Readiness — sections: Stage Checklist, Readiness Signals
- *  2. Final Pack — sections: Approval Check Bot, Final Pack Assembly, Block Register
+ *  2. Final Pack — sections: Final Pack Assembly, Block Register
  *  3. Submission Checklist — sections: Required Documents
  *  4. Approval Record — sections: Final Approval, Approval Context, Sign-off Log, Human Control
  *
@@ -11,7 +11,7 @@
  * Missing data shows "Not captured yet". NO guessing. NO hardcoded fake data.
  *
  * Old document-generation tooling is discontinued. Final Pack is readiness-only.
- * AI cannot approve, sign, override, export, or delete. Advisory only.
+ * Final approval is a recorded human decision. No bot is hardcoded into this stage.
  */
 import { useState, useMemo, useCallback, useEffect, type ReactNode } from "react";
 import { Link } from "wouter";
@@ -23,9 +23,9 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Shield, CheckCircle2, XCircle, AlertTriangle, FileText,
+  Shield, CheckCircle2, XCircle, FileText,
   Loader2, Layers, BarChart3, ClipboardCheck,
-  Clock, TrendingUp, Info, RefreshCw, Inbox,
+  Clock, TrendingUp, Info, Inbox,
 } from "lucide-react";
 import { toast } from "sonner";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
@@ -34,14 +34,10 @@ import {
   type TenderStageMetric,
   type TenderStageSectionTab,
 } from "./TenderStageTaskShell";
-// SC-01 Wave 02 boundary (deferred to Sprint X - SX-001/SX-011): AI generation is excluded.
-function generateAIUnavailable(): { content: string; tokensInput: number; tokensOutput: number } {
-  throw new Error("Final Approval AI check is not available in this build (deferred to Sprint X - SX-001/SX-011).");
-}
-import { supabase } from "@/lib/supabase";
-import { updateTenderDraftingData, updateTenderFinalApprovedData } from "@/lib/supabase-tender-actions";
+import { updateTenderFinalApprovedData } from "@/lib/supabase-tender-actions";
 import { getCurrentUser } from "@/lib/auth-state";
 import { normalizeSubmissionReadinessFacet } from "@/lib/tender-source-record";
+import { hasPricingData, normalizeTenderPricingData } from "@/lib/tender-pricing-types";
 import { countByStatus, DEPARTMENT_LABELS, DEPARTMENT_VOLUMES, type ReviewDepartment } from "@/lib/internal-review-types";
 import { reportSaveOutcome, saveTenderSectionWithOutcome, wsRevisionToken } from "./tender-save-outcome";
 
@@ -215,6 +211,14 @@ interface FinalApprovalRecord {
   notes: string;
 }
 
+function toLocalDateTimeInput(value: unknown): string {
+  if (typeof value !== "string" || !value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value.slice(0, 16);
+  const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
 /**
  * P4 (F2) — pure payload builder for the final approval record, exported for
  * the actor-truth test: `recorded_by` is exactly the SESSION user name passed
@@ -274,10 +278,10 @@ function deriveStageChecklist(t: any, ws: TenderWorkspace): StageCheck[] {
     detail: hasSd ? `${sdModels} model${sdModels !== 1 ? "s" : ""} populated` : "Not captured yet",
   });
 
-  const pricing = t.pricingData;
-  const scenarios = Array.isArray(pricing?.scenarios) ? pricing.scenarios : [];
-  const hasPricing = scenarios.length > 0 || !!(pricing?.summary);
-  const gpVal = pricing?.summary?.lowest_gp_percent ?? t.targetGpPercent;
+  const pricing = normalizeTenderPricingData(t.pricingData);
+  const scenarios = pricing.scenarios.rows;
+  const hasPricing = hasPricingData(t.pricingData);
+  const gpVal = pricing.scenarios.summary.lowest_gp_percent || t.targetGpPercent;
   checks.push({
     stage: "pnl_pricing", label: "P&L / Pricing", complete: hasPricing,
     detail: hasPricing
@@ -464,27 +468,13 @@ function SubmissionReadinessTab({ ws, intelMetrics, onOpenDocuments, onOpenGloba
 // TAB 2: FINAL PACK
 // ═══════════════════════════════════════════════════════════
 
-type PackSection = "bot_check" | "assembly_readiness" | "block_register";
+type PackSection = "assembly_readiness" | "block_register";
 const PACK_SECTIONS: { key: PackSection; label: string; icon: ReactNode }[] = [
-  { key: "bot_check", label: "Approval Check Bot", icon: <Shield className="w-3.5 h-3.5" /> },
   { key: "assembly_readiness", label: "Final Pack Assembly", icon: <FileText className="w-3.5 h-3.5" /> },
   { key: "block_register", label: "Block Register", icon: <Layers className="w-3.5 h-3.5" /> },
 ];
 
-function sanitizeDiscontinuedOutputRefs(value: any): any {
-  if (typeof value === "string") {
-    return value
-      .replace(/PDF\s*Studio/gi, "final document assembly")
-      .replace(/export(?:ing|ed)?\s+to\s+final document assembly/gi, "preparing the final pack");
-  }
-  if (Array.isArray(value)) return value.map(sanitizeDiscontinuedOutputRefs);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, val]) => [key, sanitizeDiscontinuedOutputRefs(val)]));
-  }
-  return value;
-}
-
-function FinalPackTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalIntel }: { ws: TenderWorkspace; reload: () => void; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void }) {
+function FinalPackTab({ ws, intelMetrics, onOpenDocuments, onOpenGlobalIntel }: { ws: TenderWorkspace; intelMetrics: { label: string; value: string }[]; onOpenDocuments?: () => void; onOpenGlobalIntel?: () => void }) {
   const t = ws.tender as any;
   const tenderId = t.id;
   const td = t.tenderDraftingData ?? {};
@@ -500,128 +490,13 @@ function FinalPackTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalI
     approved: blocks.filter((b: any) => b.approval_status === "Approved" || b.approval_status === "Locked").length,
   }), [blocks]);
 
-  const botResult = useMemo(() => td.final_approval_check ?? null, [td.final_approval_check]);
-  const botReadyForAssembly = botResult?.status === "READY_FOR_SUBMISSION" || botResult?.ready_for_final_pack === true;
-  const assemblyReady = botReadyForAssembly && counts.total > 0 && counts.approved > 0;
-  const [running, setRunning] = useState(false);
+  const approvalRecord = tenderDetails(t)?.final_approved?.approval_record ?? {};
+  const allBlocksApproved = counts.total > 0 && counts.approved === counts.total;
+  const humanApproved = approvalRecord.decision === "approved";
+  const assemblyReady = allBlocksApproved && humanApproved;
 
-  const [activeSection, setActiveSection] = useState<PackSection>("bot_check");
+  const [activeSection, setActiveSection] = useState<PackSection>("assembly_readiness");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
-
-  // Run the Final Approval Check Bot
-  const runFinalCheck = useCallback(async () => {
-    setRunning(true);
-    try {
-      const pricing = t.pricingData ?? {};
-      const scenarios = Array.isArray(pricing?.scenarios) ? pricing.scenarios : [];
-      const gps = scenarios.map((s: any) => Number(s.gp_percent)).filter((n: number) => !isNaN(n));
-      const matrix = approvalMatrixFor(t);
-      const matrixApprovals: any[] = Array.isArray(matrix.approvals) ? matrix.approvals : [];
-
-      // TCW-T4 (P6): review facts derive from the per-block review fields the
-      // app actually writes (quality_scores / ai_flags / <dept>_status) — the
-      // `departmental_reviews` facet read here previously has no writer.
-      const reviewProgress = deriveDepartmentalReviewProgress(blocks);
-      const deptScoreOf = (b: any, dept: ReviewDepartment): number | null => {
-        const score = b?.quality_scores?.[dept]?.score;
-        return typeof score === "number" ? score : null;
-      };
-
-      const blockScores = blocks.map((b: any) => ({
-        id: b.id, title: b.title || "Untitled", volume: b.volume || "—",
-        section_number: b.section_number || "—", approval_status: b.approval_status || "Draft",
-        draft_status: b.draft_status || "Not Ready",
-        quality_score_ops: deptScoreOf(b, "ops"),
-        quality_score_finance: deptScoreOf(b, "finance"),
-        quality_score_legal: deptScoreOf(b, "legal"),
-      }));
-
-      const countFlags = (dept: ReviewDepartment, severity: string) =>
-        blocks.reduce((sum: number, b: any) => {
-          const flags = Array.isArray(b?.ai_flags) ? b.ai_flags : [];
-          return sum + flags.filter((f: any) => f?.department === dept && f?.severity === severity).length;
-        }, 0);
-
-      const deptAverage = (dept: ReviewDepartment): number | null => {
-        const scores = blocks
-          .map((b: any) => deptScoreOf(b, dept))
-          .filter((n: number | null): n is number => n !== null);
-        return scores.length > 0 ? Math.round(scores.reduce((s: number, n: number) => s + n, 0) / scores.length) : null;
-      };
-      const deptFullyReviewed = (dept: ReviewDepartment) => reviewProgress.fullyReviewed.includes(dept);
-
-      const payload = {
-        tender_identity: {
-          id: t.id, title: t.title || "Untitled", customer_name: t.customerName || "Unknown",
-          estimated_value: t.estimatedValue || 0, target_gp_percent: t.targetGpPercent || null,
-          submission_deadline: t.submissionDeadline || null, region: t.region || "Unknown", source: t.source || "Unknown",
-        },
-        stage_completion: {
-          qualification: { sow_qualification: !!t.sowQualificationData, technical_qualification: !!t.technicalQualificationData, customer_fit: !!t.customerFitData, risk_snapshot: !!t.riskSnapshotData },
-          bid_no_bid: { decision: t.bidNoBidData?.decision?.decision || t.bidNoBidData?.decision || "Not Decided", decision_owner: t.bidNoBidData?.decision?.decided_by || "", win_strategy_exists: !!t.bidNoBidData?.win_strategy, resource_commitment_exists: !!t.bidNoBidData?.resource_commitment },
-          solution_design: { configuration: !!t.solutionDesignData?.configuration, hop: !!t.solutionDesignData?.hop, ham: !!t.solutionDesignData?.ham, hip: !!t.solutionDesignData?.hip, scope_matrix: !!t.solutionDesignData?.scope_matrix, sla_kpi: !!t.solutionDesignData?.sla_kpi, assumptions: !!t.solutionDesignData?.assumptions },
-          pnl_pricing: { scenarios_count: scenarios.length, gp_percent_lowest: gps.length > 0 ? Math.min(...gps) : null, gp_percent_highest: gps.length > 0 ? Math.max(...gps) : null, target_gp_percent: t.targetGpPercent || null, variance: gps.length > 0 && t.targetGpPercent ? Math.min(...gps) - t.targetGpPercent : null },
-          tender_drafting: { blocks_total: blocks.length, blocks_approved: counts.approved, blocks_rejected: blocks.filter((b: any) => b.approval_status === "Rejected").length, blocks_pending: blocks.filter((b: any) => !b.approval_status || b.approval_status === "Draft" || b.approval_status === "Pending").length, volumes_covered: [...new Set(blocks.map((b: any) => b.volume).filter(Boolean))] },
-          internal_review: {
-            ops_review: { fully_reviewed: deptFullyReviewed("ops"), quality_score: deptAverage("ops"), high_flags: countFlags("ops", "high"), medium_flags: countFlags("ops", "medium"), low_flags: countFlags("ops", "low") },
-            finance_review: { fully_reviewed: deptFullyReviewed("finance"), quality_score: deptAverage("finance"), high_flags: countFlags("finance", "high"), medium_flags: countFlags("finance", "medium"), low_flags: countFlags("finance", "low") },
-            legal_review: { fully_reviewed: deptFullyReviewed("legal"), quality_score: deptAverage("legal"), high_flags: countFlags("legal", "high"), medium_flags: countFlags("legal", "medium"), low_flags: countFlags("legal", "low") },
-          },
-          approval_matrix: { required_approvers: matrixApprovals.length, approved_count: matrixApprovals.filter((a: any) => a.decision === "approved").length, rejected_count: matrixApprovals.filter((a: any) => a.decision === "rejected").length, pending_count: matrixApprovals.filter((a: any) => a.decision === "pending").length, all_approved: matrixApprovals.length > 0 && matrixApprovals.every((a: any) => a.decision === "approved") },
-        },
-        compliance: { total_items: ws.complianceItems.length, compliant: ws.complianceItems.filter(c => c.status === "compliant").length, non_compliant: ws.complianceItems.filter(c => c.status === "non_compliant").length, partial: ws.complianceItems.filter(c => c.status === "partial").length, clarification_required: ws.complianceItems.filter(c => c.status === "clarification_required").length },
-        // TCW-T4 (F4): denominator is the RECORDED requirement register, never
-        // a hardcoded list; missing_count can no longer go negative.
-        documents: (() => {
-          const checklist = buildSubmissionChecklist(readRequiredDocumentsRegister(tenderDetails(t)), ws.documents);
-          return {
-            total_uploaded: ws.documents.filter(doc => doc.document_category !== "Archived").length,
-            requirement_set_recorded: checklist.recorded,
-            required_count: checklist.required,
-            missing_count: checklist.missing,
-          };
-        })(),
-        proposal_blocks: blockScores,
-        departmental_flags_summary: { high_severity_total: countFlags("ops", "high") + countFlags("finance", "high") + countFlags("legal", "high"), medium_severity_total: countFlags("ops", "medium") + countFlags("finance", "medium") + countFlags("legal", "medium"), unresolved_discrepancies: 0, blocks_below_60_score: blockScores.filter(b => (b.quality_score_ops !== null && b.quality_score_ops < 60) || (b.quality_score_finance !== null && b.quality_score_finance < 60) || (b.quality_score_legal !== null && b.quality_score_legal < 60)).length },
-      };
-
-      const { data: botRow, error: botErr } = await supabase.from("ai_bots").select("id, model, current_version_id").eq("id", "bot-final-approval").single();
-      if (botErr || !botRow) { toast.error("Final Approval Check bot not found. Please run the SQL seed first."); setRunning(false); return; }
-
-      const { data: versionRow, error: verErr } = await supabase.from("ai_bot_versions").select("system_instruction, custom_instruction, temperature, max_tokens").eq("id", botRow.current_version_id).single();
-      if (verErr || !versionRow) { toast.error("Final Approval Check bot version not found."); setRunning(false); return; }
-
-      const discontinuedOutputNotice = [
-        "IMPORTANT UPDATE: the previous document-output engine is discontinued.",
-        "Assess final pack readiness only.",
-        "Do not mention old document tools, external exports, or transfer gates.",
-        "If the tender is ready, return ready_for_final_pack = true.",
-      ].join(" ");
-
-      const aiResponse = generateAIUnavailable();
-
-      let result: any;
-      try { result = typeof aiResponse.content === "string" ? JSON.parse(aiResponse.content) : aiResponse.content; }
-      catch { result = { final_readiness_score: 0, status: "NOT_READY", status_reason: "Bot response could not be parsed.", ready_for_final_pack: false, stage_checklist: [], critical_issues: [], warnings: [], strengths: [], advice: "Please try running the check again." }; }
-
-      const sanitizedResult = sanitizeDiscontinuedOutputRefs(result);
-      const legacyExportKey = ["can", "export", "to", "pdf", "studio"].join("_");
-      delete sanitizedResult[legacyExportKey];
-      sanitizedResult.ready_for_final_pack = sanitizedResult.status === "READY_FOR_SUBMISSION" || sanitizedResult.ready_for_final_pack === true;
-
-      // P4 (F2): the recorded runner is the SESSION user (auth-state mirror),
-      // never the literal "Current User".
-      const saveResult = await updateTenderDraftingData(
-        tenderId,
-        "final_approval_check",
-        { ...sanitizedResult, ran_at: new Date().toISOString(), ran_by: getCurrentUser().name },
-        "Advisory final approval check saved",
-        wsRevisionToken(ws),
-      );
-      if (reportSaveOutcome(saveResult, `Final Approval Check: ${sanitizedResult.status || "Complete"}`)) reload();
-    } catch (err: any) { toast.error(err.message || "Final Approval Check failed."); }
-    setRunning(false);
-  }, [t, ws, blocks, counts, td, tenderId, reload]);
 
   const statusColor = (s: string) => {
     if (s === "Approved" || s === "Locked") return "border-emerald-300 text-emerald-700 bg-emerald-50";
@@ -631,76 +506,12 @@ function FinalPackTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalI
 
   return (
     <div className="space-y-4">
-      {/* TCW-T4 (B9): this tab holds no draft interval — the only write is the
-          immediate check-save above, so the rendered content is always the
-          stored content. "Saved" here states that in-sync fact. */}
+      {/* This tab is read-only and derives entirely from persisted tender data. */}
       <StageMenuHeader sections={PACK_SECTIONS} activeSection={activeSection} setActiveSection={setActiveSection}
         stageIntelOpen={stageIntelOpen} setStageIntelOpen={setStageIntelOpen} intelMetrics={intelMetrics}
         onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} saved={true} />
 
-      {/* ── 1. Approval Check Bot ── */}
-      <div className={activeSection !== "bot_check" ? "hidden" : "space-y-4"}>
-        <div className="flex items-start gap-2 text-[10px] text-muted-foreground bg-muted/30 rounded-lg border border-border px-3 py-2">
-          <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <span>Pack source blocks can be revised in Tender Drafting → Proposal Block Workbench.</span>
-        </div>
-        <Card className={`shadow-none ${botResult ? (botReadyForAssembly ? "border-emerald-300 bg-emerald-50/30" : botResult.status === "NEEDS_ATTENTION" ? "border-amber-300 bg-amber-50/30" : "border-red-300 bg-red-50/30") : "border-border"}`}>
-          <CardHeader className="py-3 px-4 bg-muted/20 border-b border-border">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Shield className="w-4 h-4 text-[var(--color-hala-navy)]" />
-                <span className="text-xs font-semibold">Final Approval Check Bot</span>
-                {botResult && <Badge variant="outline" className={`text-[8px] ${botReadyForAssembly ? "border-emerald-300 text-emerald-700 bg-emerald-50" : botResult.status === "NEEDS_ATTENTION" ? "border-amber-300 text-amber-700 bg-amber-50" : "border-red-300 text-red-700 bg-red-50"}`}>{botResult.status?.replace(/_/g, " ") || "Unknown"}</Badge>}
-              </div>
-              <Button size="sm" className="h-8 text-[10px] gap-1.5" disabled={running} onClick={runFinalCheck}>
-                {running ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                {botResult ? "Re-run Check" : "Run Final Check"}
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="p-4">
-            {/* TCW-T4 honesty: the check itself is refused in this build; say so
-                up front instead of presenting a working control. */}
-            <div className="flex items-center gap-2 text-[10px] text-muted-foreground mb-2">
-              <Info className="w-3 h-3 shrink-0" />
-              <span>AI final approval check is not available in this build (Sprint X) — running it reports the refusal.</span>
-            </div>
-            {!botResult ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground"><Info className="w-3.5 h-3.5 shrink-0" /><span>No advisory check result is stored for this tender.</span></div>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <div className={`text-2xl font-bold font-mono ${botReadyForAssembly ? "text-emerald-600" : botResult.final_readiness_score >= 50 ? "text-amber-600" : "text-red-600"}`}>{botResult.final_readiness_score ?? 0}%</div>
-                  <div className="flex-1">
-                    <p className="text-xs font-semibold">{botResult.status_reason || "Assessment complete"}</p>
-                    {botResult.ran_at && <p className="text-[9px] text-muted-foreground">Last run: {new Date(botResult.ran_at).toLocaleString()}</p>}
-                  </div>
-                </div>
-                {botResult.advice && <div className="text-[10px] text-muted-foreground bg-muted/30 rounded-md border border-border p-2.5">{botResult.advice}</div>}
-                {Array.isArray(botResult.critical_issues) && botResult.critical_issues.length > 0 && (
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-semibold text-red-700">Critical Issues:</p>
-                    {botResult.critical_issues.map((issue: any, i: number) => (
-                      <div key={i} className="flex items-start gap-1.5 text-[10px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
-                        <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
-                        <div><span className="font-semibold">{issue.area}: </span><span>{issue.issue}</span>{issue.recommendation && <p className="text-red-600 mt-0.5">→ {issue.recommendation}</p>}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {Array.isArray(botResult.strengths) && botResult.strengths.length > 0 && (
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-semibold text-emerald-700">Strengths:</p>
-                    {botResult.strengths.map((s: string, i: number) => (<div key={i} className="flex items-center gap-1.5 text-[10px] text-emerald-700"><CheckCircle2 className="w-3 h-3 shrink-0" /><span>{s}</span></div>))}
-                  </div>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* ── 2. Final Pack Assembly Readiness ── */}
+      {/* ── 1. Final Pack Assembly Readiness ── */}
       <div className={activeSection !== "assembly_readiness" ? "hidden" : "space-y-4"}>
         <Card className={`shadow-none ${assemblyReady ? "border-emerald-300 bg-emerald-50/20" : "border-border"}`}>
           <CardHeader className="py-3 px-4 bg-muted/20 border-b border-border">
@@ -713,10 +524,9 @@ function FinalPackTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalI
           <CardContent className="p-4 space-y-3">
             <div className="space-y-1.5">
               {[
-                { label: "Final Approval Check Bot run", met: !!botResult },
-                { label: "Bot status: READY_FOR_SUBMISSION", met: botReadyForAssembly },
                 { label: "Proposal blocks drafted", met: counts.total > 0 },
-                { label: "At least 1 block approved", met: counts.approved > 0 },
+                { label: "All proposal blocks approved", met: allBlocksApproved },
+                { label: "Final human approval recorded", met: humanApproved },
               ].map((c, i) => (
                 <div key={i} className="flex items-center gap-2 text-[10px]">
                   {c.met ? <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" /> : <XCircle className="w-3 h-3 text-slate-400 shrink-0" />}
@@ -742,7 +552,7 @@ function FinalPackTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGlobalI
         </div>
       </div>
 
-      {/* ── 3. Block Register ── */}
+      {/* ── 2. Block Register ── */}
       <div className={activeSection !== "block_register" ? "hidden" : ""}>
         <Card className="border-border shadow-none">
           <CardHeader className="py-2 px-4 bg-muted/20 border-b border-border">
@@ -913,7 +723,7 @@ function ApprovalRecordTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGl
     return {
       decision: record.decision === "approved" || record.decision === "not_approved" ? record.decision : "pending",
       approved_by: record.approved_by || "",
-      approved_at: typeof record.approved_at === "string" ? record.approved_at.slice(0, 16) : "",
+      approved_at: toLocalDateTimeInput(record.approved_at),
       reference: record.reference || "",
       notes: record.notes || "",
     };
@@ -994,7 +804,17 @@ function ApprovalRecordTab({ ws, reload, intelMetrics, onOpenDocuments, onOpenGl
           </label>
           <label className="space-y-1.5 text-xs font-medium">
             <span>Reference</span>
-            <Input value={record.reference} onChange={(event) => setRecord((current) => ({ ...current, reference: event.target.value }))} placeholder="Email, meeting, or document reference" />
+            <Textarea
+              data-testid="final-approval-reference"
+              rows={1}
+              className="h-9 min-h-9 resize-none py-2"
+              value={record.reference}
+              onChange={(event) => {
+                const reference = event.target.value;
+                setRecord((current) => ({ ...current, reference }));
+              }}
+              placeholder="Email, meeting, or document reference"
+            />
           </label>
           <label className="space-y-1.5 text-xs font-medium md:col-span-2">
             <span>Notes</span>
@@ -1093,16 +913,17 @@ export default function FinalApprovedStage({ ws, activeTab, reload, onOpenDocume
   const checks = deriveStageChecklist(t, ws);
   const completedCount = checks.filter(c => c.complete).length;
   const pct = checks.length > 0 ? Math.round((completedCount / checks.length) * 100) : 0;
-  const botResult = td.final_approval_check ?? null;
   const blocks: any[] = Array.isArray(td.proposal_blocks) ? td.proposal_blocks : [];
+  const approvedBlocks = blocks.filter((b: any) => b.approval_status === "Approved" || b.approval_status === "Locked").length;
+  const humanApproved = tenderDetails(t)?.final_approved?.approval_record?.decision === "approved";
 
   // TCW-T4 (B17): the documents metric measures against the RECORDED
   // requirement register only; with no register there is no denominator.
   const docChecklist = buildSubmissionChecklist(readRequiredDocumentsRegister(tenderDetails(t)), ws.documents);
   const intelMetrics = [
     { label: "Stage Readiness", value: `${pct}% (${completedCount}/${checks.length} stages)` },
-    { label: "Bot Check", value: botResult ? (botResult.status || "Run") : "Not run" },
-    { label: "Blocks", value: `${blocks.length} total, ${blocks.filter((b: any) => b.approval_status === "Approved" || b.approval_status === "Locked").length} approved` },
+    { label: "Final Approval", value: humanApproved ? "Approved" : "Not approved" },
+    { label: "Blocks", value: `${blocks.length} total, ${approvedBlocks} approved` },
     {
       label: "Required Documents",
       value: docChecklist.recorded
@@ -1112,7 +933,7 @@ export default function FinalApprovedStage({ ws, activeTab, reload, onOpenDocume
   ];
 
   if (activeTab === "submission_readiness") return <SubmissionReadinessTab ws={ws} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} />;
-  if (activeTab === "final_pack") return <FinalPackTab ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} />;
+  if (activeTab === "final_pack") return <FinalPackTab ws={ws} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} />;
   if (activeTab === "submission_checklist") return <SubmissionChecklistTab ws={ws} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} />;
   if (activeTab === "approval_record") return <ApprovalRecordTab ws={ws} reload={reload} intelMetrics={intelMetrics} onOpenDocuments={onOpenDocuments} onOpenGlobalIntel={onOpenGlobalIntel} />;
 

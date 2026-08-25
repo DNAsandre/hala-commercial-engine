@@ -111,7 +111,7 @@ export function tenderRevisionTokenOf(ws: unknown): string | undefined {
   return typeof token === "string" && token ? token : undefined;
 }
 
-/** A mutable one-shot flag owned by the component (useRef) — see runTenderTabSave. */
+/** A mutable one-shot flag owned by the component (useRef) - see runTenderTabSave. */
 export interface TenderStaleRetryFlag {
   current: boolean;
 }
@@ -124,8 +124,7 @@ export interface RunTenderTabSaveArgs {
   /**
    * One-shot informed-retry flag. After a stale refusal the user has been told
    * the tender changed; the NEXT attempt omits the stale UI token so the save
-   * layer's own fresh read supplies the revision ("reload between" semantics —
-   * ActionResult does not expose the new token). Patch-merge writers still send
+   * layer's own fresh read supplies the revision. Patch-merge writers still send
    * only this tab's keys, so sibling data is never clobbered by the retry.
    */
   staleRetryArmed?: TenderStaleRetryFlag;

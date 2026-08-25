@@ -52,9 +52,10 @@ export default function TenderSummaryTab({ ws, onOpenDocuments, onOpenGlobalInte
     ? Math.ceil((new Date(t.submissionDeadline).getTime() - Date.now()) / 86400000)
     : null;
   const criticalSignals = ws.packs.reduce((sum, p) => sum + (p.readinessBreakdown?.readiness_signals ?? 0), 0);
+  const signalEvidenceAvailable = ws.packs.some(p => typeof p.readinessBreakdown?.readiness_signals === "number");
   const deadlinePressure = daysLeft !== null && daysLeft <= 7;
   const targetGpPercent = t.targetGpPercent ?? 0;
-  const needsAttention = criticalSignals > 0 || deadlinePressure;
+  const needsAttention = signalEvidenceAvailable && (criticalSignals > 0 || deadlinePressure);
 
   const intelMetrics: IdentifiedStageMetric[] = [
     { label: "Tender Title", value: t.title || "Not captured" },
@@ -145,19 +146,20 @@ export default function TenderSummaryTab({ ws, onOpenDocuments, onOpenGlobalInte
       <IdentifiedSectionCard
         title="Advisory Readiness Signals"
         icon={<AlertCircle className="w-3.5 h-3.5 text-[#075eea]" />}
-        badge={needsAttention ? "Action Required" : "Stable"}
+        badge={!signalEvidenceAvailable ? "Not recorded" : needsAttention ? "Action Required" : "Stable"}
         hidden={activeSection !== "signals"}
       >
-        <div className={`rounded-lg border ${needsAttention ? "border-amber-200 bg-amber-50/20" : "border-emerald-200 bg-emerald-50/20"}`}>
+        <div className={`rounded-lg border ${!signalEvidenceAvailable ? "border-slate-200 bg-slate-50/30" : needsAttention ? "border-amber-200 bg-amber-50/20" : "border-emerald-200 bg-emerald-50/20"}`}>
           <CardContent className="p-4">
-            <h3 className={`mb-2 flex items-center gap-1.5 text-xs font-semibold ${needsAttention ? "text-amber-800" : "text-emerald-800"}`}>
+            <h3 className={`mb-2 flex items-center gap-1.5 text-xs font-semibold ${!signalEvidenceAvailable ? "text-slate-700" : needsAttention ? "text-amber-800" : "text-emerald-800"}`}>
               <AlertCircle className="h-4 w-4" />
               Advisory Readiness Signals
             </h3>
-            <ul className={`list-inside list-disc space-y-1 text-xs ${needsAttention ? "text-amber-700" : "text-emerald-700"}`}>
+            <ul className={`list-inside list-disc space-y-1 text-xs ${!signalEvidenceAvailable ? "text-slate-600" : needsAttention ? "text-amber-700" : "text-emerald-700"}`}>
+              {!signalEvidenceAvailable && <li className="list-none">No readiness-signal record exists for this tender yet. This panel does not infer a stable result.</li>}
               {criticalSignals > 0 && <li><strong>Signal Review Required:</strong> {criticalSignals} active readiness signals flagged for review in this workspace.</li>}
               {deadlinePressure && <li><strong>Deadline Pressure:</strong> Submission due in {daysLeft} days. Expedite qualification tasks.</li>}
-              {criticalSignals === 0 && !deadlinePressure && <li className="list-none">All initial intake indicators appear stable. No severe signals flagged.</li>}
+              {signalEvidenceAvailable && criticalSignals === 0 && !deadlinePressure && <li className="list-none">Recorded readiness signals show no severe item for review.</li>}
             </ul>
           </CardContent>
         </div>

@@ -183,8 +183,10 @@ export default function ComplianceCoverageTab({ ws, reload, onOpenDocuments, onO
                   <th className="px-2 py-2 text-left font-semibold">Requirement</th>
                   <th className="w-28 px-2 py-2 text-left font-semibold">Source Doc</th>
                   <th className="w-44 px-2 py-2 text-left font-semibold">Linked Block</th>
+                  <th className="w-40 px-2 py-2 text-left font-semibold">Linked Evidence</th>
                   <th className="w-28 px-2 py-2 text-left font-semibold">Status</th>
                   <th className="w-20 px-2 py-2 text-left font-semibold">Owner</th>
+                  <th className="w-44 px-2 py-2 text-left font-semibold">Notes</th>
                   <th className="w-8 px-2 py-2 text-center font-semibold">x</th>
                 </tr>
               </thead>
@@ -201,13 +203,23 @@ export default function ComplianceCoverageTab({ ws, reload, onOpenDocuments, onO
                       <Input className="h-6 bg-transparent p-0 text-[10px]" value={r.source_document} onChange={e => updateRow(r.id, { source_document: e.target.value })} placeholder="e.g. RFP" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <Select value={r.linked_block_id || UNLINKED_BLOCK_VALUE} onValueChange={v => updateRow(r.id, { linked_block_id: v === UNLINKED_BLOCK_VALUE ? "" : v })}>
-                        <SelectTrigger className="h-6 bg-transparent p-0 text-[10px]"><SelectValue placeholder="Link to block" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={UNLINKED_BLOCK_VALUE}>None</SelectItem>
-                          {blockOptions.map((bo: any) => <SelectItem key={bo.id} value={bo.id}>{bo.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
+                      <select
+                        aria-label={`Linked block for ${r.requirement_id || "requirement"}`}
+                        className="h-6 w-full border-0 bg-transparent p-0 text-[10px] outline-none"
+                        value={r.linked_block_id || UNLINKED_BLOCK_VALUE}
+                        onChange={e => updateRow(r.id, { linked_block_id: e.target.value === UNLINKED_BLOCK_VALUE ? "" : e.target.value })}
+                      >
+                        <option value={UNLINKED_BLOCK_VALUE}>None</option>
+                        {blockOptions.map((bo: any) => <option key={bo.id} value={bo.id}>{bo.label}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <Input
+                        className="h-6 bg-transparent p-0 text-[10px]"
+                        value={r.linked_appendix_or_document_id}
+                        onChange={e => updateRow(r.id, { linked_appendix_or_document_id: e.target.value })}
+                        placeholder="Document or appendix ID"
+                      />
                     </td>
                     <td className="px-2 py-1.5">
                       <Select value={r.status} onValueChange={v => updateRow(r.id, { status: v })}>
@@ -217,6 +229,14 @@ export default function ComplianceCoverageTab({ ws, reload, onOpenDocuments, onO
                     </td>
                     <td className="px-2 py-1.5">
                       <Input className="h-6 bg-transparent p-0 text-[10px]" value={r.owner} onChange={e => updateRow(r.id, { owner: e.target.value })} placeholder="-" />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <Input
+                        className="h-6 bg-transparent p-0 text-[10px]"
+                        value={r.notes}
+                        onChange={e => updateRow(r.id, { notes: e.target.value })}
+                        placeholder="Coverage notes"
+                      />
                     </td>
                     <td className="px-2 py-1.5 text-center">
                       <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => removeRow(r.id)}><Trash2 className="h-3 w-3 text-red-500" /></Button>

@@ -16,7 +16,10 @@ export function Section({
   return (
     <div className="border border-border rounded-lg mb-3 bg-background">
       <button
+        type="button"
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-label={`${title}: ${open ? "expanded" : "collapsed"}`}
         className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-muted/30 transition-colors rounded-t-lg"
       >
         <div className="flex items-center gap-2">
@@ -55,6 +58,11 @@ export function FieldInput({
       type={type}
       value={value}
       onChange={e => onChange(e.target.value)}
+      onBlur={e => {
+        if (String(value ?? "") !== e.currentTarget.value) {
+          onChange(e.currentTarget.value);
+        }
+      }}
       placeholder={placeholder}
       className={`w-full px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-[#075eea]/40 transition-colors ${className}`}
     />
@@ -71,6 +79,11 @@ export function FieldTextarea({
     <textarea
       value={value}
       onChange={e => onChange(e.target.value)}
+      onBlur={e => {
+        if (value !== e.currentTarget.value) {
+          onChange(e.currentTarget.value);
+        }
+      }}
       placeholder={placeholder}
       rows={rows}
       className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-[#075eea]/40 resize-none transition-colors"
@@ -130,8 +143,11 @@ export function FitSelector({ value, onChange }: { value: string; onChange: (v: 
     <div className="flex gap-1">
       {FIT_OPTIONS.map(o => (
         <button
+          type="button"
           key={o.value}
           onClick={() => onChange(value === o.value ? "" : o.value)}
+          aria-pressed={value === o.value}
+          aria-label={`Select fit ${o.label}`}
           className={`px-2.5 py-1 rounded text-[10px] font-medium transition-all border ${
             value === o.value
               ? o.value === "strong" ? "bg-emerald-100 border-emerald-300 text-emerald-700"

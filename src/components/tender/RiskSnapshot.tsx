@@ -379,6 +379,7 @@ export default function RiskSnapshot({ ws, onOpenDocuments, onOpenGlobalIntel, o
           setInitial(JSON.stringify(data));
           onSaved?.();
         },
+        onStale: () => onSaved?.(),
         // Stale: dirty stays true, so the resync effect keeps the user's entry.
       });
     } catch (e: any) {
@@ -659,7 +660,7 @@ export default function RiskSnapshot({ ws, onOpenDocuments, onOpenGlobalIntel, o
                   <div>
                     <label className="text-[9px] text-muted-foreground">Due Date</label>
                     <input type="date" className="w-full text-[10px] border border-border rounded px-2 py-0.5 bg-card"
-                      value={row.due_date} onChange={e => updateMitigation(idx, { due_date: e.target.value })} />
+                      value={row.due_date} onChange={e => updateMitigation(idx, { due_date: e.target.value })} onBlur={e => { const value = e.currentTarget.value; if (row.due_date !== value) updateMitigation(idx, { due_date: value }); }} />
                   </div>
                   <div>
                     <label className="text-[9px] text-muted-foreground">Status</label>

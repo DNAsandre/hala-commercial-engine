@@ -129,7 +129,11 @@ export default function TenderCustomerSnapshotTab({ ws, reload, onOpenDocuments,
   }, [t.assignedTeamMembers, t.assignedOwner, ownerDirty]);
 
   const toggleUser = useCallback((name: string) => {
-    setSelectedMembers(prev => prev.includes(name) ? prev.filter(user => user !== name) : [...prev, name]);
+    setSelectedMembers(prev => {
+      const removing = prev.includes(name);
+      if (removing) setSelectedOwner(owner => owner === name ? "" : owner);
+      return removing ? prev.filter(user => user !== name) : [...prev, name];
+    });
     setOwnerDirty(true);
   }, []);
 
@@ -172,11 +176,11 @@ export default function TenderCustomerSnapshotTab({ ws, reload, onOpenDocuments,
     sowData.scope_summary,
     Array.isArray(sowData.service_lines) && sowData.service_lines.length > 0 ? sowData.service_lines : null,
     sowData.warehousing,
-    Array.isArray(sowData.transport_lanes) && sowData.transport_lanes.length > 0 ? sowData.transport_lanes : null,
-    Array.isArray(sowData.technology) && sowData.technology.length > 0 ? sowData.technology : null,
+    Array.isArray(sowData.transport?.lanes) && sowData.transport.lanes.length > 0 ? sowData.transport.lanes : null,
+    sowData.technology && typeof sowData.technology === "object" && Object.values(sowData.technology).some(Boolean) ? sowData.technology : null,
     Array.isArray(sowData.sla_kpis) && sowData.sla_kpis.length > 0 ? sowData.sla_kpis : null,
     Array.isArray(sowData.sites) && sowData.sites.length > 0 ? sowData.sites : null,
-    Array.isArray(sowData.compliance) && sowData.compliance.length > 0 ? sowData.compliance : null,
+    sowData.compliance && typeof sowData.compliance === "object" && Object.values(sowData.compliance).some(Boolean) ? sowData.compliance : null,
     Array.isArray(sowData.clarifications) && sowData.clarifications.length > 0 ? sowData.clarifications : null,
     sowData.internal_notes,
   ];
@@ -316,14 +320,14 @@ export default function TenderCustomerSnapshotTab({ ws, reload, onOpenDocuments,
               </div>
               <div className="space-y-1.5">
                 <input
-                  type="range"
+                  type="number"
+                  aria-label="Initial Win Probability Percentage"
                   min={0}
                   max={100}
                   step={5}
                   value={probability}
                   onChange={handleProbChange}
-                  className="h-2 w-full cursor-pointer appearance-none rounded-full accent-[#075eea]"
-                  style={{ background: `linear-gradient(to right, ${probability >= 60 ? "#059669" : probability >= 30 ? "#d97706" : "#dc2626"} ${probability}%, #e2e8f0 ${probability}%)` }}
+                  className="w-28 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#075eea]/40"
                 />
                 <div className="flex justify-between font-mono text-[9px] text-muted-foreground/50">
                   <span>0%</span>
@@ -340,7 +344,7 @@ export default function TenderCustomerSnapshotTab({ ws, reload, onOpenDocuments,
                 </Button>
               )}
               <p className="text-[10px] text-muted-foreground">
-                Saved to <code className="rounded bg-muted px-1 font-mono text-[9px]">tenders.probability_percent</code>. Advisory only.
+                Saved to <code className="rounded bg-muted px-1 font-mono text-[9px]">commercial_tickets.probability_percent</code>. Advisory only.
               </p>
             </div>
           </div>

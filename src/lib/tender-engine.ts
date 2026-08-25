@@ -89,8 +89,8 @@ export interface Tender {
   status: TenderMilestone;
   /** CRM Pipeline stage — read from commercial_tickets.crm_pipeline_stage */
   crmPipelineStage: TenderMilestone;
-  source: TenderSource;
-  region: Region;
+  source: TenderSource | "";
+  region: Region | "";
   /** Tender Execution Scope — operational delivery geography (manual capture from RFQ/SOW) */
   executionRegions: string[];
   targetSites: { name: string; type: string }[];

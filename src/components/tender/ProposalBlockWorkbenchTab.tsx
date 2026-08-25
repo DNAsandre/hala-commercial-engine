@@ -5,7 +5,8 @@
  * Blocks are the proposal body. TOC is the spine.
  * Technical/Commercial Volumes are filtered views of this register.
  *
- * AI drafting is limited to current tender context. No mock data. No document handoff mutation.
+ * Manual drafting only. Configured bots may write through the separate Admin
+ * runtime, but this tracker owns no embedded bot selection or execution path.
  */
 import React, { useState, useMemo, useCallback, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -29,7 +30,6 @@ import TenderProposalEditorBlock, {
   normalizeEditorStage,
   TENDER_EDITOR_STAGE_CONFIG,
   type TenderProposalEditorStage,
-  type AIDraftAction,
 } from "./TenderProposalEditorBlock";
 import { generateBlockContent, getBlockBots } from "@/lib/ai-runs";
 import { normalizeTenderPricingData } from "@/lib/tender-pricing-types";
@@ -68,6 +68,8 @@ interface ProposalBlock {
   last_updated: string;
   created_at: string;
 }
+
+type AIDraftAction = "replace" | "append" | "insert_cursor" | "cancel";
 
 const BLOCK_TYPES = [
   "Executive Summary",
@@ -177,7 +179,7 @@ function normalizeProposalBlock(raw: any): ProposalBlock {
     draft_content: legacyContent || editorContent,
     editor_stage: stage,
     editor_content: editorContent,
-    is_canon_locked: raw?.is_canon_locked === true || stage === "canon",
+    is_canon_locked: false,
     ai_suggestions: (raw?.ai_suggestions && typeof raw.ai_suggestions === "object") ? raw.ai_suggestions : {},
     section_name: String(raw?.section_name || ""),
     internal_notes: String(raw?.internal_notes || ""),
@@ -215,7 +217,10 @@ function SourcePreview({ ws, block }: { ws: TenderWorkspace; block: ProposalBloc
   if (key.includes("executive")) {
     items.push(["Customer", t.customerName || "Not captured"]);
     items.push(["Tender", t.title || "Not captured"]);
-    items.push(["Win Themes", bnb.win_strategy?.key_themes || "Not captured"]);
+    const winThemes = Array.isArray(bnb.win_strategy?.win_themes)
+      ? bnb.win_strategy.win_themes.map((theme: any) => typeof theme === "string" ? theme : theme?.theme).filter(Boolean).join(", ")
+      : "";
+    items.push(["Win Themes", winThemes || "Not captured"]);
     items.push(["Solution Config", sd.configuration?.selected_modules || "Not captured"]);
   } else if (key.includes("scope") || key.includes("hop") || key.includes("ham") || key.includes("hip") || key.includes("module")) {
     items.push(["HOP", sd.hop ? "Captured" : "Not captured"]);
@@ -233,7 +238,7 @@ function SourcePreview({ ws, block }: { ws: TenderWorkspace; block: ProposalBloc
     items.push(["Assumptions", sd.assumptions_dependencies ? "Captured" : "Not captured"]);
   } else if (key.includes("risk")) {
     const risk = (t.riskSnapshotData ?? {}) as any;
-    const rows = Array.isArray(risk.risk_rows) ? risk.risk_rows : [];
+    const rows = Array.isArray(risk.register) ? risk.register : [];
     items.push(["Risk Rows", rows.length > 0 ? `${rows.length} risks` : "Not captured"]);
   }
 
@@ -357,7 +362,7 @@ export default function ProposalBlockWorkbenchTab({ ws, reload, onOpenDocuments,
     { label: "Total Blocks", value: String(blocks.length) },
     { label: "Approved", value: String(blocks.filter(b => b.approval_status === "Approved").length) },
     { label: "Drafted", value: String(blocks.filter(b => b.draft_status !== "Not Ready" && b.draft_status !== "Ready to Draft").length) },
-    { label: "Locked", value: String(blocks.filter(b => b.is_canon_locked).length) },
+    { label: "Final-labelled", value: String(blocks.filter(b => b.editor_stage === "canon").length) },
   ], [blocks]);
 
   // ── AI Context Builders (concise summaries, never raw dumps) ───
@@ -441,9 +446,11 @@ export default function ProposalBlockWorkbenchTab({ ws, reload, onOpenDocuments,
     // Resource commitment
     if (bnb.resource_commitment) {
       const rc = bnb.resource_commitment;
-      lines.push(`Bid Manager: ${rc.bid_manager || "Not assigned"}`);
-      lines.push(`Commercial Lead: ${rc.commercial_lead || "Not assigned"}`);
-      lines.push(`Operations Lead: ${rc.operations_lead || "Not assigned"}`);
+      const resourceRows = Array.isArray(rc.rows) ? rc.rows : [];
+      lines.push(`Resource Assessments: ${resourceRows.length}`);
+      resourceRows.forEach((row: any) => lines.push(`  - ${row.resource || "Resource"}: ${row.status || "Not assessed"}${row.owner ? ` — ${row.owner}` : ""}`));
+      if (rc.effort) lines.push(`Submission Readiness: ${rc.effort.can_submit_on_time || "Not assessed"}`);
+      if (Array.isArray(rc.actions)) lines.push(`Required Actions: ${rc.actions.length}`);
     }
     return lines.join("\n");
   }, [ws.tender]);
@@ -773,9 +780,9 @@ export default function ProposalBlockWorkbenchTab({ ws, reload, onOpenDocuments,
                       <Badge variant="outline" className={`text-[8px] shrink-0 ${statusColor(b.draft_status)}`}>{b.draft_status}</Badge>
                       <Badge variant="outline" className={`text-[8px] shrink-0 ${statusColor(b.approval_status)}`}>{b.approval_status}</Badge>
                       <div className="flex items-center gap-0.5 shrink-0 ml-1" onClick={e => e.stopPropagation()}>
-                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0" disabled={i === 0} onClick={() => moveBlock(b.id, -1)}><ArrowUp className="w-3 h-3" /></Button>
-                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0" disabled={i === sortedBlocks.length - 1} onClick={() => moveBlock(b.id, 1)}><ArrowDown className="w-3 h-3" /></Button>
-                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => removeBlock(b.id)}><Trash2 className="w-3 h-3 text-red-500" /></Button>
+                        <Button aria-label={`Move ${b.title || "block"} up`} size="sm" variant="ghost" className="h-6 w-6 p-0" disabled={i === 0} onClick={() => moveBlock(b.id, -1)}><ArrowUp className="w-3 h-3" /></Button>
+                        <Button aria-label={`Move ${b.title || "block"} down`} size="sm" variant="ghost" className="h-6 w-6 p-0" disabled={i === sortedBlocks.length - 1} onClick={() => moveBlock(b.id, 1)}><ArrowDown className="w-3 h-3" /></Button>
+                        <Button aria-label={`Remove ${b.title || "block"}`} size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => removeBlock(b.id)}><Trash2 className="w-3 h-3 text-red-500" /></Button>
                       </div>
                     </div>
 
@@ -792,10 +799,6 @@ export default function ProposalBlockWorkbenchTab({ ws, reload, onOpenDocuments,
                             saving={saving}
                             onChange={(patch) => updateBlock(b.id, patch)}
                             onRequestSave={handleSave}
-                            onAIGenerate={handleAIGenerate}
-                            aiGenerating={aiGeneratingBlockId === b.id}
-                            aiDraftContent={aiDrafts[b.id] || null}
-                            onAIDraftAction={(mode) => handleAIDraftAction(b.id, mode)}
                           />
 
                           {/* Compact Status Row */}
@@ -820,14 +823,6 @@ export default function ProposalBlockWorkbenchTab({ ws, reload, onOpenDocuments,
                             </div>
                           </div>
 
-                          {/* TCW-T4 (B8): no bot is connected in this build — the
-                              old "✓ Tender bot connected" claim was an
-                              unconditional literal over an always-refusing
-                              generator. State the honest status instead. */}
-                          <div className="flex items-center gap-2 pt-1 border-t border-border">
-                            <span className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wider">AI Drafting</span>
-                            <span className="text-[9px] text-muted-foreground">AI drafting is not available in this build (Sprint X) — drafting here is manual.</span>
-                          </div>
                         </div>
                       </div>
                     )}

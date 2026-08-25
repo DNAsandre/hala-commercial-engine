@@ -5,6 +5,9 @@ import * as React from "react";
 
 function Textarea({
   className,
+  value,
+  onChange,
+  onBlur,
   onKeyDown,
   onCompositionStart,
   onCompositionEnd,
@@ -59,6 +62,14 @@ function Textarea({
       onCompositionStart={handleCompositionStart}
       onCompositionEnd={handleCompositionEnd}
       onKeyDown={handleKeyDown}
+      value={value}
+      onChange={onChange}
+      onBlur={event => {
+        if (value !== undefined && String(value ?? "") !== event.currentTarget.value) {
+          onChange?.(event as React.ChangeEvent<HTMLTextAreaElement>);
+        }
+        onBlur?.(event);
+      }}
       {...props}
     />
   );

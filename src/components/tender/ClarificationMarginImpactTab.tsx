@@ -64,8 +64,8 @@ export default function ClarificationMarginImpactTab({ ws, reload, onDirtyChange
   }, [currentValue, currentGp, impactNotes, scopeChangeNotes, originalGp, tenderId, reload, ws, onDirtyChange]);
 
   const formatSar = (n: number) => n >= 1_000_000 ? `SAR ${(n / 1_000_000).toFixed(2)}M` : n >= 1_000 ? `SAR ${(n / 1_000).toFixed(0)}K` : `SAR ${n.toLocaleString()}`;
-  const gpBarColor = (gp: number) => gp >= 22 ? "bg-emerald-500" : gp >= 15 ? "bg-amber-500" : "bg-red-500";
-  const gpTextColor = (gp: number) => gp >= 22 ? "text-emerald-700" : gp >= 15 ? "text-amber-700" : "text-red-700";
+  const gpBarColor = (gp: number) => gp >= originalGp ? "bg-emerald-500" : gp > 0 ? "bg-amber-500" : "bg-slate-300";
+  const gpTextColor = (gp: number) => gp >= originalGp ? "text-emerald-700" : gp > 0 ? "text-amber-700" : "text-muted-foreground";
 
   return (
     <div className="space-y-4">

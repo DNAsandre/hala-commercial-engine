@@ -192,6 +192,7 @@ function makeFake(options: FakeOptions = {}) {
       revision,
       auditWritten: !options.auditWarning,
       ...(options.auditWarning ? { auditWarning: "audit insert refused (test)" } : {}),
+      storedData: stored,
     };
   };
 

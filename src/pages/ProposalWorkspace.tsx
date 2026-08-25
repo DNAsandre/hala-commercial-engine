@@ -251,6 +251,7 @@ export default function WorkspaceDetail() {
 
   // ── Internal Proposal Tracker stage (separate from CRM pipeline stage) ──
   const [proposalStage, setProposalStage] = useState(PROPOSAL_TRACKER_STAGES[0].key);
+  const [proposalWorkbenchDirty, setProposalWorkbenchDirty] = useState(false);
 
   // ── CRM Pipeline Stage (TOP tracker — completely independent from proposalStage) ──
   const [crmPipelineStage, setCrmPipelineStage] = useState<import("@/lib/store").CRMStage>("qualified");
@@ -552,6 +553,7 @@ export default function WorkspaceDetail() {
   const handleProposalStageChange = async (newStage: string) => {
     const oldStage = proposalStage;
     if (trackerSaving || newStage === oldStage || trackerHydration.state === "loading" || trackerHydration.state === "error") return;
+    if (proposalWorkbenchDirty && !window.confirm("This Proposal stage has unsaved changes. Select Cancel to stay and save them, or OK to leave the stage without saving.")) return;
     const ticketId = ws.crmDealId;
     if (!ticketId) {
       toast.error("Internal stage not saved", { description: "No commercial ticket is linked to this workspace." });
@@ -1036,6 +1038,7 @@ export default function WorkspaceDetail() {
             ticketRevision={trackerRevision}
             wsData={proposalWsData}
             onWsDataChange={updateProposalWsData}
+            onDirtyChange={setProposalWorkbenchDirty}
             onNavigateToComposer={() => navigate(cleanHref(`/proposals/${activeProposalIdentity?.proposalId ?? id}/final-pack`))}
           />
         )}

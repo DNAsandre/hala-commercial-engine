@@ -70,8 +70,8 @@ export default function NegotiationMarginTab({ ws, reload, onDirtyChange }: Prop
   }, [currentValue, currentGp, roundNumber, concessionsSummary, redLines, impactNotes, tenderId, reload, ws, onDirtyChange]);
 
   const formatSar = (n: number) => n >= 1_000_000 ? `SAR ${(n / 1_000_000).toFixed(2)}M` : n >= 1_000 ? `SAR ${(n / 1_000).toFixed(0)}K` : `SAR ${n.toLocaleString()}`;
-  const gpBarColor = (gp: number) => gp >= 22 ? "bg-emerald-500" : gp >= 15 ? "bg-amber-500" : "bg-red-500";
-  const gpTextColor = (gp: number) => gp >= 22 ? "text-emerald-700" : gp >= 15 ? "text-amber-700" : "text-red-700";
+  const gpBarColor = (gp: number) => gp >= originalGp ? "bg-emerald-500" : gp > 0 ? "bg-amber-500" : "bg-slate-300";
+  const gpTextColor = (gp: number) => gp >= originalGp ? "text-emerald-700" : gp > 0 ? "text-amber-700" : "text-muted-foreground";
 
   return (
     <div className="space-y-4">
@@ -146,10 +146,10 @@ export default function NegotiationMarginTab({ ws, reload, onDirtyChange }: Prop
             </div>
           </div>
 
-          {currentGp < 22 && currentGp > 0 && (
-            <div className={`mt-4 flex items-center gap-2 text-[10px] px-3 py-2 rounded-md border ${currentGp < 15 ? "bg-red-50 border-red-200 text-red-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
+          {currentGp < originalGp && currentGp > 0 && (
+            <div className="mt-4 flex items-center gap-2 text-[10px] px-3 py-2 rounded-md border bg-amber-50 border-amber-200 text-amber-700">
               <TrendingDown className="w-3 h-3 shrink-0" />
-              <span>{currentGp < 15 ? "GP is below minimum threshold (15%). Requires executive approval." : "GP is below target (22%). Review margin protection."}</span>
+              <span>Current GP is {(originalGp - currentGp).toFixed(1)} percentage points below the tender target of {originalGp.toFixed(1)}%. Review the recorded margin impact.</span>
             </div>
           )}
         </CardContent>

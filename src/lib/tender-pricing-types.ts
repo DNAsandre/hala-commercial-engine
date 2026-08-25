@@ -675,11 +675,45 @@ export function emptyTenderPricingData(): TenderPricingData {
 
 function normalizePnlSnapshot(raw: any): PnlSnapshotData {
   const base = emptyPnlSnapshot();
+  const snapshots = Array.isArray(raw?.snapshots)
+    ? raw.snapshots.filter((row: unknown) => row && typeof row === "object")
+    : [];
+  const activeSnapshot = snapshots.find((row: any) => row.id && row.id === raw?.active_snapshot_id)
+    ?? snapshots[snapshots.length - 1];
+  const summary = activeSnapshot?.summary && typeof activeSnapshot.summary === "object"
+    ? activeSnapshot.summary
+    : null;
+  const activeStatus: PnlSnapshotStatus | undefined = activeSnapshot
+    ? activeSnapshot.status === "Snapshot Created"
+      ? "Draft Snapshot"
+      : activeSnapshot.status === "Submitted for Pricing Approval"
+        ? "Submitted for Review"
+        : PNL_SNAPSHOT_STATUS_OPTIONS.includes(activeSnapshot.status)
+          ? activeSnapshot.status
+          : "Not Captured"
+    : undefined;
+
   return {
     ...base,
     ...raw,
-    snapshot_status: pickOption(raw?.snapshot_status, PNL_SNAPSHOT_STATUS_OPTIONS, base.snapshot_status),
-    calculator_source: pickOption(raw?.calculator_source, CALCULATOR_SOURCE_OPTIONS, base.calculator_source),
+    linked_pnl_record_id: asString(raw?.linked_pnl_record_id) || asString(activeSnapshot?.id),
+    snapshot_status: activeStatus
+      ?? pickOption(raw?.snapshot_status, PNL_SNAPSHOT_STATUS_OPTIONS, base.snapshot_status),
+    last_snapshot_date: asString(activeSnapshot?.created_at) || asString(raw?.last_snapshot_date),
+    last_updated_by: asString(activeSnapshot?.updated_by || activeSnapshot?.created_by) || asString(raw?.last_updated_by),
+    calculator_source: activeSnapshot
+      ? "Existing /pnl calculator"
+      : pickOption(raw?.calculator_source, CALCULATOR_SOURCE_OPTIONS, base.calculator_source),
+    monthly_revenue: summary ? asString(summary.monthly_revenue) : asString(raw?.monthly_revenue),
+    annual_revenue: summary ? asString(summary.annual_revenue) : asString(raw?.annual_revenue),
+    monthly_opex: summary ? asString(summary.monthly_opex) : asString(raw?.monthly_opex),
+    annual_opex: summary ? asString(summary.annual_opex) : asString(raw?.annual_opex),
+    gross_profit_sar: summary ? asString(summary.gross_profit) : asString(raw?.gross_profit_sar),
+    gp_percent: summary ? asString(summary.gp_percent) : asString(raw?.gp_percent),
+    target_gp_percent: summary ? asString(summary.target_gp_percent) : asString(raw?.target_gp_percent),
+    variance_to_target_gp: summary ? asString(summary.variance_to_target) : asString(raw?.variance_to_target_gp),
+    approval_chain_required: summary ? asString(summary.approval_chain_required) : asString(raw?.approval_chain_required),
+    notes: asString(activeSnapshot?.notes) || asString(raw?.notes),
   };
 }
 

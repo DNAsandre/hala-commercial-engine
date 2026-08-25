@@ -291,6 +291,8 @@ export function OperationalFeasibilityTab({
               <div className="flex gap-1">
                 {FIT_OPTIONS.map(o => (
                   <button key={o.value} onClick={() => u(field, data[field] === o.value ? "" : o.value)}
+                    aria-pressed={data[field] === o.value}
+                    aria-label={`${label}: ${o.label}`}
                     className={`px-3 py-1 rounded text-[10px] font-medium border transition-all ${
                       data[field] === o.value
                         ? o.value === "fit" ? "bg-emerald-100 border-emerald-300 text-emerald-700"

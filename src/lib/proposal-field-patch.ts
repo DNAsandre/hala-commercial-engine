@@ -187,9 +187,10 @@ export interface ProposalFieldPatchDeps {
    */
   loadSnapshot: (proposalId: string) => Promise<ProposalWorkspaceSnapshot>;
   /**
-   * The existing per-stage save contract — exact ticket id,
-   * ticket_type='proposal', active=true, revision token, read-back
-   * verification, audit row. MUST receive the COMPLETE merged envelope.
+   * The existing per-stage save contract — exact ticket id, revision token,
+   * read-back verification and audit row. It deliberately does not hide a
+   * human-created ticket behind legacy type/status labels. MUST receive the
+   * COMPLETE merged envelope.
    */
   saveStage: (
     stageKey: ProposalStageEnvelopeKey,
@@ -571,7 +572,7 @@ async function patchOneStage(
     return stageOutcome(stageKey, group, "failed", `The workspace could not be read (${message}), so nothing was written.`);
   }
   if (!snapshot.ticketFound) {
-    return stageOutcome(stageKey, group, "not_found", "The active proposal ticket was not found, so nothing was written.");
+    return stageOutcome(stageKey, group, "not_found", "The proposal ticket was not found, so nothing was written.");
   }
   if (expectedRevision !== null && snapshot.revision !== expectedRevision) {
     return stageOutcome(

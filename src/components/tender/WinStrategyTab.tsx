@@ -215,6 +215,7 @@ export default function WinStrategyTab({ ws, onOpenDocuments, onOpenGlobalIntel,
         staleRetryArmed,
         labels: { saved: "Win Strategy saved.", failed: "Save failed" },
         onConfirmed: () => onSaved?.(),
+        onStale: () => onSaved?.(),
       });
     } catch (e: any) {
       toast.error(e.message || "Save failed.");

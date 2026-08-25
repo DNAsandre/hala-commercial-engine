@@ -136,7 +136,7 @@ export default function TenderAuditTrailTab({ ws }: { ws: TenderWorkspace }) {
   );
   const sorted = useMemo(() => [...entries].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()), [entries]);
   const filtered = useMemo(() => sorted.filter(e => {
-    if (catFilter !== "all" && e.category !== catFilter) return false;
+    if (catFilter !== "all" && String(e.category || "").toLowerCase() !== catFilter.toLowerCase()) return false;
     if (sevFilter !== "all" && e.severity !== sevFilter) return false;
     return true;
   }), [sorted, catFilter, sevFilter]);

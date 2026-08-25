@@ -99,7 +99,13 @@ describe("all 11 Proposal stage save contracts", () => {
     expect(state.row.type_details.proposal_workspace[key]).toEqual(expect.objectContaining({ data: expect.any(Object), savedAt: expect.any(String) }));
     const update = state.calls.find(call => call.op === "update")!;
     expect(update.filters).toEqual(expect.arrayContaining([
-      ["id", ticketId], ["ticket_type", "proposal"], ["active", true], ["updated_at", revision],
+      ["id", ticketId], ["updated_at", revision],
+    ]));
+    expect(update.filters).not.toEqual(expect.arrayContaining([
+      ["ticket_type", "proposal"],
+    ]));
+    expect(update.filters).not.toEqual(expect.arrayContaining([
+      ["active", true],
     ]));
     const audit = state.calls.find(call => call.table === "commercial_ticket_audit")!;
     expect(audit.payload).toEqual(expect.objectContaining({

@@ -532,19 +532,20 @@ const REGION_MAP: Record<string, Tender['region']> = {
 };
 
 function normalizeRegion(value: string | null | undefined): Tender['region'] {
-  if (!value) return 'East';
-  return REGION_MAP[value.toLowerCase().trim()] ?? 'East';
+  if (!value) return '';
+  return REGION_MAP[value.toLowerCase().trim()] ?? '';
 }
 
 const SOURCE_MAP: Record<string, Tender['source']> = {
   'crm': 'CRM',
   'direct': 'Direct',
+  'manual': 'Direct',
+  'manual_verified': 'Direct',
   'referral': 'Referral',
 };
-
 function normalizeSource(value: string | null | undefined): Tender['source'] {
-  if (!value) return 'Direct';
-  return SOURCE_MAP[value.toLowerCase().trim()] ?? 'Direct';
+  if (!value) return '';
+  return SOURCE_MAP[value.toLowerCase().trim()] ?? '';
 }
 
 function normalizeTenderDocumentCategory(value: unknown): TenderDocumentCategory {

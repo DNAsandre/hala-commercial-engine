@@ -539,13 +539,13 @@ function ApprovalMatrixTab({ gpPercent, gpSource, palletVolume, palletSource,
             <p className="text-xs mt-1">Add the people or roles selected for this Tender.</p>
           </div>
         )}
-        {approvalRows.map((row: any) => {
+        {approvalRows.map((row: any, index: number) => {
           const isExpanded = expandedRole === row.role;
           const isSaving = saving === row.role;
           const decisionColor = row.decision === "approved" ? "border-emerald-300 bg-emerald-50/50"
             : row.decision === "rejected" ? "border-red-300 bg-red-50/50" : "border-border";
           return (
-            <Card key={row.role} className={`shadow-none ${decisionColor}`}>
+            <Card key={`${row.id || row.role}-${index}`} className={`shadow-none ${decisionColor}`}>
               <CardHeader className="py-2.5 px-4 cursor-pointer hover:bg-muted/10" onClick={() => setExpandedRole(isExpanded ? null : row.role)}>
                 <div className="flex items-center gap-3">
                   {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
@@ -749,7 +749,7 @@ function ExceptionNotesTab({ approvalRows, existingApprovals, handleReset, savin
               </tr></thead>
               <tbody>
                 {rejectedRows.map((row: any, i: number) => (
-                  <tr key={row.role} className="border-t border-border hover:bg-muted/20">
+                  <tr key={`${row.id || row.role}-${i}`} className="border-t border-border hover:bg-muted/20">
                     <td className="px-3 py-2 font-medium">{row.role_label}</td>
                     <td className="px-3 py-2"><Badge variant="outline" className="text-[8px]">{row.type === "feasibility" ? "Feasibility" : "Approval"}</Badge></td>
                     <td className="px-3 py-2">{row.decided_by || "Unknown"}</td>

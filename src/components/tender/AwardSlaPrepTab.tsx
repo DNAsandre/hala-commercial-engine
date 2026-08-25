@@ -34,7 +34,7 @@ export default function AwardSlaPrepTab({ ws, reload, onDirtyChange }: Props) {
   const saved = td?.awarded_data?.sla_prep ?? {};
 
   // Read existing SLA-relevant data from tender
-  const solutionDesign = td?.solution_design ?? {};
+  const solutionDesign = td?.solution_design_data ?? td?.solution_design ?? {};
   const slaKpi = solutionDesign?.sla_kpi ?? {};
   const negotiationTerms = td?.negotiation_data?.revised_terms ?? {};
   const negotiationChanges = td?.negotiation_data?.requested_changes ?? [];

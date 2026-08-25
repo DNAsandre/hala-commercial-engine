@@ -316,14 +316,17 @@ export default function ProposalArchitectureTOCTab({ ws, reload, onOpenDocuments
 
       if (sow.scope_summary) contextParts.push(`\nSCOPE SUMMARY:\n${sow.scope_summary}`);
       if (Array.isArray(sow.service_lines) && sow.service_lines.length > 0) {
-        contextParts.push(`\nSERVICE LINES:\n${sow.service_lines.map((s: any) => `- ${s.name}: ${s.description || ""} (${s.status || ""})`).join("\n")}`);
+        contextParts.push(`\nSERVICE LINES:\n${sow.service_lines.map((service: any) => {
+          if (typeof service === "string") return `- ${service}`;
+          return `- ${service?.name || service?.label || "Unnamed service"}: ${service?.description || ""}${service?.status ? ` (${service.status})` : ""}`;
+        }).join("\n")}`);
       }
       if (sowQ.outcome?.recommendation) contextParts.push(`\nSOW QUALIFICATION OUTCOME: ${sowQ.outcome.recommendation}`);
       if (techQ.recommendation?.outcome) contextParts.push(`TECHNICAL QUALIFICATION: ${techQ.recommendation.outcome}`);
       // TCW-T4 (gap-8): the stored key is decision.decision.
       if (bnb.decision?.decision) contextParts.push(`BID DECISION: ${bnb.decision.decision}`);
       if (bnb.win_strategy?.win_themes && Array.isArray(bnb.win_strategy.win_themes)) {
-        contextParts.push(`\nWIN THEMES:\n${bnb.win_strategy.win_themes.map((w: string) => `- ${w}`).join("\n")}`);
+        contextParts.push(`\nWIN THEMES:\n${bnb.win_strategy.win_themes.map((theme: any) => `- ${typeof theme === "string" ? theme : theme?.theme || "Unnamed theme"}`).join("\n")}`);
       }
       if (sd.configuration?.selected_modules) contextParts.push(`\nSOLUTION: ${sd.configuration.selected_modules}`);
       if (sd.hop) contextParts.push(`HOP: Captured`);
@@ -812,19 +815,7 @@ export default function ProposalArchitectureTOCTab({ ws, reload, onOpenDocuments
         </CardContent>
       </Card>
 
-      {/* Generate TOC Suggestion — AI-powered */}
       <div className={`space-y-2 px-1 ${activeSection !== "builder" ? "hidden" : ""}`}>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5" disabled={generating || isChaining} onClick={generateTOCSuggestion}>
-            {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            {generating ? "Generating..." : "Generate TOC Suggestion"}
-          </Button>
-          {/* TCW-T4 honesty: generation is refused in this build (Sprint X). */}
-          <span className="text-[10px] text-muted-foreground italic">
-            {generating ? "Checking AI availability..." : "AI TOC generation is not available in this build (Sprint X) — running it reports the refusal. Build the TOC manually below."}
-          </span>
-        </div>
-
         {/* AI Preview Panel */}
         {aiPreview && aiPreview.length > 0 && (
           <Card className="border-[#075eea]/20 bg-[#075eea]/10 shadow-none">

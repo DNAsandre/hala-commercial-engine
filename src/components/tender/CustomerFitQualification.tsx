@@ -203,6 +203,14 @@ function emptyCustomerFitData(): CustomerFitData {
   };
 }
 
+export function reconcileCustomerFitDimensions(value: unknown): FitDimension[] {
+  const defaults = DEFAULT_DIMENSIONS.map(dimension => ({ ...dimension }));
+  if (!Array.isArray(value)) return defaults;
+  const stored = value.filter(row => row && typeof row === "object") as FitDimension[];
+  const canonical = defaults.map(base => ({ ...base, ...(stored.find(row => row.dimension === base.dimension) ?? {}) }));
+  return [...canonical, ...stored.filter(row => !defaults.some(base => base.dimension === row.dimension))];
+}
+
 // ═══════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════
@@ -277,9 +285,7 @@ export default function CustomerFitQualification({ ws, onOpenDocuments, onOpenGl
       const saved = t.customerFitData as any;
       return {
         customer_snapshot: { ...emptyCustomerFitData().customer_snapshot, ...(saved.customer_snapshot || {}) },
-        dimensions: Array.isArray(saved.dimensions) && saved.dimensions.length === 8
-          ? saved.dimensions
-          : DEFAULT_DIMENSIONS.map(d => ({ ...d })),
+        dimensions: reconcileCustomerFitDimensions(saved.dimensions),
         evidence: Array.isArray(saved.evidence) ? saved.evidence : [],
         gaps: Array.isArray(saved.gaps) ? saved.gaps : [],
         recommendation: { ...emptyCustomerFitData().recommendation, ...(saved.recommendation || {}) },
@@ -299,9 +305,7 @@ export default function CustomerFitQualification({ ws, onOpenDocuments, onOpenGl
       const saved = t.customerFitData as any;
       const loaded: CustomerFitData = {
         customer_snapshot: { ...emptyCustomerFitData().customer_snapshot, ...(saved.customer_snapshot || {}) },
-        dimensions: Array.isArray(saved.dimensions) && saved.dimensions.length === 8
-          ? saved.dimensions
-          : DEFAULT_DIMENSIONS.map(d => ({ ...d })),
+        dimensions: reconcileCustomerFitDimensions(saved.dimensions),
         evidence: Array.isArray(saved.evidence) ? saved.evidence : [],
         gaps: Array.isArray(saved.gaps) ? saved.gaps : [],
         recommendation: { ...emptyCustomerFitData().recommendation, ...(saved.recommendation || {}) },
@@ -437,6 +441,7 @@ export default function CustomerFitQualification({ ws, onOpenDocuments, onOpenGl
           setInitial(JSON.stringify(data));
           onSaved?.();
         },
+        onStale: () => onSaved?.(),
         // Stale: dirty stays true, so the resync effect keeps the user's entry.
       });
     } catch (e: any) {
@@ -879,7 +884,7 @@ export default function CustomerFitQualification({ ws, onOpenDocuments, onOpenGl
                   </div>
                   <div>
                     <label className="text-[9px] text-muted-foreground">Required By</label>
-                    <input type="date" className="w-full text-[10px] border border-border rounded px-2 py-0.5 bg-card" value={row.required_by} onChange={e => updateGap(idx, { required_by: e.target.value })} />
+                    <input type="date" className="w-full text-[10px] border border-border rounded px-2 py-0.5 bg-card" value={row.required_by} onChange={e => updateGap(idx, { required_by: e.target.value })} onBlur={e => { const value = e.currentTarget.value; if (row.required_by !== value) updateGap(idx, { required_by: value }); }} />
                   </div>
                 </div>
               </div>

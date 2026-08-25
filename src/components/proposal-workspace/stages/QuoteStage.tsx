@@ -236,7 +236,7 @@ export function QuoteVersionsTab({
                 <FieldInput value={version.versionLabel} onChange={v => update(index, "versionLabel", v)} placeholder="Version label" />
                 <FieldInput type="date" value={version.createdAt} onChange={v => update(index, "createdAt", v)} />
                 <FieldInput value={version.status} onChange={v => update(index, "status", v)} placeholder="Status" />
-                <button type="button" onClick={() => remove(index)} className="flex h-9 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600">
+                <button type="button" onClick={() => remove(index)} aria-label={`Remove quote version ${index + 1}`} className="flex h-9 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>

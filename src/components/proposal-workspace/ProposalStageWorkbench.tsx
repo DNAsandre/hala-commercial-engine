@@ -207,6 +207,7 @@ interface ProposalStageWorkbenchProps {
   wsData?: ProposalWorkspaceData;
   onWsDataChange?: (d: ProposalWorkspaceData) => void;
   onSavePnlVersions?: (proposalId: string, version: any) => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 interface StageTaskProgressSegment {
@@ -745,7 +746,7 @@ function getProposalSentTaskPercent(taskKey: string, wsData: ProposalWorkspaceDa
       const fields = Object.values(wsData.proposalCrmSyncRecord);
       return percent(fields.filter(hasValue).length, fields.length);
     }
-    case "audit_trail":
+    case "delivery_notes":
       return wsData.proposalSentAuditNotes.some(hasProposalSentAuditContent) ? 100 : 0;
     case "supporting_documents":
       return hasStageDocuments(documents, "proposal_sent") ? 100 : 0;
@@ -1036,6 +1037,7 @@ export default function ProposalStageWorkbench({
   wsData: externalData,
   onWsDataChange,
   onSavePnlVersions,
+  onDirtyChange,
 }: ProposalStageWorkbenchProps) {
   const [localData, setLocalData] = useState<ProposalWorkspaceData>(() => createDefaultWorkspaceData());
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
@@ -1125,6 +1127,8 @@ export default function ProposalStageWorkbench({
   const stageIndex = PROPOSAL_TRACKER_STAGES.findIndex(stage => stage.key === activeStage);
   const wsData = externalData ?? localData;
   const setWsData = onWsDataChange ?? setLocalData;
+  const wsDataRef = useRef(wsData);
+  wsDataRef.current = wsData;
   const workbenchDocuments = useMemo(
     () => mergeSupportingDocuments(documents, persistedDocuments, localDocuments),
     [documents, persistedDocuments, localDocuments],
@@ -1214,6 +1218,24 @@ export default function ProposalStageWorkbench({
   const proposalGoLiveDirty = activeStage === "go_live" &&
     proposalGoLiveLoadState === "loaded" &&
     proposalGoLiveSignature !== lastSavedProposalGoLiveSignature;
+  const currentStageDirty = qualifiedDirty || discoveryDirty || solutionDesignDirty ||
+    pnlPricingDirty || quoteDirty || proposalDraftingDirty || proposalSentDirty ||
+    proposalNegotiationDirty || proposalCommercialApprovalDirty ||
+    proposalContractSignedDirty || proposalGoLiveDirty;
+
+  useEffect(() => {
+    onDirtyChange?.(currentStageDirty);
+  }, [currentStageDirty, onDirtyChange]);
+
+  useEffect(() => {
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      if (!currentStageDirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+  }, [currentStageDirty]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1415,7 +1437,7 @@ export default function ProposalStageWorkbench({
         setProposalContractSignedLoadState(proposalContractSignedResult.ticketFound ? "loaded" : "error");
         setProposalGoLiveLoadState(proposalGoLiveResult.ticketFound ? "loaded" : "error");
         if (!snapshot.ticketFound) {
-          toast.error("Workspace remains editable, but saving needs a real active proposal ticket.");
+          toast.error("Workspace remains editable, but saving needs a real proposal ticket.");
         }
       })
       .catch((err: Error) => {
@@ -1463,7 +1485,30 @@ export default function ProposalStageWorkbench({
   }, [activeStage, activeTaskKey, activeTab, stageTasks]);
 
   const updateWsData = (newData: ProposalWorkspaceData, _stage: string, _dataKey: keyof ProposalWorkspaceData) => {
+    wsDataRef.current = newData;
     setWsData(newData);
+  };
+
+  const reconcileConfirmedStageSave = <T extends object>(
+    submittedSignature: string,
+    storedData: Partial<T>,
+    extract: (workspace: ProposalWorkspaceData) => T,
+    merge: (workspace: ProposalWorkspaceData, saved: Partial<T> | null) => ProposalWorkspaceData,
+    getSignature: (data: T) => string,
+  ) => {
+    const currentWorkspace = wsDataRef.current;
+    const currentSignature = getSignature(extract(currentWorkspace));
+    const storedWorkspace = merge(currentWorkspace, storedData);
+    const storedSignature = getSignature(extract(storedWorkspace));
+
+    // Adopt the database's sanitized read-back when the user has not made a
+    // newer edit while the request was running. A newer edit stays on screen
+    // and remains visibly dirty against the confirmed stored signature.
+    if (currentSignature === submittedSignature) {
+      wsDataRef.current = storedWorkspace;
+      setWsData(storedWorkspace);
+    }
+    return storedSignature;
   };
 
   const handleTaskChange = (task: ProposalStageTask) => {
@@ -1480,7 +1525,7 @@ export default function ProposalStageWorkbench({
     toast.info("No document-specific task is mapped for this proposal stage yet.");
   };
 
-  const missingProposalSaveMessage = "Workspace remains editable, but saving needs a real active proposal ticket.";
+  const missingProposalSaveMessage = "Workspace remains editable, but saving needs a real proposal ticket.";
   const proposalSaveTimeoutMs = 12000;
   const proposalSaveOptions = {
     expectedRevision: workspaceRevision,
@@ -1514,7 +1559,7 @@ export default function ProposalStageWorkbench({
       const data = extractQualifiedStageData(wsData);
       const signature = getQualifiedStageDataSignature(data);
       const result = await withProposalSaveTimeout(saveProposalQualifiedStageData(activeProposal.proposalId, data, proposalSaveOptions), "Qualified stage save");
-      setLastSavedQualifiedSignature(signature);
+      setLastSavedQualifiedSignature(reconcileConfirmedStageSave(signature, result.storedData, extractQualifiedStageData, mergeQualifiedStageData, getQualifiedStageDataSignature));
       setQualifiedSavedAt(result.savedAt);
       setWorkspaceRevision(result.revision);
       setQualifiedLoadState("loaded");
@@ -1539,7 +1584,7 @@ export default function ProposalStageWorkbench({
       const data = extractDiscoveryStageData(wsData);
       const signature = getDiscoveryStageDataSignature(data);
       const result = await withProposalSaveTimeout(saveProposalDiscoveryStageData(activeProposal.proposalId, data, proposalSaveOptions), "Discovery stage save");
-      setLastSavedDiscoverySignature(signature);
+      setLastSavedDiscoverySignature(reconcileConfirmedStageSave(signature, result.storedData, extractDiscoveryStageData, mergeDiscoveryStageData, getDiscoveryStageDataSignature));
       setDiscoverySavedAt(result.savedAt);
       setWorkspaceRevision(result.revision);
       setDiscoveryLoadState("loaded");
@@ -1564,7 +1609,7 @@ export default function ProposalStageWorkbench({
       const data = extractSolutionDesignStageData(wsData);
       const signature = getSolutionDesignStageDataSignature(data);
       const result = await withProposalSaveTimeout(saveProposalSolutionDesignStageData(activeProposal.proposalId, data, proposalSaveOptions), "Solution Design stage save");
-      setLastSavedSolutionDesignSignature(signature);
+      setLastSavedSolutionDesignSignature(reconcileConfirmedStageSave(signature, result.storedData, extractSolutionDesignStageData, mergeSolutionDesignStageData, getSolutionDesignStageDataSignature));
       setSolutionDesignSavedAt(result.savedAt);
       setWorkspaceRevision(result.revision);
       setSolutionDesignLoadState("loaded");
@@ -1589,7 +1634,7 @@ export default function ProposalStageWorkbench({
       const data = extractPnlPricingStageData(wsData);
       const signature = getPnlPricingStageDataSignature(data);
       const result = await withProposalSaveTimeout(saveProposalPnlPricingStageData(activeProposal.proposalId, data, proposalSaveOptions), "P&L / Pricing stage save");
-      setLastSavedPnlPricingSignature(signature);
+      setLastSavedPnlPricingSignature(reconcileConfirmedStageSave(signature, result.storedData, extractPnlPricingStageData, mergePnlPricingStageData, getPnlPricingStageDataSignature));
       setPnlPricingSavedAt(result.savedAt);
       setWorkspaceRevision(result.revision);
       setPnlPricingLoadState("loaded");
@@ -1614,7 +1659,7 @@ export default function ProposalStageWorkbench({
       const data = extractQuoteStageData(wsData);
       const signature = getQuoteStageDataSignature(data);
       const result = await withProposalSaveTimeout(saveProposalQuoteStageData(activeProposal.proposalId, data, proposalSaveOptions), "Quote stage save");
-      setLastSavedQuoteSignature(signature);
+      setLastSavedQuoteSignature(reconcileConfirmedStageSave(signature, result.storedData, extractQuoteStageData, mergeQuoteStageData, getQuoteStageDataSignature));
       setQuoteSavedAt(result.savedAt);
       setWorkspaceRevision(result.revision);
       setQuoteLoadState("loaded");
@@ -1639,7 +1684,7 @@ export default function ProposalStageWorkbench({
       const data = extractProposalDraftingStageData(wsData);
       const signature = getProposalDraftingStageDataSignature(data);
       const result = await withProposalSaveTimeout(saveProposalDraftingStageData(activeProposal.proposalId, data, proposalSaveOptions), "Proposal Drafting stage save");
-      setLastSavedProposalDraftingSignature(signature);
+      setLastSavedProposalDraftingSignature(reconcileConfirmedStageSave(signature, result.storedData, extractProposalDraftingStageData, mergeProposalDraftingStageData, getProposalDraftingStageDataSignature));
       setProposalDraftingSavedAt(result.savedAt);
       setWorkspaceRevision(result.revision);
       setProposalDraftingLoadState("loaded");
@@ -1664,7 +1709,7 @@ export default function ProposalStageWorkbench({
       const data = extractProposalSentStageData(wsData);
       const signature = getProposalSentStageDataSignature(data);
       const result = await withProposalSaveTimeout(saveProposalSentStageData(activeProposal.proposalId, data, proposalSaveOptions), "Proposal Sent stage save");
-      setLastSavedProposalSentSignature(signature);
+      setLastSavedProposalSentSignature(reconcileConfirmedStageSave(signature, result.storedData, extractProposalSentStageData, mergeProposalSentStageData, getProposalSentStageDataSignature));
       setProposalSentSavedAt(result.savedAt);
       setWorkspaceRevision(result.revision);
       setProposalSentLoadState("loaded");
@@ -1689,7 +1734,7 @@ export default function ProposalStageWorkbench({
       const data = extractProposalNegotiationStageData(wsData);
       const signature = getProposalNegotiationStageDataSignature(data);
       const result = await withProposalSaveTimeout(saveProposalNegotiationStageData(activeProposal.proposalId, data, proposalSaveOptions), "Negotiation stage save");
-      setLastSavedProposalNegotiationSignature(signature);
+      setLastSavedProposalNegotiationSignature(reconcileConfirmedStageSave(signature, result.storedData, extractProposalNegotiationStageData, mergeProposalNegotiationStageData, getProposalNegotiationStageDataSignature));
       setProposalNegotiationSavedAt(result.savedAt);
       setWorkspaceRevision(result.revision);
       setProposalNegotiationLoadState("loaded");
@@ -1714,7 +1759,7 @@ export default function ProposalStageWorkbench({
       const data = extractProposalCommercialApprovalStageData(wsData);
       const signature = getProposalCommercialApprovalStageDataSignature(data);
       const result = await withProposalSaveTimeout(saveProposalCommercialApprovalStageData(activeProposal.proposalId, data, proposalSaveOptions), "Commercial Approval stage save");
-      setLastSavedProposalCommercialApprovalSignature(signature);
+      setLastSavedProposalCommercialApprovalSignature(reconcileConfirmedStageSave(signature, result.storedData, extractProposalCommercialApprovalStageData, mergeProposalCommercialApprovalStageData, getProposalCommercialApprovalStageDataSignature));
       setProposalCommercialApprovalSavedAt(result.savedAt);
       setWorkspaceRevision(result.revision);
       setProposalCommercialApprovalLoadState("loaded");
@@ -1739,7 +1784,7 @@ export default function ProposalStageWorkbench({
       const data = extractProposalContractSignedStageData(wsData);
       const signature = getProposalContractSignedStageDataSignature(data);
       const result = await withProposalSaveTimeout(saveProposalContractSignedStageData(activeProposal.proposalId, data, proposalSaveOptions), "Contract Signed stage save");
-      setLastSavedProposalContractSignedSignature(signature);
+      setLastSavedProposalContractSignedSignature(reconcileConfirmedStageSave(signature, result.storedData, extractProposalContractSignedStageData, mergeProposalContractSignedStageData, getProposalContractSignedStageDataSignature));
       setProposalContractSignedSavedAt(result.savedAt);
       setWorkspaceRevision(result.revision);
       setProposalContractSignedLoadState("loaded");
@@ -1764,7 +1809,7 @@ export default function ProposalStageWorkbench({
       const data = extractProposalGoLiveStageData(wsData);
       const signature = getProposalGoLiveStageDataSignature(data);
       const result = await withProposalSaveTimeout(saveProposalGoLiveStageData(activeProposal.proposalId, data, proposalSaveOptions), "Go-Live stage save");
-      setLastSavedProposalGoLiveSignature(signature);
+      setLastSavedProposalGoLiveSignature(reconcileConfirmedStageSave(signature, result.storedData, extractProposalGoLiveStageData, mergeProposalGoLiveStageData, getProposalGoLiveStageDataSignature));
       setProposalGoLiveSavedAt(result.savedAt);
       setWorkspaceRevision(result.revision);
       setProposalGoLiveLoadState("loaded");
@@ -2112,7 +2157,7 @@ export default function ProposalStageWorkbench({
       size="sm"
       className="h-7 gap-1.5 rounded-md border-[#2f5f9d] bg-[#102844]/80 px-2.5 text-[11px] font-medium text-slate-50 shadow-sm hover:bg-[#17365d] hover:text-white disabled:opacity-70"
       onClick={handleQualifiedSave}
-      disabled={qualifiedSaveState === "saving" || qualifiedLoadState === "loading"}
+      disabled={qualifiedSaveState === "saving" || qualifiedLoadState !== "loaded"}
     >
       {qualifiedSaveState === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
       {qualifiedSaveState === "saving" ? "Saving" : "Save"}
@@ -2126,7 +2171,7 @@ export default function ProposalStageWorkbench({
       size="sm"
       className="h-7 gap-1.5 rounded-md border-[#2f5f9d] bg-[#102844]/80 px-2.5 text-[11px] font-medium text-slate-50 shadow-sm hover:bg-[#17365d] hover:text-white disabled:opacity-70"
       onClick={handleDiscoverySave}
-      disabled={discoverySaveState === "saving" || discoveryLoadState === "loading"}
+      disabled={discoverySaveState === "saving" || discoveryLoadState !== "loaded"}
     >
       {discoverySaveState === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
       {discoverySaveState === "saving" ? "Saving" : "Save"}
@@ -2140,7 +2185,7 @@ export default function ProposalStageWorkbench({
       size="sm"
       className="h-7 gap-1.5 rounded-md border-[#2f5f9d] bg-[#102844]/80 px-2.5 text-[11px] font-medium text-slate-50 shadow-sm hover:bg-[#17365d] hover:text-white disabled:opacity-70"
       onClick={handleSolutionDesignSave}
-      disabled={solutionDesignSaveState === "saving" || solutionDesignLoadState === "loading"}
+      disabled={solutionDesignSaveState === "saving" || solutionDesignLoadState !== "loaded"}
     >
       {solutionDesignSaveState === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
       {solutionDesignSaveState === "saving" ? "Saving" : "Save"}
@@ -2154,7 +2199,7 @@ export default function ProposalStageWorkbench({
       size="sm"
       className="h-7 gap-1.5 rounded-md border-[#2f5f9d] bg-[#102844]/80 px-2.5 text-[11px] font-medium text-slate-50 shadow-sm hover:bg-[#17365d] hover:text-white disabled:opacity-70"
       onClick={handlePnlPricingSave}
-      disabled={pnlPricingSaveState === "saving" || pnlPricingLoadState === "loading"}
+      disabled={pnlPricingSaveState === "saving" || pnlPricingLoadState !== "loaded"}
     >
       {pnlPricingSaveState === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
       {pnlPricingSaveState === "saving" ? "Saving" : "Save"}
@@ -2168,7 +2213,7 @@ export default function ProposalStageWorkbench({
       size="sm"
       className="h-7 gap-1.5 rounded-md border-[#2f5f9d] bg-[#102844]/80 px-2.5 text-[11px] font-medium text-slate-50 shadow-sm hover:bg-[#17365d] hover:text-white disabled:opacity-70"
       onClick={handleQuoteSave}
-      disabled={quoteSaveState === "saving" || quoteLoadState === "loading"}
+      disabled={quoteSaveState === "saving" || quoteLoadState !== "loaded"}
     >
       {quoteSaveState === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
       {quoteSaveState === "saving" ? "Saving" : "Save"}
@@ -2188,7 +2233,7 @@ export default function ProposalStageWorkbench({
       size="sm"
       className="h-7 gap-1.5 rounded-md border-[#2f5f9d] bg-[#102844]/80 px-2.5 text-[11px] font-medium text-slate-50 shadow-sm hover:bg-[#17365d] hover:text-white disabled:opacity-70"
       onClick={handleProposalDraftingSave}
-      disabled={proposalDraftingSaveState === "saving" || proposalDraftingLoadState === "loading"}
+      disabled={proposalDraftingSaveState === "saving" || proposalDraftingLoadState !== "loaded"}
     >
       {proposalDraftingSaveState === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
       {proposalDraftingSaveState === "saving" ? "Saving" : "Save"}
@@ -2203,7 +2248,7 @@ export default function ProposalStageWorkbench({
       size="sm"
       className="h-7 gap-1.5 rounded-md border-[#2f5f9d] bg-[#102844]/80 px-2.5 text-[11px] font-medium text-slate-50 shadow-sm hover:bg-[#17365d] hover:text-white disabled:opacity-70"
       onClick={handleProposalSentSave}
-      disabled={proposalSentSaveState === "saving" || proposalSentLoadState === "loading"}
+      disabled={proposalSentSaveState === "saving" || proposalSentLoadState !== "loaded"}
     >
       {proposalSentSaveState === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
       {proposalSentSaveState === "saving" ? "Saving" : "Save"}
@@ -2217,7 +2262,7 @@ export default function ProposalStageWorkbench({
       size="sm"
       className="h-7 gap-1.5 rounded-md border-[#2f5f9d] bg-[#102844]/80 px-2.5 text-[11px] font-medium text-slate-50 shadow-sm hover:bg-[#17365d] hover:text-white disabled:opacity-70"
       onClick={handleProposalNegotiationSave}
-      disabled={proposalNegotiationSaveState === "saving" || proposalNegotiationLoadState === "loading"}
+      disabled={proposalNegotiationSaveState === "saving" || proposalNegotiationLoadState !== "loaded"}
     >
       {proposalNegotiationSaveState === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
       {proposalNegotiationSaveState === "saving" ? "Saving" : "Save"}
@@ -2231,7 +2276,7 @@ export default function ProposalStageWorkbench({
       size="sm"
       className="h-7 gap-1.5 rounded-md border-[#2f5f9d] bg-[#102844]/80 px-2.5 text-[11px] font-medium text-slate-50 shadow-sm hover:bg-[#17365d] hover:text-white disabled:opacity-70"
       onClick={handleProposalCommercialApprovalSave}
-      disabled={proposalCommercialApprovalSaveState === "saving" || proposalCommercialApprovalLoadState === "loading"}
+      disabled={proposalCommercialApprovalSaveState === "saving" || proposalCommercialApprovalLoadState !== "loaded"}
     >
       {proposalCommercialApprovalSaveState === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
       {proposalCommercialApprovalSaveState === "saving" ? "Saving" : "Save"}
@@ -2245,7 +2290,7 @@ export default function ProposalStageWorkbench({
       size="sm"
       className="h-7 gap-1.5 rounded-md border-[#2f5f9d] bg-[#102844]/80 px-2.5 text-[11px] font-medium text-slate-50 shadow-sm hover:bg-[#17365d] hover:text-white disabled:opacity-70"
       onClick={handleProposalContractSignedSave}
-      disabled={proposalContractSignedSaveState === "saving" || proposalContractSignedLoadState === "loading"}
+      disabled={proposalContractSignedSaveState === "saving" || proposalContractSignedLoadState !== "loaded"}
     >
       {proposalContractSignedSaveState === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
       {proposalContractSignedSaveState === "saving" ? "Saving" : "Save"}
@@ -2259,7 +2304,7 @@ export default function ProposalStageWorkbench({
       size="sm"
       className="h-7 gap-1.5 rounded-md border-[#2f5f9d] bg-[#102844]/80 px-2.5 text-[11px] font-medium text-slate-50 shadow-sm hover:bg-[#17365d] hover:text-white disabled:opacity-70"
       onClick={handleProposalGoLiveSave}
-      disabled={proposalGoLiveSaveState === "saving" || proposalGoLiveLoadState === "loading"}
+      disabled={proposalGoLiveSaveState === "saving" || proposalGoLiveLoadState !== "loaded"}
     >
       {proposalGoLiveSaveState === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
       {proposalGoLiveSaveState === "saving" ? "Saving" : "Save"}

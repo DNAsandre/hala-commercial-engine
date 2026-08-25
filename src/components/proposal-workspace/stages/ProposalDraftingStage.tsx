@@ -97,7 +97,7 @@ export function TocPlannerTab({
                   <input type="checkbox" checked={section.includeInProposal} onChange={e => update(index, { includeInProposal: e.target.checked })} />
                   Include
                 </label>
-                <button type="button" onClick={() => remove(index)} className="flex h-9 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600">
+                <button type="button" onClick={() => remove(index)} aria-label={`Remove TOC section ${index + 1}`} className="flex h-9 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
@@ -160,7 +160,7 @@ export function SourceMapTab({
                 <FieldInput value={mapping.sourceTab} onChange={v => update(index, { sourceTab: v })} placeholder="Source tab / task" />
                 <FieldInput value={mapping.sourceField} onChange={v => update(index, { sourceField: v })} placeholder="Source field" />
                 <FieldSelect value={mapping.targetSectionId} onChange={v => update(index, { targetSectionId: v })} options={sectionOptions} placeholder="Target section" />
-                <button type="button" onClick={() => remove(index)} className="flex h-9 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600">
+                <button type="button" onClick={() => remove(index)} aria-label={`Remove source mapping ${index + 1}`} className="flex h-9 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
@@ -225,7 +225,7 @@ export function BlockRegisterTab({
                 <FieldSelect value={block.volume} onChange={v => update(index, { volume: v })} options={VOLUME_OPTIONS} placeholder="Volume" />
                 <FieldInput value={block.owner} onChange={v => update(index, { owner: v })} placeholder="Owner" />
                 <FieldSelect value={block.status} onChange={v => update(index, { status: v })} options={BLOCK_STATUS_OPTIONS} placeholder="Status" />
-                <button type="button" onClick={() => remove(index)} className="flex h-9 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600">
+                <button type="button" onClick={() => remove(index)} aria-label={`Remove proposal block ${index + 1}`} className="flex h-9 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
@@ -435,7 +435,7 @@ export function EvidenceRegisterTab({
                 <FieldInput value={item.evidenceType} onChange={v => update(index, { evidenceType: v })} placeholder="Type" />
                 <FieldSelect value={item.sourceStage} onChange={v => update(index, { sourceStage: v })} options={STAGE_OPTIONS} placeholder="Source stage" />
                 <FieldSelect value={item.linkedSectionId} onChange={v => update(index, { linkedSectionId: v })} options={sectionOptions} placeholder="Linked section" />
-                <button type="button" onClick={() => remove(index)} className="flex h-9 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600">
+                <button type="button" onClick={() => remove(index)} aria-label={`Remove evidence item ${index + 1}`} className="flex h-9 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>

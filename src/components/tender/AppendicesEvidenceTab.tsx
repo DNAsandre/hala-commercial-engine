@@ -195,22 +195,26 @@ export default function AppendicesEvidenceTab({ ws, reload, onOpenDocuments, onO
         ) : (
           <div className="space-y-2">
             {gaps.map(g => (
-              <div key={g.id} className="grid items-start gap-2 rounded-md border border-border p-2 sm:grid-cols-2 xl:grid-cols-8">
+              <div key={g.id} className="grid items-start gap-2 rounded-md border border-border p-2 sm:grid-cols-2 xl:grid-cols-12">
                 <Input className="h-7 text-[10px] sm:col-span-2 xl:col-span-2" value={g.missing_evidence} onChange={e => updateGap(g.id, { missing_evidence: e.target.value })} placeholder="Missing evidence" />
                 <Input className="h-7 text-[10px]" value={g.required_for} onChange={e => updateGap(g.id, { required_for: e.target.value })} placeholder="Required for" />
-                <Select value={g.linked_block_id || UNLINKED_BLOCK_VALUE} onValueChange={v => updateGap(g.id, { linked_block_id: v === UNLINKED_BLOCK_VALUE ? "" : v })}>
-                  <SelectTrigger className="h-7 text-[10px]"><SelectValue placeholder="Link block" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={UNLINKED_BLOCK_VALUE}>None</SelectItem>
-                    {blockOptions.map((bo: any) => <SelectItem key={bo.id} value={bo.id}>{bo.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <select
+                  aria-label={`Linked block for ${g.missing_evidence || "evidence gap"}`}
+                  className="h-7 rounded-md border border-input bg-background px-2 text-[10px] outline-none xl:col-span-2"
+                  value={g.linked_block_id || UNLINKED_BLOCK_VALUE}
+                  onChange={e => updateGap(g.id, { linked_block_id: e.target.value === UNLINKED_BLOCK_VALUE ? "" : e.target.value })}
+                >
+                  <option value={UNLINKED_BLOCK_VALUE}>None</option>
+                  {blockOptions.map((bo: any) => <option key={bo.id} value={bo.id}>{bo.label}</option>)}
+                </select>
+                <Input className="h-7 text-[10px]" value={g.linked_section} onChange={e => updateGap(g.id, { linked_section: e.target.value })} placeholder="Linked section" />
                 <Input className="h-7 text-[10px]" value={g.owner} onChange={e => updateGap(g.id, { owner: e.target.value })} placeholder="Owner" />
                 <Input className="h-7 text-[10px]" type="date" value={g.due_date} onChange={e => updateGap(g.id, { due_date: e.target.value })} />
                 <Select value={g.status} onValueChange={v => updateGap(g.id, { status: v })}>
                   <SelectTrigger className="h-7 text-[10px]"><SelectValue /></SelectTrigger>
                   <SelectContent>{GAP_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                 </Select>
+                <Input className="h-7 text-[10px] xl:col-span-2" value={g.notes} onChange={e => updateGap(g.id, { notes: e.target.value })} placeholder="Evidence notes" />
                 <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => removeGap(g.id)}><Trash2 className="h-3 w-3 text-red-500" /></Button>
               </div>
             ))}

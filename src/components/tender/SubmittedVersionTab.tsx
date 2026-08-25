@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { Save, Loader2, Lock, Info, FileText, Layers, Hash } from "lucide-react";
+import { Save, Loader2, Info, FileText, Layers, Hash } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
 import { updateTenderSubmissionData } from "@/lib/supabase-tender-actions";
 import { reportSaveOutcome, wsRevisionToken } from "./tender-save-outcome";
@@ -31,6 +31,19 @@ interface Props {
 
 const VOLUMES = ["Technical", "Commercial", "Shared", "Appendix"] as const;
 
+function normalizeVolumes(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((volume): volume is (typeof VOLUMES)[number] =>
+    VOLUMES.includes(volume as (typeof VOLUMES)[number]),
+  );
+}
+
+function formatContentSize(length: number) {
+  if (length <= 0) return "—";
+  if (length < 1024) return `${length} B`;
+  return `${(length / 1024).toFixed(length < 10 * 1024 ? 1 : 0)} KB`;
+}
+
 export default function SubmittedVersionTab({ ws, reload, onDirtyChange }: Props) {
   const tenderId = ws.tender.id;
   const td = (ws.tender as any).typeDetails || (ws.tender as any).type_details || {};
@@ -42,7 +55,7 @@ export default function SubmittedVersionTab({ ws, reload, onDirtyChange }: Props
   const [docHash, setDocHash] = useState(saved.document_hash || "");
   const [totalPages, setTotalPages] = useState<number>(saved.total_pages ?? 0);
   const [fileSizeMb, setFileSizeMb] = useState<number>(saved.file_size_mb ?? 0);
-  const [volumesIncluded, setVolumesIncluded] = useState<string[]>(saved.volumes_included ?? []);
+  const [volumesIncluded, setVolumesIncluded] = useState<string[]>(normalizeVolumes(saved.volumes_included));
   const [versionNotes, setVersionNotes] = useState(saved.version_notes || "");
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -75,7 +88,7 @@ export default function SubmittedVersionTab({ ws, reload, onDirtyChange }: Props
         document_hash: docHash,
         total_pages: totalPages,
         file_size_mb: fileSizeMb,
-        volumes_included: volumesIncluded,
+        volumes_included: normalizeVolumes(volumesIncluded),
         version_notes: versionNotes,
       };
       // P2a threading + honest outcome; stale keeps the entry on screen.
@@ -123,7 +136,7 @@ export default function SubmittedVersionTab({ ws, reload, onDirtyChange }: Props
       <Card className="border-border shadow-none">
         <CardHeader className="py-2 px-4 bg-muted/20 border-b border-border">
           <div className="flex items-center gap-2">
-            <Lock className="w-3.5 h-3.5 text-[#075eea]" />
+            <FileText className="w-3.5 h-3.5 text-[#075eea]" />
             <span className="text-xs font-semibold">Version Record</span>
             {/* TCW-T4 (B21): "Frozen" claimed a lock that does not exist. */}
             {hasSavedData && <Badge variant="outline" className="text-[8px] border-emerald-200 text-emerald-700 bg-emerald-50">Recorded (manual)</Badge>}
@@ -136,12 +149,12 @@ export default function SubmittedVersionTab({ ws, reload, onDirtyChange }: Props
               <Input className="h-8 text-xs mt-1" value={versionLabel} onChange={e => { setVersionLabel(e.target.value); mark(); }} placeholder="e.g. v1.0 Final" />
             </div>
             <div>
-              <label className="text-[10px] font-semibold text-muted-foreground">Frozen At</label>
+              <label className="text-[10px] font-semibold text-muted-foreground">Recorded At</label>
               <Input type="datetime-local" className="h-8 text-xs mt-1" value={frozenAt} onChange={e => { setFrozenAt(e.target.value); mark(); }} />
             </div>
             <div>
-              <label className="text-[10px] font-semibold text-muted-foreground">Frozen By</label>
-              <Input className="h-8 text-xs mt-1" value={frozenBy} onChange={e => { setFrozenBy(e.target.value); mark(); }} placeholder="Person who froze the version" />
+              <label className="text-[10px] font-semibold text-muted-foreground">Recorded By</label>
+              <Input className="h-8 text-xs mt-1" value={frozenBy} onChange={e => { setFrozenBy(e.target.value); mark(); }} placeholder="Person who recorded the version" />
             </div>
             <div>
               <label className="text-[10px] font-semibold text-muted-foreground flex items-center gap-1"><Hash className="w-3 h-3" /> Document Hash</label>
@@ -214,7 +227,7 @@ export default function SubmittedVersionTab({ ws, reload, onDirtyChange }: Props
                         <td className="px-3 py-2"><Badge variant="outline" className="text-[8px]">{b.volume || "—"}</Badge></td>
                         <td className="px-3 py-2"><Badge variant="outline" className={`text-[8px] ${draftStatusColor(b.draft_status || "Not Ready")}`}>{b.draft_status || "Not Ready"}</Badge></td>
                         <td className="px-3 py-2"><Badge variant="outline" className={`text-[8px] ${draftStatusColor(b.approval_status || "Draft")}`}>{b.approval_status || "Draft"}</Badge></td>
-                        <td className="px-3 py-2 text-right text-muted-foreground font-mono">{contentLen > 0 ? `${Math.round(contentLen / 1024)}kb` : "—"}</td>
+                        <td className="px-3 py-2 text-right text-muted-foreground font-mono">{formatContentSize(contentLen)}</td>
                       </tr>
                     );
                   })}

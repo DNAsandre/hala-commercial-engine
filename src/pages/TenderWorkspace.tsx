@@ -121,14 +121,27 @@ function buildRequiredDocumentsSegment(ws: TenderWorkspace): StageTaskProgressSe
 
 function hasValue(value: unknown): boolean {
   if (value === null || value === undefined) return false;
-  if (typeof value === "string") return value.trim().length > 0;
-  if (typeof value === "number") return Number.isFinite(value);
-  return true;
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text) return false;
+    return !new Set(["Not Assessed", "Not Decided", "Not Selected", "No Snapshot", "Unassigned", "Unknown"]).has(text);
+  }
+  if (typeof value === "number") return Number.isFinite(value) && value !== 0;
+  if (typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.some(hasValue);
+  if (typeof value === "object") return Object.values(value as Record<string, unknown>).some(hasValue);
+  return false;
 }
 
 function progressPercent(done: number, total: number): number {
   if (total <= 0) return 0;
   return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+}
+
+function hasRowContent(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.entries(value as Record<string, unknown>)
+    .some(([key, field]) => !["id", "status", "created_at", "updated_at"].includes(key) && hasValue(field));
 }
 
 function getCleanCrmSyncStatusLabel(status?: string): string {
@@ -148,16 +161,23 @@ function buildTenderSummaryTaskProgress(ws: TenderWorkspace): StageTaskProgressS
   const intakePercent = progressPercent(intakeFields.filter(hasValue).length, intakeFields.length);
 
   // Segment 2: "Advisory Readiness Signals" tab — signal health
+  const signalEvidenceAvailable = ws.packs.some(p => typeof p.readinessBreakdown?.readiness_signals === "number");
   const criticalSignals = ws.packs.reduce((sum, p) => sum + (p.readinessBreakdown?.readiness_signals ?? 0), 0);
   const daysLeft = t.submissionDeadline
     ? Math.ceil((new Date(t.submissionDeadline).getTime() - Date.now()) / 86400000)
     : null;
-  const signalPercent = (criticalSignals === 0 && (!daysLeft || daysLeft > 7)) ? 100 : (criticalSignals > 0 || (daysLeft && daysLeft <= 7)) ? 50 : 100;
-
-  return [
+  const signalPercent = !signalEvidenceAvailable
+    ? 0
+    : (criticalSignals === 0 && (!daysLeft || daysLeft > 7))
+      ? 100
+      : 50;
+  const progress: StageTaskProgressSegment[] = [
     { key: "intake", label: "Tender Intake Summary", percent: intakePercent },
-    { key: "signals", label: "Advisory Readiness Signals", percent: signalPercent },
   ];
+  if (signalEvidenceAvailable) {
+    progress.push({ key: "signals", label: "Advisory Readiness Signals", percent: signalPercent });
+  }
+  return progress;
 }
 
 function buildCustomerSnapshotTaskProgress(ws: TenderWorkspace): StageTaskProgressSegment[] {
@@ -202,10 +222,10 @@ function buildIntakeFileAuditTaskProgress(ws: TenderWorkspace): StageTaskProgres
   const notesFields = [data.initial_notes];
 
   return [
-    { key: "files", label: "Received Files", percent: progressPercent(receivedFiles.length > 0 ? 1 : 0, 1) },
+    { key: "files", label: "Received Files", percent: progressPercent(receivedFiles.some(hasValue) ? 1 : 0, 1) },
     { key: "source", label: "Source Details", percent: progressPercent(sourceFields.filter(hasValue).length, sourceFields.length) },
     { key: "deadline", label: "Deadline Check", percent: progressPercent(deadlineFields.filter(hasValue).length, deadlineFields.length) },
-    { key: "notes", label: "Initial Notes", percent: progressPercent(notesFields.filter(hasValue).length + (missingItems.length > 0 ? 1 : 0), 2) },
+    { key: "notes", label: "Initial Notes", percent: progressPercent(notesFields.filter(hasValue).length + (missingItems.some(hasValue) ? 1 : 0), 2) },
   ];
 }
 
@@ -241,7 +261,7 @@ function buildIdentifiedComplianceMatrixTaskProgress(ws: TenderWorkspace): Stage
 
 function buildIdentifiedClarificationLogTaskProgress(ws: TenderWorkspace): StageTaskProgressSegment[] {
   const identified = getIdentifiedDetails(ws);
-  const rows = Array.isArray(identified.clarification_log) ? identified.clarification_log : [];
+  const rows = Array.isArray(identified.clarification_log) ? identified.clarification_log.filter(hasRowContent) : [];
   const submitted = rows.filter((row: any) => row.submitted_to_client || row.status === "submitted" || row.status === "answered" || row.status === "closed").length;
   const answered = rows.filter((row: any) => row.response_received || row.status === "answered" || row.status === "closed").length;
   const notes = identified.clarification_log_notes;
@@ -289,7 +309,7 @@ export function buildSowQualificationTaskProgress(ws: TenderWorkspace): StageTas
   const snapshotFields = [t.customerName, t.title, t.source, t.region, t.submissionDeadline, t.estimatedValue, t.targetGpPercent, t.assignedOwner];
   const coverage = Array.isArray(sq?.coverage_matrix) ? { filled: sq.coverage_matrix.filter((r: any) => r.status && r.status !== "Not Assessed").length, total: Math.max(sq.coverage_matrix.length, 1) } : { filled: 0, total: 1 };
   const clarity = sq?.clarity_assessment && typeof sq.clarity_assessment === "object" ? { filled: Object.values(sq.clarity_assessment).filter((v: any) => v && v !== "Not Assessed").length, total: Math.max(Object.keys(sq.clarity_assessment).length, 1) } : { filled: 0, total: 1 };
-  const clarificationRows = Array.isArray(sq?.clarifications) ? sq.clarifications : [];
+  const clarificationRows = Array.isArray(sq?.clarifications) ? sq.clarifications.filter(hasRowContent) : [];
   const outcomeFilled = [
     sq?.outcome?.recommendation && sq.outcome.recommendation !== "Not decided" ? sq.outcome.recommendation : null,
     sq?.outcome?.reason,
@@ -322,8 +342,8 @@ export function buildTechnicalQualificationTaskProgress(ws: TenderWorkspace): St
   const capabilityRows = Array.isArray(tq?.capability_assessment) ? tq.capability_assessment : [];
   const capabilityAssessed = capabilityRows.filter((r: any) => r.fit && r.fit !== "Not Assessed").length;
   const capabilityPct = progressPercent(capabilityAssessed, Math.max(capabilityRows.length, 1));
-  const gapRows = Array.isArray(tq?.gaps) ? tq.gaps : [];
-  const clarificationRows = Array.isArray(tq?.clarifications) ? tq.clarifications : [];
+  const gapRows = Array.isArray(tq?.gaps) ? tq.gaps.filter(hasRowContent) : [];
+  const clarificationRows = Array.isArray(tq?.clarifications) ? tq.clarifications.filter(hasRowContent) : [];
   const recommendationFilled = [
     tq?.recommendation?.outcome && tq.recommendation.outcome !== "Not decided" ? tq.recommendation.outcome : null,
     tq?.recommendation?.reason,
@@ -358,8 +378,8 @@ export function buildCustomerFitTaskProgress(ws: TenderWorkspace): StageTaskProg
   const dimensionRows = Array.isArray(cf?.dimensions) ? cf.dimensions : [];
   const dimensionsAssessed = dimensionRows.filter((r: any) => r.assessment && r.assessment !== "Not Assessed").length;
   const dimensionsPct = progressPercent(dimensionsAssessed, Math.max(dimensionRows.length, 1));
-  const evidenceRows = Array.isArray(cf?.evidence) ? cf.evidence : [];
-  const gapRows = Array.isArray(cf?.gaps) ? cf.gaps : [];
+  const evidenceRows = Array.isArray(cf?.evidence) ? cf.evidence.filter(hasRowContent) : [];
+  const gapRows = Array.isArray(cf?.gaps) ? cf.gaps.filter(hasRowContent) : [];
   const recommendationFilled = [
     cf?.recommendation?.outcome && cf.recommendation.outcome !== "Not decided" ? cf.recommendation.outcome : null,
     cf?.recommendation?.reason,
@@ -388,11 +408,11 @@ export function buildCustomerFitTaskProgress(ws: TenderWorkspace): StageTaskProg
 export function buildRiskSnapshotTaskProgress(ws: TenderWorkspace): StageTaskProgressSegment[] {
   const rs = ((ws.tender as any).riskSnapshotData || {}) as any;
   // 7 inner tabs: summary, register, assessment, mitigation, clarifications, recommendation, wiring
-  const registerRows = Array.isArray(rs?.register) ? rs.register : [];
+  const registerRows = Array.isArray(rs?.register) ? rs.register.filter(hasRowContent) : [];
   const registerPct = progressPercent(registerRows.length > 0 ? 1 : 0, 1);
   const assessment = rs?.assessment && typeof rs.assessment === "object" ? { filled: Object.values(rs.assessment).filter((v: any) => v && v !== "Not Assessed").length, total: Math.max(Object.keys(rs.assessment).length, 1) } : { filled: 0, total: 1 };
-  const mitigation = Array.isArray(rs?.mitigation_actions) ? { filled: rs.mitigation_actions.length > 0 ? 1 : 0, total: 1 } : { filled: 0, total: 1 };
-  const clarificationRows = Array.isArray(rs?.clarifications) ? rs.clarifications : [];
+  const mitigation = Array.isArray(rs?.mitigation_actions) ? { filled: rs.mitigation_actions.some(hasRowContent) ? 1 : 0, total: 1 } : { filled: 0, total: 1 };
+  const clarificationRows = Array.isArray(rs?.clarifications) ? rs.clarifications.filter(hasRowContent) : [];
   const recommendationFilled = [
     rs?.recommendation?.outcome && rs.recommendation.outcome !== "Not decided" ? rs.recommendation.outcome : null,
     rs?.recommendation?.reason,
@@ -472,13 +492,13 @@ function buildBidNoBidTaskProgress(tabId: string, ws: TenderWorkspace): StageTas
     }).length;
     const rationalePercent = progressPercent(rationaleFilled, 3);
 
-    const themes = Array.isArray(wsData.win_themes) ? wsData.win_themes : [];
+    const themes = Array.isArray(wsData.win_themes) ? wsData.win_themes.filter(hasRowContent) : [];
     const themesPercent = themes.length > 0 ? Math.min(Math.round((themes.length / 3) * 100), 100) : 0;
 
-    const diffs = Array.isArray(wsData.differentiators) ? wsData.differentiators : [];
+    const diffs = Array.isArray(wsData.differentiators) ? wsData.differentiators.filter(hasRowContent) : [];
     const diffsPercent = diffs.length > 0 ? Math.min(Math.round((diffs.length / 3) * 100), 100) : 0;
 
-    const evals = Array.isArray(wsData.evaluation_alignment) ? wsData.evaluation_alignment : [];
+    const evals = Array.isArray(wsData.evaluation_alignment) ? wsData.evaluation_alignment.filter(hasRowContent) : [];
     const evalsPercent = evals.length > 0 ? Math.min(Math.round((evals.length / 3) * 100), 100) : 0;
 
     return [
@@ -506,7 +526,7 @@ function buildBidNoBidTaskProgress(tabId: string, ws: TenderWorkspace): StageTas
     }).length;
     const effortPercent = progressPercent(effortFilled, 4);
 
-    const actions = Array.isArray(rc.actions) ? rc.actions : [];
+    const actions = Array.isArray(rc.actions) ? rc.actions.filter(hasRowContent) : [];
     const actionsPercent = actions.length > 0 ? Math.min(Math.round((actions.length / 2) * 100), 100) : 0;
 
     let recPercent = 0;
@@ -544,12 +564,27 @@ function buildBidNoBidTaskProgress(tabId: string, ws: TenderWorkspace): StageTas
     }).length;
     const formalPercent = progressPercent(formalFilled, 8);
 
-    const evidence = Array.isArray(dr.evidence) ? dr.evidence : [];
+    const evidence = Array.isArray(dr.evidence) ? dr.evidence.filter(hasValue) : [];
     const evidencePercent = evidence.length > 0 ? Math.min(Math.round((evidence.length / 2) * 100), 100) : 0;
+
+    const conditionalSegment = formal.decision === "Bid"
+      ? {
+          key: "if_bid",
+          label: "If Bid — Next Steps",
+          percent: progressPercent([dr.if_bid?.approved_next_stage, dr.if_bid?.approved_to_commit, dr.if_bid?.proposal_authorized].filter(hasValue).length, 3),
+        }
+      : formal.decision === "No-Bid"
+        ? {
+            key: "if_no_bid",
+            label: "If No-Bid — Reason",
+            percent: progressPercent([dr.if_no_bid?.reason, dr.if_no_bid?.notes].filter(hasValue).length, 2),
+          }
+        : null;
 
     return [
       { key: "formal_decision", label: "Formal Decision", percent: formalPercent },
       { key: "decision_evidence", label: "Decision Evidence", percent: evidencePercent },
+      ...(conditionalSegment ? [conditionalSegment] : []),
     ];
   }
 
@@ -734,7 +769,8 @@ export function buildTenderDraftingTaskProgress(tabId: string, ws: TenderWorkspa
   if (tabId === "proposal_block_workbench") {
     const blocks = Array.isArray(td.proposal_blocks) ? td.proposal_blocks : [];
     const approved = blocks.filter((b: any) => b.approval_status === "Approved").length;
-    const drafted = blocks.filter((b: any) => b.draft_status === "AI Drafted" || b.draft_status === "Human Edited" || b.draft_status === "Reviewed").length;
+    const draftedStatuses = new Set(["AI Drafted", "Manual Draft", "Human Edited", "Reviewed", "Approved", "Ready for Final Pack", "Locked"]);
+    const drafted = blocks.filter((b: any) => draftedStatuses.has(b.draft_status)).length;
     const blocksPct = progressPercent(blocks.length, Math.max(blocks.length, 3));
     const draftedPct = progressPercent(drafted, Math.max(blocks.length, 1));
     const approvedPct = progressPercent(approved, Math.max(blocks.length, 1));
@@ -1267,7 +1303,6 @@ function buildInternalReviewTaskProgress(tabId: string, ws: TenderWorkspace): St
     return [
       { key: "dept_summary", label: "Department Summary", percent: deptPct },
       { key: "readiness", label: "Overall Readiness", percent: readinessPct },
-      { key: "ai_flags", label: "AI Flags", percent: flagPct },
     ];
   }
 
@@ -1283,7 +1318,6 @@ function buildInternalReviewTaskProgress(tabId: string, ws: TenderWorkspace): St
     const flagPct: number | null = null;
     return [
       { key: "ops_briefing", label: "Briefing", percent: briefPct },
-      { key: "ops_findings", label: "AI Findings", percent: flagPct },
       { key: "ops_blocks", label: "Block Review", percent: reviewPct },
     ];
   }
@@ -1298,7 +1332,6 @@ function buildInternalReviewTaskProgress(tabId: string, ws: TenderWorkspace): St
     const flagPct: number | null = null;
     return [
       { key: "fin_briefing", label: "Briefing", percent: briefPct },
-      { key: "fin_findings", label: "AI Findings", percent: flagPct },
       { key: "fin_blocks", label: "Block Review", percent: reviewPct },
     ];
   }
@@ -1313,7 +1346,6 @@ function buildInternalReviewTaskProgress(tabId: string, ws: TenderWorkspace): St
     const flagPct: number | null = null;
     return [
       { key: "leg_briefing", label: "Briefing", percent: briefPct },
-      { key: "leg_findings", label: "AI Findings", percent: flagPct },
       { key: "leg_blocks", label: "Block Review", percent: reviewPct },
     ];
   }
@@ -1377,7 +1409,6 @@ export function buildFinalApprovedTaskProgress(tabId: string, ws: TenderWorkspac
     const approvedBlocks = blocks.filter((b: any) => b.approval_status === "Approved" || b.approval_status === "Locked").length;
     const assemblyReady = blocks.length > 0 && approvedBlocks === blocks.length;
     return [
-      { key: "bot_check", label: "AI Review", percent: null, note: "Optional support — Final Pack readiness does not depend on AI" },
       { key: "assembly_readiness", label: "Assembly Readiness", percent: assemblyReady ? 100 : approvedBlocks > 0 ? Math.round((approvedBlocks / blocks.length) * 100) : 0 },
       { key: "block_register", label: "Block Register", percent: blocks.length > 0 ? Math.round((approvedBlocks / blocks.length) * 100) : 0 },
     ];
@@ -1440,10 +1471,10 @@ function buildSubmittedTaskProgress(tabId: string, ws: TenderWorkspace): StageTa
   if (tabId === "crm_sync") {
     const crm = sub.crm_sync ?? {};
     const hasCrm = !!(crm.crm_stage_after || crm.synced_at);
-    const isSynced = crm.sync_status === "synced";
+    const hasDetails = hasCrm && !!(crm.sync_status && crm.synced_at && crm.synced_by);
     return [
       { key: "pipeline", label: "Pipeline Transition", percent: hasCrm ? 100 : 0 },
-      { key: "details", label: "Sync Details", percent: isSynced ? 100 : (hasCrm ? 50 : 0) },
+      { key: "details", label: "CRM Record Details", percent: hasDetails ? 100 : (hasCrm ? 50 : 0) },
     ];
   }
 

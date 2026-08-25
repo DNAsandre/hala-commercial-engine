@@ -109,7 +109,7 @@ export function DeliveryRecordTab({
             <FieldInput type="date" value={data.sentDate} onChange={v => update("sentDate", v)} />
           </FieldRow>
           <FieldRow label="Sent Time">
-            <FieldInput type="time" value={data.sentTime} onChange={v => update("sentTime", v)} />
+            <FieldInput value={data.sentTime} onChange={v => update("sentTime", v)} placeholder="HH:MM" />
           </FieldRow>
         </div>
         <FieldRow label="Channel">
@@ -165,7 +165,7 @@ export function RecipientContactLogTab({
                 <FieldInput value={contact.contactName} onChange={v => update(index, { contactName: v })} placeholder="Contact name" />
                 <FieldInput value={contact.role} onChange={v => update(index, { role: v })} placeholder="Role" />
                 <FieldInput value={contact.company} onChange={v => update(index, { company: v })} placeholder="Company" />
-                <FieldInput value={contact.email} onChange={v => update(index, { email: v })} placeholder="Email" />
+                <FieldInput type="email" value={contact.email} onChange={v => update(index, { email: v })} placeholder="Email" />
                 <label className="flex h-9 items-center gap-2 rounded-md border border-border px-2 text-[11px] text-muted-foreground">
                   <input type="checkbox" checked={contact.included} onChange={e => update(index, { included: e.target.checked })} />
                   Included
@@ -175,7 +175,7 @@ export function RecipientContactLogTab({
                 </button>
               </div>
               <div className="mt-2 grid gap-2 lg:grid-cols-[220px_1fr]">
-                <FieldInput value={contact.phone} onChange={v => update(index, { phone: v })} placeholder="Phone" />
+                <FieldInput type="tel" value={contact.phone} onChange={v => update(index, { phone: v })} placeholder="Phone" />
                 <FieldTextarea value={contact.notes} onChange={v => update(index, { notes: v })} placeholder="Recipient notes" rows={2} />
               </div>
             </div>

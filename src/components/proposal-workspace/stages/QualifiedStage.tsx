@@ -74,9 +74,13 @@ export function QualificationSummaryTab({
         <div className="space-y-2">
           <div className="flex items-center gap-3">
             <input
-              type="range" min="0" max="100" value={data.qualificationConfidence}
-              onChange={e => u("qualificationConfidence", Number(e.target.value))}
-              className="flex-1 h-2 accent-[#075eea]"
+              type="number"
+              min="0"
+              max="100"
+              aria-label="Qualification Confidence Percentage"
+              value={data.qualificationConfidence}
+              onChange={e => u("qualificationConfidence", Math.max(0, Math.min(100, Number(e.target.value))))}
+              className="w-28 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#075eea]/40"
             />
             <span className={`text-sm font-bold min-w-[40px] text-right ${
               data.qualificationConfidence >= 70 ? "text-emerald-600" :
@@ -135,6 +139,8 @@ export function CustomerFitTab({
           <div className="flex gap-1">
             {(["green", "amber", "red"] as const).map(c => (
               <button key={c} onClick={() => u("fitScore", data.fitScore === c ? "" : c)}
+                aria-pressed={data.fitScore === c}
+                aria-label={`Overall fit ${c}`}
                 className={`px-3 py-1 rounded text-[10px] font-medium border transition-all ${
                   data.fitScore === c
                     ? c === "green" ? "bg-emerald-100 border-emerald-300 text-emerald-700"
@@ -241,7 +247,7 @@ export function RequiredInfoTab({
             <div key={item.key} className={`flex items-start gap-3 p-3 rounded-lg border transition-all ${
               item.complete ? "border-emerald-200 bg-emerald-50/30" : "border-border"
             }`}>
-              <button onClick={() => toggle(i)} className="mt-0.5 shrink-0">
+              <button onClick={() => toggle(i)} className="mt-0.5 shrink-0" aria-pressed={item.complete} aria-label={`${item.label}: ${item.complete ? "complete" : "incomplete"}`}>
                 <CheckCircle2 className={`w-4 h-4 transition-colors ${
                   item.complete ? "text-emerald-500" : "text-muted-foreground/30"
                 }`} />

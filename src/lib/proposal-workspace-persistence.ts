@@ -2566,8 +2566,6 @@ export async function loadProposalWorkspaceSnapshot(proposalId: string): Promise
     .from("commercial_tickets")
     .select("id,ticket_title,customer_name,company,region,industry,estimated_value,probability_percent,target_date,notes,source_type,source_reference,legacy_opportunity_id,type_details,updated_at")
     .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -2628,8 +2626,6 @@ export async function loadProposalQualifiedStageData(proposalId: string): Promis
     .from("commercial_tickets")
     .select("id,ticket_title,customer_name,company,region,industry,estimated_value,probability_percent,target_date,notes,source_type,source_reference,legacy_opportunity_id,type_details,updated_at")
     .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -2663,8 +2659,6 @@ export async function loadProposalDiscoveryStageData(proposalId: string): Promis
     .from("commercial_tickets")
     .select("id,type_details")
     .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -2696,8 +2690,6 @@ export async function loadProposalSolutionDesignStageData(proposalId: string): P
     .from("commercial_tickets")
     .select("id,type_details")
     .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -2729,8 +2721,6 @@ export async function loadProposalPnlPricingStageData(proposalId: string): Promi
     .from("commercial_tickets")
     .select("id,type_details")
     .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -2762,8 +2752,6 @@ export async function loadProposalQuoteStageData(proposalId: string): Promise<Pr
     .from("commercial_tickets")
     .select("id,ticket_title,customer_name,company,type_details")
     .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -2795,8 +2783,6 @@ export async function loadProposalDraftingStageData(proposalId: string): Promise
     .from("commercial_tickets")
     .select("id,type_details")
     .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -2828,8 +2814,6 @@ export async function loadProposalSentStageData(proposalId: string): Promise<Pro
     .from("commercial_tickets")
     .select("id,type_details")
     .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -2861,8 +2845,6 @@ export async function loadProposalNegotiationStageData(proposalId: string): Prom
     .from("commercial_tickets")
     .select("id,type_details")
     .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -2894,8 +2876,6 @@ export async function loadProposalCommercialApprovalStageData(proposalId: string
     .from("commercial_tickets")
     .select("id,type_details")
     .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -2927,8 +2907,6 @@ export async function loadProposalContractSignedStageData(proposalId: string): P
     .from("commercial_tickets")
     .select("id,type_details")
     .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -2960,8 +2938,6 @@ export async function loadProposalGoLiveStageData(proposalId: string): Promise<P
     .from("commercial_tickets")
     .select("id,type_details")
     .eq("id", proposalId)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -2995,11 +2971,12 @@ export interface ProposalStageSaveOptions {
   actorName?: string;
 }
 
-export interface ProposalStageSaveResult {
+export interface ProposalStageSaveResult<T extends object = Record<string, unknown>> {
   savedAt: string;
   revision: string;
   auditWritten: boolean;
   auditWarning?: string;
+  storedData: Partial<T>;
 }
 
 interface ProposalStagePersistenceDefinition<T extends object> {
@@ -3017,7 +2994,7 @@ async function saveProposalStageData<T extends object>(
   data: T,
   definition: ProposalStagePersistenceDefinition<T>,
   options: ProposalStageSaveOptions = {},
-): Promise<ProposalStageSaveResult> {
+): Promise<ProposalStageSaveResult<T>> {
   const id = text(proposalId);
   if (!id) throw new Error("A proposal ticket id is required.");
 
@@ -3025,12 +3002,10 @@ async function saveProposalStageData<T extends object>(
     .from("commercial_tickets")
     .select("id,type_details,updated_at")
     .eq("id", id)
-    .eq("ticket_type", "proposal")
-    .eq("active", true)
     .maybeSingle();
 
   if (readError) throw new Error(readError.message);
-  if (!existing) throw new Error("Active proposal ticket was not found.");
+  if (!existing) throw new Error("Proposal ticket was not found.");
 
   const existingRow = existing as { id: string; type_details?: unknown; updated_at?: string | null };
   const currentRevision = text(existingRow.updated_at) || null;
@@ -3062,9 +3037,7 @@ async function saveProposalStageData<T extends object>(
       type_details: nextDetails,
       updated_at: savedAt,
     })
-    .eq("id", id)
-    .eq("ticket_type", "proposal")
-    .eq("active", true);
+    .eq("id", id);
 
   if (currentRevision) updateQuery = updateQuery.eq("updated_at", currentRevision);
 
@@ -3078,14 +3051,12 @@ async function saveProposalStageData<T extends object>(
       .from("commercial_tickets")
       .select("id,updated_at")
       .eq("id", id)
-      .eq("ticket_type", "proposal")
-      .eq("active", true)
       .maybeSingle();
     if (currentError) throw new Error(currentError.message);
     if (current) {
       throw new Error("This proposal changed while it was being saved. Reload before trying again; no data was overwritten.");
     }
-    throw new Error("The active proposal ticket was not found, so nothing was saved.");
+    throw new Error("The proposal ticket was not found, so nothing was saved.");
   }
 
   const updatedRow = updated as { id: string; type_details?: unknown; updated_at?: string | null };
@@ -3123,17 +3094,18 @@ async function saveProposalStageData<T extends object>(
       revision,
       auditWritten: false,
       auditWarning,
+      storedData: sanitized,
     };
   }
 
-  return { savedAt, revision, auditWritten: true };
+  return { savedAt, revision, auditWritten: true, storedData: sanitized };
 }
 
 export async function saveProposalQualifiedStageData(
   proposalId: string,
   data: ProposalQualifiedStageData,
   options?: ProposalStageSaveOptions,
-): Promise<ProposalStageSaveResult> {
+): Promise<ProposalStageSaveResult<ProposalQualifiedStageData>> {
   return saveProposalStageData(proposalId, data, {
     key: "qualified",
     source: "proposal_qualified_stage",
@@ -3146,7 +3118,7 @@ export async function saveProposalDiscoveryStageData(
   proposalId: string,
   data: ProposalDiscoveryStageData,
   options?: ProposalStageSaveOptions,
-): Promise<ProposalStageSaveResult> {
+): Promise<ProposalStageSaveResult<ProposalDiscoveryStageData>> {
   return saveProposalStageData(proposalId, data, {
     key: "discovery",
     source: "proposal_discovery_stage",
@@ -3159,7 +3131,7 @@ export async function saveProposalSolutionDesignStageData(
   proposalId: string,
   data: ProposalSolutionDesignStageData,
   options?: ProposalStageSaveOptions,
-): Promise<ProposalStageSaveResult> {
+): Promise<ProposalStageSaveResult<ProposalSolutionDesignStageData>> {
   return saveProposalStageData(proposalId, data, {
     key: "solution_design",
     source: "proposal_solution_design_stage",
@@ -3172,7 +3144,7 @@ export async function saveProposalPnlPricingStageData(
   proposalId: string,
   data: ProposalPnlPricingStageData,
   options?: ProposalStageSaveOptions,
-): Promise<ProposalStageSaveResult> {
+): Promise<ProposalStageSaveResult<ProposalPnlPricingStageData>> {
   return saveProposalStageData(proposalId, data, {
     key: "pnl_pricing",
     source: "proposal_pnl_pricing_stage",
@@ -3185,7 +3157,7 @@ export async function saveProposalQuoteStageData(
   proposalId: string,
   data: ProposalQuoteStageData,
   options?: ProposalStageSaveOptions,
-): Promise<ProposalStageSaveResult> {
+): Promise<ProposalStageSaveResult<ProposalQuoteStageData>> {
   return saveProposalStageData(proposalId, data, {
     key: "quote",
     source: "proposal_quote_stage",
@@ -3198,7 +3170,7 @@ export async function saveProposalDraftingStageData(
   proposalId: string,
   data: ProposalDraftingStageData,
   options?: ProposalStageSaveOptions,
-): Promise<ProposalStageSaveResult> {
+): Promise<ProposalStageSaveResult<ProposalDraftingStageData>> {
   return saveProposalStageData(proposalId, data, {
     key: "proposal_drafting",
     source: "proposal_drafting_stage",
@@ -3211,7 +3183,7 @@ export async function saveProposalSentStageData(
   proposalId: string,
   data: ProposalSentStageData,
   options?: ProposalStageSaveOptions,
-): Promise<ProposalStageSaveResult> {
+): Promise<ProposalStageSaveResult<ProposalSentStageData>> {
   return saveProposalStageData(proposalId, data, {
     key: "proposal_sent",
     source: "proposal_sent_stage",
@@ -3224,7 +3196,7 @@ export async function saveProposalNegotiationStageData(
   proposalId: string,
   data: ProposalNegotiationStageData,
   options?: ProposalStageSaveOptions,
-): Promise<ProposalStageSaveResult> {
+): Promise<ProposalStageSaveResult<ProposalNegotiationStageData>> {
   return saveProposalStageData(proposalId, data, {
     key: "negotiation",
     source: "proposal_negotiation_stage",
@@ -3237,7 +3209,7 @@ export async function saveProposalCommercialApprovalStageData(
   proposalId: string,
   data: ProposalCommercialApprovalStageData,
   options?: ProposalStageSaveOptions,
-): Promise<ProposalStageSaveResult> {
+): Promise<ProposalStageSaveResult<ProposalCommercialApprovalStageData>> {
   return saveProposalStageData(proposalId, data, {
     key: "commercial_approval",
     source: "proposal_commercial_approval_stage",
@@ -3250,7 +3222,7 @@ export async function saveProposalContractSignedStageData(
   proposalId: string,
   data: ProposalContractSignedStageData,
   options?: ProposalStageSaveOptions,
-): Promise<ProposalStageSaveResult> {
+): Promise<ProposalStageSaveResult<ProposalContractSignedStageData>> {
   return saveProposalStageData(proposalId, data, {
     key: "contract_signed",
     source: "proposal_contract_signed_stage",
@@ -3263,7 +3235,7 @@ export async function saveProposalGoLiveStageData(
   proposalId: string,
   data: ProposalGoLiveStageData,
   options?: ProposalStageSaveOptions,
-): Promise<ProposalStageSaveResult> {
+): Promise<ProposalStageSaveResult<ProposalGoLiveStageData>> {
   return saveProposalStageData(proposalId, data, {
     key: "go_live",
     source: "proposal_go_live_stage",

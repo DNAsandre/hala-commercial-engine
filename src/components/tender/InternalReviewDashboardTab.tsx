@@ -1,19 +1,18 @@
 /**
  * InternalReviewDashboardTab — Review Dashboard (Bid Manager's Control Tower)
  *
- * 3 Section Tabs (matching Qualification pattern):
+ * 2 Section Tabs (matching Qualification pattern):
  *   1. Department Summary — cards per dept showing approval counts
  *   2. Overall Readiness — progress bar + approved/rejected/pending badges
- *   3. AI Review Flags — severity-sorted flag table
- *
- * No AI generation here. No mock data.
+ * Stored review flags may contribute to readiness context, but bot execution
+ * is owned by the Admin-configured runtime rather than this dashboard.
  */
 import { useMemo, useState, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
-  Shield, DollarSign, Scale, AlertTriangle, CheckCircle2, XCircle, Clock, BarChart3, Bot,
+  Shield, DollarSign, Scale, AlertTriangle, CheckCircle2, XCircle, Clock, BarChart3,
   ChevronDown,
 } from "lucide-react";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
@@ -44,11 +43,10 @@ const DEPT_COLORS: Record<ReviewDepartment, { bg: string; border: string; text: 
   legal: { bg: "bg-[#075eea]/10", border: "border-[#075eea]/20", text: "text-[#075eea]" },
 };
 
-type DashboardSection = "departments" | "readiness" | "flags";
+type DashboardSection = "departments" | "readiness";
 const DASHBOARD_TABS: TenderStageSectionTab<DashboardSection>[] = [
   { key: "departments", label: "Department Summary", icon: <Shield className="w-3.5 h-3.5" /> },
   { key: "readiness", label: "Overall Readiness", icon: <BarChart3 className="w-3.5 h-3.5" /> },
-  { key: "flags", label: "AI Review Flags", icon: <Bot className="w-3.5 h-3.5" /> },
 ];
 
 function SectionHeader({ title, icon, badge }: { title: string; icon: ReactNode; badge?: string | number }) {
@@ -107,7 +105,7 @@ export default function InternalReviewDashboardTab({ ws, onOpenDocuments, onOpen
     { label: "Overall Readiness", value: `${readinessPct}%` },
     { label: "Total Approved", value: `${totalApproved}/${totalRequired}` },
     { label: "Rejected", value: `${totalRejected}` },
-    { label: "AI Flags", value: `${allFlags.length} (${highFlags} critical)` },
+    { label: "Stored Review Flags", value: `${allFlags.length} (${highFlags} critical)` },
   ];
 
   if (blocks.length === 0) {
@@ -196,53 +194,13 @@ export default function InternalReviewDashboardTab({ ws, onOpenDocuments, onOpen
             </Badge>
             {highFlags > 0 && (
               <Badge variant="outline" className="border-amber-200 text-amber-700 gap-1">
-                <AlertTriangle className="w-3 h-3" /> {highFlags} Critical AI Flags
+                <AlertTriangle className="w-3 h-3" /> {highFlags} Critical Stored Flags
               </Badge>
             )}
           </div>
         </CardContent>
       </Card>
 
-      {/* ── 3. AI Review Flags ── */}
-      <Card className={`gap-0 overflow-hidden rounded-lg border-border py-0 shadow-none ${activeSection !== "flags" ? "hidden" : ""}`}>
-        <CardHeader className="p-0"><SectionHeader title="AI Review Flags" icon={<Bot className="w-3.5 h-3.5 text-[#075eea]" />} badge={`${allFlags.length} flags`} /></CardHeader>
-        <CardContent className="p-0">
-          {allFlags.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-6">No AI flags yet. Run departmental AI reviews first.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-[11px]">
-                <thead className="bg-muted/50 border-b">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-semibold w-16">Severity</th>
-                    <th className="px-3 py-2 text-left font-semibold">Block</th>
-                    <th className="px-3 py-2 text-left font-semibold w-20">Dept</th>
-                    <th className="px-3 py-2 text-left font-semibold">Issue</th>
-                    <th className="px-3 py-2 text-left font-semibold">Recommendation</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {allFlags.map((f, i) => (
-                    <tr key={f.id || i} className="border-t border-border hover:bg-muted/20">
-                      <td className="px-3 py-2">
-                        <Badge variant="outline" className={`text-[8px] ${f.severity === "high" ? "border-red-300 text-red-700 bg-red-50" : f.severity === "medium" ? "border-amber-300 text-amber-700 bg-amber-50" : "border-slate-200 text-slate-600"}`}>
-                          {f.severity}
-                        </Badge>
-                      </td>
-                      <td className="px-3 py-2 font-medium">§{f.blockSection} {f.blockTitle}</td>
-                      <td className="px-3 py-2">
-                        <Badge variant="outline" className="text-[8px]">{DEPARTMENT_LABELS[f.department as ReviewDepartment] || f.department}</Badge>
-                      </td>
-                      <td className="px-3 py-2">{f.issue}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{f.recommendation}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
       </div>
     </div>
   );

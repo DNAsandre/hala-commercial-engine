@@ -389,7 +389,7 @@ describe("stage-9 checklist meter — internal review derives from block statuse
       { id: "b2", approval_status: "Approved" },
     ] } });
     const segments = buildFinalApprovedTaskProgress("final_pack", ws);
-    expect(segment(segments, "bot_check").percent).toBeNull();
+    expect(segments?.some(item => item.key === "bot_check")).toBe(false);
     expect(segment(segments, "assembly_readiness").percent).toBe(100);
     expect(segment(segments, "block_register").percent).toBe(100);
   });

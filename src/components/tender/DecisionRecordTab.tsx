@@ -15,7 +15,7 @@
  * This is a structured decision record.
  */
 
-import { useState, useCallback, useMemo, useRef, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -191,6 +191,10 @@ export default function DecisionRecordTab({ ws, onOpenDocuments, onOpenGlobalInt
     return tabs;
   }, [showIfBid, showIfNoBid]);
 
+  useEffect(() => {
+    if (!sectionTabs.some(tab => tab.key === activeSection)) setActiveSection("formal");
+  }, [activeSection, sectionTabs]);
+
   const addEvidence = () => setEvidence(p => [...p, emptyEvidence()]);
   const removeEvidence = (i: number) => setEvidence(p => p.filter((_, idx) => idx !== i));
   const updateEvidence = (i: number, f: keyof EvidenceRow, v: any) => setEvidence(p => p.map((r, idx) => idx === i ? { ...r, [f]: v } : r));
@@ -219,6 +223,7 @@ export default function DecisionRecordTab({ ws, onOpenDocuments, onOpenGlobalInt
         staleRetryArmed,
         labels: { saved: "Decision Record saved.", failed: "Save failed" },
         onConfirmed: () => onSaved?.(),
+        onStale: () => onSaved?.(),
       });
     } catch (e: any) {
       toast.error(e.message || "Save failed.");
@@ -307,7 +312,7 @@ export default function DecisionRecordTab({ ws, onOpenDocuments, onOpenGlobalInt
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 block">Decision Date</label>
-              <input type="date" className="w-full border border-border rounded-md px-3 py-1.5 text-xs bg-card" value={formal.decision_date} onChange={e => setFormal(p => ({ ...p, decision_date: e.target.value }))} />
+              <input type="date" className="w-full border border-border rounded-md px-3 py-1.5 text-xs bg-card" value={formal.decision_date} onChange={e => setFormal(p => ({ ...p, decision_date: e.target.value }))} onBlur={e => { const value = e.currentTarget.value; setFormal(p => p.decision_date === value ? p : ({ ...p, decision_date: value })); }} />
             </div>
             <div>
               <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 block">Decision Owner</label>

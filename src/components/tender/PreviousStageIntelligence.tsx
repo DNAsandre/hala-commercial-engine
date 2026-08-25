@@ -310,7 +310,8 @@ function buildBidRows(ws: TenderWorkspace): IntelligenceRow[] {
     ? (bnb.decision?.decision || bnb.bid_decision?.decision || bnb.decision_record?.formal?.decision || "Not decided")
     : "Not captured";
   const winThemes = rowsFrom(bnb?.win_strategy?.win_themes);
-  const resources = rowsFrom(bnb?.resource_commitment?.resources).length || rowsFrom(bnb?.resource_commitment?.commitments).length;
+  const resourceRows = rowsFrom(bnb?.resource_commitment?.rows);
+  const resources = resourceRows.filter((row: any) => row?.resource || row?.owner || (row?.status && row.status !== "Not Assessed")).length;
   const decisionRecord = bnb?.decision_record;
 
   return [
@@ -335,7 +336,7 @@ function buildBidRows(ws: TenderWorkspace): IntelligenceRow[] {
       icon: Users,
       label: "Resource Commitment",
       status: resources > 0 ? `${resources} commitment${resources === 1 ? "" : "s"}` : "Not captured",
-      detail: labelize(bnb?.resource_commitment?.status, ""),
+      detail: labelize(bnb?.resource_commitment?.recommendation?.recommendation, ""),
       captured: isCaptured(bnb?.resource_commitment),
     },
     {

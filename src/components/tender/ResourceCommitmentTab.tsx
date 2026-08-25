@@ -112,6 +112,14 @@ function emptyResourceRows(): ResourceRow[] {
   return RESOURCE_LABELS.map(r => ({ resource: r, status: "Not Assessed" as ResourceStatus, owner: "", evidence: "", due_date: "" }));
 }
 
+export function reconcileResourceRows(value: unknown): ResourceRow[] {
+  const defaults = emptyResourceRows();
+  if (!Array.isArray(value)) return defaults;
+  const stored = value.filter(row => row && typeof row === "object") as ResourceRow[];
+  const canonical = defaults.map(base => ({ ...base, ...(stored.find(row => row.resource === base.resource) ?? {}) }));
+  return [...canonical, ...stored.filter(row => !defaults.some(base => base.resource === row.resource))];
+}
+
 function emptyEffort(): EffortData {
   return { estimated_effort: "Not Assessed", deadline_pressure: "Not Assessed", can_submit_on_time: "Not Assessed", proposal_complexity: "Not Assessed" };
 }
@@ -171,8 +179,7 @@ export default function ResourceCommitmentTab({ ws, onOpenDocuments, onOpenGloba
   const rc = existing?.resource_commitment;
 
   const [rows, setRows] = useState<ResourceRow[]>(() => {
-    if (Array.isArray(rc?.rows) && rc.rows.length === RESOURCE_LABELS.length) return rc.rows;
-    return emptyResourceRows();
+    return reconcileResourceRows(rc?.rows);
   });
 
   const [effort, setEffort] = useState<EffortData>(() => {
@@ -221,6 +228,7 @@ export default function ResourceCommitmentTab({ ws, onOpenDocuments, onOpenGloba
         staleRetryArmed,
         labels: { saved: "Resource Commitment saved.", failed: "Save failed" },
         onConfirmed: () => onSaved?.(),
+        onStale: () => onSaved?.(),
       });
     } catch (e: any) {
       toast.error(e.message || "Save failed.");
@@ -327,7 +335,7 @@ export default function ResourceCommitmentTab({ ws, onOpenDocuments, onOpenGloba
                       <input type="text" className="w-full border border-border rounded px-2 py-1 text-xs bg-card" placeholder="Notes..." value={row.evidence} onChange={e => updateRow(idx, "evidence", e.target.value)} />
                     </td>
                     <td className="px-3 py-2">
-                      <input type="date" className="w-full border border-border rounded px-2 py-1 text-xs bg-card" value={row.due_date} onChange={e => updateRow(idx, "due_date", e.target.value)} />
+                      <input type="date" className="w-full border border-border rounded px-2 py-1 text-xs bg-card" value={row.due_date} onChange={e => updateRow(idx, "due_date", e.target.value)} onBlur={e => { const value = e.currentTarget.value; if (row.due_date !== value) updateRow(idx, "due_date", value); }} />
                     </td>
                   </tr>
                 ))}
@@ -390,7 +398,7 @@ export default function ResourceCommitmentTab({ ws, onOpenDocuments, onOpenGloba
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="text-[9px] font-semibold text-muted-foreground mb-0.5 block">Due Date</label>
-                  <input type="date" className="w-full border border-border rounded px-2 py-1.5 text-xs bg-card" value={row.due_date} onChange={e => updateAction(idx, "due_date", e.target.value)} />
+                  <input type="date" className="w-full border border-border rounded px-2 py-1.5 text-xs bg-card" value={row.due_date} onChange={e => updateAction(idx, "due_date", e.target.value)} onBlur={e => { const value = e.currentTarget.value; if (row.due_date !== value) updateAction(idx, "due_date", value); }} />
                 </div>
                 <div>
                   <label className="text-[9px] font-semibold text-muted-foreground mb-0.5 block">Status</label>

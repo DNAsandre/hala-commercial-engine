@@ -106,6 +106,14 @@ function emptyChecklist(): ChecklistRow[] {
   return CHECKLIST_QUESTIONS.map(q => ({ question: q, status: "Not Assessed" as ChecklistStatus, evidence: "", owner: "" }));
 }
 
+export function reconcileDecisionChecklist(value: unknown): ChecklistRow[] {
+  const defaults = emptyChecklist();
+  if (!Array.isArray(value)) return defaults;
+  const stored = value.filter(row => row && typeof row === "object") as ChecklistRow[];
+  const canonical = defaults.map(base => ({ ...base, ...(stored.find(row => row.question === base.question) ?? {}) }));
+  return [...canonical, ...stored.filter(row => !defaults.some(base => base.question === row.question))];
+}
+
 function emptyRecommendation(): RecommendationData {
   return { next_step: "Not Decided", conditions: "" };
 }
@@ -160,10 +168,7 @@ export default function BidDecisionTab({ ws, onOpenDocuments, onOpenGlobalIntel,
   });
 
   const [checklist, setChecklist] = useState<ChecklistRow[]>(() => {
-    if (Array.isArray(existing?.decision_checklist) && existing.decision_checklist.length === CHECKLIST_QUESTIONS.length) {
-      return existing.decision_checklist;
-    }
-    return emptyChecklist();
+    return reconcileDecisionChecklist(existing?.decision_checklist);
   });
 
   const [recommendation, setRecommendation] = useState<RecommendationData>(() => {
@@ -202,6 +207,7 @@ export default function BidDecisionTab({ ws, onOpenDocuments, onOpenGlobalIntel,
         staleRetryArmed,
         labels: { saved: "Bid Decision saved.", failed: "Save failed" },
         onConfirmed: () => onSaved?.(),
+        onStale: () => onSaved?.(),
         // Stale: local form state is untouched — the user's entry stays.
       });
     } catch (e: any) {
@@ -296,7 +302,7 @@ export default function BidDecisionTab({ ws, onOpenDocuments, onOpenGlobalIntel,
             </div>
             <div>
               <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 block">Decision Date</label>
-              <input type="date" className="w-full border border-border rounded-md px-3 py-1.5 text-xs bg-card" value={decision.decision_date} onChange={e => setDecision(prev => ({ ...prev, decision_date: e.target.value }))} />
+              <input type="date" className="w-full border border-border rounded-md px-3 py-1.5 text-xs bg-card" value={decision.decision_date} onChange={e => setDecision(prev => ({ ...prev, decision_date: e.target.value }))} onBlur={e => { const value = e.currentTarget.value; setDecision(prev => prev.decision_date === value ? prev : ({ ...prev, decision_date: value })); }} />
             </div>
           </div>
 

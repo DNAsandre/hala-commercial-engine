@@ -294,7 +294,7 @@ export default function IdentifiedClarificationLogTab({ ws, reload, onOpenDocume
               <div key={row.id} className="rounded-md border p-3">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Question {index + 1}</span>
-                  <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-red-600" onClick={() => removeRow(row.id)}>
+                  <Button type="button" variant="ghost" size="sm" aria-label={`Remove question ${index + 1}`} className="h-7 w-7 p-0 text-muted-foreground hover:text-red-600" onClick={() => removeRow(row.id)}>
                     <Trash2 className="w-3.5 h-3.5" />
                   </Button>
                 </div>
@@ -318,6 +318,10 @@ export default function IdentifiedClarificationLogTab({ ws, reload, onOpenDocume
                   <div>
                     <label className="text-[10px] font-semibold text-muted-foreground">Due Date</label>
                     <Input type="date" className="mt-1 h-8 text-xs" value={row.due_date} onChange={event => updateRow(row.id, { due_date: event.target.value })} />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="text-[10px] font-semibold text-muted-foreground">Question Notes</label>
+                    <Textarea className="mt-1 min-h-[64px] text-xs" value={row.notes} onChange={event => updateRow(row.id, { notes: event.target.value })} />
                   </div>
                 </div>
               </div>

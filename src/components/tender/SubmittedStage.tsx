@@ -208,6 +208,13 @@ export default function SubmittedStage({ ws, activeTab, reload, onOpenDocuments,
   const hasVersion = !!(sub.submitted_version?.version_label || sub.submitted_version?.frozen_at);
   const hasCrmSync = !!(sub.crm_sync?.crm_stage_after || sub.crm_sync?.synced_at);
   const syncStatus = sub.crm_sync?.sync_status || "pending";
+  const syncStatusLabel = syncStatus === "synced"
+    ? "Synced"
+    : syncStatus === "failed"
+      ? "Failed"
+      : syncStatus === "manual"
+        ? "Manual Update"
+        : "Pending";
   // TCW-T4 (F5): activityEvents and auditEntries are two projections of the
   // SAME commercial_ticket_audit rows — count ONE of them.
   const auditCount = Array.isArray(ws.auditEntries) ? ws.auditEntries.length : 0;
@@ -216,7 +223,7 @@ export default function SubmittedStage({ ws, activeTab, reload, onOpenDocuments,
     { label: "Submission", value: hasSubmission ? "Recorded" : "Not recorded" },
     { label: "Receipt", value: hasReceipt ? "Confirmed" : "Pending" },
     { label: "Version", value: hasVersion ? (sub.submitted_version?.version_label || "Recorded") : "Not recorded" },
-    { label: "CRM Sync", value: hasCrmSync ? (syncStatus === "synced" ? "Synced" : syncStatus === "failed" ? "Failed" : "Pending") : "Not recorded" },
+    { label: "CRM Record", value: hasCrmSync ? syncStatusLabel : "Not recorded" },
     { label: "Audit Rows", value: String(auditCount) },
   ];
 

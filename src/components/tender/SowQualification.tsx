@@ -165,6 +165,14 @@ function emptySowQualificationData(): SowQualificationData {
   };
 }
 
+export function reconcileSowCoverageRows(value: unknown): CoverageRow[] {
+  const defaults = emptySowQualificationData().coverage_matrix;
+  if (!Array.isArray(value)) return defaults;
+  const stored = value.filter(row => row && typeof row === "object") as CoverageRow[];
+  const canonical = defaults.map(base => ({ ...base, ...(stored.find(row => row.area === base.area) ?? {}) }));
+  return [...canonical, ...stored.filter(row => !defaults.some(base => base.area === row.area))];
+}
+
 // ═══════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════
@@ -212,9 +220,7 @@ export default function SowQualification({ ws, onOpenDocuments, onOpenGlobalInte
     if (t.sowQualificationData && typeof t.sowQualificationData === "object") {
       const saved = t.sowQualificationData as any;
       return {
-        coverage_matrix: Array.isArray(saved.coverage_matrix) && saved.coverage_matrix.length === 11
-          ? saved.coverage_matrix
-          : emptySowQualificationData().coverage_matrix,
+        coverage_matrix: reconcileSowCoverageRows(saved.coverage_matrix),
         clarity_assessment: { ...emptySowQualificationData().clarity_assessment, ...(saved.clarity_assessment || {}) },
         clarifications: Array.isArray(saved.clarifications) ? saved.clarifications : [],
         outcome: { ...emptySowQualificationData().outcome, ...(saved.outcome || {}) },
@@ -233,9 +239,7 @@ export default function SowQualification({ ws, onOpenDocuments, onOpenGlobalInte
     if (t.sowQualificationData && typeof t.sowQualificationData === "object") {
       const saved = t.sowQualificationData as any;
       const loaded: SowQualificationData = {
-        coverage_matrix: Array.isArray(saved.coverage_matrix) && saved.coverage_matrix.length === 11
-          ? saved.coverage_matrix
-          : emptySowQualificationData().coverage_matrix,
+        coverage_matrix: reconcileSowCoverageRows(saved.coverage_matrix),
         clarity_assessment: { ...emptySowQualificationData().clarity_assessment, ...(saved.clarity_assessment || {}) },
         clarifications: Array.isArray(saved.clarifications) ? saved.clarifications : [],
         outcome: { ...emptySowQualificationData().outcome, ...(saved.outcome || {}) },
@@ -332,6 +336,7 @@ export default function SowQualification({ ws, onOpenDocuments, onOpenGlobalInte
           setInitial(JSON.stringify(data));
           onSaved?.();
         },
+        onStale: () => onSaved?.(),
         // Stale: entry stays (dirty stays true → the resync effect keeps the
         // user's copy); no bundle-refresh handle exists on this tab beyond
         // onSaved, which fires on confirmed saves only.

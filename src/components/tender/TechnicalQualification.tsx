@@ -167,6 +167,14 @@ function emptyTechnicalQualificationData(): TechnicalQualificationData {
   };
 }
 
+export function reconcileCapabilityRows(value: unknown): CapabilityRow[] {
+  const defaults = emptyTechnicalQualificationData().capability_assessment;
+  if (!Array.isArray(value)) return defaults;
+  const stored = value.filter(row => row && typeof row === "object") as CapabilityRow[];
+  const canonical = defaults.map(base => ({ ...base, ...(stored.find(row => row.area === base.area) ?? {}) }));
+  return [...canonical, ...stored.filter(row => !defaults.some(base => base.area === row.area))];
+}
+
 // ═══════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════
@@ -216,9 +224,7 @@ export default function TechnicalQualification({ ws, onOpenDocuments, onOpenGlob
     if (t.technicalQualificationData && typeof t.technicalQualificationData === "object") {
       const saved = t.technicalQualificationData as any;
       return {
-        capability_assessment: Array.isArray(saved.capability_assessment) && saved.capability_assessment.length === 7
-          ? saved.capability_assessment
-          : emptyTechnicalQualificationData().capability_assessment,
+        capability_assessment: reconcileCapabilityRows(saved.capability_assessment),
         gaps: Array.isArray(saved.gaps) ? saved.gaps : [],
         clarifications: Array.isArray(saved.clarifications) ? saved.clarifications : [],
         recommendation: { ...emptyTechnicalQualificationData().recommendation, ...(saved.recommendation || {}) },
@@ -236,9 +242,7 @@ export default function TechnicalQualification({ ws, onOpenDocuments, onOpenGlob
     if (t.technicalQualificationData && typeof t.technicalQualificationData === "object") {
       const saved = t.technicalQualificationData as any;
       const loaded: TechnicalQualificationData = {
-        capability_assessment: Array.isArray(saved.capability_assessment) && saved.capability_assessment.length === 7
-          ? saved.capability_assessment
-          : emptyTechnicalQualificationData().capability_assessment,
+        capability_assessment: reconcileCapabilityRows(saved.capability_assessment),
         gaps: Array.isArray(saved.gaps) ? saved.gaps : [],
         clarifications: Array.isArray(saved.clarifications) ? saved.clarifications : [],
         recommendation: { ...emptyTechnicalQualificationData().recommendation, ...(saved.recommendation || {}) },
@@ -355,6 +359,7 @@ export default function TechnicalQualification({ ws, onOpenDocuments, onOpenGlob
           setInitial(JSON.stringify(data));
           onSaved?.();
         },
+        onStale: () => onSaved?.(),
         // Stale: dirty stays true, so the resync effect keeps the user's entry.
       });
     } catch (e: any) {

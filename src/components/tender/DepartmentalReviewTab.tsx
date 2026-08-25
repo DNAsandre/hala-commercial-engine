@@ -5,12 +5,9 @@
  * - Department-specific briefing panel with context data availability
  * - Approve / Reject workflow per block (human decisions, persisted per block)
  *
- * AI review is NOT available in this build (deferred to Sprint X — SX-001/
- * SX-011): the Run AI Review button always reports that refusal. The one
- * persisted pre-AI path is the honest "BLOCK NOT DRAFTED" flag for blocks with
- * no content. Stored AI findings/scores from earlier builds still render.
- *
- * No hardcoded bots. No mock data.
+ * Stored review flags and quality scores remain visible as read-only evidence.
+ * Bot selection and execution belong to the Admin-configured bot runtime, not
+ * to this tracker component.
  */
 import { useState, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -18,9 +15,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Shield, DollarSign, Scale, CheckCircle2, XCircle, AlertTriangle, Bot,
+  Shield, DollarSign, Scale, CheckCircle2, XCircle, AlertTriangle,
   Loader2, ChevronRight, ChevronDown, RotateCcw, Database, FileCheck2,
-  TrendingUp, Eye, Info,
+  Eye, Info,
 } from "lucide-react";
 import { toast } from "sonner";
 import { type TenderWorkspace } from "@/lib/tender-workspace-data";
@@ -29,12 +26,7 @@ import {
   type TenderStageMetric,
   type TenderStageSectionTab,
 } from "./TenderStageTaskShell";
-// SC-01 Wave 02 boundary (deferred to Sprint X - SX-001/SX-011): AI generation is excluded.
-function generateAIUnavailable(): { content: string; tokensInput: number; tokensOutput: number } {
-  throw new Error("AI departmental review is not available in this build (deferred to Sprint X - SX-001/SX-011).");
-}
-import { loadGovernedBotByName } from "@/lib/ai-runs";
-import { updateBlockReviewStatus, saveBlockAIFlags } from "@/lib/supabase-tender-actions";
+import { updateBlockReviewStatus } from "@/lib/supabase-tender-actions";
 import { getCurrentUser } from "@/lib/auth-state";
 import { reportSaveOutcome } from "./tender-save-outcome";
 import {
@@ -52,14 +44,6 @@ interface Props {
   onOpenDocuments?: () => void;
   onOpenGlobalIntel?: () => void;
 }
-
-// Bot names must match display_name in ai_bots table (Bot Builder).
-// ONE SOURCE OF TRUTH: all bots come from Bot Builder → ai_bots.
-const BOT_NAMES: Record<ReviewDepartment, string> = {
-  ops: "Operations Technical Reviewer",
-  finance: "Finance & Commercial Reviewer",
-  legal: "Legal Risk & Compliance Reviewer",
-};
 
 const DEPT_ICONS: Record<ReviewDepartment, typeof Shield> = {
   ops: Shield,
@@ -130,10 +114,9 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
       .sort((a: any, b: any) => (parseInt(a.section_number) || 9999) - (parseInt(b.section_number) || 9999));
   }, [drafting.proposal_blocks, requiredVolumes]);
 
-  type DeptSection = "briefing" | "findings" | "blocks";
+  type DeptSection = "briefing" | "blocks";
   const SECTION_TABS: TenderStageSectionTab<DeptSection>[] = [
     { key: "briefing", label: "Briefing Panel", icon: <Database className="w-3.5 h-3.5" /> },
-    { key: "findings", label: "AI Findings", icon: <TrendingUp className="w-3.5 h-3.5" /> },
     { key: "blocks", label: "Block Review", icon: <FileCheck2 className="w-3.5 h-3.5" /> },
   ];
   const [activeSection, setActiveSection] = useState<DeptSection>("briefing");
@@ -142,7 +125,6 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectComment, setRejectComment] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
-  const [aiRunning, setAiRunning] = useState(false);
 
   const statusKey = `${department}_status`;
   const commentKey = `${department}_comment`;
@@ -187,13 +169,11 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
   }, [filteredBlocks, department]);
 
   const highFlags = deptFlags.filter(f => f.severity === "high").length;
-  const mediumFlags = deptFlags.filter(f => f.severity === "medium").length;
-  const lowFlags = deptFlags.filter(f => f.severity === "low").length;
   const intelMetrics: TenderStageMetric[] = [
     { label: "Department", value: DEPARTMENT_LABELS[department] },
     { label: "Review Progress", value: `${reviewPct}% (${approvedCount}/${filteredBlocks.length})` },
     { label: "Context Sources", value: `${availableCount}/${totalSources} available` },
-    { label: "AI Flags", value: `${deptFlags.length} (${highFlags} critical)` },
+    { label: "Stored Review Flags", value: `${deptFlags.length} (${highFlags} critical)` },
   ];
 
   // ─── Quality Scores ────────────────────────────────────────
@@ -270,197 +250,6 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
     }
   }, [tenderId, department, reload]);
 
-  // ─── AI Review Sweep ─────────────────────────────────────────
-  const handleRunAIReview = useCallback(async () => {
-    setAiRunning(true);
-    try {
-      // 1. Load bot from ai_bots (Bot Builder) — ONE SOURCE OF TRUTH
-      const botName = BOT_NAMES[department];
-      const bot = await loadGovernedBotByName(botName);
-      if (!bot) {
-        toast.error(`Review bot "${botName}" not found in Bot Builder. Create it in Admin → Bot Registry → Create New Bot.`);
-        setAiRunning(false);
-        return;
-      }
-
-      // 2. Split blocks: only blocks WITH actual content can be AI-reviewed.
-      //    Empty blocks get auto-flagged as NOT DRAFTED.
-      const allBlocks = filteredBlocks.map((b: any) => ({
-        id: b.id,
-        title: b.title,
-        volume: b.volume,
-        section_number: b.section_number,
-        content: (b.content || b.editor_content || "").trim(),
-      }));
-
-      const draftedBlocks = allBlocks.filter((b: any) => b.content.length > 50); // needs meaningful content
-      const emptyBlocks = allBlocks.filter((b: any) => b.content.length <= 50);
-
-      // Auto-flag empty blocks — the system does NOT lie about these
-      const emptyFlags: any[] = emptyBlocks.map((b: any) => ({
-        block_id: b.id,
-        severity: "high",
-        issue: `BLOCK NOT DRAFTED — this block has no content (or less than 50 characters). Cannot perform cross-reference review on empty blocks.`,
-        recommendation: `Draft this block in the Tender Drafting stage before running the ${DEPARTMENT_LABELS[department]} review. Without content, no validation is possible.`,
-        department,
-      }));
-
-      if (draftedBlocks.length === 0 && emptyBlocks.length > 0) {
-        // ALL blocks are empty — save empty-flags and warn user. Failure and
-        // stale outcomes are surfaced honestly, never swallowed.
-        const res = await saveBlockAIFlags(tenderId, department, emptyFlags, bot.id);
-        if (reportSaveOutcome(res, `${emptyBlocks.length} block(s) have NO content — flagged as NOT DRAFTED. Draft blocks first.`)) {
-          reload();
-        }
-        setAiRunning(false);
-        return;
-      }
-
-      if (draftedBlocks.length === 0) {
-        toast.error("No blocks to review.");
-        setAiRunning(false);
-        return;
-      }
-
-      // Build department-specific context from previous stages
-      const contextData: Record<string, any> = {
-        tender_name: t.name || t.title || "",
-        customer: t.customerName || "",
-        estimated_value: t.estimatedValue || 0,
-        target_gp_percent: t.targetGpPercent || 0,
-        submission_deadline: t.submissionDeadline || "",
-      };
-
-      if (department === "ops") {
-        contextData.solution_design = t.solutionDesignData ?? {};
-        contextData.sow_data = t.sowData ?? {};
-        contextData.risk_snapshot = t.riskSnapshotData ?? {};
-        contextData.technical_qualification = t.technicalQualificationData ?? {};
-        contextData.sow_qualification = t.sowQualificationData ?? {};
-      } else if (department === "finance") {
-        contextData.pricing_data = t.pricingData ?? {};
-        contextData.bid_no_bid_data = t.bidNoBidData ?? {};
-        contextData.solution_design_cost_drivers = (t.solutionDesignData ?? {}).cost_drivers ?? {};
-      } else if (department === "legal") {
-        contextData.risk_snapshot = t.riskSnapshotData ?? {};
-        contextData.customer_fit = t.customerFitData ?? {};
-        contextData.compliance_coverage = (t.tenderDraftingData ?? {}).compliance_coverage ?? {};
-        contextData.pricing_commercial_terms = ((t.pricingData ?? {}).commercial_terms) ?? {};
-      }
-
-      const docs = (ws.documents ?? []).filter(doc => doc.document_category !== "Archived");
-      contextData.uploaded_documents = docs.map((d: any) => ({
-        name: d.document_name,
-        type: d.document_type,
-        category: d.document_category,
-        status: d.status,
-      }));
-
-      // ONLY send blocks WITH content to the AI — never empty blocks
-      const fullPayload = {
-        proposal_blocks: draftedBlocks,
-        tender_context: contextData,
-      };
-
-      console.info(`[DeptReview] ${department}: Bot "${bot.name}" (id: ${bot.id}), system_prompt length: ${bot.system_prompt.length}, sending ${draftedBlocks.length} drafted blocks`);
-      if (bot.system_prompt.length < 50) {
-        toast.error(`Bot "${bot.name}" has NO system prompt (${bot.system_prompt.length} chars). Update the Custom Instruction in Bot Builder.`);
-        setAiRunning(false);
-        return;
-      }
-
-      // 3. Call generateAI — all bot config comes from DB
-      const result = generateAIUnavailable();
-
-      console.info(`[DeptReview] ${department}: AI response length: ${result.content?.length || 0}`);
-      console.info(`[DeptReview] ${department}: AI raw response (first 500 chars):`, result.content?.substring(0, 500));
-
-      // 4. Parse JSON response — new format: array of per-block reports with quality_score + flags[]
-      let aiReports: any[] = [];
-      try {
-        const cleaned = result.content.replace(/```json\n?/g, "").replace(/```/g, "").trim();
-        aiReports = JSON.parse(cleaned);
-      } catch {
-        toast.error("AI returned invalid JSON. Check the bot's system prompt in Bot Builder.");
-        setAiRunning(false);
-        return;
-      }
-
-      console.info(`[DeptReview] ${department}: Parsed ${Array.isArray(aiReports) ? aiReports.length : 0} block report(s)`);
-
-      // 5. Extract quality scores + flatten flags from new format
-      const blockScores: Array<{ block_id: string; quality_score: number; score_rationale: string }> = [];
-      let aiFlags: any[] = [];
-
-      if (Array.isArray(aiReports)) {
-        for (const report of aiReports) {
-          if (report.block_id && typeof report.quality_score === 'number') {
-            // New format: { block_id, quality_score, score_rationale, flags: [...] }
-            blockScores.push({
-              block_id: report.block_id,
-              quality_score: report.quality_score,
-              score_rationale: report.score_rationale || '',
-            });
-            // Flatten flags from nested array
-            if (Array.isArray(report.flags)) {
-              for (const flag of report.flags) {
-                aiFlags.push({
-                  block_id: report.block_id,
-                  severity: flag.severity || 'medium',
-                  type: flag.type || 'general',
-                  issue: flag.issue || '',
-                  recommendation: flag.recommendation || '',
-                  source_field: flag.source_field || '',
-                  source_value: flag.source_value || '',
-                  block_value: flag.block_value || '',
-                });
-              }
-            }
-          } else if (report.block_id && report.severity) {
-            // Old format fallback: { block_id, severity, issue, recommendation }
-            aiFlags.push(report);
-          }
-        }
-      }
-
-      console.info(`[DeptReview] ${department}: ${blockScores.length} quality scores, ${aiFlags.length} flags extracted`);
-
-      // 6. Merge: AI flags for drafted blocks + auto-flags for empty blocks
-      const allFlags = [...aiFlags, ...emptyFlags];
-
-      // Add score 0 for empty blocks
-      for (const eb of emptyBlocks) {
-        blockScores.push({
-          block_id: eb.id,
-          quality_score: 0,
-          score_rationale: 'Block has no content — cannot be scored',
-        });
-      }
-
-      if (allFlags.length > 0 || blockScores.length > 0) {
-        const res = await saveBlockAIFlags(tenderId, department, allFlags, bot.id, blockScores);
-        if (res.success) {
-          const avgScore = blockScores.length > 0
-            ? Math.round(blockScores.reduce((sum, s) => sum + s.quality_score, 0) / blockScores.length)
-            : null;
-          const parts: string[] = [];
-          if (avgScore !== null) parts.push(`Average quality: ${avgScore}%`);
-          if (aiFlags.length > 0) parts.push(`${aiFlags.length} issue(s) in ${draftedBlocks.length} block(s)`);
-          if (emptyBlocks.length > 0) parts.push(`${emptyBlocks.length} block(s) NOT DRAFTED`);
-          toast.success(parts.join(" · "));
-          reload();
-        } else {
-          toast.error(res.error || "Failed to save AI flags.");
-        }
-      } else {
-        toast.success(`AI reviewed ${draftedBlocks.length} drafted block(s) — no issues found.`);
-      }
-    } catch (err: any) {
-      toast.error(err.message || "AI review failed.");
-    }
-    setAiRunning(false);
-  }, [department, filteredBlocks, tenderId, reload]);
-
   if (filteredBlocks.length === 0) {
     return (
       <div className="text-center py-12 text-muted-foreground">
@@ -503,20 +292,6 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
           <div className="flex-1">
             <h3 className="text-sm font-bold text-white">{DEPARTMENT_LABELS[department]} Review</h3>
             <p className="text-[10px] text-white/80">{DEPT_DESCRIPTIONS[department]}</p>
-          </div>
-          <div className="flex flex-col items-end gap-0.5">
-            <Button
-              size="sm"
-              className="h-8 text-[11px] gap-1.5 bg-white/20 hover:bg-white/30 text-white border-white/30"
-              variant="outline"
-              disabled={aiRunning}
-              onClick={handleRunAIReview}
-            >
-              {aiRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bot className="w-3.5 h-3.5" />}
-              {aiRunning ? "Checking..." : `Run AI ${DEPARTMENT_LABELS[department]} Review`}
-            </Button>
-            {/* TCW-T4 honesty: the generation itself is refused in this build. */}
-            <span className="text-[8px] text-white/70">AI review unavailable in this build (Sprint X)</span>
           </div>
         </div>
 
@@ -587,8 +362,7 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
                 })() : (
                   <div className="flex flex-col items-center justify-center p-2 rounded-lg border bg-slate-50 border-slate-200 min-w-[80px]">
                     <span className="text-lg font-bold text-slate-400">—</span>
-                    <span className="text-[8px] text-muted-foreground mt-1">No AI score stored</span>
-                    <span className="text-[8px] text-muted-foreground">(AI review: Sprint X)</span>
+                    <span className="text-[8px] text-muted-foreground mt-1">No quality score recorded</span>
                   </div>
                 )}
 
@@ -627,57 +401,7 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
         </CardContent>
       </Card>
 
-      {/* ─── 2. AI Findings Summary ─────────── */}
-      <div className={activeSection !== "findings" ? "hidden" : ""}>
-      {deptFlags.length > 0 ? (
-        <Card className="border-amber-200 shadow-none">
-          <CardHeader className="py-2 px-4 bg-amber-50 border-b border-amber-200">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-3.5 h-3.5 text-amber-600" />
-                <span className="text-xs font-semibold text-amber-800">AI Findings Summary</span>
-                <Badge variant="outline" className="text-[8px] border-amber-300 text-amber-700">{deptFlags.length} total</Badge>
-              </div>
-              <div className="flex gap-2">
-                {highFlags > 0 && (
-                  <Badge variant="outline" className="text-[8px] border-red-300 text-red-700 bg-red-50 gap-0.5">
-                    <AlertTriangle className="w-2.5 h-2.5" /> {highFlags} Critical
-                  </Badge>
-                )}
-                {mediumFlags > 0 && (
-                  <Badge variant="outline" className="text-[8px] border-amber-300 text-amber-700 bg-amber-50">{mediumFlags} Medium</Badge>
-                )}
-                {lowFlags > 0 && (
-                  <Badge variant="outline" className="text-[8px] border-slate-200 text-slate-600">{lowFlags} Improvements</Badge>
-                )}
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="p-3">
-            <div className="space-y-1.5 max-h-48 overflow-y-auto">
-              {deptFlags.map((f, i) => (
-                <div key={f.id || i} className={`flex items-start gap-2 text-[10px] rounded-md border px-3 py-2 ${severityColor(f.severity)}`}>
-                  <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
-                  <div className="flex-1">
-                    <span className="font-semibold">{f.blockTitle}:</span>{" "}
-                    <span>{f.issue}</span>
-                    {f.recommendation && <span className="text-muted-foreground ml-1">→ {f.recommendation}</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="text-center py-12 text-muted-foreground">
-          <TrendingUp className="w-8 h-8 mx-auto mb-3 opacity-40" />
-          <p className="text-sm font-medium">No AI flags for this department yet.</p>
-          <p className="text-xs mt-1">AI review is not available in this build (Sprint X); stored flags from earlier runs would appear here.</p>
-        </div>
-      )}
-      </div>
-
-      {/* ─── 3. Block List ─────────────────────────────────────────── */}
+      {/* ─── 2. Block List ─────────────────────────────────────────── */}
       <div className={activeSection !== "blocks" ? "hidden" : ""}>
       {(() => {
         const drafted = filteredBlocks.filter((b: any) => ((b.content || b.editor_content || "").trim()).length > 50).length;
@@ -778,8 +502,8 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
                 {blockFlags.length > 0 && (
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-1.5 mb-1">
-                      <Bot className="w-3 h-3 text-amber-600" />
-                      <span className="text-[9px] font-semibold uppercase tracking-wider text-amber-700">AI Flags ({blockFlags.length})</span>
+                      <Info className="w-3 h-3 text-amber-600" />
+                      <span className="text-[9px] font-semibold uppercase tracking-wider text-amber-700">Stored Review Flags ({blockFlags.length})</span>
                     </div>
                     {blockFlags.map((f, i) => (
                       <div key={f.id || i} className={`flex items-start gap-2 text-[10px] rounded-md border px-3 py-2 ${severityColor(f.severity)}`}>
@@ -796,7 +520,7 @@ export default function DepartmentalReviewTab({ ws, department, requiredVolumes,
                 {blockFlags.length === 0 && (
                   <div className="flex items-center gap-2 text-[10px] text-muted-foreground bg-muted/30 rounded-md px-3 py-2 border border-border">
                     <Info className="w-3 h-3 shrink-0" />
-                    <span>No AI flags stored for this block (AI review is not available in this build — Sprint X).</span>
+                    <span>No review flags are stored for this block.</span>
                   </div>
                 )}
 
