@@ -48,6 +48,21 @@ export function getCrmStageLabel(stage: CRMStage): string {
   return CRM_PIPELINE_STAGES.find(s => s.key === stage)?.label ?? stage;
 }
 
+/** Convert saved labels and legacy title-case values to the CRM tracker key. */
+export function normalizeCrmStageKey(value: string | null | undefined): CRMStage | null {
+  const token = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (!token) return null;
+  const stage = CRM_PIPELINE_STAGES.find((candidate) =>
+    candidate.key === token ||
+    candidate.label.toLowerCase().replace(/[^a-z0-9]+/g, "_") === token,
+  );
+  return stage?.key ?? null;
+}
+
 // ═══════════════════════════════════════════════════════════
 
 interface CrmPipelineStripProps {

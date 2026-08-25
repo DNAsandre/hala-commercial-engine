@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   changeProposalTrackerStage,
   finalizeStageAdvance,
+  loadProposalWorkspaceSnapshot,
   readProposalTrackerStages,
 } from "@/lib/proposal-workspace-persistence";
 
@@ -124,6 +125,7 @@ beforeEach(() => {
     ticket_title: "[HALA-UAT-ARV2] Warehousing and Transport Proposal",
     internal_stage: "qualified",
     crm_pipeline_stage: "qualified",
+    updated_at: "2026-08-25T08:00:00.000Z",
     type_details: { secret: "must not leak through a projection" },
   });
   db.calls.length = 0;
@@ -149,11 +151,12 @@ describe("readProposalTrackerStages — rehydration reads the record, not a cach
       found: true,
       internalStage: "qualified",
       crmPipelineStage: "qualified",
+      revision: "2026-08-25T08:00:00.000Z",
       error: null,
     });
     expect(db.calls).toHaveLength(1);
     expect(db.calls[0].table).toBe("commercial_tickets");
-    expect(db.calls[0].projection).toBe("id,internal_stage,crm_pipeline_stage");
+    expect(db.calls[0].projection).toBe("id,internal_stage,crm_pipeline_stage,updated_at");
     expect(db.calls[0].filters).toEqual([["id", TICKET_ID]]);
   });
 
@@ -183,6 +186,27 @@ describe("readProposalTrackerStages — rehydration reads the record, not a cach
   });
 });
 
+describe("proposal stage checkpoint hydration", () => {
+  it("keeps an explicitly saved blank stage marked as saved after reload", async () => {
+    db.rows.get(TICKET_ID)!.type_details = {
+      proposal_workspace: {
+        proposal_drafting: {
+          data: {},
+          savedAt: "2026-08-25T08:30:00.000Z",
+          source: "proposal_drafting_stage",
+          version: 1,
+        },
+      },
+    };
+
+    const snapshot = await loadProposalWorkspaceSnapshot(TICKET_ID);
+
+    expect(snapshot.proposalDrafting.ticketFound).toBe(true);
+    expect(snapshot.proposalDrafting.savedData).toEqual({});
+    expect(snapshot.proposalDrafting.savedAt).toBe("2026-08-25T08:30:00.000Z");
+  });
+});
+
 describe("changeProposalTrackerStage — success only after confirmed persistence", () => {
   it("writes internal_stage on the requested row and confirms it from the returned row", async () => {
     const result = await changeProposalTrackerStage({
@@ -195,13 +219,14 @@ describe("changeProposalTrackerStage — success only after confirmed persistenc
 
     expect(result.ok).toBe(true);
     expect(result.persistedValue).toBe("discovery");
+    expect(result.revision).toBe("2026-08-25T08:00:00.000Z");
 
     // What actually reached the database:
     expect(writes()).toHaveLength(1);
     expect(writes()[0].table).toBe("commercial_tickets");
     expect(writes()[0].payload).toEqual({ internal_stage: "discovery" });
     expect(writes()[0].filters).toEqual([["id", TICKET_ID], ["internal_stage", "qualified"]]);
-    expect(writes()[0].projection).toBe("id,internal_stage");
+    expect(writes()[0].projection).toBe("id,internal_stage,updated_at");
     // The stored row moved, and ONLY that column moved.
     expect(db.rows.get(TICKET_ID)!.internal_stage).toBe("discovery");
     expect(db.rows.get(TICKET_ID)!.crm_pipeline_stage).toBe("qualified");
@@ -218,7 +243,7 @@ describe("changeProposalTrackerStage — success only after confirmed persistenc
 
     expect(result.ok).toBe(true);
     expect(writes()[0].payload).toEqual({ crm_pipeline_stage: "proposal_sent" });
-    expect(writes()[0].projection).toBe("id,crm_pipeline_stage");
+    expect(writes()[0].projection).toBe("id,crm_pipeline_stage,updated_at");
     expect(db.rows.get(TICKET_ID)!.internal_stage).toBe("qualified");
   });
 

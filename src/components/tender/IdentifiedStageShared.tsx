@@ -174,13 +174,17 @@ export async function runTenderTabSave(args: RunTenderTabSaveArgs): Promise<Tend
 }
 
 /**
- * B12 badge truth: green "Saved" only after a save was CONFIRMED in this
- * session and the form holds no unsaved edits. Data merely being present is
- * not a save claim (C3 inverse), and a successful save must not fall back to
- * grey "Not Saved" (B12).
+ * B12 badge truth: green "Saved" only when a confirmed or hydrated checkpoint
+ * is represented by the form and it holds no unsaved edits.
  */
 export function identifiedSavedBadgeState(savedConfirmed: boolean, dirty: boolean): boolean {
   return savedConfirmed && !dirty;
+}
+
+export function hasPersistedIdentifiedCheckpoint(value: unknown): boolean {
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return Boolean(value && typeof value === "object" && Object.keys(value).length > 0);
 }
 
 interface IdentifiedStageShellProps<T extends string> {

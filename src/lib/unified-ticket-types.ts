@@ -36,13 +36,13 @@ export type AuditAction =
   | "promoted"
   | "deactivated";
 
-export const DEFAULT_CRM_PIPELINE_STAGE = "Prospecting";
+export const DEFAULT_CRM_PIPELINE_STAGE = "prospecting";
 
 export const DEFAULT_INTERNAL_STAGE: Record<UnifiedTicketType, string> = {
-  proposal: "Qualified",
-  tender: "Identified",
-  renewal: "Identified",
-  sla: "Draft",
+  proposal: "qualified",
+  tender: "identified",
+  renewal: "identified",
+  sla: "draft",
 };
 
 // ── Main Ticket Interface ──────────────────────────────────────

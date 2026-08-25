@@ -10,6 +10,7 @@ import { updateTenderIdentifiedData } from "@/lib/supabase-tender-actions";
 import {
   IdentifiedSectionCard,
   IdentifiedStageShell,
+  hasPersistedIdentifiedCheckpoint,
   identifiedSavedBadgeState,
   runTenderTabSave,
   tenderRevisionTokenOf,
@@ -56,12 +57,12 @@ export default function IntakeFileAuditTab({ ws, reload, onOpenDocuments, onOpen
   const t = ws.tender;
   const details = ((t as any).typeDetails || (t as any).type_details || {}) as any;
   const saved = details?.identified?.intake_file_audit ?? {};
+  const persistedCheckpoint = hasPersistedIdentifiedCheckpoint(saved);
   const [activeSection, setActiveSection] = useState<SectionKey>("files");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  /** B12: true only after a save confirmed in this session. */
-  const [savedConfirmed, setSavedConfirmed] = useState(false);
+  const [savedConfirmed, setSavedConfirmed] = useState(persistedCheckpoint);
   const staleRetryArmed = useRef(false);
 
   const [receivedFiles, setReceivedFiles] = useState(asTextList(saved.received_files));
@@ -81,7 +82,8 @@ export default function IntakeFileAuditTab({ ws, reload, onOpenDocuments, onOpen
     setTenderOwner(saved.tender_owner ?? t.assignedOwner ?? "");
     setMissingItems(asTextList(saved.missing_intake_items));
     setInitialNotes(saved.initial_notes ?? "");
-  }, [dirty, saved, t.assignedOwner]);
+    setSavedConfirmed(persistedCheckpoint);
+  }, [dirty, persistedCheckpoint, saved, t.assignedOwner]);
 
   const fileCount = textToList(receivedFiles).length;
   const missingCount = textToList(missingItems).length;

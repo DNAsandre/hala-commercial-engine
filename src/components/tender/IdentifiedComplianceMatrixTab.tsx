@@ -12,6 +12,7 @@ import {
   IdentifiedEmptyState,
   IdentifiedSectionCard,
   IdentifiedStageShell,
+  hasPersistedIdentifiedCheckpoint,
   identifiedSavedBadgeState,
   runTenderTabSave,
   tenderRevisionTokenOf,
@@ -46,12 +47,12 @@ export default function IdentifiedComplianceMatrixTab({ ws, reload, onOpenDocume
   const t = ws.tender;
   const details = ((t as any).typeDetails || (t as any).type_details || {}) as any;
   const saved = details?.identified?.compliance_matrix_notes ?? {};
+  const persistedCheckpoint = hasPersistedIdentifiedCheckpoint(saved);
   const [activeSection, setActiveSection] = useState<SectionKey>("matrix");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  /** B12: true only after a save confirmed in this session. */
-  const [savedConfirmed, setSavedConfirmed] = useState(false);
+  const [savedConfirmed, setSavedConfirmed] = useState(persistedCheckpoint);
   const staleRetryArmed = useRef(false);
 
   const [reviewStatus, setReviewStatus] = useState(saved.review_status ?? "not_started");
@@ -67,7 +68,8 @@ export default function IdentifiedComplianceMatrixTab({ ws, reload, onOpenDocume
     setReviewDate(saved.review_date ?? "");
     setRiskSummary(saved.risk_summary ?? "");
     setNotes(saved.notes ?? "");
-  }, [dirty, saved]);
+    setSavedConfirmed(persistedCheckpoint);
+  }, [dirty, persistedCheckpoint, saved]);
 
   const items = ws.complianceItems ?? [];
   const gapCount = items.filter(item => item.status === "non_compliant" || item.status === "partial" || item.status === "clarification_required").length;

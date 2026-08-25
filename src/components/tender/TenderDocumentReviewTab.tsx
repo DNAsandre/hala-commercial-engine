@@ -21,6 +21,7 @@ import {
   IdentifiedSectionCard,
   IdentifiedStageShell,
   announceTenderTabSaveOutcome,
+  hasPersistedIdentifiedCheckpoint,
   identifiedSavedBadgeState,
   resolveTenderTabSaveOutcome,
   runTenderTabSave,
@@ -60,12 +61,12 @@ export default function TenderDocumentReviewTab({ ws, reload, onOpenDocuments, o
   const t = ws.tender;
   const details = ((t as any).typeDetails || (t as any).type_details || {}) as any;
   const saved = details?.identified?.document_review ?? {};
+  const persistedCheckpoint = hasPersistedIdentifiedCheckpoint(saved);
   const [activeSection, setActiveSection] = useState<SectionKey>("inventory");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  /** B12: true only after a save confirmed in this session. */
-  const [savedConfirmed, setSavedConfirmed] = useState(false);
+  const [savedConfirmed, setSavedConfirmed] = useState(persistedCheckpoint);
   const staleRetryArmed = useRef(false);
   const [linkingId, setLinkingId] = useState<string | null>(null);
 
@@ -84,7 +85,8 @@ export default function TenderDocumentReviewTab({ ws, reload, onOpenDocuments, o
     setKeyObligations(saved.key_obligations ?? "");
     setMissingDocuments(saved.missing_documents ?? "");
     setReviewNotes(saved.review_notes ?? "");
-  }, [dirty, saved]);
+    setSavedConfirmed(persistedCheckpoint);
+  }, [dirty, persistedCheckpoint, saved]);
 
   const docs = ws.documents ?? [];
   const identifiedDocs = useMemo(() => documentsForTenderStage(docs, "identified"), [docs]);

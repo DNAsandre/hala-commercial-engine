@@ -200,6 +200,7 @@ interface ProposalStageWorkbenchProps {
   activeStage: string;
   workspaceId: string;
   customerName: string;
+  ticketRevision?: string | null;
   documents?: SupportingDocument[];
   onDocUpload?: (doc: Partial<SupportingDocument>) => void;
   onNavigateToComposer?: (type: "quote" | "proposal") => void;
@@ -1028,6 +1029,7 @@ export default function ProposalStageWorkbench({
   activeStage,
   workspaceId,
   customerName,
+  ticketRevision,
   documents = [],
   onDocUpload,
   onNavigateToComposer,
@@ -1127,6 +1129,10 @@ export default function ProposalStageWorkbench({
     () => mergeSupportingDocuments(documents, persistedDocuments, localDocuments),
     [documents, persistedDocuments, localDocuments],
   );
+
+  useEffect(() => {
+    if (ticketRevision) setWorkspaceRevision(ticketRevision);
+  }, [ticketRevision]);
   const stageTasks = useMemo(() => getProposalStageTasks(activeStage), [activeStage]);
   const activeTask = getProposalTask(activeStage, activeTaskKey) ?? stageTasks[0];
   const activeTabs = activeTask?.tabs ?? [];

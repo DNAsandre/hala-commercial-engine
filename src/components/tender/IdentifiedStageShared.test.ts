@@ -22,6 +22,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   identifiedSavedBadgeState,
+  hasPersistedIdentifiedCheckpoint,
   resolveTenderTabSaveOutcome,
   runTenderTabSave,
   tenderRevisionTokenOf,
@@ -114,6 +115,21 @@ describe("identifiedSavedBadgeState — B12 badge truth", () => {
     // No save confirmed this session — data presence alone must not claim Saved (C3 inverse).
     expect(identifiedSavedBadgeState(false, false)).toBe(false);
     expect(identifiedSavedBadgeState(false, true)).toBe(false);
+  });
+});
+
+describe("hasPersistedIdentifiedCheckpoint", () => {
+  it("recognizes persisted objects, arrays, and text", () => {
+    expect(hasPersistedIdentifiedCheckpoint({ received_files: ["rfp.pdf"], updated_at: "2026-08-25" })).toBe(true);
+    expect(hasPersistedIdentifiedCheckpoint([{ id: "row-1" }])).toBe(true);
+    expect(hasPersistedIdentifiedCheckpoint("saved notes")).toBe(true);
+  });
+
+  it("keeps untouched empty sections unconfirmed", () => {
+    expect(hasPersistedIdentifiedCheckpoint({})).toBe(false);
+    expect(hasPersistedIdentifiedCheckpoint([])).toBe(false);
+    expect(hasPersistedIdentifiedCheckpoint("  ")).toBe(false);
+    expect(hasPersistedIdentifiedCheckpoint(null)).toBe(false);
   });
 });
 

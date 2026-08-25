@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import { getCurrentUser } from "./auth-state";
+import { stableJsonStringify } from "./stable-json";
 import type {
   AssumptionsDependencies,
   CommercialTerms,
@@ -2293,10 +2294,11 @@ function readSavedQualifiedData(details: Record<string, unknown>): {
     ? qualified
     : {};
   const rawData = Object.keys(payload).length > 0 ? payload : legacyPayload;
-  if (Object.keys(rawData).length === 0) return { data: null, savedAt: null };
+  const savedAt = text(qualified.savedAt) || text(qualified.updatedAt) || null;
+  if (Object.keys(rawData).length === 0 && !savedAt) return { data: null, savedAt: null };
   return {
     data: sanitizeQualifiedStageData(rawData as Partial<ProposalQualifiedStageData>),
-    savedAt: text(qualified.savedAt) || text(qualified.updatedAt) || null,
+    savedAt,
   };
 }
 
@@ -2311,10 +2313,11 @@ function readSavedDiscoveryData(details: Record<string, unknown>): {
     ? discovery
     : {};
   const rawData = Object.keys(payload).length > 0 ? payload : legacyPayload;
-  if (Object.keys(rawData).length === 0) return { data: null, savedAt: null };
+  const savedAt = text(discovery.savedAt) || text(discovery.updatedAt) || null;
+  if (Object.keys(rawData).length === 0 && !savedAt) return { data: null, savedAt: null };
   return {
     data: sanitizeDiscoveryStageData(rawData as Partial<ProposalDiscoveryStageData>),
-    savedAt: text(discovery.savedAt) || text(discovery.updatedAt) || null,
+    savedAt,
   };
 }
 
@@ -2336,10 +2339,11 @@ function readSavedSolutionDesignData(details: Record<string, unknown>): {
     ? solutionDesign
     : {};
   const rawData = Object.keys(payload).length > 0 ? payload : legacyPayload;
-  if (Object.keys(rawData).length === 0) return { data: null, savedAt: null };
+  const savedAt = text(solutionDesign.savedAt) || text(solutionDesign.updatedAt) || null;
+  if (Object.keys(rawData).length === 0 && !savedAt) return { data: null, savedAt: null };
   return {
     data: sanitizeSolutionDesignStageData(rawData as Partial<ProposalSolutionDesignStageData>),
-    savedAt: text(solutionDesign.savedAt) || text(solutionDesign.updatedAt) || null,
+    savedAt,
   };
 }
 
@@ -2360,10 +2364,11 @@ function readSavedPnlPricingData(details: Record<string, unknown>): {
     ? pnlPricing
     : {};
   const rawData = Object.keys(payload).length > 0 ? payload : legacyPayload;
-  if (Object.keys(rawData).length === 0) return { data: null, savedAt: null };
+  const savedAt = text(pnlPricing.savedAt) || text(pnlPricing.updatedAt) || null;
+  if (Object.keys(rawData).length === 0 && !savedAt) return { data: null, savedAt: null };
   return {
     data: sanitizePnlPricingStageData(rawData as Partial<ProposalPnlPricingStageData>),
-    savedAt: text(pnlPricing.savedAt) || text(pnlPricing.updatedAt) || null,
+    savedAt,
   };
 }
 
@@ -2382,10 +2387,11 @@ function readSavedQuoteData(details: Record<string, unknown>): {
     ? quote
     : {};
   const rawData = Object.keys(payload).length > 0 ? payload : legacyPayload;
-  if (Object.keys(rawData).length === 0) return { data: null, savedAt: null };
+  const savedAt = text(quote.savedAt) || text(quote.updatedAt) || null;
+  if (Object.keys(rawData).length === 0 && !savedAt) return { data: null, savedAt: null };
   return {
     data: sanitizeQuoteStageData(rawData as Partial<ProposalQuoteStageData>),
-    savedAt: text(quote.savedAt) || text(quote.updatedAt) || null,
+    savedAt,
   };
 }
 
@@ -2407,10 +2413,11 @@ function readSavedProposalDraftingData(details: Record<string, unknown>): {
     ? drafting
     : {};
   const rawData = Object.keys(payload).length > 0 ? payload : legacyPayload;
-  if (Object.keys(rawData).length === 0) return { data: null, savedAt: null };
+  const savedAt = text(drafting.savedAt) || text(drafting.updatedAt) || null;
+  if (Object.keys(rawData).length === 0 && !savedAt) return { data: null, savedAt: null };
   return {
     data: sanitizeProposalDraftingStageData(rawData as Partial<ProposalDraftingStageData>),
-    savedAt: text(drafting.savedAt) || text(drafting.updatedAt) || null,
+    savedAt,
   };
 }
 
@@ -2430,10 +2437,11 @@ function readSavedProposalSentData(details: Record<string, unknown>): {
     ? proposalSent
     : {};
   const rawData = Object.keys(payload).length > 0 ? payload : legacyPayload;
-  if (Object.keys(rawData).length === 0) return { data: null, savedAt: null };
+  const savedAt = text(proposalSent.savedAt) || text(proposalSent.updatedAt) || null;
+  if (Object.keys(rawData).length === 0 && !savedAt) return { data: null, savedAt: null };
   return {
     data: sanitizeProposalSentStageData(rawData as Partial<ProposalSentStageData>),
-    savedAt: text(proposalSent.savedAt) || text(proposalSent.updatedAt) || null,
+    savedAt,
   };
 }
 
@@ -2453,10 +2461,11 @@ function readSavedProposalNegotiationData(details: Record<string, unknown>): {
     ? negotiation
     : {};
   const rawData = Object.keys(payload).length > 0 ? payload : legacyPayload;
-  if (Object.keys(rawData).length === 0) return { data: null, savedAt: null };
+  const savedAt = text(negotiation.savedAt) || text(negotiation.updatedAt) || null;
+  if (Object.keys(rawData).length === 0 && !savedAt) return { data: null, savedAt: null };
   return {
     data: sanitizeProposalNegotiationStageData(rawData as Partial<ProposalNegotiationStageData>),
-    savedAt: text(negotiation.savedAt) || text(negotiation.updatedAt) || null,
+    savedAt,
   };
 }
 
@@ -2475,10 +2484,11 @@ function readSavedProposalCommercialApprovalData(details: Record<string, unknown
     ? commercialApproval
     : {};
   const rawData = Object.keys(payload).length > 0 ? payload : legacyPayload;
-  if (Object.keys(rawData).length === 0) return { data: null, savedAt: null };
+  const savedAt = text(commercialApproval.savedAt) || text(commercialApproval.updatedAt) || null;
+  if (Object.keys(rawData).length === 0 && !savedAt) return { data: null, savedAt: null };
   return {
     data: sanitizeProposalCommercialApprovalStageData(rawData as Partial<ProposalCommercialApprovalStageData>),
-    savedAt: text(commercialApproval.savedAt) || text(commercialApproval.updatedAt) || null,
+    savedAt,
   };
 }
 
@@ -2497,10 +2507,11 @@ function readSavedProposalContractSignedData(details: Record<string, unknown>): 
     ? contractSigned
     : {};
   const rawData = Object.keys(payload).length > 0 ? payload : legacyPayload;
-  if (Object.keys(rawData).length === 0) return { data: null, savedAt: null };
+  const savedAt = text(contractSigned.savedAt) || text(contractSigned.updatedAt) || null;
+  if (Object.keys(rawData).length === 0 && !savedAt) return { data: null, savedAt: null };
   return {
     data: sanitizeProposalContractSignedStageData(rawData as Partial<ProposalContractSignedStageData>),
-    savedAt: text(contractSigned.savedAt) || text(contractSigned.updatedAt) || null,
+    savedAt,
   };
 }
 
@@ -2520,10 +2531,11 @@ function readSavedProposalGoLiveData(details: Record<string, unknown>): {
     ? goLive
     : {};
   const rawData = Object.keys(payload).length > 0 ? payload : legacyPayload;
-  if (Object.keys(rawData).length === 0) return { data: null, savedAt: null };
+  const savedAt = text(goLive.savedAt) || text(goLive.updatedAt) || null;
+  if (Object.keys(rawData).length === 0 && !savedAt) return { data: null, savedAt: null };
   return {
     data: sanitizeProposalGoLiveStageData(rawData as Partial<ProposalGoLiveStageData>),
-    savedAt: text(goLive.savedAt) || text(goLive.updatedAt) || null,
+    savedAt,
   };
 }
 
@@ -3081,7 +3093,10 @@ async function saveProposalStageData<T extends object>(
   const storedWorkspace = asRecord(storedDetails.proposal_workspace);
   const storedEnvelope = asRecord(storedWorkspace[definition.key]);
   const storedData = asRecord(storedEnvelope.data);
-  if (JSON.stringify(storedData) !== JSON.stringify(sanitized)) {
+  // PostgreSQL JSONB does not preserve object key order. Compare canonical
+  // serializations so a truthful read-back cannot fail only because PostgREST
+  // returned the same object with its keys in a different order.
+  if (stableJsonStringify(storedData) !== stableJsonStringify(sanitized)) {
     throw new Error("The proposal row was updated, but the saved stage did not match the submitted data. Reload before continuing.");
   }
 
@@ -3293,6 +3308,8 @@ export interface ProposalTrackerStages {
   /** Raw stored value — null means the column is genuinely not recorded. */
   internalStage: string | null;
   crmPipelineStage: string | null;
+  /** Current commercial_tickets.updated_at token for the stage workbench. */
+  revision: string | null;
   /** Set only when the READ failed. A failed read is not an empty result. */
   error: string | null;
 }
@@ -3311,20 +3328,20 @@ export async function readProposalTrackerStages(
 ): Promise<ProposalTrackerStages> {
   const id = text(ticketId);
   if (!id) {
-    return { found: false, internalStage: null, crmPipelineStage: null, error: "No commercial ticket id was supplied." };
+    return { found: false, internalStage: null, crmPipelineStage: null, revision: null, error: "No commercial ticket id was supplied." };
   }
 
   const { data, error } = await supabase
     .from("commercial_tickets")
-    .select("id,internal_stage,crm_pipeline_stage")
+    .select("id,internal_stage,crm_pipeline_stage,updated_at")
     .eq("id", id)
     .maybeSingle();
 
   if (error) {
-    return { found: false, internalStage: null, crmPipelineStage: null, error: error.message };
+    return { found: false, internalStage: null, crmPipelineStage: null, revision: null, error: error.message };
   }
   if (!data) {
-    return { found: false, internalStage: null, crmPipelineStage: null, error: null };
+    return { found: false, internalStage: null, crmPipelineStage: null, revision: null, error: null };
   }
 
   const row = data as Record<string, unknown>;
@@ -3332,6 +3349,7 @@ export async function readProposalTrackerStages(
     found: true,
     internalStage: text(row.internal_stage) || null,
     crmPipelineStage: text(row.crm_pipeline_stage) || null,
+    revision: text(row.updated_at) || null,
     error: null,
   };
 }
@@ -3341,6 +3359,8 @@ export interface ProposalTrackerStageChangeResult {
   ok: boolean;
   /** The value the database actually holds now, as returned by the write. */
   persistedValue: string | null;
+  /** Current commercial_tickets.updated_at token returned by the confirmed write. */
+  revision: string | null;
   /** true when the audit entry was accepted; only ever attempted after ok. */
   auditWritten: boolean;
   /** Human-facing explanation. Always populated. */
@@ -3368,16 +3388,17 @@ export async function changeProposalTrackerStage(input: {
   const ticketId = text(input.ticketId);
   const newValue = text(input.newValue);
   if (!ticketId) {
-    return { ok: false, persistedValue: null, auditWritten: false, message: "No commercial ticket is linked to this workspace." };
+    return { ok: false, persistedValue: null, revision: null, auditWritten: false, message: "No commercial ticket is linked to this workspace." };
   }
   if (!newValue) {
-    return { ok: false, persistedValue: null, auditWritten: false, message: "No stage was supplied." };
+    return { ok: false, persistedValue: null, revision: null, auditWritten: false, message: "No stage was supplied." };
   }
   const oldValue = text(input.oldValue) || null;
   if (oldValue === newValue) {
     return {
       ok: true,
       persistedValue: oldValue,
+      revision: null,
       auditWritten: true,
       message: "The tracker is already at this stage. No database change was needed.",
     };
@@ -3391,16 +3412,17 @@ export async function changeProposalTrackerStage(input: {
     ? updateQuery.is(input.column, null)
     : updateQuery.eq(input.column, oldValue);
   const { data: updated, error: writeError } = await updateQuery
-    .select("id," + input.column)
+    .select("id," + input.column + ",updated_at")
     .maybeSingle();
 
   if (writeError) {
-    return { ok: false, persistedValue: null, auditWritten: false, message: writeError.message };
+    return { ok: false, persistedValue: null, revision: null, auditWritten: false, message: writeError.message };
   }
   if (!updated) {
     return {
       ok: false,
       persistedValue: null,
+      revision: null,
       auditWritten: false,
       message: "This tracker changed after you loaded it. Reloaded truth must be used before trying again.",
     };
@@ -3411,6 +3433,7 @@ export async function changeProposalTrackerStage(input: {
     return {
       ok: false,
       persistedValue,
+      revision: text((updated as unknown as Record<string, unknown>).updated_at) || null,
       auditWritten: false,
       message: "The stage was not stored as requested — the ticket now holds " + (persistedValue ?? "no value") + ".",
     };
@@ -3432,6 +3455,7 @@ export async function changeProposalTrackerStage(input: {
   return {
     ok: true,
     persistedValue,
+    revision: text((updated as unknown as Record<string, unknown>).updated_at) || null,
     auditWritten: !auditError,
     message: auditError
       ? "Saved to the commercial ticket, but the audit entry was not recorded (" + auditError.message + ")."

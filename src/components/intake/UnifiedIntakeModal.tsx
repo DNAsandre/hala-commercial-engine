@@ -201,6 +201,17 @@ export default function UnifiedIntakeModal({
     []
   );
 
+  const resetDraft = useCallback(() => {
+    setForm({
+      ...INITIAL_STATE,
+      ticket_type: normalizeDefaultTicketType(defaultType),
+      customer_id: defaultCustomerId ?? "",
+      customer_name: defaultCustomerName ?? "",
+    });
+    setCustomerSearch("");
+    setStage(1);
+  }, [defaultCustomerId, defaultCustomerName, defaultType]);
+
   // ── Validation ───────────────────────────────────────────────
 
   function getStageErrors(s: number): string[] {
@@ -262,8 +273,7 @@ export default function UnifiedIntakeModal({
         });
         onCreated?.(result.data!.id);
         onOpenChange(false);
-        setForm({ ...INITIAL_STATE, ticket_type: normalizeDefaultTicketType(defaultType) });
-        setStage(1);
+        resetDraft();
       }
     } catch (err: unknown) {
       toast.error("Unexpected error", {
@@ -278,8 +288,7 @@ export default function UnifiedIntakeModal({
 
   function handleOpenChange(v: boolean) {
     if (!v) {
-      setForm({ ...INITIAL_STATE, ticket_type: normalizeDefaultTicketType(defaultType) });
-      setStage(1);
+      resetDraft();
     }
     onOpenChange(v);
   }

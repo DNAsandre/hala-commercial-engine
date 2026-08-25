@@ -13,6 +13,7 @@ import {
   IdentifiedSectionCard,
   IdentifiedStageShell,
   announceTenderTabSaveOutcome,
+  hasPersistedIdentifiedCheckpoint,
   identifiedSavedBadgeState,
   resolveTenderTabSaveOutcome,
   tenderRevisionTokenOf,
@@ -176,12 +177,13 @@ export default function IdentifiedClarificationLogTab({ ws, reload, onOpenDocume
   const details = ((t as any).typeDetails || (t as any).type_details || {}) as any;
   const savedRows = details?.identified?.clarification_log;
   const savedNotes = details?.identified?.clarification_log_notes ?? "";
+  const persistedCheckpoint = hasPersistedIdentifiedCheckpoint(savedRows)
+    || hasPersistedIdentifiedCheckpoint(savedNotes);
   const [activeSection, setActiveSection] = useState<SectionKey>("register");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  /** B12: true only after BOTH halves of the pair confirmed in this session. */
-  const [savedConfirmed, setSavedConfirmed] = useState(false);
+  const [savedConfirmed, setSavedConfirmed] = useState(persistedCheckpoint);
   const staleRetryArmed = useRef(false);
   const [rows, setRows] = useState<ClarificationRow[]>(Array.isArray(savedRows) ? savedRows : []);
   const [notes, setNotes] = useState(savedNotes);
@@ -190,7 +192,8 @@ export default function IdentifiedClarificationLogTab({ ws, reload, onOpenDocume
     if (dirty) return;
     setRows(Array.isArray(savedRows) ? savedRows : []);
     setNotes(savedNotes);
-  }, [dirty, savedRows, savedNotes]);
+    setSavedConfirmed(persistedCheckpoint);
+  }, [dirty, persistedCheckpoint, savedRows, savedNotes]);
 
   const openRows = rows.filter(row => row.status !== "answered" && row.status !== "closed").length;
   const submittedRows = rows.filter(row => row.submitted_to_client).length;

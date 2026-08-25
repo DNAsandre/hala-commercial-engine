@@ -40,6 +40,29 @@ export const PROPOSAL_TRACKER_STAGES: ProposalStage[] = [
   { key: "go_live",             label: "Go-Live",              shortLabel: "Live",       description: "Prepare handover into operations and preserve proposal memory for execution.",      color: "text-rose-700",    bgColor: "bg-rose-50",      borderColor: "border-rose-200" },
 ];
 
+/** Convert saved labels and legacy title-case values to the tracker key. */
+export function normalizeProposalStageKey(value: string | null | undefined): string | null {
+  const token = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (!token) return null;
+
+  const direct = PROPOSAL_TRACKER_STAGES.find((stage) => stage.key === token);
+  if (direct) return direct.key;
+
+  const byLabel = PROPOSAL_TRACKER_STAGES.find((stage) =>
+    stage.label
+      .toLowerCase()
+      .replace(/&/g, "and")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") === token,
+  );
+  return byLabel?.key ?? null;
+}
+
 export const PROPOSAL_STAGE_TASKS: Record<string, ProposalStageTask[]> = {
   qualified: [
     { key: "qualification_summary", label: "Qualification Summary", tabs: [{ key: "qualification_summary", label: "Qualification Summary" }] },

@@ -73,8 +73,8 @@ import ProposalTrackerStrip from "@/components/proposal-workspace/ProposalTracke
 import ProposalStageWorkbench from "@/components/proposal-workspace/ProposalStageWorkbench";
 import ProposalOverviewPanel from "@/components/proposal-workspace/ProposalOverviewPanel";
 import ProposalSnapshotCard from "@/components/proposal-workspace/ProposalSnapshotCard";
-import CrmPipelineStrip, { getCrmStageLabel } from "@/components/proposal-workspace/CrmPipelineStrip";
-import { getProposalStageLabel, PROPOSAL_TRACKER_STAGES } from "@/components/proposal-workspace/proposal-stages";
+import CrmPipelineStrip, { getCrmStageLabel, normalizeCrmStageKey } from "@/components/proposal-workspace/CrmPipelineStrip";
+import { getProposalStageLabel, normalizeProposalStageKey, PROPOSAL_TRACKER_STAGES } from "@/components/proposal-workspace/proposal-stages";
 // SC-01 W04 (T08-B): tracker persistence goes through helpers that CONFIRM the
 // stored value from the returned row before anything is reported. The hazard
 // is real — proved live on 2026-08-05: an unauthorised PATCH returned HTTP 200
@@ -264,12 +264,17 @@ export default function WorkspaceDetail() {
   }>({ state: "loading", message: null });
   const [trackerReloadKey, setTrackerReloadKey] = useState(0);
   const [trackerSaving, setTrackerSaving] = useState<"crm" | "internal" | null>(null);
+  const [storedTrackerStages, setStoredTrackerStages] = useState<{
+    crm: string | null;
+    internal: string | null;
+  }>({ crm: null, internal: null });
+  const [trackerRevision, setTrackerRevision] = useState<string | null>(null);
   // Whether `crm_pipeline_stage` is actually recorded on the ticket. The
   // workspace mapper turns a NULL column into "prospecting", which would read
   // as a real CRM position; this keeps the difference visible.
   const [crmStageRecorded, setCrmStageRecorded] = useState(true);
 
-  // Proposal workbench state is session-only until it is backed by Supabase.
+  // Proposal workbench state is hydrated from and saved to the linked ticket.
   const [proposalWsData, setProposalWsData] = useState<ProposalWorkspaceData>(() => createDefaultWorkspaceData());
   const updateProposalWsData = (d: ProposalWorkspaceData) => {
     setProposalWsData(d);
@@ -375,6 +380,8 @@ export default function WorkspaceDetail() {
     setProposalStage(PROPOSAL_TRACKER_STAGES[0].key);
     setTrackerHydration({ state: "loading", message: null });
     setCrmStageRecorded(true);
+    setStoredTrackerStages({ crm: null, internal: null });
+    setTrackerRevision(null);
     if (ws?.crmStage) setCrmPipelineStage(ws.crmStage);
 
     if (!ticketId) {
@@ -400,11 +407,22 @@ export default function WorkspaceDetail() {
         });
         return;
       }
+      setStoredTrackerStages({ crm: stages.crmPipelineStage, internal: stages.internalStage });
+      setTrackerRevision(stages.revision);
       setCrmStageRecorded(stages.crmPipelineStage !== null);
-      if (stages.crmPipelineStage) setCrmPipelineStage(stages.crmPipelineStage as import("@/lib/store").CRMStage);
+      const normalizedCrmStage = normalizeCrmStageKey(stages.crmPipelineStage);
+      if (normalizedCrmStage) setCrmPipelineStage(normalizedCrmStage);
       if (stages.internalStage) {
-        setProposalStage(stages.internalStage);
-        setTrackerHydration({ state: "persisted", message: null });
+        const normalizedInternalStage = normalizeProposalStageKey(stages.internalStage);
+        if (normalizedInternalStage) {
+          setProposalStage(normalizedInternalStage);
+          setTrackerHydration({ state: "persisted", message: null });
+        } else {
+          setTrackerHydration({
+            state: "unrecorded",
+            message: `The stored internal stage "${stages.internalStage}" is not a recognized Proposal stage. Choose a stage to correct it.`,
+          });
+        }
       } else {
         setTrackerHydration({
           state: "unrecorded",
@@ -513,7 +531,7 @@ export default function WorkspaceDetail() {
     const saved = await changeProposalTrackerStage({
       ticketId,
       column: "crm_pipeline_stage",
-      oldValue: oldStage,
+      oldValue: storedTrackerStages.crm,
       newValue: newStage,
       userName: getCurrentUser().name,
     });
@@ -523,6 +541,8 @@ export default function WorkspaceDetail() {
       return;
     }
     setCrmPipelineStage(newStage);
+    setStoredTrackerStages((current) => ({ ...current, crm: newStage }));
+    if (saved.revision) setTrackerRevision(saved.revision);
     setCrmStageRecorded(true);
     toast.success(`CRM Pipeline → ${getCrmStageLabel(newStage)}`, { description: saved.message });
   };
@@ -541,7 +561,7 @@ export default function WorkspaceDetail() {
     const saved = await changeProposalTrackerStage({
       ticketId,
       column: "internal_stage",
-      oldValue: oldStage,
+      oldValue: storedTrackerStages.internal,
       newValue: newStage,
       userName: getCurrentUser().name,
     });
@@ -551,6 +571,8 @@ export default function WorkspaceDetail() {
       return;
     }
     setProposalStage(newStage);
+    setStoredTrackerStages((current) => ({ ...current, internal: newStage }));
+    if (saved.revision) setTrackerRevision(saved.revision);
     setTrackerHydration({ state: "persisted", message: null });
     toast.success(`Internal stage → ${getProposalStageLabel(newStage)}`, { description: saved.message });
   };
@@ -1011,6 +1033,7 @@ export default function WorkspaceDetail() {
             activeStage={proposalStage}
             workspaceId={ws.id}
             customerName={ws.customerName}
+            ticketRevision={trackerRevision}
             wsData={proposalWsData}
             onWsDataChange={updateProposalWsData}
             onNavigateToComposer={() => navigate(cleanHref(`/proposals/${activeProposalIdentity?.proposalId ?? id}/final-pack`))}

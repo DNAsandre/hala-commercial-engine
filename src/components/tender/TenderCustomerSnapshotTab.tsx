@@ -65,8 +65,9 @@ export default function TenderCustomerSnapshotTab({ ws, reload, onOpenDocuments,
 
   const [activeSection, setActiveSection] = useState<SectionKey>("metadata");
   const [stageIntelOpen, setStageIntelOpen] = useState(false);
-  /** B12: true only after a save confirmed in this session (any of the three save surfaces). */
-  const [savedConfirmed, setSavedConfirmed] = useState(false);
+  // This composite surface is hydrated from the persisted Tender row. Dirty
+  // flags still take precedence as soon as the user edits any save surface.
+  const [savedConfirmed, setSavedConfirmed] = useState(Boolean(t.id));
   /** Dirty state lifted from the embedded Scope of Work capture. */
   const [sowDirty, setSowDirty] = useState(false);
 
@@ -79,8 +80,9 @@ export default function TenderCustomerSnapshotTab({ ws, reload, onOpenDocuments,
     if (!probDirty) {
       setProbability(t.probabilityPercent ?? 0);
       prevProb.current = t.probabilityPercent ?? 0;
+      setSavedConfirmed(Boolean(t.id));
     }
-  }, [t.probabilityPercent, probDirty]);
+  }, [t.id, t.probabilityPercent, probDirty]);
 
   const handleProbChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
     setProbability(Number(e.target.value));

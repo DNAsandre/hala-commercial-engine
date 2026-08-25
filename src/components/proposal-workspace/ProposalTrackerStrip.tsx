@@ -46,7 +46,7 @@ export default function ProposalTrackerStrip({
 
   return (
     <Card className="border border-[#075eea]/20/60 shadow-none mb-3">
-      <CardContent className="pt-4 pb-3 px-6">
+      <CardContent className="px-3 pb-3 pt-4 sm:px-6">
         {/* Persisted-truth disclosure — loading, unread and failed read are
             three visibly different answers, and none of them reads as saved. */}
         {hydrationState === "loading" && (
@@ -78,8 +78,8 @@ export default function ProposalTrackerStrip({
         )}
 
         {/* Header row */}
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
+        <div className="mb-2 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-[#075eea]">
               Internal Proposal Tracker
             </span>
@@ -89,7 +89,7 @@ export default function ProposalTrackerStrip({
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button disabled={saving || hydrationState === "loading" || hydrationState === "error"} variant="outline" size="sm" className="text-xs h-7 gap-1 border-[#075eea]/20 text-[#075eea] hover:bg-[#075eea]/10">
+              <Button disabled={saving || hydrationState === "loading" || hydrationState === "error"} variant="outline" size="sm" className="h-7 w-full gap-1 border-[#075eea]/20 text-xs text-[#075eea] hover:bg-[#075eea]/10 sm:w-auto">
                 {saving ? "Saving Proposal Stage" : "Move Proposal Stage"} <ChevronDown className="w-3 h-3" />
               </Button>
             </DropdownMenuTrigger>

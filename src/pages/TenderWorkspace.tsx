@@ -1714,7 +1714,9 @@ export default function TenderWorkspaceDetail() {
               Internal: {TENDER_INTERNAL_STAGES.find(s => s.value === persistedInternalStage)?.label ?? persistedInternalStage}
             </Badge>
             <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700 bg-emerald-50">
-              Saved CRM stage: {ws.crmPipelineStageRaw ?? 'Not set'}
+              Saved CRM stage: {ws.crmPipelineStageRaw
+                ? CRM_PIPELINE_STAGES.find(stage => stage.value === t.crmPipelineStage)?.label ?? ws.crmPipelineStageRaw
+                : 'Not set'}
             </Badge>
             {riskBadge(ws.riskLevel)}
             <Badge variant="outline" className="text-[10px] border-gray-300 text-gray-600">CRM: {getCleanCrmSyncStatusLabel(ws.crmSyncStatus)}</Badge>
